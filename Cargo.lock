@@ -1119,6 +1119,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "hot_reload"
+version = "0.1.0"
+dependencies = [
+ "bincode",
+ "dmasm",
+ "serde",
+]
+
+[[package]]
 name = "hot_reload_test"
 version = "0.1.0"
 dependencies = [

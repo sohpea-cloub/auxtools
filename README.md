@@ -13,6 +13,8 @@ Debug Server - Working with SpaceManiac's [SpacemanDMM](https://github.com/Space
 
 *Dissassembly*  - When currently stopped at a breakpoint, enter the `#dis` command into the Debug Console in VSC to see the DM bytecode for the current proc. You can also provide it any arbitrary proc path like `#dis /mob/proc/Life`.
 
+*Hot reloading* (experimental) - Changed procs can be swapped into a running world without a restart. `tools/hot_reload` watches a codebase's source, compiles the procs that change with [dmasm](https://github.com/willox/dmasm)'s proc compiler, and sends them to the debug server's reload port (`AUXTOOLS_RELOAD_PORT`, 2449 unless set, `NONE` to turn it off), which is open whenever debugging is: `hot_reload path/to/world.dme -DNAME...` with the defines the world was built with. A debugger can be attached at the same time, and is told about each reload. Only proc code can change for now. New procs, vars and types, var defaults, parameters and `set` statements need a rebuild, and the watcher says so. `tests/hot_reload_test` shows what it does.
+
 ## Supported BYOND versions
 
 516.1659 through 516.1688 on Windows, and 516.1664 through 516.1688 on Linux. Those are the builds the patterns that find BYOND's functions were checked against. A newer build is still tried, and fails at init with the name of whatever stopped matching. An older build, or another major version, is refused at init with an error that names the build.
