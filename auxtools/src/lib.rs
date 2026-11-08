@@ -30,6 +30,7 @@ use std::sync::{
 pub use auxtools_impl::{full_shutdown, hook, init, pin_dll, runtime_handler, shutdown};
 /// For crates that need to find something else in BYOND's binary.
 pub use byond_scan;
+pub use bytecode_manager::bytecode_at;
 /// Used by the [pin_dll] macro to set dll pinning
 pub use ctor;
 pub use hooks::{CompileTimeHook, HookFailure, ProcHook, RuntimeErrorHook};
@@ -159,6 +160,7 @@ byond_ffi_fn! { auxtools_shutdown(_input) {
 	init::run_partial_shutdown();
 	string_intern::destroy_interned_strings();
 	bytecode_manager::shutdown();
+	debug::clear_local_names();
 
 	hooks::clear_hooks();
 	proc::clear_procs();
@@ -179,6 +181,7 @@ byond_ffi_fn! { auxtools_full_shutdown(_input) {
 		init::run_partial_shutdown();
 		string_intern::destroy_interned_strings();
 		bytecode_manager::shutdown();
+		debug::clear_local_names();
 
 		hooks::clear_hooks();
 		proc::clear_procs();

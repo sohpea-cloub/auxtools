@@ -1,7 +1,38 @@
+use std::{cell::RefCell, collections::HashMap};
+
 use crate::{
 	raw_types::{funcs, procs},
 	Proc, StringRef, Value
 };
+
+thread_local! {
+	// Local names by bytecode buffer, for code whose locals the proc's own
+	// table doesn't name (code swapped in by a hot reload, and the code it
+	// replaced, which old frames still run)
+	static LOCAL_NAMES: RefCell<HashMap<usize, Vec<String>>> = RefCell::new(HashMap::new());
+}
+
+/// Names the locals of frames running the bytecode at `bytecode`, in place of
+/// what the proc's locals table says.
+pub fn set_local_names(bytecode: *const u32, names: Vec<String>) {
+	LOCAL_NAMES.with(|map| map.borrow_mut().insert(bytecode as usize, names));
+}
+
+/// Whether [`set_local_names`] named the bytecode at `bytecode`.
+pub fn has_local_names(bytecode: *const u32) -> bool {
+	LOCAL_NAMES.with(|map| map.borrow().contains_key(&(bytecode as usize)))
+}
+
+/// The local names of frames of `proc` running the bytecode at `bytecode`.
+pub fn local_names_for(proc: &Proc, bytecode: *const u32) -> Vec<String> {
+	LOCAL_NAMES
+		.with(|map| map.borrow().get(&(bytecode as usize)).cloned())
+		.unwrap_or_else(|| proc.local_names().into_iter().map(String::from).collect())
+}
+
+pub(crate) fn clear_local_names() {
+	LOCAL_NAMES.with(|map| map.borrow_mut().clear());
+}
 
 pub struct StackFrame {
 	pub context: *mut procs::ExecutionContext,
@@ -30,7 +61,13 @@ impl StackFrame {
 		let proc = Proc::from_id((*instance).proc).unwrap();
 		let offset = *(*context).bytecode_offset();
 		let param_names = proc.parameter_names();
-		let local_names = proc.local_names();
+		let bytecode = *(*context).bytecode();
+		let local_names = LOCAL_NAMES.with(|map| {
+			map.borrow()
+				.get(&(bytecode as usize))
+				.map(|names| names.iter().map(|name| StringRef::new(name).ok()).collect::<Vec<_>>())
+		});
+		let local_names = local_names.unwrap_or_else(|| proc.local_names().into_iter().map(Some).collect());
 
 		let usr = Value::from_raw((*instance).usr);
 		let src = Value::from_raw((*instance).src);
@@ -45,12 +82,15 @@ impl StackFrame {
 			})
 			.collect();
 
+		// A frame can have more locals than names when its proc's table was
+		// swapped for a bigger one
 		let locals = (0..*(*context).locals_count())
 			.map(|i| {
-				(
-					local_names.get(i as usize).unwrap().clone(),
-					Value::from_raw(*(*(*context).locals()).add(i as usize))
-				)
+				let name = match local_names.get(i as usize) {
+					Some(Some(name)) => name.clone(),
+					_ => StringRef::new(&format!("<local {}>", i)).unwrap()
+				};
+				(name, Value::from_raw(*(*(*context).locals()).add(i as usize)))
 			})
 			.collect();
 

@@ -68,6 +68,7 @@ pub struct Locals_V1 {
 #[derive(Copy, Clone)]
 pub struct Locals_V2 {
 	pub count: u16,
+	// reference count
 	unk_0: u32,
 	pub names: *const strings::VariableId
 }
@@ -145,6 +146,24 @@ pub fn set_bytecode(id: BytecodeId, new_bytecode: *mut u32, new_bytecode_count: 
 	unsafe {
 		(*misc).bytecode.bytecode = new_bytecode;
 		(*misc).bytecode.count = new_bytecode_count;
+	}
+}
+
+/// Takes a reference to a misc entry for good, so BYOND never frees it.
+pub fn add_ref<T: AsMiscId>(id: &T) {
+	let mut misc: *mut c_void = std::ptr::null_mut();
+	unsafe {
+		assert_eq!(super::funcs::get_misc_by_id(&mut misc, id.as_misc_id()), 1);
+	}
+
+	let (major, minor) = version::get();
+
+	// Older entries have no reference count
+	if major > 513 || minor >= 1539 {
+		let misc = misc as *mut Misc_V2;
+		unsafe {
+			(*misc).locals.unk_0 += 1;
+		}
 	}
 }
 

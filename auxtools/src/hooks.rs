@@ -155,6 +155,13 @@ impl Proc {
 	pub fn hook(&self, func: ProcHook) -> Result<(), HookFailure> {
 		hook_by_id(self.id, func, self.path.to_owned())
 	}
+
+	/// Whether this library replaced the proc with a Rust function, which runs
+	/// instead of its bytecode. Hooks made by other auxtools libraries loaded
+	/// into the same world aren't known here.
+	pub fn is_hooked(&self) -> bool {
+		PROC_HOOKS.0.borrow().contains_key(&self.id)
+	}
 }
 
 #[no_mangle]

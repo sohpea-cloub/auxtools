@@ -120,6 +120,27 @@ impl Proc {
 		crate::bytecode_manager::set_bytecode(self, bytecode);
 	}
 
+	/// Replaces the proc's bytecode with a copy only it uses, and returns where
+	/// that is. New calls run it; calls already running finish on the old code.
+	pub fn set_bytecode_unshared(&self, bytecode: Vec<u32>) -> *const u32 {
+		crate::bytecode_manager::set_bytecode_unshared(self, bytecode)
+	}
+
+	/// The proc's locals table, which also says how many locals its frames get.
+	pub fn locals_id(&self) -> raw_types::misc::LocalsId {
+		unsafe { *(*self.entry()).metadata.locals() }
+	}
+
+	/// Gives the proc another locals table (put back at shutdown).
+	pub fn set_locals_id(&self, locals: raw_types::misc::LocalsId) {
+		crate::bytecode_manager::set_locals(self, locals);
+	}
+
+	/// How many locals a new frame of this proc gets.
+	pub fn locals_count(&self) -> usize {
+		unsafe { raw_types::misc::get_locals(*(*self.entry()).metadata.locals()).1 }
+	}
+
 	pub unsafe fn bytecode_mut_ptr(&self) -> (*mut u32, u16) {
 		raw_types::misc::get_bytecode(*(*self.entry()).metadata.bytecode())
 	}
