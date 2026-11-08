@@ -53,7 +53,9 @@ pub struct Prepared {
 	code: Vec<PreparedCode>,
 	/// (type id, field, misc id) for the types' new var tables and declared
 	/// vars
-	type_fields: Vec<(u32, usize, u32)>
+	type_fields: Vec<(u32, usize, u32)>,
+	/// (var id, name, bytecode) for initial values to work out once
+	run_once: Vec<(u32, String, Vec<u32>)>
 }
 
 /// A var id to add: its name's string id and the value of its global slot
@@ -69,7 +71,10 @@ struct AddedVars {
 	first: u32,
 	vars: Vec<PreparedNewVar>,
 	/// Ids added to name parameters, by name
-	param_names: HashMap<String, u32>
+	param_names: HashMap<String, u32>,
+	/// Global and static vars whose initial values aren't constants: the id,
+	/// what to call it, and the code that returns the value
+	run_once: Vec<(u32, String, dmasm::reload::ProcReload)>
 }
 
 impl AddedVars {
@@ -317,7 +322,8 @@ pub fn prepare(request: &HotReloadRequest, warnings: &mut Vec<String>) -> Result
 	let mut added = AddedVars {
 		first: runtime_tables::variable_count(),
 		vars: vec![],
-		param_names: HashMap::new()
+		param_names: HashMap::new(),
+		run_once: vec![]
 	};
 	for new in new_vars {
 		if let Err(e) = prepare_new_var(new, &mut added, &mut type_vars, &mut pending) {
@@ -385,6 +391,33 @@ pub fn prepare(request: &HotReloadRequest, warnings: &mut Vec<String>) -> Result
 	for default in var_defaults {
 		if let Err(e) = prepare_var_default(default, &mut type_vars) {
 			errors.push(e);
+		}
+	}
+
+	// Initial values that aren't constants, which can use anything else the
+	// reload adds
+	for (id, name, init) in std::mem::take(&mut added.run_once) {
+		let code = HotReloadProc {
+			proc: ProcRef {
+				path: init.proc.path.clone(),
+				override_id: 0
+			},
+			nodes: init.nodes,
+			locals: init.locals,
+			params: vec![],
+			settings: init.settings,
+			statics: vec![]
+		};
+		if !code.locals.is_empty() {
+			errors.push(format!(
+				"{}: working out its initial value needs locals, which a reload can't give it yet",
+				name
+			));
+			continue;
+		}
+		match assemble(&name, &code, &[], &pending, &mut world_globals, &mut added) {
+			Ok(bytecode) => prepared.run_once.push((id, name, bytecode)),
+			Err(e) => errors.push(e)
 		}
 	}
 
@@ -773,14 +806,15 @@ fn new_statics(
 		if proc_globals.get(&name).is_some_and(|ids| ids.len() > static_number(&local.scope)) {
 			continue;
 		}
-		let value = local.value.as_ref().ok_or_else(|| {
-			format!(
-				"static local {} is new and starts as something other than a constant, which a reload can't set up yet",
-				local.name
-			)
-		})?;
-		let value = const_value(value).map_err(|e| format!("static local {}: {}", local.name, e))?;
+		let value = match (&local.value, &local.init) {
+			(Some(value), _) => const_value(value).map_err(|e| format!("static local {}: {}", local.name, e))?,
+			(None, Some(_)) => (0, 0),
+			(None, None) => return Err(format!("static local {} has no initial value to start with", local.name))
+		};
 		let id = added.add(leaked_string(&local.name)?, value);
+		if let (None, Some(init)) = (&local.value, &local.init) {
+			added.run_once.push((id, format!("static local {}", local.name), (**init).clone()));
+		}
 		out.insert((local.scope.clone(), name), id);
 	}
 	Ok(out)
@@ -905,6 +939,9 @@ fn prepare_new_var(new: &NewVar, added: &mut AddedVars, type_vars: &mut TypeVars
 	let value = const_value(&new.value).map_err(fail)?;
 	let name = leaked_string(&new.var).map_err(fail)?;
 	type_vars.new_names.insert(id, name);
+	if let Some(init) = &new.init {
+		added.run_once.push((id, format!("{}/var/{}", new.type_path, new.var), (**init).clone()));
+	}
 
 	if !new.type_path.is_empty() {
 		let type_id = find_type(&new.type_path).map_err(fail)?;
@@ -1050,6 +1087,24 @@ pub fn apply(
 
 	for (type_id, field, words) in prepared.type_fields {
 		let _ = runtime_tables::set_type_field(type_id, field, words);
+	}
+
+	// As the world does when it starts, with everything else in place. They
+	// run in the expression stub, like the debugger's evals.
+	for (id, name, bytecode) in prepared.run_once {
+		let Some(stub) = Proc::find("/proc/auxtools_expr_stub") else {
+			warnings.push(format!("{}: no /proc/auxtools_expr_stub to work out its initial value in", name));
+			continue;
+		};
+		stub.set_bytecode(bytecode);
+		match stub.call(&[]) {
+			Ok(value) => {
+				if let Err(e) = runtime_tables::set_global_value(id, value) {
+					warnings.push(format!("{}: {}", name, e));
+				}
+			}
+			Err(e) => warnings.push(format!("{}: working out its initial value failed: {}", name, e.message))
+		}
 	}
 }
 

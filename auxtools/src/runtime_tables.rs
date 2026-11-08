@@ -683,6 +683,22 @@ pub fn set_named_procs(type_id: u32, key: u32, procs: &[u32]) -> Result<(), Stri
 	Ok(())
 }
 
+/// Puts a value in a var id's global slot, which keeps the value's
+/// reference. What was there is let go.
+pub fn set_global_value(var_id: u32, value: crate::Value) -> Result<(), String> {
+	let functions = functions()?;
+	unsafe {
+		if var_id >= variable_count() {
+			return Err(format!("there's no var id {}", var_id));
+		}
+		let slot = (*functions.global_values as *mut crate::raw_types::values::Value).add(var_id as usize);
+		drop(crate::Value::from_raw_owned(*slot));
+		*slot = value.raw;
+		std::mem::forget(value);
+	}
+	Ok(())
+}
+
 /// The value of a var id's global slot (see `Functions::global_values`).
 pub fn global_value(var_id: u32) -> Result<crate::raw_types::values::Value, String> {
 	let functions = functions()?;

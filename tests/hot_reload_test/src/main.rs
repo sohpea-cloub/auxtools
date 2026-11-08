@@ -681,6 +681,21 @@ fn main() {
 	assert_eq!(eval(&mut client, "istype(old_puppy, /datum/animal/dog)"), "1");
 	println!("ok: new types");
 
+	// Globals and statics whose initial values aren't constants get them once,
+	// as when the world starts
+	let changes = source.edit(
+		"reload.dm",
+		"/proc/crate_report(type)\n",
+		"var/list/once_global = list(\"g\", \"h\")\n\n/obj/crate\n\tvar/static/list/once_static = list(1, 2, \
+		 3)\n\n/proc/once_local()\n\tvar/static/datum/ledger/l = new\n\treturn l.add()\n\n/proc/once_report()\n\tvar/obj/crate/c = new\n\treturn \
+		 \"[length(once_global)] [length(c.once_static)]\"\n\n/proc/crate_report(type)\n"
+	);
+	reload(&mut watcher, &changes);
+	assert_eq!(eval(&mut client, "once_report()"), "\"2 3\"");
+	assert_eq!(eval(&mut client, "once_local()"), "1");
+	assert_eq!(eval(&mut client, "once_local()"), "2");
+	println!("ok: globals and statics that aren't constants");
+
 	// set waitfor = 0: the caller no longer waits for the sleep
 	let before = eval(&mut client, "caller_sees()");
 	let changes = source.edit("reload.dm", "/proc/slow()\n\tsleep(1)", "/proc/slow()\n\tset waitfor = 0\n\tsleep(1)");
