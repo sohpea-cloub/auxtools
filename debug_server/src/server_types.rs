@@ -5,6 +5,10 @@ use serde::{Deserialize, Serialize};
 #[allow(dead_code)]
 pub const DEFAULT_PORT: u16 = 2448;
 
+/// Where hot reload watchers connect by default (see `Request::HotReload`)
+#[allow(dead_code)]
+pub const DEFAULT_RELOAD_PORT: u16 = 2449;
+
 // Message from client -> server
 #[derive(Serialize, Deserialize, Debug)]
 pub enum Request {

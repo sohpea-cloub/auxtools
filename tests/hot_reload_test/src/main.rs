@@ -229,11 +229,13 @@ fn main() {
 	assert!(res.success(), "dreammaker build failed");
 
 	let port = free_port();
+	let reload_port = free_port();
 	let _world = World(
 		Command::new(paths::find_dreamdaemon())
 			.with_byond_paths()
 			.env("AUXTOOLS_DEBUG_DLL", find_debug_server())
 			.env("AUXTOOLS_DEBUG_PORT", port.to_string())
+			.env("AUXTOOLS_RELOAD_PORT", reload_port.to_string())
 			.arg(source.dir.join("hot_reload_test_host.dmb"))
 			.arg("-trusted")
 			.arg("-close")
@@ -241,10 +243,13 @@ fn main() {
 			.unwrap()
 	);
 
+	// A debugger and a watcher, attached at the same time. The watcher sends
+	// the reloads, except where the debugger's own connection is tested.
 	let mut client = Client::connect(port);
+	let mut watcher = Client::connect(reload_port);
 
 	// Parsed as DreamMaker does for the BYOND version the world runs on
-	let (version, build) = match client.request(Request::ByondVersion) {
+	let (version, build) = match watcher.request(Request::ByondVersion) {
 		Response::ByondVersion { version, build } => (version, build),
 		other => panic!("expected ByondVersion, got {:?}", other)
 	};
@@ -256,7 +261,7 @@ fn main() {
 	assert_eq!(eval(&mut client, "answer()"), "1");
 	let changes = source.edit("reload.dm", "/proc/answer()\n\treturn 1", "/proc/answer()\n\treturn 2");
 	assert_eq!(changes.reloads.len(), 1);
-	reload(&mut client, &changes);
+	reload(&mut watcher, &changes);
 	assert_eq!(eval(&mut client, "answer()"), "2");
 	println!("ok: new code for a proc");
 
@@ -268,7 +273,7 @@ fn main() {
 		"sleeper_state = \"old code finished\"",
 		"sleeper_state = \"new code finished\""
 	);
-	reload(&mut client, &changes);
+	reload(&mut watcher, &changes);
 	eval(&mut client, "release_sleeper()");
 	wait_for(&mut client, "sleeper_state", "\"old code finished\"");
 	eval(&mut client, "start_sleeper()");
@@ -278,7 +283,7 @@ fn main() {
 	// Recursion into the new code
 	assert_eq!(eval(&mut client, "factorial(4)"), "24");
 	let changes = source.edit("reload.dm", "return n * factorial(n - 1)", "return n * factorial(n - 1) + 1");
-	reload(&mut client, &changes);
+	reload(&mut watcher, &changes);
 	assert_eq!(eval(&mut client, "factorial(4)"), "41");
 	println!("ok: a recursive proc");
 
@@ -291,7 +296,7 @@ fn main() {
 	);
 	let few_locals = changes.reloads.iter().find(|r| r.proc.path == "/few_locals").unwrap();
 	assert_eq!(few_locals.locals.len(), 6);
-	reload(&mut client, &changes);
+	reload(&mut watcher, &changes);
 	assert_eq!(eval(&mut client, "few_locals()"), "21");
 	println!("ok: growing a proc's locals");
 
@@ -299,11 +304,23 @@ fn main() {
 	assert_eq!(eval(&mut client, "counter()"), "1");
 	assert_eq!(eval(&mut client, "counter()"), "2");
 	let changes = source.edit("reload.dm", "\tcount++", "\tcount += 10");
-	reload(&mut client, &changes);
+	reload(&mut watcher, &changes);
 	assert_eq!(eval(&mut client, "counter()"), "12");
 	println!("ok: a static local keeps its value");
 
-	// A breakpoint stays on its line: with new code it stays on the same line,
+	// The watcher doesn't need a debugger there
+	client.send(Request::Disconnect);
+	client.wait_closed();
+	let changes = source.edit("reload.dm", "/proc/answer()\n\treturn 2", "/proc/answer()\n\treturn 20");
+	reload(&mut watcher, &changes);
+	let mut client = Client::connect(port);
+	assert_eq!(eval(&mut client, "answer()"), "20");
+	let changes = source.edit("reload.dm", "/proc/answer()\n\treturn 20", "/proc/answer()\n\treturn 2");
+	reload(&mut watcher, &changes);
+	println!("ok: reloading with no debugger attached");
+
+	// A breakpoint stays on its line, and the watcher can reload while the
+	// debugger has the world paused.: with new code it stays on the same line,
 	// and when the proc moves it moves with it
 	let line = source.line_of("reload.dm", "\tx += 1");
 	let old_offset = offset_of(&mut client, "/breakpoint_target", line);
@@ -330,7 +347,7 @@ fn main() {
 		"/proc/answer()\n\tvar/unused = 1\n\tunused++\n\treturn 3"
 	);
 	assert!(changes.line_moves.iter().any(|m| m.proc.path == "/breakpoint_target"));
-	let result = reload(&mut client, &changes);
+	let result = reload(&mut watcher, &changes);
 	assert!(result.warnings.is_empty(), "{:?}", result.warnings);
 	// The paused frame runs the old code, and still knows its line
 	assert_eq!(paused_line(&mut client), ("/breakpoint_target".to_owned(), Some(line)));
@@ -365,7 +382,7 @@ fn main() {
 		"/proc/runtime_target()\n\treturn 1",
 		"/proc/runtime_target()\n\tvar/list/nothing\n\treturn nothing.len"
 	);
-	reload(&mut client, &changes);
+	reload(&mut watcher, &changes);
 	eval(&mut client, "arm_runtime()");
 	match client.expect_pause() {
 		BreakpointReason::Runtime(message) => assert!(message.contains("null.len"), "unexpected runtime: {}", message),
@@ -382,7 +399,7 @@ fn main() {
 		"/proc/enable_debugging(mode, port)\n\tCRASH(\"auxtools not loaded\")",
 		"/proc/enable_debugging(mode, port)\n\tCRASH(\"auxtools still not loaded\")"
 	);
-	let result = reload(&mut client, &changes);
+	let result = reload(&mut watcher, &changes);
 	assert!(
 		result.warnings.iter().any(|w| w.contains("hooked")),
 		"no warning about the hook: {:?}",
@@ -390,7 +407,8 @@ fn main() {
 	);
 	println!("ok: a warning for a hooked proc");
 
-	// Requests sent back to back, the way VS Code sends them
+	// The debugger's own connection takes reloads too. Requests sent back to
+	// back, the way VS Code sends them.
 	let changes = source.edit("reload.dm", "\treturn 3", "\treturn 4");
 	client.send(reload_request(&changes));
 	client.send(Request::Eval {

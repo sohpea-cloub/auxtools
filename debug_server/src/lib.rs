@@ -52,6 +52,17 @@ fn get_default_port() -> u16 {
 	}
 }
 
+/// Where hot reload watchers connect, next to the debug-client:
+/// AUXTOOLS_RELOAD_PORT, or 2449. `NONE` turns it off.
+fn get_reload_addr() -> Option<SocketAddr> {
+	let port = match std::env::var("AUXTOOLS_RELOAD_PORT") {
+		Ok(val) if val == "NONE" => return None,
+		Ok(val) => val.parse::<u16>().unwrap_or(server_types::DEFAULT_RELOAD_PORT),
+		Err(_) => server_types::DEFAULT_RELOAD_PORT
+	};
+	Some(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port))
+}
+
 struct DebugServerInstructionHook<'a> {
 	debug_server: &'a mut UnsafeCell<Option<server::Server>>
 }
@@ -77,6 +88,7 @@ fn enable_debugging(mode: Value, port: Value) {
 	let port = port.as_number().map(|x| x as u16).unwrap_or_else(|_| get_default_port());
 
 	let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port);
+	let reload_addr = get_reload_addr();
 
 	// A second server would mean a second instruction hook, and both hooks
 	// would run the one server on every instruction
@@ -89,12 +101,12 @@ fn enable_debugging(mode: Value, port: Value) {
 			return Ok(Value::NULL);
 		}
 
-		"LAUNCHED" => server::Server::connect(&addr).map_err(|e| runtime!("Couldn't create debug server: {}", e))?,
+		"LAUNCHED" => server::Server::connect(&addr, reload_addr.as_ref()).map_err(|e| runtime!("Couldn't create debug server: {}", e))?,
 
-		"BACKGROUND" => server::Server::listen(&addr).map_err(|e| runtime!("Couldn't create debug server: {}", e))?,
+		"BACKGROUND" => server::Server::listen(&addr, reload_addr.as_ref()).map_err(|e| runtime!("Couldn't create debug server: {}", e))?,
 
 		"BLOCK" => {
-			let mut server = server::Server::listen(&addr).map_err(|e| runtime!("Couldn't create debug server: {}", e))?;
+			let mut server = server::Server::listen(&addr, reload_addr.as_ref()).map_err(|e| runtime!("Couldn't create debug server: {}", e))?;
 			server.process_until_configured(); // might never return 😳
 			server
 		}

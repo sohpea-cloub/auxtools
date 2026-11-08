@@ -6,7 +6,7 @@ use std::{
 	net::{SocketAddr, TcpListener, TcpStream},
 	sync::{
 		atomic::{AtomicBool, Ordering},
-		mpsc, Arc
+		mpsc, Arc, Mutex
 	},
 	thread,
 	thread::JoinHandle
@@ -78,6 +78,10 @@ impl State {
 //
 // Limitations: one debug-client at a time. Another can connect once it leaves.
 //
+// Reload clients (hot reload watchers) connect on a port of their own, as many
+// as like, and can be there while a debug-client is. All they can ask for is
+// ByondVersion and HotReload, so nothing they do pauses the world.
+//
 
 enum Event {
 	// A debug-client arrived. The TcpStream is for the Server to send responses on
@@ -87,7 +91,10 @@ enum Event {
 	Request(Request),
 
 	// The debug-client left, or its connection broke
-	Disconnected
+	Disconnected,
+
+	// A request from a reload client, and where to answer it
+	ReloadRequest(Request, TcpStream)
 }
 
 // Nothing a debug-client sends is anywhere near this big. Without a limit, any
@@ -108,6 +115,7 @@ pub struct Server {
 	eval_error: Option<String>,
 	conditional_breakpoints: HashMap<(raw_types::procs::ProcId, u16), String>,
 	moved_breakpoints: hot_reload::MovedBreakpoints,
+	reload_listener: Option<ReloadListener>,
 	app: Command<'static>
 }
 
@@ -158,9 +166,11 @@ impl Server {
 			)
 	}
 
-	pub fn connect(addr: &SocketAddr) -> std::io::Result<Server> {
+	pub fn connect(addr: &SocketAddr, reload_addr: Option<&SocketAddr>) -> std::io::Result<Server> {
 		let stream = TcpStream::connect_timeout(addr, std::time::Duration::from_secs(5))?;
 		let (events_sender, events_receiver) = mpsc::channel();
+		let stop = Arc::new(AtomicBool::new(false));
+		let reload_listener = reload_addr.and_then(|addr| ReloadListener::start(addr, events_sender.clone(), stop.clone()));
 
 		let server_thread = ServerThread { events: events_sender };
 
@@ -174,13 +184,14 @@ impl Server {
 			stream: Some(stream),
 			thread: Some(thread),
 			listen_addr: None,
-			stop: Arc::new(AtomicBool::new(false)),
+			stop,
 			should_catch_runtimes: true,
 			state: None,
 			in_eval: false,
 			eval_error: None,
 			conditional_breakpoints: HashMap::new(),
 			moved_breakpoints: HashMap::new(),
+			reload_listener,
 			app: Self::setup_app()
 		};
 
@@ -188,11 +199,12 @@ impl Server {
 		Ok(server)
 	}
 
-	pub fn listen(addr: &SocketAddr) -> std::io::Result<Server> {
+	pub fn listen(addr: &SocketAddr, reload_addr: Option<&SocketAddr>) -> std::io::Result<Server> {
 		let (events_sender, events_receiver) = mpsc::channel();
 		let stop = Arc::new(AtomicBool::new(false));
 
 		let listener = TcpListener::bind(addr)?;
+		let reload_listener = reload_addr.and_then(|addr| ReloadListener::start(addr, events_sender.clone(), stop.clone()));
 		// Asking for port 0 gets whichever port the OS picks, and Server::drop
 		// has to connect to that one
 		let listen_addr = listener.local_addr()?;
@@ -210,6 +222,7 @@ impl Server {
 			eval_error: None,
 			conditional_breakpoints: HashMap::new(),
 			moved_breakpoints: HashMap::new(),
+			reload_listener,
 			app: Self::setup_app()
 		})
 	}
@@ -1017,6 +1030,11 @@ impl Server {
 	}
 
 	fn handle_hot_reload(&mut self, procs: &[HotReloadProc], line_moves: &[HotReloadLines]) {
+		let result = self.hot_reload(procs, line_moves);
+		self.send_or_disconnect(Response::HotReload(result));
+	}
+
+	fn hot_reload(&mut self, procs: &[HotReloadProc], line_moves: &[HotReloadLines]) -> HotReloadResult {
 		// Assembling runs DM code to look up typepaths and resources, which
 		// counts as eval code (see eval_expr)
 		self.in_eval = true;
@@ -1045,13 +1063,35 @@ impl Server {
 			self.notify(format!("runtime occured during a hot reload: {}", err));
 		}
 
-		// The client might not be the one who asked, so tell it what changed
+		// A reload client might have asked, so tell the debug-client what
+		// changed
 		let changed = procs.len() + line_moves.len();
 		if result.applied && changed > 0 {
 			self.notify(format!("Hot reload: new code for {} procs, {} moved", procs.len(), line_moves.len()));
 		}
 
-		self.send_or_disconnect(Response::HotReload(result));
+		result
+	}
+
+	fn handle_reload_request(&mut self, request: Request, mut stream: TcpStream) {
+		let response = match request {
+			Request::ByondVersion => {
+				let (version, build) = auxtools::version::get();
+				Response::ByondVersion { version, build }
+			}
+
+			Request::HotReload { procs, line_moves } => Response::HotReload(self.hot_reload(&procs, &line_moves)),
+
+			_ => Response::Notification {
+				message: "the reload port only takes ByondVersion and HotReload requests".to_owned()
+			}
+		};
+
+		// A client that has gone doesn't need an answer, and its thread finds
+		// out by itself
+		if let Err(e) = Self::send(&mut stream, &response) {
+			eprintln!("Debug server failed to answer a reload client: {}", e);
+		}
 	}
 
 	fn handle_disassemble(&mut self, path: &str, id: u32) -> String {
@@ -1148,9 +1188,9 @@ impl Server {
 		false
 	}
 
-	/// Applies whatever the networking thread has reported and hands back the
-	/// next request. `None` means nothing is waiting, or when blocking, that
-	/// the debug-client is gone.
+	/// Applies whatever the networking threads have reported, answers reload
+	/// clients, and hands back the debug-client's next request. `None` means
+	/// nothing is waiting, or when blocking, that the debug-client is gone.
 	fn recv_request(&mut self, block: bool) -> Option<Request> {
 		loop {
 			let event = if block { self.events.recv().ok()? } else { self.events.try_recv().ok()? };
@@ -1169,7 +1209,11 @@ impl Server {
 				// Sent by a client we've since given up on
 				Event::Request(_) if self.stream.is_none() => {}
 
-				Event::Request(request) => return Some(request)
+				Event::Request(request) => return Some(request),
+
+				// Handled wherever we are waiting for the debug-client, paused
+				// or not
+				Event::ReloadRequest(request, stream) => self.handle_reload_request(request, stream)
 			}
 		}
 	}
@@ -1296,17 +1340,7 @@ impl Server {
 		if let Some(mut stream) = self.stream.take() {
 			eprintln!("Debug server disconnecting");
 			let _ = Self::send(&mut stream, &Response::Disconnect);
-			let _ = stream.shutdown(std::net::Shutdown::Both);
-
-			// On Windows a shutdown stops later reads, but the one the
-			// networking thread is already sat in waits for the client to hang
-			// up too. Server::drop joins that thread, so don't leave it up to
-			// the client.
-			#[cfg(windows)]
-			unsafe {
-				use std::os::windows::io::AsRawSocket;
-				winapi::um::ioapiset::CancelIoEx(stream.as_raw_socket() as _, std::ptr::null_mut());
-			}
+			hang_up(&stream);
 		}
 
 		// Whoever connects next sets up their own breakpoints. Until then the
@@ -1330,14 +1364,21 @@ impl Drop for Server {
 	fn drop(&mut self) {
 		self.disconnect();
 
+		// The listener threads sit in accept() holding their ports, and after a
+		// world reboot the next Server wants those ports. Connecting is the
+		// only way to get them out of accept() so they can see the stop flag.
+		self.stop.store(true, Ordering::Relaxed);
+
+		// Reload clients' threads hold senders too, so they have to be gone
+		// before the channel can close below
+		if let Some(reload_listener) = self.reload_listener.take() {
+			reload_listener.stop();
+		}
+
 		let Some(listen_addr) = self.listen_addr else {
 			return;
 		};
 
-		// The listener thread sits in accept() holding the port, and after a
-		// world reboot the next Server wants that port. Connecting is the only
-		// way to get it out of accept() so it can see the stop flag.
-		self.stop.store(true, Ordering::Relaxed);
 		if TcpStream::connect(listen_addr).is_err() {
 			return;
 		}
@@ -1354,6 +1395,114 @@ impl Drop for Server {
 
 		if let Some(thread) = self.thread.take() {
 			let _ = thread.join();
+		}
+	}
+}
+
+/// Closes a connection, including for the networking thread that is reading
+/// from it.
+fn hang_up(stream: &TcpStream) {
+	let _ = stream.shutdown(std::net::Shutdown::Both);
+
+	// On Windows a shutdown stops later reads, but the one the networking
+	// thread is already sat in waits for the client to hang up too.
+	// Server::drop waits for those threads, so don't leave it up to the client.
+	#[cfg(windows)]
+	unsafe {
+		use std::os::windows::io::AsRawSocket;
+		winapi::um::ioapiset::CancelIoEx(stream.as_raw_socket() as _, std::ptr::null_mut());
+	}
+}
+
+/// Reads one request off a connection: a u32 length, then the request in
+/// bincode.
+fn read_request(stream: &mut TcpStream, buf: &mut Vec<u8>) -> Result<Request, Box<dyn Error>> {
+	let mut len_bytes = [0u8; 4];
+	stream.read_exact(&mut len_bytes)?;
+	let len = u32::from_le_bytes(len_bytes);
+
+	if len > MAX_REQUEST_LEN {
+		return Err(format!("a {} byte request is too big to be real", len).into());
+	}
+
+	buf.resize(len as usize, 0);
+	stream.read_exact(buf)?;
+	Ok(bincode::deserialize::<Request>(buf)?)
+}
+
+/// The port reload clients connect to, and the clients that are there.
+struct ReloadListener {
+	addr: SocketAddr,
+	thread: JoinHandle<()>,
+	clients: Arc<Mutex<Vec<TcpStream>>>
+}
+
+impl ReloadListener {
+	/// `None` when the port can't be had (another world might have it): the
+	/// debugger works without it.
+	fn start(addr: &SocketAddr, events: mpsc::Sender<Event>, stop: Arc<AtomicBool>) -> Option<Self> {
+		let listener = match TcpListener::bind(addr) {
+			Ok(listener) => listener,
+			Err(e) => {
+				eprintln!("Debug server couldn't listen for reload clients on {}: {}", addr, e);
+				return None;
+			}
+		};
+		let addr = listener.local_addr().ok()?;
+		let clients = Arc::new(Mutex::new(vec![]));
+
+		let thread_clients = clients.clone();
+		let thread = thread::spawn(move || loop {
+			let Ok((stream, _)) = listener.accept() else {
+				return;
+			};
+
+			// That was Server::drop knocking
+			if stop.load(Ordering::Relaxed) {
+				return;
+			}
+
+			let Ok(kept) = stream.try_clone() else {
+				continue;
+			};
+			thread_clients.lock().unwrap().push(kept);
+
+			let events = events.clone();
+			thread::spawn(move || Self::run(stream, &events));
+		});
+
+		Some(Self { addr, thread, clients })
+	}
+
+	fn run(mut stream: TcpStream, events: &mpsc::Sender<Event>) {
+		let mut buf = vec![];
+		loop {
+			let request = match read_request(&mut stream, &mut buf) {
+				Ok(Request::Disconnect) => break,
+				Ok(request) => request,
+				Err(_) => break
+			};
+
+			let Ok(reply) = stream.try_clone() else {
+				break;
+			};
+			if events.send(Event::ReloadRequest(request, reply)).is_err() {
+				break;
+			}
+		}
+
+		let _ = stream.shutdown(std::net::Shutdown::Both);
+	}
+
+	/// Frees the port and hangs up on every client. The stop flag has to be set
+	/// already.
+	fn stop(self) {
+		if TcpStream::connect(self.addr).is_ok() {
+			let _ = self.thread.join();
+		}
+
+		for client in self.clients.lock().unwrap().drain(..) {
+			hang_up(&client);
 		}
 	}
 }
@@ -1393,26 +1542,12 @@ impl ServerThread {
 		})
 	}
 
-	// returns true if we should disconnect
-	fn handle_request(&self, data: &[u8]) -> Result<bool, Box<dyn Error>> {
-		let request = bincode::deserialize::<Request>(data)?;
-
-		if let Request::Disconnect = request {
-			return Ok(true);
-		}
-
-		self.events.send(Event::Request(request))?;
-		Ok(false)
-	}
-
 	fn run(&self, mut stream: TcpStream) {
 		let mut buf = vec![];
 
-		// The incoming stream is a u32 followed by a bincode-encoded Request.
 		loop {
-			let mut len_bytes = [0u8; 4];
-			let len = match stream.read_exact(&mut len_bytes) {
-				Ok(_) => u32::from_le_bytes(len_bytes),
+			let request = match read_request(&mut stream, &mut buf) {
+				Ok(request) => request,
 
 				Err(e) => {
 					eprintln!("Debug server thread read error: {}", e);
@@ -1420,33 +1555,14 @@ impl ServerThread {
 				}
 			};
 
-			if len > MAX_REQUEST_LEN {
-				eprintln!("Debug server thread got a {} byte request, which is too big to be real", len);
+			if let Request::Disconnect = request {
+				eprintln!("Debug client disconnected");
 				break;
 			}
 
-			buf.resize(len as usize, 0);
-			match stream.read_exact(&mut buf) {
-				Ok(_) => (),
-
-				Err(e) => {
-					eprintln!("Debug server thread read error: {}", e);
-					break;
-				}
-			};
-
-			match self.handle_request(&buf[..]) {
-				Ok(requested_disconnect) => {
-					if requested_disconnect {
-						eprintln!("Debug client disconnected");
-						break;
-					}
-				}
-
-				Err(e) => {
-					eprintln!("Debug server thread failed to handle request: {}", e);
-					break;
-				}
+			if let Err(e) = self.events.send(Event::Request(request)) {
+				eprintln!("Debug server thread failed to handle request: {}", e);
+				break;
 			}
 		}
 
@@ -1471,7 +1587,7 @@ mod tests {
 
 	#[test]
 	fn drop_stops_a_listener_on_a_port_the_os_picked() {
-		let server = Server::listen(&SocketAddr::from((Ipv4Addr::LOCALHOST, 0))).unwrap();
+		let server = Server::listen(&SocketAddr::from((Ipv4Addr::LOCALHOST, 0)), None).unwrap();
 		// The listener thread holds the only other copy, until it exits
 		let stop = server.stop.clone();
 
@@ -1487,7 +1603,7 @@ mod tests {
 
 		// A hung drop never returns, so it gets its own thread to be stuck on
 		thread::spawn(move || {
-			let server = Server::listen(&addr).unwrap();
+			let server = Server::listen(&addr, None).unwrap();
 			let _client = TcpStream::connect(addr).unwrap();
 			// Long enough for the networking thread to start reading from the
 			// client. Nothing here tells the server it connected.
@@ -1500,5 +1616,30 @@ mod tests {
 		dropped
 			.recv_timeout(Duration::from_secs(5))
 			.expect("dropping the server hung on a client that was still connected");
+	}
+
+	#[test]
+	fn drop_hangs_up_on_reload_clients_and_frees_their_port() {
+		let free_port = || TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap().local_addr().unwrap().port();
+		let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, free_port()));
+		let reload_addr = SocketAddr::from((Ipv4Addr::LOCALHOST, free_port()));
+		let (done, dropped) = mpsc::channel();
+
+		thread::spawn(move || {
+			let server = Server::listen(&addr, Some(&reload_addr)).unwrap();
+			let _watcher = TcpStream::connect(reload_addr).unwrap();
+			let _debugger = TcpStream::connect(addr).unwrap();
+			thread::sleep(Duration::from_millis(200));
+
+			drop(server);
+			let _ = done.send(());
+		});
+
+		dropped
+			.recv_timeout(Duration::from_secs(5))
+			.expect("dropping the server hung on a reload client");
+
+		// A world reboot makes a new server, which wants the port again
+		TcpListener::bind(reload_addr).expect("the reload port is still taken");
 	}
 }
