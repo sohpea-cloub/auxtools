@@ -20,6 +20,22 @@ pub struct LocalsId(u32);
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
 pub struct ParametersId(u32);
 
+impl MiscId {
+	pub const fn from_raw(id: u32) -> Self {
+		Self(id)
+	}
+
+	pub const fn raw(self) -> u32 {
+		self.0
+	}
+}
+
+impl AsMiscId for MiscId {
+	fn as_misc_id(&self) -> MiscId {
+		*self
+	}
+}
+
 pub trait AsMiscId {
 	fn as_misc_id(&self) -> MiscId;
 }

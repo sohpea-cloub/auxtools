@@ -61,10 +61,13 @@ pub enum Request {
 	// New requests go last, so older debug-clients' requests keep their numbers
 	/// Which BYOND version the world runs on
 	ByondVersion,
-	/// Swaps new code into procs and renumbers the lines of procs that moved.
-	/// Either all of it is applied or none of it is.
+	/// Swaps new code into procs, adds procs, sets new var defaults and
+	/// renumbers the lines of procs that moved. Either all of it is applied or
+	/// none of it is.
 	HotReload {
 		procs: Vec<HotReloadProc>,
+		new_procs: Vec<HotReloadNewProc>,
+		var_defaults: Vec<HotReloadVarDefault>,
 		line_moves: Vec<HotReloadLines>
 	}
 }
@@ -193,8 +196,27 @@ pub struct HotReloadProc {
 	pub nodes: Vec<dmasm::Node>,
 	/// Local variable names by slot
 	pub locals: Vec<String>,
-	/// Parameter names, which have to be the proc's own
-	pub params: Vec<String>
+	pub params: Vec<dmasm::reload::Param>,
+	pub settings: dmasm::reload::ProcSettings
+}
+
+/// A proc the world doesn't have yet. `code.proc` is how it will be known.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct HotReloadNewProc {
+	/// The type it's on, `""` for a global proc
+	pub type_path: String,
+	pub name: String,
+	/// Declared on the type (`proc/name`), not overriding a parent's proc
+	pub declared: bool,
+	pub code: HotReloadProc
+}
+
+/// A new default for a var, on the type and each subtype that inherits it.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct HotReloadVarDefault {
+	pub var: String,
+	pub value: dmasm::reload::ConstValue,
+	pub types: Vec<String>
 }
 
 /// A proc whose code is unchanged but now sits on other lines

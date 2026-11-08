@@ -17,11 +17,10 @@ static mut BYTECODE_ALLOCATIONS: UnsafeCell<Option<State>> = UnsafeCell::new(Non
 
 struct State {
 	allocations: HashSet<Vec<u32>>,
-	// Buffers that belong to one proc each (hot reloads), which breakpoints can
-	// be patched into without reaching other procs
-	unshared: Vec<Vec<u32>>,
 	original: HashMap<raw_types::procs::ProcId, (*mut u32, u16)>,
-	original_locals: HashMap<raw_types::procs::ProcId, raw_types::misc::LocalsId>
+	// Copies of bytecode procs were given and have since been replaced, by
+	// where it is: frames that started on it still run it
+	remembered: HashMap<usize, Vec<u32>>
 }
 
 pub fn init() {
@@ -29,9 +28,8 @@ pub fn init() {
 		let ptr = BYTECODE_ALLOCATIONS.get();
 		*ptr = Some(State {
 			allocations: HashSet::new(),
-			unshared: Vec::new(),
 			original: HashMap::new(),
-			original_locals: HashMap::new()
+			remembered: HashMap::new()
 		});
 	}
 }
@@ -69,15 +67,7 @@ pub fn shutdown() {
 		}
 	}
 
-	for (id, locals) in state.original_locals {
-		let proc = Proc::from_id(id).unwrap();
-
-		unsafe {
-			*(*proc.entry()).metadata.locals_mut() = locals;
-		}
-	}
-
-	for mut vec in state.allocations.into_iter().chain(state.unshared) {
+	for mut vec in state.allocations {
 		// If a proc with this bytecode is still running, just leak the mrmoy
 		if active_ptrs.contains(&vec.as_mut_ptr()) {
 			std::mem::forget(vec);
@@ -93,54 +83,27 @@ fn remember_original(state: &mut State, proc: &Proc) {
 	state.original.entry(proc.id).or_insert_with(|| unsafe { proc.bytecode_mut_ptr() });
 }
 
-/// Gives `proc` new bytecode in a buffer of its own, and returns where that is.
-/// Unlike [`set_bytecode`], two procs never end up sharing a buffer, so a
-/// breakpoint patched into one stays out of the other.
-pub fn set_bytecode_unshared(proc: &Proc, mut bytecode: Vec<u32>) -> *const u32 {
-	let state = state();
-	remember_original(state, proc);
-
-	let len = u16::try_from(bytecode.len()).unwrap();
-	let ptr = bytecode.as_mut_ptr();
-	state.unshared.push(bytecode);
-
-	unsafe {
-		raw_types::misc::set_bytecode(*(*proc.entry()).metadata.bytecode(), ptr, len);
-	}
-
-	ptr
+/// Keeps a copy of bytecode that a proc is about to stop using, for
+/// [`bytecode_at`].
+pub fn remember_bytecode(ptr: *const u32, bytecode: &[u32]) {
+	state().remembered.entry(ptr as usize).or_insert_with(|| bytecode.to_vec());
 }
 
-/// Points `proc` at another locals table. BYOND gives each new frame as many
-/// locals as the table has names; frames already running keep what they got.
-pub fn set_locals(proc: &Proc, locals: raw_types::misc::LocalsId) {
-	let state = state();
-
-	unsafe {
-		let current = (*proc.entry()).metadata.locals_mut();
-		state.original_locals.entry(proc.id).or_insert(*current);
-		// BYOND frees a table nobody holds a reference to
-		raw_types::misc::add_ref(&locals);
-		*current = locals;
-	}
-}
-
-/// A copy of the bytecode at `ptr`, if it's a proc's original bytecode or one
-/// we gave a proc. Frames that started before a proc's bytecode was replaced
-/// still run the old buffer.
+/// A copy of the bytecode at `ptr`, if it's a proc's original bytecode, one we
+/// gave a proc, or one [`remember_bytecode`] kept. Frames that started before a
+/// proc's bytecode was replaced still run the old buffer.
 pub fn bytecode_at(ptr: *const u32) -> Option<Vec<u32>> {
 	let state = state();
+
+	if let Some(bytecode) = state.remembered.get(&(ptr as usize)) {
+		return Some(bytecode.clone());
+	}
 
 	if let Some(&(original, len)) = state.original.values().find(|(original, _)| std::ptr::eq(*original, ptr)) {
 		return Some(unsafe { std::slice::from_raw_parts(original, len as usize) }.to_vec());
 	}
 
-	state
-		.unshared
-		.iter()
-		.chain(state.allocations.iter())
-		.find(|bytecode| bytecode.as_ptr() == ptr)
-		.cloned()
+	state.allocations.iter().find(|bytecode| bytecode.as_ptr() == ptr).cloned()
 }
 
 pub fn set_bytecode(proc: &Proc, mut bytecode: Vec<u32>) {

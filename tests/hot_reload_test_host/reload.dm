@@ -68,3 +68,58 @@ var/breakpoint_armed = FALSE
 	if (runtime_armed)
 		runtime_armed = FALSE
 		runtime_target()
+
+// Phase 5: procs, overrides and var defaults the test adds or changes
+
+/datum/animal
+	var/sound = "..."
+	var/legs = 4
+
+/datum/animal/proc/speak()
+	return sound
+
+/datum/animal/dog
+	sound = "woof"
+
+/datum/animal/dog/puppy
+
+/datum/animal/dog/puppy/speak()
+	return "[..()]?"
+
+/datum/animal/cat
+	sound = "meow"
+
+/datum/animal/bird
+	legs = 2
+
+var/datum/animal/dog/old_dog = new
+var/datum/animal/dog/puppy/old_puppy = new
+var/datum/animal/dog/legs_written = new
+
+/proc/write_legs()
+	legs_written.legs = 9
+
+/proc/new_dog_legs()
+	var/datum/animal/dog/d = new
+	return d.legs
+
+/proc/new_bird_legs()
+	var/datum/animal/bird/b = new
+	return b.legs
+
+/proc/uses_helper()
+	return 0
+
+/proc/greet(n)
+	return "hi [n]"
+
+/proc/greet_named()
+	return "unchanged"
+
+/proc/slow()
+	sleep(1)
+	return 1
+
+/proc/caller_sees()
+	var/x = slow()
+	return isnull(x)

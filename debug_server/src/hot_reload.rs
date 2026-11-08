@@ -1,42 +1,82 @@
 //! Hot reloading (`Request::HotReload`): new code for procs of the running
-//! world, compiled by dmasm from edited source.
+//! world, compiled by dmasm from edited source, new procs, and new var
+//! defaults.
 //!
 //! Everything is checked and assembled before anything changes, so a reload
-//! that can't be done in full leaves the world as it was. Then each proc gets
-//! its new bytecode in a buffer of its own. Calls already running, sleeping
-//! ones included, finish on the code they started with, which is never freed.
+//! that can't be done in full leaves the world as it was. Code goes in as a
+//! new bytecode entry made by BYOND's own function, and the proc is pointed at
+//! it. Calls already running, sleeping ones included, finish on the code they
+//! started with, which is never freed.
+//!
+//! New procs are added the way BYOND adds the procs it makes at startup: a
+//! proc table entry copied from an existing proc, with its own bytecode,
+//! locals and parameters. A proc on a type also goes into the type's proc
+//! list and the proc name maps of the type and its subtypes, ahead of the
+//! proc it overrides, and the `..()` of subtypes' procs that skipped past it
+//! is pointed at it.
+//!
+//! A new var default goes into the var table of each type that inherits it,
+//! which is where instances read a var they never set.
 //!
 //! What a reload can't do yet, and refuses:
-//! - change a proc's parameters (BYOND keeps their names and types in a table
-//!   shared between procs, and named arguments go by those names)
 //! - add static vars, or use prefabs with var overrides (`/obj{a = 1}`)
-//! - find a locals table with room for the new code's locals, when no proc in
-//!   the world has that many
+//! - parameter names no proc or var in the world uses
 
 use std::collections::{BTreeSet, HashMap};
 
-use auxtools::{raw_types, Proc, StringRef};
-use dmasm::{Instruction, Node, Opcode};
+use auxtools::{
+	raw_types,
+	runtime_tables::{self, type_fields, ProcEntryWords, NONE, PROC_FLAG_BACKGROUND, PROC_FLAG_WAITFOR},
+	Proc, StringRef
+};
+use dmasm::{assembler::AssembleEnv as _, reload::ConstValue, Instruction, Node, Opcode};
 
 use crate::{
 	assemble_env::AssembleEnv,
 	instruction_hooking::{hook_instruction, hooked_offsets, original_bytecode, unhook_instruction},
-	server_types::{HotReloadLines, HotReloadProc, ProcRef}
+	server_types::{HotReloadLines, HotReloadNewProc, HotReloadProc, HotReloadVarDefault, ProcRef}
 };
 
-/// A proc's new bytecode, checked and ready to swap in.
+/// A reload, checked and assembled, ready to apply.
+#[derive(Default)]
 pub struct Prepared {
+	new_procs: Vec<PreparedNewProc>,
+	code: Vec<PreparedCode>,
+	/// (type id, new var table)
+	var_tables: Vec<(u32, u32)>
+}
+
+/// New contents for an existing proc's table entry.
+struct PreparedCode {
 	proc: Proc,
 	name: String,
 	bytecode: Vec<u32>,
-	/// A bigger locals table, when the new code has more locals than the
-	/// proc's frames get now
-	locals_table: Option<raw_types::misc::LocalsId>,
+	bytecode_id: u32,
+	locals_id: Option<u32>,
+	params_id: Option<u32>,
+	flags: Option<u32>,
 	/// The new code's local names, when they're new
 	local_names: Option<Vec<String>>,
 	/// How the proc's lines moved. `None` for new code, where a breakpoint
 	/// stays on the line it was on.
 	lines: Option<Vec<(u32, u32)>>
+}
+
+struct PreparedNewProc {
+	entry: ProcEntryWords,
+	/// The id it will get: procs are only ever appended
+	id: u32,
+	local_names: Vec<String>,
+	on_type: Option<NewProcOnType>
+}
+
+/// What adding a proc to a type changes besides the proc table.
+struct NewProcOnType {
+	type_id: u32,
+	/// (type id, name key, procs) for each proc name map that gets it
+	map_entries: Vec<(u32, u32, Vec<u32>)>,
+	/// Procs whose `..()` goes to the new proc now
+	relinked: Vec<u32>
 }
 
 /// Where reloads moved breakpoints, by the offset the debug-client set them at,
@@ -57,16 +97,45 @@ fn find(proc: &ProcRef) -> Result<Proc, String> {
 	Proc::find_override(&proc.path, proc.override_id).ok_or_else(|| format!("{}: there's no such proc in the running world", describe(proc)))
 }
 
+/// A proc path the way auxtools keys procs: without `/proc` or `/verb`.
+fn strip_path(path: &str) -> String {
+	path.replace("/proc/", "/").replace("/verb/", "/")
+}
+
 /// Checks and assembles everything in a reload. Errors mean none of it can be
 /// applied.
-pub fn prepare(procs: &[HotReloadProc], line_moves: &[HotReloadLines], warnings: &mut Vec<String>) -> Result<Vec<Prepared>, Vec<String>> {
-	let mut prepared = vec![];
+pub fn prepare(
+	procs: &[HotReloadProc],
+	new_procs: &[HotReloadNewProc],
+	var_defaults: &[HotReloadVarDefault],
+	line_moves: &[HotReloadLines],
+	warnings: &mut Vec<String>
+) -> Result<Prepared, Vec<String>> {
+	runtime_tables::available().map_err(|e| vec![format!("hot reloading isn't available on this build of BYOND: {}", e)])?;
+
+	let mut prepared = Prepared::default();
 	let mut errors = vec![];
 	let mut world_globals = WorldGlobals::default();
 
+	// New procs get the next ids, in order, and code in this reload can
+	// already call them
+	let first_id = runtime_tables::proc_count();
+	let pending: HashMap<String, u32> = new_procs
+		.iter()
+		.enumerate()
+		.map(|(i, new)| (strip_path(&new.code.proc.path), first_id + i as u32))
+		.collect();
+
+	for (i, new) in new_procs.iter().enumerate() {
+		match prepare_new_proc(new, first_id + i as u32, &pending, &mut world_globals) {
+			Ok(p) => prepared.new_procs.push(p),
+			Err(e) => errors.push(e)
+		}
+	}
+
 	for reload in procs {
-		match prepare_proc(reload, &mut world_globals, warnings) {
-			Ok(p) => prepared.push(p),
+		match prepare_code(reload, &pending, &mut world_globals, warnings) {
+			Ok(p) => prepared.code.push(p),
 			Err(e) => errors.push(e)
 		}
 	}
@@ -82,14 +151,27 @@ pub fn prepare(procs: &[HotReloadProc], line_moves: &[HotReloadLines], warnings:
 
 		// A world built without DEBUG has no lines to move
 		if let Some(bytecode) = remap_lines(&original_bytecode(&proc), &moved.lines) {
-			prepared.push(Prepared {
-				proc,
-				name: describe(&moved.proc),
-				bytecode,
-				locals_table: None,
-				local_names: None,
-				lines: Some(moved.lines.clone())
-			});
+			match runtime_tables::intern_misc(&bytecode) {
+				Ok(bytecode_id) => prepared.code.push(PreparedCode {
+					proc,
+					name: describe(&moved.proc),
+					bytecode,
+					bytecode_id,
+					locals_id: None,
+					params_id: None,
+					flags: None,
+					local_names: None,
+					lines: Some(moved.lines.clone())
+				}),
+				Err(e) => errors.push(format!("{}: {}", describe(&moved.proc), e))
+			}
+		}
+	}
+
+	for default in var_defaults {
+		match prepare_var_default(default) {
+			Ok(tables) => prepared.var_tables.extend(tables),
+			Err(e) => errors.push(e)
 		}
 	}
 
@@ -100,28 +182,17 @@ pub fn prepare(procs: &[HotReloadProc], line_moves: &[HotReloadLines], warnings:
 	}
 }
 
-fn prepare_proc(reload: &HotReloadProc, world_globals: &mut WorldGlobals, warnings: &mut Vec<String>) -> Result<Prepared, String> {
-	let name = describe(&reload.proc);
-	let proc = find(&reload.proc)?;
+/// Assembles a proc's code for the running world.
+fn assemble(
+	name: &str,
+	code: &HotReloadProc,
+	original: &[u32],
+	pending: &HashMap<String, u32>,
+	world_globals: &mut WorldGlobals
+) -> Result<Vec<u32>, String> {
+	let nodes = adapt_debug_info(&code.nodes, original);
 
-	let params: Vec<String> = proc.parameter_names().into_iter().map(String::from).collect();
-	if params != reload.params {
-		return Err(format!(
-			"{}: its parameters are ({}) in the running world and ({}) in the new code, and parameters can't change in a reload",
-			name,
-			params.join(", "),
-			reload.params.join(", ")
-		));
-	}
-
-	if proc.is_hooked() {
-		warnings.push(format!("{}: auxtools has hooked it, so the hook runs instead of the new code", name));
-	}
-
-	let original = original_bytecode(&proc);
-	let nodes = adapt_debug_info(&reload.nodes, &original);
-
-	let mut env = ReloadEnv::new(&original, world_globals);
+	let mut env = ReloadEnv::new(original, world_globals, pending);
 	let bytecode = match dmasm::assembler::assemble(&nodes, &mut env) {
 		Ok(bytecode) => bytecode,
 		Err(e) => return Err(format!("{}: {}", name, env.error.take().unwrap_or_else(|| describe_assemble_error(&e))))
@@ -136,101 +207,449 @@ fn prepare_proc(reload: &HotReloadProc, world_globals: &mut WorldGlobals, warnin
 		));
 	}
 
-	let locals_table = if reload.locals.len() > proc.locals_count() {
-		Some(find_locals_table(reload.locals.len()).ok_or_else(|| {
-			format!(
-				"{}: the new code has {} locals, and no proc in the world has a locals table that big to borrow",
-				name,
-				reload.locals.len()
-			)
-		})?)
-	} else {
+	Ok(bytecode)
+}
+
+fn prepare_code(
+	reload: &HotReloadProc,
+	pending: &HashMap<String, u32>,
+	world_globals: &mut WorldGlobals,
+	warnings: &mut Vec<String>
+) -> Result<PreparedCode, String> {
+	let name = describe(&reload.proc);
+	let proc = find(&reload.proc)?;
+	let entry = runtime_tables::proc_entry(proc.id).ok_or_else(|| format!("{}: couldn't read its table entry", name))?;
+
+	if proc.is_hooked() {
+		warnings.push(format!("{}: auxtools has hooked it, so the hook runs instead of the new code", name));
+	}
+
+	let original = original_bytecode(&proc);
+	let bytecode = assemble(&name, reload, &original, pending, world_globals)?;
+	let bytecode_id = runtime_tables::intern_misc(&bytecode).map_err(|e| format!("{}: {}", name, e))?;
+
+	// Frames get as many locals as the table has names
+	let locals_id = if reload.locals.len() == proc.locals_count() {
 		None
+	} else {
+		Some(locals_table(&reload.locals, entry.0[ProcEntryWords::LOCALS]).map_err(|e| format!("{}: {}", name, e))?)
 	};
 
-	Ok(Prepared {
+	let params_id = params_table(&reload.params, entry.0[ProcEntryWords::PARAMETERS]).map_err(|e| format!("{}: {}", name, e))?;
+
+	let flags = settings_flags(entry.0[ProcEntryWords::FLAGS], &reload.settings);
+
+	Ok(PreparedCode {
 		proc,
 		name,
 		bytecode,
-		locals_table,
+		bytecode_id,
+		locals_id,
+		params_id,
+		flags: (flags != entry.0[ProcEntryWords::FLAGS]).then_some(flags),
 		local_names: Some(reload.locals.clone()),
 		lines: None
 	})
 }
 
+const fn settings_flags(flags: u32, settings: &dmasm::reload::ProcSettings) -> u32 {
+	let mut flags = flags & !(PROC_FLAG_WAITFOR | PROC_FLAG_BACKGROUND);
+	if settings.waitfor {
+		flags |= PROC_FLAG_WAITFOR;
+	}
+	if settings.background {
+		flags |= PROC_FLAG_BACKGROUND;
+	}
+	flags
+}
+
+/// The var id a local or parameter called `name` gets: one already used for
+/// that name. BYOND only reads it back for its name.
+fn name_var_id(name: &str) -> Option<u32> {
+	variable_ids(name.as_bytes()).first().copied()
+}
+
+/// A locals table with these names. `empty` is a table with none, which the
+/// proc has (BYOND makes empty misc entries poorly).
+///
+/// A new frame starts each local as the global slot of its var id, which for
+/// the ids DreamMaker gives locals is null. So a local gets an id of its name
+/// with a null slot, or any id with one: the debugger names locals itself.
+fn locals_table(names: &[String], empty: u32) -> Result<u32, String> {
+	if names.is_empty() {
+		return Ok(empty);
+	}
+	let null_slot = |id: &u32| runtime_tables::global_value(*id).is_ok_and(|v| v.tag == raw_types::values::ValueTag::Null);
+	let mut words = vec![];
+	for name in names {
+		let id = match variable_ids(name.as_bytes()).into_iter().find(null_slot) {
+			Some(id) => id,
+			None => {
+				let count = unsafe { (*raw_types::funcs::VARIABLE_NAMES).count };
+				(0..count).find(null_slot).ok_or("no var id has a null value to start a local with")?
+			}
+		};
+		words.push(id);
+	}
+	runtime_tables::intern_misc(&words)
+}
+
+/// A new parameter table, when `params` differ from what `current` (a misc
+/// id) has. Four words per parameter: input type, a word that's 0x7D01 when
+/// there's no `in` list, the name's var id, and the input type's high bits.
+fn params_table(params: &[dmasm::reload::Param], current: u32) -> Result<Option<u32>, String> {
+	const NO_IN_LIST: u32 = 0x7D01;
+	let current_words = runtime_tables::misc_words(current).unwrap_or_default();
+
+	let unchanged = current_words.len() == params.len() * 4
+		&& params.iter().zip(current_words.chunks(4)).all(|(param, words)| {
+			let name = unsafe { StringRef::from_variable_id(raw_types::strings::VariableId(words[2])) };
+			words[0] == param.input && words[3] == param.input_extra && name.data() == param.name.as_bytes()
+		});
+	if unchanged {
+		return Ok(None);
+	}
+	if current_words.chunks(4).any(|words| words.get(1) != Some(&NO_IN_LIST)) {
+		return Err("its parameters changed, and one of them has an `in` list, which a reload can't change yet".to_owned());
+	}
+	if params.is_empty() {
+		return Err("its parameters were all removed, which a reload can't do yet".to_owned());
+	}
+
+	let mut words = vec![];
+	for param in params {
+		let id = name_var_id(&param.name).ok_or_else(|| {
+			format!(
+				"parameter {} has a name no proc or var in the running world uses yet, which a reload can't add",
+				param.name
+			)
+		})?;
+		words.extend([param.input, NO_IN_LIST, id, param.input_extra]);
+	}
+	runtime_tables::intern_misc(&words).map(Some)
+}
+
+/// The type whose path is `path`.
+fn find_type(path: &str) -> Result<u32, String> {
+	let id = StringRef::new(path).map_err(|_| format!("couldn't make the string {}", path))?.get_id().0;
+	(0..runtime_tables::type_count()?)
+		.find(|&t| runtime_tables::type_field(t, type_fields::PATH) == Ok(id))
+		.ok_or_else(|| format!("there's no type {} in the running world", path))
+}
+
+/// The types `type_id` is or descends from, itself first.
+fn type_and_ancestors(type_id: u32) -> Vec<u32> {
+	let mut out = vec![type_id];
+	let mut at = type_id;
+	while let Ok(parent) = runtime_tables::type_field(at, type_fields::PARENT) {
+		if parent == NONE || out.contains(&parent) {
+			break;
+		}
+		out.push(parent);
+		at = parent;
+	}
+	out
+}
+
+fn prepare_new_proc(
+	new: &HotReloadNewProc,
+	id: u32,
+	pending: &HashMap<String, u32>,
+	world_globals: &mut WorldGlobals
+) -> Result<PreparedNewProc, String> {
+	let shown = describe(&new.code.proc);
+	let fail = |e: String| format!("{}: {}", shown, e);
+
+	// Copied from a plain proc every debuggable world has, like BYOND copies
+	// an existing proc for the init procs it makes
+	let template = Proc::find("/proc/auxtools_expr_stub")
+		.and_then(|stub| runtime_tables::proc_entry(stub.id))
+		.ok_or_else(|| fail("couldn't find /proc/auxtools_expr_stub to copy a proc entry from".to_owned()))?;
+
+	let bytecode = assemble(&shown, &new.code, &[], pending, world_globals)?;
+
+	let string = |text: &str| -> Result<u32, String> {
+		let string = StringRef::new(text).map_err(|_| fail(format!("couldn't make the string {}", text)))?;
+		let id = string.get_id().0;
+		// The proc table entry holds it from now on
+		std::mem::forget(string);
+		Ok(id)
+	};
+
+	// As DreamMaker writes them: `proc/` where the proc is declared, and a
+	// name with spaces for underscores, which is what calls by name use
+	let path = match (new.type_path.as_str(), new.declared) {
+		("", _) => format!("/proc/{}", new.name),
+		(ty, true) => format!("{}/proc/{}", ty, new.name),
+		(ty, false) => format!("{}/{}", ty, new.name)
+	};
+	let call_name = new.name.replace('_', " ");
+
+	let mut entry = template;
+	entry.0[ProcEntryWords::PATH] = string(&path)?;
+	entry.0[ProcEntryWords::NAME] = string(&call_name)?;
+	entry.0[ProcEntryWords::DESC] = NONE;
+	entry.0[ProcEntryWords::CATEGORY] = NONE;
+	entry.0[ProcEntryWords::PATH_BASENAME] = string(&new.name)?;
+	entry.0[ProcEntryWords::FLAGS] = settings_flags(template.0[ProcEntryWords::FLAGS], &new.code.settings);
+	entry.0[ProcEntryWords::BYTECODE] = runtime_tables::intern_misc(&bytecode).map_err(fail)?;
+	entry.0[ProcEntryWords::LOCALS] = locals_table(&new.code.locals, template.0[ProcEntryWords::LOCALS]).map_err(fail)?;
+	entry.0[ProcEntryWords::PARAMETERS] = if new.code.params.is_empty() {
+		template.0[ProcEntryWords::PARAMETERS]
+	} else {
+		params_table(&new.code.params, NONE).map_err(fail)?.unwrap()
+	};
+	entry.0[ProcEntryWords::NEXT_OVERRIDE] = NONE;
+
+	let on_type = if new.type_path.is_empty() {
+		None
+	} else {
+		let type_id = find_type(&new.type_path).map_err(fail)?;
+		let keys = [entry.0[ProcEntryWords::NAME], entry.0[ProcEntryWords::PATH_BASENAME]];
+
+		// What the name finds on the type now is what the new proc overrides
+		let overridden = runtime_tables::named_procs(type_id, keys[0])
+			.map_err(fail)?
+			.first()
+			.copied()
+			.unwrap_or(NONE);
+		entry.0[ProcEntryWords::NEXT_OVERRIDE] = overridden;
+
+		// The type and every subtype gets it, after the procs of the types in
+		// between (they override it) and before what it overrides
+		let mut map_entries = vec![];
+		let mut relinked = vec![];
+		for sub in 0..runtime_tables::type_count().map_err(fail)? {
+			let line = type_and_ancestors(sub);
+			let Some(depth) = line.iter().position(|&t| t == type_id) else {
+				continue;
+			};
+
+			for (k, &key) in keys.iter().enumerate() {
+				if k == 1 && key == keys[0] {
+					continue;
+				}
+				let mut procs = runtime_tables::named_procs(sub, key).map_err(fail)?;
+				let at = procs.iter().position(|&p| p == overridden).unwrap_or(procs.len());
+				procs.insert(at, id);
+				map_entries.push((sub, key, procs));
+			}
+
+			// The `..()` of the last proc below it in the chain went past it
+			if depth > 0 {
+				let own = runtime_tables::misc_words(runtime_tables::type_field(sub, type_fields::PROCS).map_err(fail)?).unwrap_or_default();
+				for proc in own {
+					if let Some(e) = runtime_tables::proc_entry(raw_types::procs::ProcId(proc)) {
+						if e.0[ProcEntryWords::NAME] == keys[0] && e.0[ProcEntryWords::NEXT_OVERRIDE] == overridden && !relinked.contains(&proc) {
+							relinked.push(proc);
+						}
+					}
+				}
+			}
+		}
+
+		Some(NewProcOnType {
+			type_id,
+			map_entries,
+			relinked
+		})
+	};
+
+	Ok(PreparedNewProc {
+		entry,
+		id,
+		local_names: new.code.locals.clone(),
+		on_type
+	})
+}
+
+fn prepare_var_default(default: &HotReloadVarDefault) -> Result<Vec<(u32, u32)>, String> {
+	let fail = |e: String| format!("var {}: {}", default.var, e);
+
+	let value = match &default.value {
+		ConstValue::Null => (0, 0),
+		ConstValue::Number(n) => (0x2A, n.to_bits()),
+		ConstValue::String(text) => {
+			let string = StringRef::new(text).map_err(|_| fail("couldn't make the string".to_owned()))?;
+			let id = string.get_id().0;
+			// The var tables hold it from now on
+			std::mem::forget(string);
+			(0x06, id)
+		}
+		ConstValue::Path(path) => {
+			let (tag, data) = AssembleEnv
+				.get_type(path)
+				.ok_or_else(|| fail(format!("there's no type {} in the running world", path)))?;
+			(tag as u32, data)
+		}
+		ConstValue::Resource(file) => (
+			0x0C,
+			AssembleEnv
+				.get_resource_index(file)
+				.ok_or_else(|| fail(format!("couldn't find the file {}", file)))?
+		)
+	};
+	let key = StringRef::new(&default.var)
+		.map_err(|_| fail("couldn't make its name".to_owned()))?
+		.get_id()
+		.0;
+
+	let mut tables = vec![];
+	for path in &default.types {
+		let type_id = find_type(path).map_err(fail)?;
+		let table = runtime_tables::type_field(type_id, type_fields::VAR_TABLE).map_err(fail)?;
+		let mut words = runtime_tables::misc_words(table).ok_or_else(|| fail(format!("couldn't read {}'s vars", path)))?;
+		// (name, var id, tag, data) per var
+		let Some(entry) = words.chunks_mut(4).find(|entry| entry[0] == key) else {
+			return Err(fail(format!("{} doesn't have it in the running world", path)));
+		};
+		entry[2] = value.0;
+		entry[3] = value.1;
+		tables.push((type_id, runtime_tables::intern_misc(&words).map_err(fail)?));
+	}
+	Ok(tables)
+}
+
 /// Swaps everything in. Breakpoints in the procs come out first and go back in
 /// on the same lines (where the lines moved, on the lines they moved to).
 pub fn apply(
-	prepared: Vec<Prepared>,
+	prepared: Prepared,
 	conditions: &mut HashMap<(raw_types::procs::ProcId, u16), String>,
 	moved_breakpoints: &mut MovedBreakpoints,
 	warnings: &mut Vec<String>
 ) {
-	for p in prepared {
-		let (old_ptr, _) = unsafe { p.proc.bytecode_mut_ptr() };
-		let old_bytecode = original_bytecode(&p.proc);
-
-		// Frames still running the old code have the old locals. The proc's
-		// table might not name them after this.
-		if !auxtools::debug::has_local_names(old_ptr) {
-			let names = auxtools::debug::local_names_for(&p.proc, old_ptr);
-			auxtools::debug::set_local_names(old_ptr, names);
-		}
-
-		let breakpoints: Vec<(u32, u32, Option<String>)> = hooked_offsets(&p.proc)
-			.into_iter()
-			.filter_map(|offset| {
-				let line = line_at(&old_bytecode, offset)?;
-				let condition = conditions.remove(&(p.proc.id, offset as u16));
-				let _ = unhook_instruction(&p.proc, offset);
-				Some((offset, line, condition))
-			})
-			.collect();
-
-		let local_names = p.local_names.unwrap_or_else(|| auxtools::debug::local_names_for(&p.proc, old_ptr));
-		let new_ptr = p.proc.set_bytecode_unshared(p.bytecode.clone());
-		if let Some(table) = p.locals_table {
-			p.proc.set_locals_id(table);
-		}
-		auxtools::debug::set_local_names(new_ptr, local_names);
-
-		for (old_offset, line, condition) in breakpoints {
-			let line = match &p.lines {
-				Some(lines) => map_line(line, lines),
-				None => line
-			};
-
-			// The debug-client knows this breakpoint by the offset it set it
-			// at, or one an earlier reload moved it from
-			let known_as: Vec<(raw_types::procs::ProcId, u32)> = moved_breakpoints
-				.iter()
-				.filter(|((proc, _), at)| *proc == p.proc.id && **at == old_offset)
-				.map(|(key, _)| *key)
-				.collect();
-			for key in &known_as {
-				moved_breakpoints.remove(key);
-			}
-
-			let Some(offset) = offset_of_line(&p.bytecode, line) else {
-				warnings.push(format!(
-					"{}: the breakpoint on line {} was removed, because that line has no code now",
-					p.name, line
-				));
-				continue;
-			};
-
-			if hook_instruction(&p.proc, offset).is_err() {
-				warnings.push(format!("{}: couldn't put the breakpoint on line {} back", p.name, line));
+	for new in &prepared.new_procs {
+		let id = match runtime_tables::add_proc(&new.entry) {
+			Ok(id) => id,
+			Err(e) => {
+				warnings.push(format!("couldn't add a proc: {}", e));
 				continue;
 			}
+		};
+		if id.0 != new.id {
+			// Code in this reload calls it by the id it expected
+			warnings.push(format!("a new proc got id {} where {} was expected", id.0, new.id));
+		}
 
-			if let Some(condition) = condition {
-				conditions.insert((p.proc.id, offset as u16), condition);
-			}
-			for key in known_as.into_iter().chain([(p.proc.id, old_offset)]) {
-				if key.1 != offset {
-					moved_breakpoints.insert(key, offset);
+		if let Some(on_type) = &new.on_type {
+			let procs = runtime_tables::type_field(on_type.type_id, type_fields::PROCS).unwrap_or(NONE);
+			let mut list = runtime_tables::misc_words(procs).unwrap_or_default();
+			list.push(id.0);
+			match runtime_tables::intern_misc(&list) {
+				Ok(list) => {
+					let _ = runtime_tables::set_type_field(on_type.type_id, type_fields::PROCS, list);
 				}
+				Err(e) => warnings.push(format!("couldn't add a proc to its type's list: {}", e))
+			}
+
+			for (sub, key, procs) in &on_type.map_entries {
+				if let Err(e) = runtime_tables::set_named_procs(*sub, *key, procs) {
+					warnings.push(format!("couldn't add a proc to a type's proc names: {}", e));
+				}
+			}
+
+			for &proc in &on_type.relinked {
+				runtime_tables::set_proc_entry_word(raw_types::procs::ProcId(proc), ProcEntryWords::NEXT_OVERRIDE, id.0);
+			}
+		}
+
+		if let Some(proc) = Proc::from_id(id) {
+			let (ptr, _) = unsafe { proc.bytecode_mut_ptr() };
+			auxtools::debug::set_local_names(ptr, new.local_names.clone());
+		}
+	}
+	if let Some(first) = prepared.new_procs.first() {
+		Proc::add_to_table(raw_types::procs::ProcId(first.id));
+	}
+
+	for p in prepared.code {
+		apply_code(p, conditions, moved_breakpoints, warnings);
+	}
+
+	for (type_id, table) in prepared.var_tables {
+		let _ = runtime_tables::set_type_field(type_id, type_fields::VAR_TABLE, table);
+	}
+}
+
+fn apply_code(
+	p: PreparedCode,
+	conditions: &mut HashMap<(raw_types::procs::ProcId, u16), String>,
+	moved_breakpoints: &mut MovedBreakpoints,
+	warnings: &mut Vec<String>
+) {
+	let (old_ptr, _) = unsafe { p.proc.bytecode_mut_ptr() };
+	let old_bytecode = original_bytecode(&p.proc);
+
+	// Frames still running the old code have the old locals. The proc's table
+	// might not name them after this.
+	if !auxtools::debug::has_local_names(old_ptr) {
+		let names = auxtools::debug::local_names_for(&p.proc, old_ptr);
+		auxtools::debug::set_local_names(old_ptr, names);
+	}
+
+	let breakpoints: Vec<(u32, u32, Option<String>)> = hooked_offsets(&p.proc)
+		.into_iter()
+		.filter_map(|offset| {
+			let line = line_at(&old_bytecode, offset)?;
+			let condition = conditions.remove(&(p.proc.id, offset as u16));
+			let _ = unhook_instruction(&p.proc, offset);
+			Some((offset, line, condition))
+		})
+		.collect();
+
+	let local_names = p.local_names.unwrap_or_else(|| auxtools::debug::local_names_for(&p.proc, old_ptr));
+	auxtools::remember_bytecode(old_ptr, &old_bytecode);
+
+	runtime_tables::set_proc_entry_word(p.proc.id, ProcEntryWords::BYTECODE, p.bytecode_id);
+	if let Some(locals) = p.locals_id {
+		runtime_tables::set_proc_entry_word(p.proc.id, ProcEntryWords::LOCALS, locals);
+	}
+	if let Some(params) = p.params_id {
+		runtime_tables::set_proc_entry_word(p.proc.id, ProcEntryWords::PARAMETERS, params);
+	}
+	if let Some(flags) = p.flags {
+		runtime_tables::set_proc_entry_word(p.proc.id, ProcEntryWords::FLAGS, flags);
+	}
+
+	let (new_ptr, _) = unsafe { p.proc.bytecode_mut_ptr() };
+	auxtools::debug::set_local_names(new_ptr, local_names);
+
+	for (old_offset, line, condition) in breakpoints {
+		let line = match &p.lines {
+			Some(lines) => map_line(line, lines),
+			None => line
+		};
+
+		// The debug-client knows this breakpoint by the offset it set it at,
+		// or one an earlier reload moved it from
+		let known_as: Vec<(raw_types::procs::ProcId, u32)> = moved_breakpoints
+			.iter()
+			.filter(|((proc, _), at)| *proc == p.proc.id && **at == old_offset)
+			.map(|(key, _)| *key)
+			.collect();
+		for key in &known_as {
+			moved_breakpoints.remove(key);
+		}
+
+		let Some(offset) = offset_of_line(&p.bytecode, line) else {
+			warnings.push(format!(
+				"{}: the breakpoint on line {} was removed, because that line has no code now",
+				p.name, line
+			));
+			continue;
+		};
+
+		if hook_instruction(&p.proc, offset).is_err() {
+			warnings.push(format!("{}: couldn't put the breakpoint on line {} back", p.name, line));
+			continue;
+		}
+
+		if let Some(condition) = condition {
+			conditions.insert((p.proc.id, offset as u16), condition);
+		}
+		for key in known_as.into_iter().chain([(p.proc.id, old_offset)]) {
+			if key.1 != offset {
+				moved_breakpoints.insert(key, offset);
 			}
 		}
 	}
@@ -240,7 +659,11 @@ pub fn apply(
 fn adapt_debug_info(nodes: &[Node], original: &[u32]) -> Vec<Node> {
 	let is_debug_info = |node: &Node| matches!(node, Node::Instruction(Instruction::DbgFile(_) | Instruction::DbgLine(_), _));
 
-	// DreamMaker only writes them for worlds built with DEBUG
+	// DreamMaker only writes them for worlds built with DEBUG. A new proc has
+	// them if the world's procs do.
+	if original.is_empty() && world_has_debug_info() {
+		return nodes.to_vec();
+	}
 	if original.first() != Some(&Opcode::DbgFile.word()) || original.len() < 2 {
 		return nodes.iter().filter(|node| !is_debug_info(node)).cloned().collect();
 	}
@@ -261,6 +684,12 @@ fn adapt_debug_info(nodes: &[Node], original: &[u32]) -> Vec<Node> {
 			_ => node.clone()
 		})
 		.collect()
+}
+
+/// Whether the world was built with DEBUG, as the procs every debuggable world
+/// has show
+fn world_has_debug_info() -> bool {
+	Proc::find("/proc/auxtools_expr_stub").is_some_and(|stub| original_bytecode(&stub).first() == Some(&Opcode::DbgFile.word()))
 }
 
 /// `bytecode` with its DbgLines renumbered, or `None` when none changes.
@@ -321,22 +750,6 @@ fn offset_of_line(bytecode: &[u32], line: u32) -> Option<u32> {
 		.iter()
 		.position(|ins| ins.opcode == Opcode::DbgLine && ins.bytecode.get(1) == Some(&line))?;
 	instructions.get(at + 1).map(|ins| ins.offset)
-}
-
-/// The smallest locals table in the world with room for `count` locals. Its
-/// names don't matter: BYOND only takes the count from it, and the debugger
-/// names the new code's locals itself.
-fn find_locals_table(count: usize) -> Option<raw_types::misc::LocalsId> {
-	let mut best: Option<(usize, raw_types::misc::LocalsId)> = None;
-	let mut id = 0;
-	while let Some(proc) = Proc::from_id(raw_types::procs::ProcId(id)) {
-		let size = proc.locals_count();
-		if size >= count && best.is_none_or(|(best_size, _)| size < best_size) {
-			best = Some((size, proc.locals_id()));
-		}
-		id += 1;
-	}
-	best.map(|(_, table)| table)
 }
 
 fn describe_assemble_error(e: &dmasm::assembler::AssembleError) -> String {
@@ -416,15 +829,18 @@ impl WorldGlobals {
 struct ReloadEnv<'a> {
 	proc_globals: HashMap<Vec<u8>, Vec<u32>>,
 	world_globals: &'a mut WorldGlobals,
+	/// Procs this reload adds, by path without `/proc`, and the ids they'll get
+	pending: &'a HashMap<String, u32>,
 	/// Why a lookup failed, when that says more than the assembler's error
 	error: Option<String>
 }
 
 impl<'a> ReloadEnv<'a> {
-	fn new(original: &[u32], world_globals: &'a mut WorldGlobals) -> Self {
+	fn new(original: &[u32], world_globals: &'a mut WorldGlobals, pending: &'a HashMap<String, u32>) -> Self {
 		Self {
 			proc_globals: globals_in(original),
 			world_globals,
+			pending,
 			error: None
 		}
 	}
@@ -440,10 +856,17 @@ impl dmasm::assembler::AssembleEnv for ReloadEnv<'_> {
 	}
 
 	fn get_proc_index(&mut self, path: &str) -> Option<u32> {
+		if let Some(&id) = self.pending.get(&strip_path(path)) {
+			return Some(id);
+		}
 		AssembleEnv.get_proc_index(path)
 	}
 
 	fn get_type(&mut self, path: &str) -> Option<(u8, u32)> {
+		// A reference to a proc this reload adds
+		if let Some(&id) = self.pending.get(&strip_path(path)) {
+			return Some((raw_types::values::ValueTag::ProcRef as u8, id));
+		}
 		AssembleEnv.get_type(path)
 	}
 

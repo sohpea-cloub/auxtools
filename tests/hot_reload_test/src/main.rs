@@ -128,16 +128,36 @@ fn proc_ref(key: &dmasm::reload::ProcKey) -> ProcRef {
 	}
 }
 
+fn proc_code(r: &dmasm::reload::ProcReload) -> HotReloadProc {
+	HotReloadProc {
+		proc: proc_ref(&r.proc),
+		nodes: r.nodes.clone(),
+		locals: r.locals.clone(),
+		params: r.params.clone(),
+		settings: r.settings
+	}
+}
+
 fn reload_request(changes: &Changes) -> Request {
 	Request::HotReload {
-		procs: changes
-			.reloads
+		procs: changes.reloads.iter().map(proc_code).collect(),
+		new_procs: changes
+			.new_procs
 			.iter()
-			.map(|r| HotReloadProc {
-				proc: proc_ref(&r.proc),
-				nodes: r.nodes.clone(),
-				locals: r.locals.clone(),
-				params: r.params.clone()
+			.map(|p| HotReloadNewProc {
+				type_path: p.type_path.clone(),
+				name: p.name.clone(),
+				declared: p.declared,
+				code: proc_code(&p.code)
+			})
+			.collect(),
+		var_defaults: changes
+			.var_defaults
+			.iter()
+			.map(|d| HotReloadVarDefault {
+				var: d.var.clone(),
+				value: d.value.clone(),
+				types: d.types.clone()
 			})
 			.collect(),
 		line_moves: changes
@@ -423,17 +443,99 @@ fn main() {
 	}
 	println!("ok: a reload and an eval sent back to back");
 
+	// A new global proc, called from a changed one
+	let changes = source.edit(
+		"reload.dm",
+		"/proc/uses_helper()\n\treturn 0",
+		"/proc/uses_helper()\n\treturn helper() + 1\n\n/proc/helper()\n\treturn 7"
+	);
+	assert_eq!(changes.new_procs.len(), 1);
+	reload(&mut watcher, &changes);
+	assert_eq!(eval(&mut client, "uses_helper()"), "8");
+	assert_eq!(eval(&mut client, "helper()"), "7");
+	// With its lines, as the world was built with DEBUG
+	let response = client.request(Request::Offset {
+		proc: ProcRef {
+			path: "/helper".to_owned(),
+			override_id: 0
+		},
+		line: source.line_of("reload.dm", "\treturn 7")
+	});
+	assert!(matches!(response, Response::Offset { offset: Some(_) }), "{:?}", response);
+	println!("ok: a new global proc");
+
+	// A new proc on a type: existing instances of it and its subtypes have it
+	let changes = source.edit(
+		"reload.dm",
+		"/datum/animal/proc/speak()\n\treturn sound",
+		"/datum/animal/proc/speak()\n\treturn sound\n\n/datum/animal/proc/describe()\n\treturn \"[sound] on [legs] legs\""
+	);
+	reload(&mut watcher, &changes);
+	assert_eq!(eval(&mut client, "old_dog.describe()"), "\"woof on 4 legs\"");
+	println!("ok: a new proc on a type");
+
+	// A new override between a proc and a subtype's override of it: the
+	// subtype's ..() goes through it now
+	assert_eq!(eval(&mut client, "old_puppy.speak()"), "\"woof?\"");
+	let changes = source.edit(
+		"reload.dm",
+		"/datum/animal/dog\n\tsound = \"woof\"\n",
+		"/datum/animal/dog\n\tsound = \"woof\"\n\n/datum/animal/dog/speak()\n\treturn \"[..()]!\"\n"
+	);
+	reload(&mut watcher, &changes);
+	assert_eq!(eval(&mut client, "old_dog.speak()"), "\"woof!\"");
+	assert_eq!(eval(&mut client, "old_puppy.speak()"), "\"woof!?\"");
+	println!("ok: a new override, and a subtype's ..() through it");
+
+	// A new var default reaches instances that never set the var, new ones,
+	// and subtypes that inherit it, but not a subtype that sets its own
+	eval(&mut client, "write_legs()");
+	let changes = source.edit("reload.dm", "\tvar/legs = 4", "\tvar/legs = 3");
+	assert_eq!(changes.var_defaults.len(), 1);
+	reload(&mut watcher, &changes);
+	assert_eq!(eval(&mut client, "old_dog.legs"), "3");
+	assert_eq!(eval(&mut client, "new_dog_legs()"), "3");
+	assert_eq!(eval(&mut client, "legs_written.legs"), "9");
+	assert_eq!(eval(&mut client, "new_bird_legs()"), "2");
+	assert_eq!(eval(&mut client, "initial(old_dog.legs)"), "3");
+	println!("ok: a new var default");
+
+	// A new parameter, by name too
+	let changes = source.edit(
+		"reload.dm",
+		"/proc/greet(n)\n\treturn \"hi [n]\"\n\n/proc/greet_named()\n\treturn \"unchanged\"",
+		"/proc/greet(n, sound = \"!\")\n\treturn \"hi [n][sound]\"\n\n/proc/greet_named()\n\treturn greet(\"bo\", sound = \"?\")"
+	);
+	reload(&mut watcher, &changes);
+	assert_eq!(eval(&mut client, "greet(\"al\")"), "\"hi al!\"");
+	assert_eq!(eval(&mut client, "greet_named()"), "\"hi bo?\"");
+	println!("ok: a new parameter");
+
+	// set waitfor = 0: the caller no longer waits for the sleep
+	let before = eval(&mut client, "caller_sees()");
+	let changes = source.edit("reload.dm", "/proc/slow()\n\tsleep(1)", "/proc/slow()\n\tset waitfor = 0\n\tsleep(1)");
+	reload(&mut watcher, &changes);
+	assert_eq!(eval(&mut client, "caller_sees()"), "1", "before the change it was {}", before);
+	println!("ok: set waitfor");
+
 	// Something that can't be done leaves everything as it was
 	let mut request = reload_request(&source.edit("reload.dm", "\treturn 4", "\treturn 5"));
 	if let Request::HotReload { procs, .. } = &mut request {
-		procs.push(HotReloadProc {
-			params: vec!["x".to_owned()],
-			..procs[0].clone()
+		let mut bad = procs[0].clone();
+		bad.params.push(dmasm::reload::Param {
+			name: "a_name_nothing_in_the_world_uses".to_owned(),
+			input: 0,
+			input_extra: 0
 		});
+		procs.push(bad);
 	}
 	let result = expect_reload_result(client.request(request));
 	assert!(!result.applied);
-	assert!(result.errors.iter().any(|e| e.contains("parameters")), "{:?}", result.errors);
+	assert!(
+		result.errors.iter().any(|e| e.contains("a_name_nothing_in_the_world_uses")),
+		"{:?}",
+		result.errors
+	);
 	assert_eq!(eval(&mut client, "answer()"), "4");
 	println!("ok: a reload that can't be done in full changes nothing");
 

@@ -120,20 +120,14 @@ impl Proc {
 		crate::bytecode_manager::set_bytecode(self, bytecode);
 	}
 
-	/// Replaces the proc's bytecode with a copy only it uses, and returns where
-	/// that is. New calls run it; calls already running finish on the old code.
-	pub fn set_bytecode_unshared(&self, bytecode: Vec<u32>) -> *const u32 {
-		crate::bytecode_manager::set_bytecode_unshared(self, bytecode)
-	}
-
-	/// The proc's locals table, which also says how many locals its frames get.
-	pub fn locals_id(&self) -> raw_types::misc::LocalsId {
-		unsafe { *(*self.entry()).metadata.locals() }
-	}
-
-	/// Gives the proc another locals table (put back at shutdown).
-	pub fn set_locals_id(&self, locals: raw_types::misc::LocalsId) {
-		crate::bytecode_manager::set_locals(self, locals);
+	/// Adds procs that were appended to the proc table since the world
+	/// started, from `first` on, to what `find` and `find_override` know.
+	pub fn add_to_table(first: raw_types::procs::ProcId) {
+		let mut id = first.0;
+		while let Some(proc) = Proc::from_id(raw_types::procs::ProcId(id)) {
+			register_proc(proc);
+			id += 1;
+		}
 	}
 
 	/// How many locals a new frame of this proc gets.
@@ -216,28 +210,30 @@ pub fn populate_procs() {
 		if proc.is_none() {
 			break;
 		}
-		let proc = proc.unwrap();
-
-		PROC_OVERRIDE_IDS.with(|override_ids| {
-			let mut override_ids = override_ids.borrow_mut();
-
-			PROCS_BY_NAME.with(|h| {
-				match h.borrow_mut().entry(proc.path.clone()) {
-					Entry::Occupied(mut o) => {
-						let vec = o.get_mut();
-						override_ids.insert(proc.id, vec.len() as u32);
-						vec.push(proc);
-					}
-					Entry::Vacant(v) => {
-						override_ids.insert(proc.id, 0);
-						v.insert(vec![proc]);
-					}
-				};
-			});
-		});
+		register_proc(proc.unwrap());
 
 		i += 1;
 	}
+}
+
+fn register_proc(proc: Proc) {
+	PROC_OVERRIDE_IDS.with(|override_ids| {
+		let mut override_ids = override_ids.borrow_mut();
+
+		PROCS_BY_NAME.with(|h| {
+			match h.borrow_mut().entry(proc.path.clone()) {
+				Entry::Occupied(mut o) => {
+					let vec = o.get_mut();
+					override_ids.insert(proc.id, vec.len() as u32);
+					vec.push(proc);
+				}
+				Entry::Vacant(v) => {
+					override_ids.insert(proc.id, 0);
+					v.insert(vec![proc]);
+				}
+			};
+		});
+	});
 }
 
 pub fn clear_procs() {

@@ -20,7 +20,10 @@ use std::{
 };
 
 use dmasm::reload::{diff, Changes, ParseOptions, ProcKey, Snapshot};
-use server_types::{ContinueKind, HotReloadLines, HotReloadProc, HotReloadResult, ProcRef, Request, Response, DEFAULT_RELOAD_PORT};
+use server_types::{
+	ContinueKind, HotReloadLines, HotReloadNewProc, HotReloadProc, HotReloadResult, HotReloadVarDefault, ProcRef, Request, Response,
+	DEFAULT_RELOAD_PORT
+};
 
 const USAGE: &str = "\
 usage: hot_reload WORLD.dme [options]
@@ -31,9 +34,10 @@ AUXTOOLS_DEBUG_MODE but NONE), which listens for watchers on its reload port,
 AUXTOOLS_RELOAD_PORT (2449 unless set). A debugger can be attached at the same
 time.
 
-The world should be running the code as it is when this starts. Only proc code
-can change: new procs, vars and types, var defaults, parameters and `set`
-statements need the world rebuilt, and are refused.
+The world should be running the code as it is when this starts. Proc code,
+new procs, parameters, `set waitfor` and `set background`, and constant var
+defaults can change. New types and vars, verbs, and other `set` statements
+need the world rebuilt, and are refused, along with the rest of the change.
 
   --port N          the debug server's reload port (default 2449)
   -DNAME[=VALUE]    a define DreamMaker was given on its command line
@@ -175,16 +179,36 @@ fn proc_ref(key: &ProcKey) -> ProcRef {
 	}
 }
 
+fn proc_code(r: &dmasm::reload::ProcReload) -> HotReloadProc {
+	HotReloadProc {
+		proc: proc_ref(&r.proc),
+		nodes: r.nodes.clone(),
+		locals: r.locals.clone(),
+		params: r.params.clone(),
+		settings: r.settings
+	}
+}
+
 fn reload_request(changes: &Changes) -> Request {
 	Request::HotReload {
-		procs: changes
-			.reloads
+		procs: changes.reloads.iter().map(proc_code).collect(),
+		new_procs: changes
+			.new_procs
 			.iter()
-			.map(|r| HotReloadProc {
-				proc: proc_ref(&r.proc),
-				nodes: r.nodes.clone(),
-				locals: r.locals.clone(),
-				params: r.params.clone()
+			.map(|p| HotReloadNewProc {
+				type_path: p.type_path.clone(),
+				name: p.name.clone(),
+				declared: p.declared,
+				code: proc_code(&p.code)
+			})
+			.collect(),
+		var_defaults: changes
+			.var_defaults
+			.iter()
+			.map(|d| HotReloadVarDefault {
+				var: d.var.clone(),
+				value: d.value.clone(),
+				types: d.types.clone()
 			})
 			.collect(),
 		line_moves: changes
@@ -274,7 +298,11 @@ impl Watcher {
 			return Ok(false);
 		}
 
-		if changes.reloads.is_empty() && changes.line_moves.is_empty() {
+		for why in &changes.warnings {
+			println!("    note: {}", why);
+		}
+
+		if changes.reloads.is_empty() && changes.new_procs.is_empty() && changes.var_defaults.is_empty() && changes.line_moves.is_empty() {
 			log("no proc changed");
 			return Ok(true);
 		}
@@ -290,20 +318,25 @@ impl Watcher {
 		let HotReloadResult { applied, errors, warnings } = result;
 
 		if applied {
-			let names: Vec<String> = changes.reloads.iter().map(|r| r.proc.to_string()).collect();
-			log(format!(
-				"reloaded {} in {} ms{}",
-				if names.len() <= 5 {
-					names.join(", ")
-				} else {
-					format!("{} procs", names.len())
-				},
-				started.elapsed().as_millis(),
-				match changes.line_moves.len() {
-					0 => String::new(),
-					n => format!(", and moved the lines of {} more", n)
-				}
-			));
+			let list = |names: Vec<String>, what: &str| match names.len() {
+				0 => None,
+				1..=5 => Some(names.join(", ")),
+				n => Some(format!("{} {}", n, what))
+			};
+			let parts: Vec<String> = [
+				list(changes.reloads.iter().map(|r| r.proc.to_string()).collect(), "procs").map(|s| format!("reloaded {}", s)),
+				list(changes.new_procs.iter().map(|p| p.code.proc.to_string()).collect(), "procs").map(|s| format!("added {}", s)),
+				list(
+					changes.var_defaults.iter().map(|d| format!("{}/var/{}", d.types[0], d.var)).collect(),
+					"vars"
+				)
+				.map(|s| format!("set the default of {}", s)),
+				(!changes.line_moves.is_empty()).then(|| format!("moved the lines of {} more", changes.line_moves.len()))
+			]
+			.into_iter()
+			.flatten()
+			.collect();
+			log(format!("{} in {} ms", parts.join("; "), started.elapsed().as_millis()));
 		} else {
 			log("not reloaded:");
 		}
