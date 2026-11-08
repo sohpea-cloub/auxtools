@@ -71,6 +71,9 @@ pub mod type_fields {
 	pub const VERBS: usize = 0x60;
 	/// Misc id: the type's own procs
 	pub const PROCS: usize = 0x64;
+	/// Proc id: what each new instance runs to set the vars whose defaults
+	/// aren't constants, merged from the type's ancestors at startup
+	pub const INIT_PROC: usize = 0x68;
 	/// Misc id: (var id, flags) pairs for the vars the type declares
 	pub const DECLARED_VARS: usize = 0x70;
 	/// Misc id: every var the type has, (name string id, var id, tag, data)

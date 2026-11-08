@@ -191,13 +191,15 @@ pub struct HotReloadRequest {
 	pub new_vars: Vec<dmasm::reload::NewVar>,
 	/// Applied after the new vars, so they can set the defaults of those too
 	pub var_defaults: Vec<HotReloadVarDefault>,
+	/// Types whose new instances run other code to set their vars
+	pub init_procs: Vec<HotReloadInitProc>,
 	pub line_moves: Vec<HotReloadLines>
 }
 
 impl HotReloadRequest {
 	/// How many things it changes
 	pub const fn len(&self) -> usize {
-		self.procs.len() + self.new_procs.len() + self.new_vars.len() + self.var_defaults.len() + self.line_moves.len()
+		self.procs.len() + self.new_procs.len() + self.new_vars.len() + self.var_defaults.len() + self.init_procs.len() + self.line_moves.len()
 	}
 
 	pub const fn is_empty(&self) -> bool {
@@ -237,6 +239,15 @@ pub struct HotReloadVarDefault {
 	pub var: String,
 	pub value: dmasm::reload::ConstValue,
 	pub types: Vec<String>
+}
+
+/// A type's new init proc: the code each new instance runs to set the vars
+/// whose defaults aren't constants, its own and those it inherits
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct HotReloadInitProc {
+	pub type_path: String,
+	/// `None` when there's nothing left for it to set
+	pub code: Option<HotReloadProc>
 }
 
 /// A proc whose code is unchanged but now sits on other lines

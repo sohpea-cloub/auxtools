@@ -1067,11 +1067,12 @@ impl Server {
 		// changed
 		if result.applied && !request.is_empty() {
 			self.notify(format!(
-				"Hot reload: new code for {} procs, {} new procs, {} new vars, {} new var defaults, {} moved",
+				"Hot reload: new code for {} procs, {} new procs, {} new vars, {} new var defaults, {} new init procs, {} moved",
 				request.procs.len(),
 				request.new_procs.len(),
 				request.new_vars.len(),
 				request.var_defaults.len(),
+				request.init_procs.len(),
 				request.line_moves.len()
 			));
 		}

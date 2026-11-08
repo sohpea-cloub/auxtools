@@ -153,6 +153,14 @@ fn reload_request(changes: &Changes) -> Request {
 			})
 			.collect(),
 		new_vars: changes.new_vars.clone(),
+		init_procs: changes
+			.init_procs
+			.iter()
+			.map(|i| HotReloadInitProc {
+				type_path: i.type_path.clone(),
+				code: i.code.as_ref().map(proc_code)
+			})
+			.collect(),
 		var_defaults: changes
 			.var_defaults
 			.iter()
@@ -599,6 +607,46 @@ fn main() {
 	assert_eq!(eval(&mut client, "in_lists()"), "5");
 	assert_eq!(eval(&mut client, "in_lists(n = 6)"), "6");
 	println!("ok: a new parameter next to `in` lists");
+
+	// A default that isn't a constant: new instances of the type and the
+	// subtype that inherits it get it, the subtype with its own doesn't, and
+	// instances that exist keep theirs
+	let changes = source.edit("reload.dm", "\tvar/list/items = list(\"a\")", "\tvar/list/items = list(\"a\", \"b\")");
+	assert_eq!(
+		changes.init_procs.len(),
+		2,
+		"{:?}",
+		changes.init_procs.iter().map(|i| &i.type_path).collect::<Vec<_>>()
+	);
+	reload(&mut watcher, &changes);
+	assert_eq!(eval(&mut client, "new_items(/datum/bag)"), "\"a,b\"");
+	assert_eq!(eval(&mut client, "new_items(/datum/bag/big)"), "\"a,b\"");
+	assert_eq!(eval(&mut client, "new_items(/datum/bag/fixed)"), "\"z\"");
+	assert_eq!(eval(&mut client, "jointext(old_bag.items, \",\")"), "\"a\"");
+	println!("ok: a default that isn't a constant");
+
+	// New vars whose defaults aren't constants, on a type with an init proc
+	// and one without
+	let changes = source.edit(
+		"reload.dm",
+		"\tvar/list/items = list(\"a\", \"b\")\n",
+		"\tvar/list/items = list(\"a\", \"b\")\n\tvar/list/tags = list(1, 2)\n\n/datum/animal\n\tvar/list/toys = \
+		 list(\"ball\")\n\n/proc/new_tags()\n\tvar/datum/bag/b = new\n\treturn length(b.tags)\n\n/proc/new_toys()\n\tvar/datum/animal/dog/d = \
+		 new\n\treturn d.toys[1]\n"
+	);
+	reload(&mut watcher, &changes);
+	assert_eq!(eval(&mut client, "new_tags()"), "2");
+	assert_eq!(eval(&mut client, "new_toys()"), "\"ball\"");
+	assert_eq!(eval(&mut client, "isnull(old_bag.tags)"), "1");
+	println!("ok: new vars whose defaults aren't constants");
+
+	// And back to a constant
+	let changes = source.edit("reload.dm", "\tvar/list/items = list(\"a\", \"b\")\n", "\tvar/list/items = null\n");
+	reload(&mut watcher, &changes);
+	assert_eq!(eval(&mut client, "new_items(/datum/bag)"), "\"none\"");
+	assert_eq!(eval(&mut client, "new_items(/datum/bag/fixed)"), "\"z\"");
+	assert_eq!(eval(&mut client, "new_tags()"), "2");
+	println!("ok: a default that becomes a constant");
 
 	// set waitfor = 0: the caller no longer waits for the sleep
 	let before = eval(&mut client, "caller_sees()");

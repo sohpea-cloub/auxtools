@@ -21,8 +21,8 @@ use std::{
 
 use dmasm::reload::{diff, Changes, ParseOptions, ProcKey, Snapshot};
 use server_types::{
-	ContinueKind, HotReloadLines, HotReloadNewProc, HotReloadProc, HotReloadRequest, HotReloadResult, HotReloadVarDefault, ProcRef, Request,
-	Response, DEFAULT_RELOAD_PORT
+	ContinueKind, HotReloadInitProc, HotReloadLines, HotReloadNewProc, HotReloadProc, HotReloadRequest, HotReloadResult, HotReloadVarDefault,
+	ProcRef, Request, Response, DEFAULT_RELOAD_PORT
 };
 
 const USAGE: &str = "\
@@ -35,10 +35,11 @@ AUXTOOLS_RELOAD_PORT (2449 unless set). A debugger can be attached at the same
 time.
 
 The world should be running the code as it is when this starts. Proc code,
-new procs and vars, parameters, `set waitfor` and `set background`, and
-constant var defaults can change. New types, verbs, var defaults that aren't
-constants, and other `set` statements need the world rebuilt, and are
-refused, along with the rest of the change.
+new procs (more definitions of one too), new vars and static locals, var
+defaults (those that aren't constants reach new instances), parameters,
+`set waitfor` and `set background` can change. New types, verbs, prefabs with
+var overrides, new `in` list expressions and other `set` statements need the
+world rebuilt, and are refused, along with the rest of the change.
 
   --port N          the debug server's reload port (default 2449)
   -DNAME[=VALUE]    a define DreamMaker was given on its command line
@@ -205,6 +206,14 @@ fn reload_request(changes: &Changes) -> Request {
 			})
 			.collect(),
 		new_vars: changes.new_vars.clone(),
+		init_procs: changes
+			.init_procs
+			.iter()
+			.map(|i| HotReloadInitProc {
+				type_path: i.type_path.clone(),
+				code: i.code.as_ref().map(proc_code)
+			})
+			.collect(),
 		var_defaults: changes
 			.var_defaults
 			.iter()
@@ -340,6 +349,7 @@ impl Watcher {
 					"vars"
 				)
 				.map(|s| format!("set the default of {}", s)),
+				list(changes.init_procs.iter().map(|i| i.type_path.clone()).collect(), "types").map(|s| format!("rebuilt the init procs of {}", s)),
 				(!changes.line_moves.is_empty()).then(|| format!("moved the lines of {} more", changes.line_moves.len()))
 			]
 			.into_iter()

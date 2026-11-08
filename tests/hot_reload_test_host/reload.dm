@@ -126,3 +126,19 @@ var/datum/animal/dog/legs_written = new
 
 /proc/in_lists(mob/m in world, o in global.vars)
 	return 1
+
+// Defaults that aren't constants, which the types' init procs set
+
+/datum/bag
+	var/list/items = list("a")
+
+/datum/bag/big
+
+/datum/bag/fixed
+	items = list("z")
+
+var/datum/bag/old_bag = new
+
+/proc/new_items(type)
+	var/datum/bag/b = new type
+	return b.items ? jointext(b.items, ",") : "none"

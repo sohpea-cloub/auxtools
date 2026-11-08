@@ -41,7 +41,7 @@ use dmasm::{
 use crate::{
 	assemble_env::AssembleEnv,
 	instruction_hooking::{hook_instruction, hooked_offsets, original_bytecode, unhook_instruction},
-	server_types::{HotReloadNewProc, HotReloadProc, HotReloadRequest, HotReloadVarDefault, ProcRef}
+	server_types::{HotReloadInitProc, HotReloadNewProc, HotReloadProc, HotReloadRequest, HotReloadVarDefault, ProcRef}
 };
 
 /// A reload, checked and assembled, ready to apply.
@@ -49,6 +49,7 @@ use crate::{
 pub struct Prepared {
 	new_vars: Vec<PreparedNewVar>,
 	new_procs: Vec<PreparedNewProc>,
+	init_procs: Vec<PreparedInitProc>,
 	code: Vec<PreparedCode>,
 	/// (type id, field, misc id) for the types' new var tables and declared
 	/// vars
@@ -243,6 +244,13 @@ struct PreparedCode {
 	lines: Option<Vec<(u32, u32)>>
 }
 
+/// A type's new init proc
+struct PreparedInitProc {
+	type_id: u32,
+	/// The new proc's entry and local names, or none for no init proc
+	proc: Option<(ProcEntryWords, Vec<String>)>
+}
+
 struct PreparedNewProc {
 	entry: ProcEntryWords,
 	/// The id it will get: procs are only ever appended
@@ -291,6 +299,7 @@ pub fn prepare(request: &HotReloadRequest, warnings: &mut Vec<String>) -> Result
 		new_procs,
 		new_vars,
 		var_defaults,
+		init_procs,
 		line_moves
 	} = request;
 	runtime_tables::available().map_err(|e| vec![format!("hot reloading isn't available on this build of BYOND: {}", e)])?;
@@ -326,6 +335,13 @@ pub fn prepare(request: &HotReloadRequest, warnings: &mut Vec<String>) -> Result
 	for (i, new) in new_procs.iter().enumerate() {
 		match prepare_new_proc(new, first_id + i as u32, &pending, &mut world_globals, &mut added, &mut staged) {
 			Ok(p) => prepared.new_procs.push(p),
+			Err(e) => errors.push(e)
+		}
+	}
+
+	for init in init_procs {
+		match prepare_init_proc(init, &pending, &mut world_globals, &mut added) {
+			Ok(p) => prepared.init_procs.push(p),
 			Err(e) => errors.push(e)
 		}
 	}
@@ -569,6 +585,50 @@ fn type_and_ancestors(type_id: u32) -> Vec<u32> {
 		at = parent;
 	}
 	out
+}
+
+fn prepare_init_proc(
+	init: &HotReloadInitProc,
+	pending: &Pending,
+	world_globals: &mut WorldGlobals,
+	added: &mut AddedVars
+) -> Result<PreparedInitProc, String> {
+	let shown = format!("{}'s init proc", init.type_path);
+	let fail = |e: String| format!("{}: {}", shown, e);
+	let type_id = find_type(&init.type_path).map_err(fail)?;
+	let Some(code) = &init.code else {
+		return Ok(PreparedInitProc { type_id, proc: None });
+	};
+
+	// Like the one it replaces, or like any proc
+	let current = runtime_tables::type_field(type_id, type_fields::INIT_PROC).map_err(fail)?;
+	let current = (current != NONE).then(|| Proc::from_id(raw_types::procs::ProcId(current))).flatten();
+	let template = match &current {
+		Some(proc) => runtime_tables::proc_entry(proc.id),
+		None => Proc::find("/proc/auxtools_expr_stub").and_then(|stub| runtime_tables::proc_entry(stub.id))
+	}
+	.ok_or_else(|| fail("couldn't find a proc entry to copy".to_owned()))?;
+	let original = current.as_ref().map(original_bytecode).unwrap_or_default();
+
+	let bytecode = assemble(&shown, code, &original, pending, world_globals, added)?;
+	let mut entry = template;
+	if current.is_none() {
+		// As BYOND names the init procs it makes
+		entry.0[ProcEntryWords::PATH] = leaked_string(&format!("{}/proc/(init)", init.type_path)).map_err(fail)?;
+		entry.0[ProcEntryWords::NAME] = NONE;
+		entry.0[ProcEntryWords::DESC] = NONE;
+		entry.0[ProcEntryWords::CATEGORY] = NONE;
+		entry.0[ProcEntryWords::PATH_BASENAME] = NONE;
+		entry.0[ProcEntryWords::PARAMETERS] = NONE;
+	}
+	entry.0[ProcEntryWords::BYTECODE] = runtime_tables::intern_misc(&bytecode).map_err(fail)?;
+	entry.0[ProcEntryWords::LOCALS] = locals_table(&code.locals, template.0[ProcEntryWords::LOCALS]).map_err(fail)?;
+	entry.0[ProcEntryWords::NEXT_OVERRIDE] = NONE;
+
+	Ok(PreparedInitProc {
+		type_id,
+		proc: Some((entry, code.locals.clone()))
+	})
 }
 
 fn prepare_new_proc(
@@ -832,6 +892,8 @@ pub fn apply(
 		}
 	}
 
+	let procs_before = runtime_tables::proc_count();
+
 	// All of them first: one can relink another's `..()`
 	for new in &prepared.new_procs {
 		match runtime_tables::add_proc(&new.entry) {
@@ -873,8 +935,31 @@ pub fn apply(
 			auxtools::debug::set_local_names(ptr, new.local_names.clone());
 		}
 	}
-	if let Some(first) = prepared.new_procs.first() {
-		Proc::add_to_table(raw_types::procs::ProcId(first.id));
+	for init in &prepared.init_procs {
+		let id = match &init.proc {
+			None => NONE,
+			Some((entry, local_names)) => {
+				// BYOND gives a type the same init proc as another with the
+				// same code, and nothing else refers to it by id
+				let id = match runtime_tables::add_proc(entry) {
+					Ok(id) => id,
+					Err(e) => {
+						warnings.push(format!("couldn't add an init proc: {}", e));
+						continue;
+					}
+				};
+				if let Some(proc) = Proc::from_id(id) {
+					let (ptr, _) = unsafe { proc.bytecode_mut_ptr() };
+					auxtools::debug::set_local_names(ptr, local_names.clone());
+				}
+				id.0
+			}
+		};
+		let _ = runtime_tables::set_type_field(init.type_id, type_fields::INIT_PROC, id);
+	}
+
+	if runtime_tables::proc_count() > procs_before {
+		Proc::add_to_table(raw_types::procs::ProcId(procs_before));
 	}
 
 	for p in prepared.code {
