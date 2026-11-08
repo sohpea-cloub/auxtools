@@ -186,7 +186,8 @@ fn proc_code(r: &dmasm::reload::ProcReload) -> HotReloadProc {
 		nodes: r.nodes.clone(),
 		locals: r.locals.clone(),
 		params: r.params.clone(),
-		settings: r.settings
+		settings: r.settings,
+		statics: r.statics.clone()
 	}
 }
 

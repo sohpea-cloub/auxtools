@@ -123,3 +123,6 @@ var/datum/animal/dog/legs_written = new
 /proc/caller_sees()
 	var/x = slow()
 	return isnull(x)
+
+/proc/in_lists(mob/m in world, o in global.vars)
+	return 1

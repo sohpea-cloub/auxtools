@@ -735,7 +735,7 @@ dependencies = [
 [[package]]
 name = "dmasm"
 version = "0.1.0"
-source = "git+https://github.com/sohpea-cloub/dmasm?branch=hot-reload#d2dee590692e289287dfbddefada2869f250d687"
+source = "git+https://github.com/sohpea-cloub/dmasm?branch=hot-reload#0b5525b725b80c62a3e048e4c11d23daa8e561dd"
 dependencies = [
  "bitflags 2.13.2",
  "dreammaker",

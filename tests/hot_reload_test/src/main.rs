@@ -134,7 +134,8 @@ fn proc_code(r: &dmasm::reload::ProcReload) -> HotReloadProc {
 		nodes: r.nodes.clone(),
 		locals: r.locals.clone(),
 		params: r.params.clone(),
-		settings: r.settings
+		settings: r.settings,
+		statics: r.statics.clone()
 	}
 }
 
@@ -550,6 +551,54 @@ fn main() {
 	reload(&mut watcher, &changes);
 	assert_eq!(eval(&mut client, "greet_named()"), "\"hi bo!~\"");
 	println!("ok: a parameter with a name the world didn't have");
+
+	// New static locals: one in a proc that has another, and one in a new proc
+	let before: u32 = eval(&mut client, "counter()").parse().unwrap();
+	let changes = source.edit(
+		"reload.dm",
+		"\tvar/static/count = 0\n\tcount += 10\n\treturn count",
+		"\tvar/static/count = 0\n\tvar/static/bonus = 100\n\tcount += 10\n\treturn count + bonus\n\n/proc/visits()\n\tvar/static/v = \
+		 10\n\tv++\n\treturn v"
+	);
+	reload(&mut watcher, &changes);
+	assert_eq!(eval(&mut client, "counter()"), (before + 110).to_string());
+	assert_eq!(eval(&mut client, "visits()"), "11");
+	assert_eq!(eval(&mut client, "visits()"), "12");
+	println!("ok: new static locals");
+
+	// More definitions of a proc on a type that has one: one more of the dog's
+	// speak(), which the puppy's ..() goes through now, and two for the cat
+	// in one reload, the second calling the first
+	let changes = source.edit(
+		"reload.dm",
+		"/proc/caller_sees()\n\tvar/x = slow()\n\treturn isnull(x)\n",
+		"/proc/caller_sees()\n\tvar/x = slow()\n\treturn isnull(x)\n\n/datum/animal/dog/speak()\n\treturn \
+		 \"[..()]!!\"\n\n/datum/animal/cat/speak()\n\treturn \"[..()]~\"\n\n/datum/animal/cat/speak()\n\treturn \
+		 uppertext(..())\n\n/proc/cat_says()\n\tvar/datum/animal/cat/c = new\n\treturn c.speak()\n"
+	);
+	assert_eq!(
+		changes.new_procs.len(),
+		4,
+		"{:?}",
+		changes.new_procs.iter().map(|p| p.code.proc.to_string()).collect::<Vec<_>>()
+	);
+	reload(&mut watcher, &changes);
+	assert_eq!(eval(&mut client, "old_dog.speak()"), "\"woof!!!\"");
+	assert_eq!(eval(&mut client, "old_puppy.speak()"), "\"woof!!!?\"");
+	assert_eq!(eval(&mut client, "cat_says()"), "\"MEOW~\"");
+	println!("ok: more definitions of a proc on a type");
+
+	// A new parameter next to `in` lists: one BYOND has built in, and an
+	// expression it keeps
+	let changes = source.edit(
+		"reload.dm",
+		"/proc/in_lists(mob/m in world, o in global.vars)\n\treturn 1",
+		"/proc/in_lists(mob/m in world, o in global.vars, n = 5)\n\treturn n"
+	);
+	reload(&mut watcher, &changes);
+	assert_eq!(eval(&mut client, "in_lists()"), "5");
+	assert_eq!(eval(&mut client, "in_lists(n = 6)"), "6");
+	println!("ok: a new parameter next to `in` lists");
 
 	// set waitfor = 0: the caller no longer waits for the sleep
 	let before = eval(&mut client, "caller_sees()");

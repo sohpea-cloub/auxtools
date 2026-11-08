@@ -215,7 +215,9 @@ pub struct HotReloadProc {
 	/// Local variable names by slot
 	pub locals: Vec<String>,
 	pub params: Vec<dmasm::reload::Param>,
-	pub settings: dmasm::reload::ProcSettings
+	pub settings: dmasm::reload::ProcSettings,
+	/// Its static locals, for those the running proc doesn't have yet
+	pub statics: Vec<dmasm::reload::StaticVar>
 }
 
 /// A proc the world doesn't have yet. `code.proc` is how it will be known.

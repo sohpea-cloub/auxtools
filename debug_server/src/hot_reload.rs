@@ -34,7 +34,7 @@ use auxtools::{
 };
 use dmasm::{
 	assembler::AssembleEnv as _,
-	reload::{ConstValue, NewVar},
+	reload::{ConstValue, InList, NewVar},
 	Instruction, Node, Opcode
 };
 
@@ -82,14 +82,56 @@ impl AddedVars {
 		if let Some(id) = variable_ids(name.as_bytes()).first().or_else(|| self.param_names.get(name)).copied() {
 			return Ok(id);
 		}
-		let id = self.next_id();
-		self.vars.push(PreparedNewVar {
-			id,
-			name: leaked_string(name)?,
-			value: (0, 0)
-		});
+		let id = self.add(leaked_string(name)?, (0, 0));
 		self.param_names.insert(name.to_owned(), id);
 		Ok(id)
+	}
+
+	/// A new var id, with its name's string id and its global slot's value
+	fn add(&mut self, name: u32, value: (u32, u32)) -> u32 {
+		let id = self.next_id();
+		self.vars.push(PreparedNewVar { id, name, value });
+		id
+	}
+}
+
+/// The proc name maps and `..()` links as the new procs prepared so far
+/// leave them, so a reload can add several definitions of one proc.
+#[derive(Default)]
+struct StagedProcs {
+	maps: HashMap<(u32, u32), Vec<u32>>,
+	/// New `..()` targets of existing procs
+	next_override: HashMap<u32, u32>,
+	/// The entries of new procs
+	entries: HashMap<u32, ProcEntryWords>,
+	/// New procs, by the type they're on
+	own: HashMap<u32, Vec<u32>>
+}
+
+impl StagedProcs {
+	fn named_procs(&self, type_id: u32, key: u32) -> Result<Vec<u32>, String> {
+		match self.maps.get(&(type_id, key)) {
+			Some(procs) => Ok(procs.clone()),
+			None => runtime_tables::named_procs(type_id, key)
+		}
+	}
+
+	fn entry(&self, proc: u32) -> Option<ProcEntryWords> {
+		if let Some(entry) = self.entries.get(&proc) {
+			return Some(*entry);
+		}
+		let mut entry = runtime_tables::proc_entry(raw_types::procs::ProcId(proc))?;
+		if let Some(&next) = self.next_override.get(&proc) {
+			entry.0[ProcEntryWords::NEXT_OVERRIDE] = next;
+		}
+		Some(entry)
+	}
+
+	/// The procs a type defines itself
+	fn own_procs(&self, type_id: u32) -> Result<Vec<u32>, String> {
+		let mut procs = runtime_tables::misc_words(runtime_tables::type_field(type_id, type_fields::PROCS)?).unwrap_or_default();
+		procs.extend(self.own.get(&type_id).into_iter().flatten());
+		Ok(procs)
 	}
 }
 
@@ -274,6 +316,7 @@ pub fn prepare(request: &HotReloadRequest, warnings: &mut Vec<String>) -> Result
 	}
 
 	let first_id = runtime_tables::proc_count();
+	let mut staged = StagedProcs::default();
 	pending.procs = new_procs
 		.iter()
 		.enumerate()
@@ -281,7 +324,7 @@ pub fn prepare(request: &HotReloadRequest, warnings: &mut Vec<String>) -> Result
 		.collect();
 
 	for (i, new) in new_procs.iter().enumerate() {
-		match prepare_new_proc(new, first_id + i as u32, &pending, &mut world_globals, &mut added) {
+		match prepare_new_proc(new, first_id + i as u32, &pending, &mut world_globals, &mut added, &mut staged) {
 			Ok(p) => prepared.new_procs.push(p),
 			Err(e) => errors.push(e)
 		}
@@ -344,10 +387,18 @@ pub fn prepare(request: &HotReloadRequest, warnings: &mut Vec<String>) -> Result
 }
 
 /// Assembles a proc's code for the running world.
-fn assemble(name: &str, code: &HotReloadProc, original: &[u32], pending: &Pending, world_globals: &mut WorldGlobals) -> Result<Vec<u32>, String> {
+fn assemble(
+	name: &str,
+	code: &HotReloadProc,
+	original: &[u32],
+	pending: &Pending,
+	world_globals: &mut WorldGlobals,
+	added: &mut AddedVars
+) -> Result<Vec<u32>, String> {
 	let nodes = adapt_debug_info(&code.nodes, original);
 
 	let mut env = ReloadEnv::new(original, world_globals, pending);
+	env.new_statics = new_statics(code, &env.proc_globals, added).map_err(|e| format!("{}: {}", name, e))?;
 	let bytecode = match dmasm::assembler::assemble(&nodes, &mut env) {
 		Ok(bytecode) => bytecode,
 		Err(e) => return Err(format!("{}: {}", name, env.error.take().unwrap_or_else(|| describe_assemble_error(&e))))
@@ -381,7 +432,7 @@ fn prepare_code(
 	}
 
 	let original = original_bytecode(&proc);
-	let bytecode = assemble(&name, reload, &original, pending, world_globals)?;
+	let bytecode = assemble(&name, reload, &original, pending, world_globals, added)?;
 	let bytecode_id = runtime_tables::intern_misc(&bytecode).map_err(|e| format!("{}: {}", name, e))?;
 
 	// Frames get as many locals as the table has names
@@ -445,31 +496,55 @@ fn locals_table(names: &[String], empty: u32) -> Result<u32, String> {
 }
 
 /// A new parameter table, when `params` differ from what `current` (a misc
-/// id) has. Four words per parameter: input type, a word that's 0x7D01 when
-/// there's no `in` list, the name's var id, and the input type's high bits.
+/// id) has. Four words per parameter: input type, where an `in` list takes
+/// its choices from, the name's var id, and the input type's high bits.
 fn params_table(params: &[dmasm::reload::Param], current: u32, added: &mut AddedVars) -> Result<Option<u32>, String> {
-	const NO_IN_LIST: u32 = 0x7D01;
 	let current_words = runtime_tables::misc_words(current).unwrap_or_default();
+	let name_of = |words: &[u32]| {
+		unsafe { StringRef::from_variable_id(raw_types::strings::VariableId(words[2])) }
+			.data()
+			.to_vec()
+	};
+	let current_in_list = |name: &str| -> Option<u32> {
+		current_words
+			.chunks(4)
+			.find(|words| words.len() == 4 && name_of(words) == name.as_bytes())
+			.map(|words| words[1])
+	};
+
+	let mut in_lists = vec![];
+	for param in params {
+		in_lists.push(match param.in_list {
+			InList::Builtin(word) => word,
+			InList::Kept => current_in_list(&param.name).ok_or_else(|| {
+				format!(
+					"parameter {} has an `in` list expression the running proc doesn't, which a reload can't make yet",
+					param.name
+				)
+			})?
+		});
+	}
 
 	let unchanged = current_words.len() == params.len() * 4
-		&& params.iter().zip(current_words.chunks(4)).all(|(param, words)| {
-			let name = unsafe { StringRef::from_variable_id(raw_types::strings::VariableId(words[2])) };
-			words[0] == param.input && words[3] == param.input_extra && name.data() == param.name.as_bytes()
-		});
+		&& params
+			.iter()
+			.zip(&in_lists)
+			.zip(current_words.chunks(4))
+			.all(|((param, &in_list), words)| {
+				words[0] == param.input && words[1] == in_list && words[3] == param.input_extra && name_of(words) == param.name.as_bytes()
+			});
 	if unchanged {
 		return Ok(None);
 	}
-	if current_words.chunks(4).any(|words| words.get(1) != Some(&NO_IN_LIST)) {
-		return Err("its parameters changed, and one of them has an `in` list, which a reload can't change yet".to_owned());
-	}
+	// What a proc with no parameters has
 	if params.is_empty() {
-		return Err("its parameters were all removed, which a reload can't do yet".to_owned());
+		return Ok(Some(NONE));
 	}
 
 	let mut words = vec![];
-	for param in params {
+	for (param, in_list) in params.iter().zip(in_lists) {
 		let id = added.param_name(&param.name).map_err(|e| format!("parameter {}: {}", param.name, e))?;
-		words.extend([param.input, NO_IN_LIST, id, param.input_extra]);
+		words.extend([param.input, in_list, id, param.input_extra]);
 	}
 	runtime_tables::intern_misc(&words).map(Some)
 }
@@ -501,7 +576,8 @@ fn prepare_new_proc(
 	id: u32,
 	pending: &Pending,
 	world_globals: &mut WorldGlobals,
-	added: &mut AddedVars
+	added: &mut AddedVars,
+	staged: &mut StagedProcs
 ) -> Result<PreparedNewProc, String> {
 	let shown = describe(&new.code.proc);
 	let fail = |e: String| format!("{}: {}", shown, e);
@@ -512,7 +588,7 @@ fn prepare_new_proc(
 		.and_then(|stub| runtime_tables::proc_entry(stub.id))
 		.ok_or_else(|| fail("couldn't find /proc/auxtools_expr_stub to copy a proc entry from".to_owned()))?;
 
-	let bytecode = assemble(&shown, &new.code, &[], pending, world_globals)?;
+	let bytecode = assemble(&shown, &new.code, &[], pending, world_globals, added)?;
 
 	let string = |text: &str| -> Result<u32, String> {
 		let string = StringRef::new(text).map_err(|_| fail(format!("couldn't make the string {}", text)))?;
@@ -554,11 +630,7 @@ fn prepare_new_proc(
 		let keys = [entry.0[ProcEntryWords::NAME], entry.0[ProcEntryWords::PATH_BASENAME]];
 
 		// What the name finds on the type now is what the new proc overrides
-		let overridden = runtime_tables::named_procs(type_id, keys[0])
-			.map_err(fail)?
-			.first()
-			.copied()
-			.unwrap_or(NONE);
+		let overridden = staged.named_procs(type_id, keys[0]).map_err(fail)?.first().copied().unwrap_or(NONE);
 		entry.0[ProcEntryWords::NEXT_OVERRIDE] = overridden;
 
 		// The type and every subtype gets it, after the procs of the types in
@@ -575,7 +647,7 @@ fn prepare_new_proc(
 				if k == 1 && key == keys[0] {
 					continue;
 				}
-				let mut procs = runtime_tables::named_procs(sub, key).map_err(fail)?;
+				let mut procs = staged.named_procs(sub, key).map_err(fail)?;
 				let at = procs.iter().position(|&p| p == overridden).unwrap_or(procs.len());
 				procs.insert(at, id);
 				map_entries.push((sub, key, procs));
@@ -583,9 +655,8 @@ fn prepare_new_proc(
 
 			// The `..()` of the last proc below it in the chain went past it
 			if depth > 0 {
-				let own = runtime_tables::misc_words(runtime_tables::type_field(sub, type_fields::PROCS).map_err(fail)?).unwrap_or_default();
-				for proc in own {
-					if let Some(e) = runtime_tables::proc_entry(raw_types::procs::ProcId(proc)) {
+				for proc in staged.own_procs(sub).map_err(fail)? {
+					if let Some(e) = staged.entry(proc) {
 						if e.0[ProcEntryWords::NAME] == keys[0] && e.0[ProcEntryWords::NEXT_OVERRIDE] == overridden && !relinked.contains(&proc) {
 							relinked.push(proc);
 						}
@@ -593,6 +664,20 @@ fn prepare_new_proc(
 				}
 			}
 		}
+
+		// Procs added after this one in the same reload see it
+		for (sub, key, procs) in &map_entries {
+			staged.maps.insert((*sub, *key), procs.clone());
+		}
+		for &proc in &relinked {
+			if let Some(e) = staged.entries.get_mut(&proc) {
+				e.0[ProcEntryWords::NEXT_OVERRIDE] = id;
+			} else {
+				staged.next_override.insert(proc, id);
+			}
+		}
+		staged.entries.insert(id, entry);
+		staged.own.entry(type_id).or_default().push(id);
 
 		Some(NewProcOnType {
 			type_id,
@@ -607,6 +692,37 @@ fn prepare_new_proc(
 		local_names: new.code.locals.clone(),
 		on_type
 	})
+}
+
+/// Which of a proc's same-named static locals a scope (`proc:PATH#N`) means
+fn static_number(scope: &str) -> usize {
+	scope.rsplit_once('#').and_then(|(_, n)| n.parse().ok()).unwrap_or(0)
+}
+
+/// Var ids for the static locals of `code` that the running proc doesn't
+/// have (by the globals its bytecode uses), starting as their initial values.
+fn new_statics(
+	code: &HotReloadProc,
+	proc_globals: &HashMap<Vec<u8>, Vec<u32>>,
+	added: &mut AddedVars
+) -> Result<HashMap<(String, Vec<u8>), u32>, String> {
+	let mut out = HashMap::new();
+	for local in &code.statics {
+		let name = local.name.as_bytes().to_vec();
+		if proc_globals.get(&name).is_some_and(|ids| ids.len() > static_number(&local.scope)) {
+			continue;
+		}
+		let value = local.value.as_ref().ok_or_else(|| {
+			format!(
+				"static local {} is new and starts as something other than a constant, which a reload can't set up yet",
+				local.name
+			)
+		})?;
+		let value = const_value(value).map_err(|e| format!("static local {}: {}", local.name, e))?;
+		let id = added.add(leaked_string(&local.name)?, value);
+		out.insert((local.scope.clone(), name), id);
+	}
+	Ok(out)
 }
 
 /// A constant as a value's tag and data. A string's reference is kept for
@@ -716,23 +832,24 @@ pub fn apply(
 		}
 	}
 
+	// All of them first: one can relink another's `..()`
 	for new in &prepared.new_procs {
-		let id = match runtime_tables::add_proc(&new.entry) {
-			Ok(id) => id,
-			Err(e) => {
-				warnings.push(format!("couldn't add a proc: {}", e));
-				continue;
+		match runtime_tables::add_proc(&new.entry) {
+			Ok(id) if id.0 != new.id => {
+				// Code in this reload calls it by the id it expected
+				warnings.push(format!("a new proc got id {} where {} was expected", id.0, new.id));
 			}
-		};
-		if id.0 != new.id {
-			// Code in this reload calls it by the id it expected
-			warnings.push(format!("a new proc got id {} where {} was expected", id.0, new.id));
+			Ok(_) => {}
+			Err(e) => warnings.push(format!("couldn't add a proc: {}", e))
 		}
+	}
 
+	for new in &prepared.new_procs {
+		let id = new.id;
 		if let Some(on_type) = &new.on_type {
 			let procs = runtime_tables::type_field(on_type.type_id, type_fields::PROCS).unwrap_or(NONE);
 			let mut list = runtime_tables::misc_words(procs).unwrap_or_default();
-			list.push(id.0);
+			list.push(id);
 			match runtime_tables::intern_misc(&list) {
 				Ok(list) => {
 					let _ = runtime_tables::set_type_field(on_type.type_id, type_fields::PROCS, list);
@@ -747,11 +864,11 @@ pub fn apply(
 			}
 
 			for &proc in &on_type.relinked {
-				runtime_tables::set_proc_entry_word(raw_types::procs::ProcId(proc), ProcEntryWords::NEXT_OVERRIDE, id.0);
+				runtime_tables::set_proc_entry_word(raw_types::procs::ProcId(proc), ProcEntryWords::NEXT_OVERRIDE, id);
 			}
 		}
 
-		if let Some(proc) = Proc::from_id(id) {
+		if let Some(proc) = Proc::from_id(raw_types::procs::ProcId(id)) {
 			let (ptr, _) = unsafe { proc.bytecode_mut_ptr() };
 			auxtools::debug::set_local_names(ptr, new.local_names.clone());
 		}
@@ -1029,6 +1146,9 @@ struct ReloadEnv<'a> {
 	world_globals: &'a mut WorldGlobals,
 	/// What this reload adds
 	pending: &'a Pending,
+	/// The proc's static locals the running world doesn't have yet, by scope
+	/// and name
+	new_statics: HashMap<(String, Vec<u8>), u32>,
 	/// Why a lookup failed, when that says more than the assembler's error
 	error: Option<String>
 }
@@ -1039,6 +1159,7 @@ impl<'a> ReloadEnv<'a> {
 			proc_globals: globals_in(original),
 			world_globals,
 			pending,
+			new_statics: HashMap::new(),
 			error: None
 		}
 	}
@@ -1078,10 +1199,11 @@ impl dmasm::assembler::AssembleEnv for ReloadEnv<'_> {
 		// A static local (`proc:PATH#N`, the Nth of that name in the proc):
 		// the proc's own, which its current code already uses
 		if let Some(scope) = scope.filter(|s| s.starts_with("proc:")) {
-			let n = scope.rsplit_once('#').and_then(|(_, n)| n.parse::<usize>().ok()).unwrap_or(0);
+			let n = static_number(scope);
 			let id = self.proc_globals.get(name).and_then(|ids| ids.get(n)).copied();
+			let id = id.or_else(|| self.new_statics.get(&(scope.to_owned(), name.to_vec())).copied());
 			if id.is_none() {
-				self.error = Some(format!("static local {} is new, which a reload can't add yet", shown));
+				self.error = Some(format!("static local {} isn't declared in the proc", shown));
 			}
 			return id;
 		}
