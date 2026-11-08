@@ -3,13 +3,11 @@
 //! lists), the type table and the per-type proc name maps.
 //!
 //! Everything here goes through BYOND's own functions where it has them, so
-//! what it allocates is BYOND's and BYOND frees it like its own. Found on
-//! Windows only for now; on Linux every function here fails with an error that
-//! says so.
+//! what it allocates is BYOND's and BYOND frees it like its own.
 //!
-//! Layouts are from 516.1688 `byondcore.dll` (see the hot reload plan in the
-//! auxtools-debug workspace for where each was read), and the patterns match
-//! 1659, 1685, 1687 and 1688.
+//! Layouts are from 516.1688 `byondcore.dll` and `libbyond.so` (see the hot
+//! reload plan in the auxtools-debug workspace for where each was read), and
+//! the patterns match 1659, 1685, 1687 and 1688 on both.
 
 use std::ffi::c_void;
 
@@ -228,9 +226,111 @@ fn resolve() -> Result<Functions, String> {
 	}
 }
 
+// The same functions in libbyond.so, from 516.1688 (procdef_add 0x2ED8C0,
+// misc_intern_copy 0x308840, the proc name map accessor 0x2EC7C0). Where
+// Windows keeps a table's pointer before its count, Linux keeps it after.
+#[cfg(unix)]
+mod recipes {
+	use byond_scan::{Anchor, Extract, OperandSelect, Recipe, SignatureTreatment, VersionRange};
+
+	const CHECKED: VersionRange = VersionRange { min: 1659, max: 1688 };
+
+	pub const PROCDEF_ADD: Recipe = Recipe {
+		name: "procdef_add",
+		versions: CHECKED,
+		anchor: Anchor::Signature(
+			SignatureTreatment::NoOffset,
+			"57 56 53 83 EC 10 A1 ?? ?? ?? ?? 8B 7C 24 20 85 C0 0F 84 ?? ?? ?? ?? 31 F6 31 DB EB ?? 8D 76 00 A1 ?? ?? ?? ?? 83 C3 01"
+		),
+		hops: &[],
+		extract: Extract::Entry
+	};
+
+	pub const MISC_INTERN_COPY: Recipe = Recipe {
+		name: "misc_intern_copy",
+		versions: CHECKED,
+		anchor: Anchor::Signature(
+			SignatureTreatment::NoOffset,
+			"57 56 53 8B 1D ?? ?? ?? ?? 8B 7C 24 10 8B 74 24 14 85 DB 74 ?? 8B 43 08 A3 ?? ?? ?? ?? 66 89 33 0F B7 F6"
+		),
+		hops: &[],
+		extract: Extract::Entry
+	};
+
+	// The type count is operand 0, the maps 1. The type table is the word
+	// after the count.
+	const TYPE_MAP_ACCESSOR: &str = "8B 54 24 04 31 C0 39 15 ?? ?? ?? ?? 72 08 A1 ?? ?? ?? ?? 8D 04 D0 C3";
+
+	pub const TYPE_COUNT: Recipe = Recipe {
+		name: "obj_type_count",
+		versions: CHECKED,
+		anchor: Anchor::Signature(SignatureTreatment::NoOffset, TYPE_MAP_ACCESSOR),
+		hops: &[],
+		extract: Extract::AbsMem(OperandSelect::NthAbsMem(0))
+	};
+
+	pub const NAME_MAPS: Recipe = Recipe {
+		name: "proc_name_maps",
+		versions: CHECKED,
+		anchor: Anchor::Signature(SignatureTreatment::NoOffset, TYPE_MAP_ACCESSOR),
+		hops: &[],
+		extract: Extract::AbsMem(OperandSelect::NthAbsMem(1))
+	};
+
+	// The loader of the var tables, as auxtools' `variable_names` finds it.
+	// global_values is operand 1.
+	pub const GLOBAL_VALUES: Recipe = Recipe {
+		name: "global_values",
+		versions: CHECKED,
+		anchor: Anchor::Signature(
+			SignatureTreatment::NoOffset,
+			"89 1D ?? ?? ?? ?? 57 E8 ?? ?? ?? ?? 83 C4 10 85 FF 74 08 85 C0 0F 84 ?? ?? ?? ?? 83 EC 0C C1 E3 02 A3 ?? ?? ?? ?? 53 E8 ?? ?? ?? ?? 83 \
+			 C4 10 85 DB 74 08 85 C0 0F 84 ?? ?? ?? ?? A3 ?? ?? ?? ??"
+		),
+		hops: &[],
+		extract: Extract::AbsMem(OperandSelect::NthAbsMem(1))
+	};
+
+	pub const ALLOC_SHARED: Recipe = Recipe {
+		name: "AllocShared",
+		versions: CHECKED,
+		anchor: Anchor::Export(c"_Z11AllocSharedm"),
+		hops: &[],
+		extract: Extract::Entry
+	};
+
+	pub const FREE_SHARED: Recipe = Recipe {
+		name: "FreeShared",
+		versions: CHECKED,
+		anchor: Anchor::Export(c"_Z10FreeSharedPv"),
+		hops: &[],
+		extract: Extract::Entry
+	};
+}
+
+// libbyond.so allocates with the C library, as we do
 #[cfg(unix)]
 fn resolve() -> Result<Functions, String> {
-	Err("this isn't available on Linux yet".to_owned())
+	use recipes::*;
+	extern "C" {
+		fn realloc(ptr: *mut c_void, size: usize) -> *mut c_void;
+	}
+	let find = |recipe| crate::find_recipe(recipe);
+
+	let type_count = find(&TYPE_COUNT)?;
+	unsafe {
+		Ok(Functions {
+			procdef_add: std::mem::transmute(find(&PROCDEF_ADD)?),
+			misc_intern_copy: std::mem::transmute(find(&MISC_INTERN_COPY)?),
+			alloc_shared: std::mem::transmute(find(&ALLOC_SHARED)?),
+			free_shared: std::mem::transmute(find(&FREE_SHARED)?),
+			crt_realloc: std::mem::transmute::<unsafe extern "C" fn(*mut c_void, usize) -> *mut c_void, _>(realloc),
+			type_count: type_count as *const u32,
+			type_table: (type_count + 4) as *const *mut u8,
+			name_maps: find(&NAME_MAPS)? as *const *mut ProcNameMap,
+			global_values: find(&GLOBAL_VALUES)? as *const *const crate::raw_types::values::Value
+		})
+	}
 }
 
 fn functions() -> Result<&'static Functions, String> {
