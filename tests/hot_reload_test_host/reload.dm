@@ -142,3 +142,17 @@ var/datum/bag/old_bag = new
 /proc/new_items(type)
 	var/datum/bag/b = new type
 	return b.items ? jointext(b.items, ",") : "none"
+
+// New types
+
+/obj/crate
+	name = "crate"
+	var/capacity = 4
+	var/list/contents_log = list("empty")
+
+/obj/crate/proc/describe_crate()
+	return "[name] holds [capacity]"
+
+/proc/crate_report(type)
+	var/obj/crate/c = new type
+	return "[c.name]|[c.desc]|[c.icon_state]|[c.density]|[c.capacity]|[c.describe_crate()]|[c.contents_log[1]]|[c.text]"

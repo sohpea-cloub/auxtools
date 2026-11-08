@@ -194,6 +194,7 @@ fn proc_code(r: &dmasm::reload::ProcReload) -> HotReloadProc {
 
 fn reload_request(changes: &Changes) -> Request {
 	Request::HotReload(HotReloadRequest {
+		new_types: changes.new_types.clone(),
 		procs: changes.reloads.iter().map(proc_code).collect(),
 		new_procs: changes
 			.new_procs
@@ -337,6 +338,7 @@ impl Watcher {
 				n => Some(format!("{} {}", n, what))
 			};
 			let parts: Vec<String> = [
+				list(changes.new_types.iter().map(|t| t.path.clone()).collect(), "types").map(|s| format!("added {}", s)),
 				list(changes.reloads.iter().map(|r| r.proc.to_string()).collect(), "procs").map(|s| format!("reloaded {}", s)),
 				list(changes.new_procs.iter().map(|p| p.code.proc.to_string()).collect(), "procs").map(|s| format!("added {}", s)),
 				list(

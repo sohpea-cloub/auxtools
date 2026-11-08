@@ -34,7 +34,7 @@ use auxtools::{
 };
 use dmasm::{
 	assembler::AssembleEnv as _,
-	reload::{ConstValue, InList, NewVar},
+	reload::{ConstValue, InList, NewType, NewVar},
 	Instruction, Node, Opcode
 };
 
@@ -295,6 +295,7 @@ fn strip_path(path: &str) -> String {
 /// applied.
 pub fn prepare(request: &HotReloadRequest, warnings: &mut Vec<String>) -> Result<Prepared, Vec<String>> {
 	let HotReloadRequest {
+		new_types: _,
 		procs,
 		new_procs,
 		new_vars,
@@ -783,6 +784,87 @@ fn new_statics(
 		out.insert((local.scope.clone(), name), id);
 	}
 	Ok(out)
+}
+
+/// Adds the types the world doesn't have yet (see `runtime_tables::add_type`)
+/// and sets the fields of their records. A type the world has already, from
+/// an earlier try at the same reload, is left as it is. Returns how many it
+/// added.
+pub fn add_types(new_types: &[NewType]) -> Result<usize, Vec<String>> {
+	if new_types.is_empty() {
+		return Ok(0);
+	}
+	runtime_tables::available().map_err(|e| vec![format!("hot reloading isn't available on this build of BYOND: {}", e)])?;
+
+	let mut added = 0;
+	for new in new_types {
+		if find_type(&new.path).is_ok() {
+			continue;
+		}
+		// Its subtypes can't be added without it
+		add_type(new).map_err(|e| vec![format!("{}: {}", new.path, e)])?;
+		added += 1;
+	}
+	Ok(added)
+}
+
+fn add_type(new: &NewType) -> Result<(), String> {
+	use runtime_tables::{set_type_byte, set_type_field};
+	const OPACITY: u32 = 1;
+	const DENSITY: u32 = 2;
+
+	// Everything is worked out before the type exists
+	let parent = find_type(&new.parent)?;
+	let mut words = vec![];
+	let mut dir = None;
+	let mut flags = runtime_tables::type_field(parent, type_fields::FLAGS)?;
+	for (field, value) in &new.fields {
+		let number = || match value {
+			ConstValue::Number(n) => Ok(*n),
+			ConstValue::Null => Ok(0.0),
+			_ => Err(format!("{} has to be a number", field))
+		};
+		let string = || match value {
+			ConstValue::Null => Ok(NONE),
+			ConstValue::String(text) => leaked_string(text),
+			_ => Err(format!("{} has to be text", field))
+		};
+		match field.as_str() {
+			"name" => words.push((type_fields::NAME, string()?)),
+			"desc" => words.push((type_fields::DESC, string()?)),
+			"icon_state" => words.push((type_fields::ICON_STATE, string()?)),
+			"text" => words.push((type_fields::TEXT, string()?)),
+			"suffix" => words.push((type_fields::SUFFIX, string()?)),
+			"icon" => words.push((type_fields::ICON, match value {
+				ConstValue::Null => NONE,
+				ConstValue::Resource(file) => AssembleEnv
+					.get_resource_index(file)
+					.ok_or_else(|| format!("couldn't find the file {}", file))?,
+				_ => return Err("icon has to be a file".to_owned())
+			})),
+			"layer" => words.push((type_fields::LAYER, number()?.to_bits())),
+			"dir" => dir = Some(number()? as u8),
+			"density" | "opacity" => {
+				let bit = if field == "density" { DENSITY } else { OPACITY };
+				if number()? != 0.0 {
+					flags |= bit;
+				} else {
+					flags &= !bit;
+				}
+			}
+			other => return Err(format!("{} isn't a field of a type's record", other))
+		}
+	}
+
+	let id = runtime_tables::add_type(parent, leaked_string(&new.path)?)?;
+	let _ = set_type_field(id, type_fields::FLAGS, flags);
+	for (offset, word) in words {
+		let _ = set_type_field(id, offset, word);
+	}
+	if let Some(dir) = dir {
+		let _ = set_type_byte(id, type_fields::DIR, dir);
+	}
+	Ok(())
 }
 
 /// A constant as a value's tag and data. A string's reference is kept for

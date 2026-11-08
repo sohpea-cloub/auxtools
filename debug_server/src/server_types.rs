@@ -185,6 +185,9 @@ pub struct EvalResponse {
 /// What a hot reload changes (see `Request::HotReload`)
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct HotReloadRequest {
+	/// Added before anything else, each after its parent. If the rest can't
+	/// be applied, they stay: nothing uses them.
+	pub new_types: Vec<dmasm::reload::NewType>,
 	pub procs: Vec<HotReloadProc>,
 	pub new_procs: Vec<HotReloadNewProc>,
 	/// Added before anything else, so the code in the reload can use them
@@ -199,7 +202,7 @@ pub struct HotReloadRequest {
 impl HotReloadRequest {
 	/// How many things it changes
 	pub const fn len(&self) -> usize {
-		self.procs.len() + self.new_procs.len() + self.new_vars.len() + self.var_defaults.len() + self.init_procs.len() + self.line_moves.len()
+		self.new_types.len() + self.procs.len() + self.new_procs.len() + self.new_vars.len() + self.var_defaults.len() + self.init_procs.len() + self.line_moves.len()
 	}
 
 	pub const fn is_empty(&self) -> bool {

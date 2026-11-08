@@ -141,6 +141,7 @@ fn proc_code(r: &dmasm::reload::ProcReload) -> HotReloadProc {
 
 fn reload_request(changes: &Changes) -> Request {
 	Request::HotReload(HotReloadRequest {
+		new_types: changes.new_types.clone(),
 		procs: changes.reloads.iter().map(proc_code).collect(),
 		new_procs: changes
 			.new_procs
@@ -647,6 +648,38 @@ fn main() {
 	assert_eq!(eval(&mut client, "new_items(/datum/bag/fixed)"), "\"z\"");
 	assert_eq!(eval(&mut client, "new_tags()"), "2");
 	println!("ok: a default that becomes a constant");
+
+	// New types: a subtype of a type the world has, a subtype of that, and a
+	// datum, with vars, overrides, built-in fields and procs of their own
+	let changes = source.edit(
+		"reload.dm",
+		"/obj/crate/proc/describe_crate()\n",
+		"/obj/crate/big_crate\n\tdesc = \"roomy\"\n\ticon_state = \"big\"\n\tdensity = 1\n\tcapacity = 8\n\tvar/list/stickers = \
+		 list(\"fragile\")\n\n/obj/crate/big_crate/describe_crate()\n\treturn \"[..()] with [stickers[1]]\"\n\n/obj/crate/big_crate/huge\n\tname = \
+		 \"huge crate\"\n\tcapacity = 16\n\n/datum/ledger\n\tvar/entries = 0\n\n/datum/ledger/proc/add()\n\tentries++\n\treturn \
+		 entries\n\n/proc/ledger_test()\n\tvar/datum/ledger/l = new\n\tl.add()\n\treturn \"[l.add()] [istype(l, /datum/ledger)] [istype(l, /datum)] \
+		 [l.type]\"\n\n/obj/crate/proc/describe_crate()\n"
+	);
+	assert_eq!(changes.new_types.len(), 3, "{:?}", changes.new_types);
+	reload(&mut watcher, &changes);
+	assert_eq!(eval(&mut client, "crate_report(/obj/crate)"), "\"crate|||0|4|crate holds 4|empty|c\"");
+	assert_eq!(
+		eval(&mut client, "crate_report(/obj/crate/big_crate)"),
+		"\"crate|roomy|big|1|8|crate holds 8 with fragile|empty|c\""
+	);
+	assert_eq!(
+		eval(&mut client, "crate_report(/obj/crate/big_crate/huge)"),
+		"\"huge crate|roomy|big|1|16|huge crate holds 16 with fragile|empty|h\""
+	);
+	assert_eq!(eval(&mut client, "ledger_test()"), "\"2 1 1 /datum/ledger\"");
+	assert_eq!(eval(&mut client, "text2path(\"/obj/crate/big_crate/huge\")"), "/obj/crate/big_crate/huge");
+	assert_eq!(eval(&mut client, "length(typesof(/obj/crate))"), "3");
+	assert_eq!(eval(&mut client, "istype(new /obj/crate/big_crate/huge, /obj/crate/big_crate)"), "1");
+	assert_eq!(eval(&mut client, "istype(new /obj/crate, /obj/crate/big_crate)"), "0");
+	// Types after it in the preorder still know their subtypes
+	assert_eq!(eval(&mut client, "length(typesof(/datum/animal))"), "5");
+	assert_eq!(eval(&mut client, "istype(old_puppy, /datum/animal/dog)"), "1");
+	println!("ok: new types");
 
 	// set waitfor = 0: the caller no longer waits for the sleep
 	let before = eval(&mut client, "caller_sees()");

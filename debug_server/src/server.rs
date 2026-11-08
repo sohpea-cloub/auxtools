@@ -1041,7 +1041,16 @@ impl Server {
 		self.eval_error = None;
 
 		let mut warnings = vec![];
-		let result = match hot_reload::prepare(request, &mut warnings) {
+		// New types come first, so the rest can be prepared against them
+		let prepared = hot_reload::add_types(&request.new_types).and_then(|added| {
+			hot_reload::prepare(request, &mut warnings).map_err(|mut errors| {
+				if added > 0 {
+					errors.push(format!("the {} new types were added anyway; nothing uses them yet", added));
+				}
+				errors
+			})
+		});
+		let result = match prepared {
 			Ok(prepared) => {
 				hot_reload::apply(prepared, &mut self.conditional_breakpoints, &mut self.moved_breakpoints, &mut warnings);
 				HotReloadResult {

@@ -65,6 +65,22 @@ pub struct ProcNameBucket {
 pub mod type_fields {
 	pub const PATH: usize = 0x00;
 	pub const PARENT: usize = 0x04;
+	/// String ids, or the resource id for the icon
+	pub const NAME: usize = 0x08;
+	pub const DESC: usize = 0x0C;
+	pub const ICON: usize = 0x10;
+	pub const ICON_STATE: usize = 0x14;
+	pub const TEXT: usize = 0x18;
+	/// Bit 1 opacity, bit 2 density
+	pub const FLAGS: usize = 0x28;
+	/// A byte
+	pub const DIR: usize = 0x32;
+	/// Pointers to the type's own transform (6 floats) and color matrix (20)
+	pub const TRANSFORM: usize = 0x34;
+	pub const COLOR_MATRIX: usize = 0x38;
+	pub const SUFFIX: usize = 0x54;
+	/// A float
+	pub const LAYER: usize = 0x5C;
 	/// Misc id: the type's own verbs
 	pub const VERBS: usize = 0x60;
 	/// Misc id: the type's own procs
@@ -74,9 +90,24 @@ pub mod type_fields {
 	pub const INIT_PROC: usize = 0x68;
 	/// Misc id: (var id, flags) pairs for the vars the type declares
 	pub const DECLARED_VARS: usize = 0x70;
+	/// Misc id: (var id, tag, data) for the vars the type sets, as the .dmb has
+	/// them; only read when the world starts
+	pub const OWN_OVERRIDES: usize = 0x6C;
+	/// Misc id: built-in vars set otherwise than in the record (inherited)
+	pub const BUILTIN_VALUES: usize = 0x74;
 	/// Misc id: every var the type has, (name string id, var id, tag, data)
 	/// per var, sorted by name. Instances read their defaults from here.
 	pub const VAR_TABLE: usize = 0x78;
+	pub const EXTRA: usize = 0x7C;
+	/// Where each var's code is in the init procs, for merging them when the
+	/// world starts
+	pub const INIT_SEGMENTS: usize = 0x80;
+	/// The type's place in the preorder of all types, and the end of its
+	/// subtree's
+	pub const PREORDER: usize = 0x84;
+	pub const PREORDER_END: usize = 0x88;
+	/// The type's typepath value (tag, data)
+	pub const TYPEPATH: usize = 0x8C;
 }
 
 #[cfg(windows)]
@@ -89,10 +120,18 @@ struct Functions {
 	misc_intern_copy: extern "C" fn(*const u32, u32) -> u32,
 	alloc_shared: extern "C" fn(usize) -> *mut c_void,
 	free_shared: extern "C" fn(*mut c_void) -> bool,
+	copy_shared: extern "C" fn(*mut c_void) -> *mut c_void,
+	/// Works out a type's typepath value and lets `text2path` find it
+	register_typepath: extern "C" fn(u32),
 	crt_realloc: extern "C" fn(*mut c_void, usize) -> *mut c_void,
 	type_count: *const u32,
 	type_table: *const *mut u8,
 	name_maps: *const *mut ProcNameMap,
+	/// Every type id in preorder
+	preorder: *const *mut u32,
+	/// Each type's default appearance, worked out when first needed (NONE
+	/// until then)
+	appearance_cache: *const *mut u32,
 	/// One Value per var id: a global var's value, and the default of a
 	/// type's declared var. A new frame's locals start as their var ids'
 	/// values.
@@ -188,6 +227,63 @@ mod recipes {
 		hops: &[],
 		extract: Extract::Entry
 	};
+
+	pub const COPY_SHARED: Recipe = Recipe {
+		name: "CopyShared",
+		versions: CHECKED,
+		anchor: Anchor::Export(c"?CopyShared@@YAPAXPAX@Z"),
+		hops: &[],
+		extract: Extract::Entry
+	};
+
+	// The loader of the type table, which allocates the table, the preorder,
+	// the proc name maps and the appearance cache, one after the other. Memory
+	// operands without a base register count, `lea`s of the sizes too.
+	const TYPE_LOADER: &str = "69 F0 98 00 00 00 83 C4 04 A3 ?? ?? ?? ?? 56 FF D3 83 C4 04 85 F6 74 08 85 C0 0F 84 ?? ?? ?? ?? A3 ?? ?? ?? ?? A1 ?? \
+	                           ?? ?? ?? 8D 34 85 00 00 00 00 56 FF D3 83 C4 04 85 F6 74 08 85 C0 0F 84 ?? ?? ?? ?? A3 ?? ?? ?? ?? A1 ?? ?? ?? ?? 8D \
+	                           34 C5 00 00 00 00 56 FF D3 83 C4 04 85 F6 74 08 85 C0 0F 84 ?? ?? ?? ?? A3 ?? ?? ?? ?? A1 ?? ?? ?? ?? 8D 34 85 00 00 \
+	                           00 00 56 FF D3 83 C4 04 85 F6 74 08 85 C0 0F 84 ?? ?? ?? ?? 33 F6 A3 ?? ?? ?? ??";
+
+	pub const PREORDER: Recipe = Recipe {
+		name: "type_preorder",
+		versions: CHECKED,
+		anchor: Anchor::Signature(SignatureTreatment::NoOffset, TYPE_LOADER),
+		hops: &[],
+		extract: Extract::AbsMem(OperandSelect::NthAbsMem(4))
+	};
+
+	pub const APPEARANCE_CACHE: Recipe = Recipe {
+		name: "type_appearance_cache",
+		versions: CHECKED,
+		anchor: Anchor::Signature(SignatureTreatment::NoOffset, TYPE_LOADER),
+		hops: &[],
+		extract: Extract::AbsMem(OperandSelect::NthAbsMem(10))
+	};
+
+	// Builds before 1687 don't check for NONE
+	pub const REGISTER_TYPEPATH: Recipe = Recipe {
+		name: "register_typepath",
+		versions: VersionRange { min: 1687, max: 1688 },
+		anchor: Anchor::Signature(
+			SignatureTreatment::NoOffset,
+			"55 8B EC 57 8B 7D 08 3B 3D ?? ?? ?? ?? 0F 83 ?? ?? ?? ?? 81 FF FF FF 00 00 0F 84 ?? ?? ?? ?? 56 69 F7 98 00 00 00 03 35 ?? ?? ?? ?? 0F \
+			 84 ?? ?? ?? ?? 80 BE 8C 00 00 00 00 75"
+		),
+		hops: &[],
+		extract: Extract::Entry
+	};
+
+	pub const REGISTER_TYPEPATH_OLD: Recipe = Recipe {
+		name: "register_typepath",
+		versions: VersionRange { min: 1659, max: 1686 },
+		anchor: Anchor::Signature(
+			SignatureTreatment::NoOffset,
+			"55 8B EC 57 8B 7D 08 3B 3D ?? ?? ?? ?? 0F 83 ?? ?? ?? ?? 56 69 F7 98 00 00 00 03 35 ?? ?? ?? ?? 0F 84 ?? ?? ?? ?? 80 BE 8C 00 00 00 00 \
+			 75"
+		),
+		hops: &[],
+		extract: Extract::Entry
+	};
 }
 
 #[cfg(windows)]
@@ -217,10 +313,14 @@ fn resolve() -> Result<Functions, String> {
 			misc_intern_copy: std::mem::transmute(find(&MISC_INTERN_COPY)?),
 			alloc_shared: std::mem::transmute(find(&ALLOC_SHARED)?),
 			free_shared: std::mem::transmute(find(&FREE_SHARED)?),
+			copy_shared: std::mem::transmute(find(&COPY_SHARED)?),
+			register_typepath: std::mem::transmute(find(&REGISTER_TYPEPATH).or_else(|_| find(&REGISTER_TYPEPATH_OLD))?),
 			crt_realloc: std::mem::transmute(crt_realloc),
 			type_count: type_count as *const u32,
 			type_table: (type_count - 4) as *const *mut u8,
 			name_maps: find(&NAME_MAPS)? as *const *mut ProcNameMap,
+			preorder: find(&PREORDER)? as *const *mut u32,
+			appearance_cache: find(&APPEARANCE_CACHE)? as *const *mut u32,
 			global_values: find(&GLOBAL_VALUES)? as *const *const crate::raw_types::values::Value
 		})
 	}
@@ -306,6 +406,64 @@ mod recipes {
 		hops: &[],
 		extract: Extract::Entry
 	};
+
+	pub const COPY_SHARED: Recipe = Recipe {
+		name: "CopyShared",
+		versions: CHECKED,
+		anchor: Anchor::Export(c"_Z10CopySharedPv"),
+		hops: &[],
+		extract: Extract::Entry
+	};
+
+	// The loader of the type table, which allocates the table, the preorder,
+	// the proc name maps and the appearance cache, one after the other. Memory
+	// operands without a base register count, `lea`s of the sizes too.
+	const TYPE_LOADER: &str = "69 FB 94 00 00 00 83 EC 0C 89 1D ?? ?? ?? ?? 57 E8 ?? ?? ?? ?? 83 C4 10 85 FF 74 08 85 C0 0F 84 ?? ?? ?? ?? 83 EC 0C \
+	                           8D 3C 9D 00 00 00 00 A3 ?? ?? ?? ?? 57 89 BD ?? ?? ?? ?? E8 ?? ?? ?? ?? 83 C4 10 85 FF 0F 95 85 ?? ?? ?? ?? 0F B6 8D \
+	                           ?? ?? ?? ?? 85 C0 75 08 84 C9 0F 85 ?? ?? ?? ?? 83 EC 0C 8D 3C DD 00 00 00 00 A3 ?? ?? ?? ?? 57 E8 ?? ?? ?? ?? 83 C4 \
+	                           10 85 FF 74 08 85 C0 0F 84 ?? ?? ?? ?? 83 EC 0C FF B5 ?? ?? ?? ?? A3 ?? ?? ?? ?? E8 ?? ?? ?? ?? 83 C4 10 85 C0 75 ?? \
+	                           80 BD ?? ?? ?? ?? 00 0F 85 ?? ?? ?? ?? A3 ?? ?? ?? ??";
+
+	pub const PREORDER: Recipe = Recipe {
+		name: "type_preorder",
+		versions: CHECKED,
+		anchor: Anchor::Signature(SignatureTreatment::NoOffset, TYPE_LOADER),
+		hops: &[],
+		extract: Extract::AbsMem(OperandSelect::NthAbsMem(4))
+	};
+
+	pub const APPEARANCE_CACHE: Recipe = Recipe {
+		name: "type_appearance_cache",
+		versions: CHECKED,
+		anchor: Anchor::Signature(SignatureTreatment::NoOffset, TYPE_LOADER),
+		hops: &[],
+		extract: Extract::AbsMem(OperandSelect::NthAbsMem(6))
+	};
+
+	// Builds before 1687 don't check for NONE
+	pub const REGISTER_TYPEPATH: Recipe = Recipe {
+		name: "register_typepath",
+		versions: VersionRange { min: 1687, max: 1688 },
+		anchor: Anchor::Signature(
+			SignatureTreatment::NoOffset,
+			"53 83 EC 18 8B 44 24 20 3B 05 ?? ?? ?? ?? 73 ?? 3D FF FF 00 00 74 ?? 69 D8 94 00 00 00 03 1D ?? ?? ?? ?? 74 ?? 80 BB 8C 00 00 00 00 74 \
+			 ?? 8D 44 24 08 83 EC 04 6A 06"
+		),
+		hops: &[],
+		extract: Extract::Entry
+	};
+
+	pub const REGISTER_TYPEPATH_OLD: Recipe = Recipe {
+		name: "register_typepath",
+		versions: VersionRange { min: 1659, max: 1686 },
+		anchor: Anchor::Signature(
+			SignatureTreatment::NoOffset,
+			"53 83 EC 18 8B 44 24 20 3B 05 ?? ?? ?? ?? 73 ?? 69 D8 94 00 00 00 03 1D ?? ?? ?? ?? 74 ?? 80 BB 8C 00 00 00 00 74 ?? 8D 44 24 08 83 EC \
+			 04 6A 06"
+		),
+		hops: &[],
+		extract: Extract::Entry
+	};
 }
 
 // libbyond.so allocates with the C library, as we do
@@ -324,10 +482,14 @@ fn resolve() -> Result<Functions, String> {
 			misc_intern_copy: std::mem::transmute(find(&MISC_INTERN_COPY)?),
 			alloc_shared: std::mem::transmute(find(&ALLOC_SHARED)?),
 			free_shared: std::mem::transmute(find(&FREE_SHARED)?),
+			copy_shared: std::mem::transmute(find(&COPY_SHARED)?),
+			register_typepath: std::mem::transmute(find(&REGISTER_TYPEPATH).or_else(|_| find(&REGISTER_TYPEPATH_OLD))?),
 			crt_realloc: std::mem::transmute::<unsafe extern "C" fn(*mut c_void, usize) -> *mut c_void, _>(realloc),
 			type_count: type_count as *const u32,
 			type_table: (type_count + 4) as *const *mut u8,
 			name_maps: find(&NAME_MAPS)? as *const *mut ProcNameMap,
+			preorder: find(&PREORDER)? as *const *mut u32,
+			appearance_cache: find(&APPEARANCE_CACHE)? as *const *mut u32,
 			global_values: find(&GLOBAL_VALUES)? as *const *const crate::raw_types::values::Value
 		})
 	}
@@ -456,11 +618,20 @@ fn name_map(type_id: u32) -> Result<*mut ProcNameMap, String> {
 	}
 }
 
+/// A map's buckets. A map with none can have no buffer.
+unsafe fn buckets<'a>(map: *mut ProcNameMap) -> &'a [ProcNameBucket] {
+	if (*map).buckets.is_null() {
+		&[]
+	} else {
+		std::slice::from_raw_parts((*map).buckets, (*map).count as usize)
+	}
+}
+
 /// The procs a name (its string id) finds on a type, most derived first.
 pub fn named_procs(type_id: u32, key: u32) -> Result<Vec<u32>, String> {
 	let map = name_map(type_id)?;
 	unsafe {
-		let buckets = std::slice::from_raw_parts((*map).buckets, (*map).count as usize);
+		let buckets = buckets(map);
 		Ok(match buckets.binary_search_by_key(&key, |bucket| bucket.key) {
 			Ok(i) if !buckets[i].ids.is_null() => std::slice::from_raw_parts(buckets[i].ids, buckets[i].count as usize).to_vec(),
 			_ => vec![]
@@ -474,8 +645,8 @@ pub fn set_named_procs(type_id: u32, key: u32, procs: &[u32]) -> Result<(), Stri
 	let functions = functions()?;
 	let map = name_map(type_id)?;
 	unsafe {
-		let count = (*map).count as usize;
-		let at = match std::slice::from_raw_parts((*map).buckets, count).binary_search_by_key(&key, |bucket| bucket.key) {
+		let count = buckets(map).len();
+		let at = match buckets(map).binary_search_by_key(&key, |bucket| bucket.key) {
 			Ok(at) => at,
 			Err(at) => {
 				let size = std::mem::size_of::<ProcNameBucket>();
@@ -567,4 +738,125 @@ pub fn add_variable(name: u32, tag: u8, data: u32) -> Result<u32, String> {
 		(*table).count += 1;
 		Ok(count as u32)
 	}
+}
+
+/// Adds a type: a copy of `parent` called `path` (a string id), with nothing
+/// of its own yet. It goes into the preorder after its parent's subtree, gets
+/// its parent's proc name map, and `text2path` finds it. Returns its id.
+///
+/// The parent's lists of vars and its init proc stay shared; the type's own
+/// procs, verbs and overrides start empty, and its record fields (name, icon
+/// and so on) are its parent's until changed with `set_type_field`.
+pub fn add_type(parent: u32, path: u32) -> Result<u32, String> {
+	use type_fields::*;
+	let functions = functions()?;
+	unsafe {
+		let count = *functions.type_count as usize;
+		if parent as usize >= count {
+			return Err(format!("there's no type {}", parent));
+		}
+		if count + 1 >= NONE as usize {
+			return Err("the world has as many types as BYOND can number".to_owned());
+		}
+
+		// The tables BYOND sizes by the type count, one entry longer
+		let grow = |table: *const *mut u8, size: usize| -> Result<*mut u8, String> {
+			let grown = (functions.crt_realloc)(*table as *mut c_void, size) as *mut u8;
+			if grown.is_null() {
+				return Err("out of memory growing the type tables".to_owned());
+			}
+			*(table as *mut *mut u8) = grown;
+			Ok(grown)
+		};
+		let table = grow(functions.type_table, (count + 1) * TYPE_STRIDE)?;
+		let preorder = grow(functions.preorder as *const *mut u8, (count + 1) * 4)? as *mut u32;
+		let maps = grow(functions.name_maps as *const *mut u8, (count + 1) * 8)? as *mut ProcNameMap;
+		let cache = grow(functions.appearance_cache as *const *mut u8, (count + 1) * 4)? as *mut u32;
+
+		let entry = |id: usize| table.add(id * TYPE_STRIDE);
+		let word = |id: usize, offset: usize| entry(id).add(offset) as *mut u32;
+
+		std::ptr::copy_nonoverlapping(entry(parent as usize), entry(count), TYPE_STRIDE);
+		*word(count, PATH) = path;
+		*word(count, PARENT) = parent;
+		for offset in [VERBS, PROCS, OWN_OVERRIDES] {
+			*word(count, offset) = NONE;
+		}
+		for offset in [DECLARED_VARS, BUILTIN_VALUES, VAR_TABLE, EXTRA] {
+			let id = *word(count, offset);
+			if id != NONE {
+				misc::add_ref(&misc::MiscId::from_raw(id));
+			}
+		}
+		// What BYOND frees with the type is the type's own
+		for (offset, size) in [(TRANSFORM, 6 * 4), (COLOR_MATRIX, 20 * 4)] {
+			let from = *word(count, offset) as *const u8;
+			if !from.is_null() {
+				let copy = (functions.crt_realloc)(std::ptr::null_mut(), size) as *mut u8;
+				if copy.is_null() {
+					return Err("out of memory copying a type".to_owned());
+				}
+				std::ptr::copy_nonoverlapping(from, copy, size);
+				*word(count, offset) = copy as u32;
+			}
+		}
+		*word(count, INIT_SEGMENTS) = 0;
+		*word(count, TYPEPATH) = 0;
+		*word(count, TYPEPATH + 4) = 0;
+
+		// The parent's proc name map, sharing its id buffers as BYOND does
+		let from = &*maps.add(parent as usize);
+		let mut buckets = std::ptr::null_mut();
+		if from.count > 0 && !from.buckets.is_null() {
+			let size = from.count as usize * std::mem::size_of::<ProcNameBucket>();
+			buckets = (functions.crt_realloc)(std::ptr::null_mut(), size) as *mut ProcNameBucket;
+			if buckets.is_null() {
+				return Err("out of memory copying a proc name map".to_owned());
+			}
+			std::ptr::copy_nonoverlapping(from.buckets, buckets, from.count as usize);
+			for i in 0..from.count as usize {
+				let bucket = &mut *buckets.add(i);
+				if !bucket.ids.is_null() {
+					bucket.ids = (functions.copy_shared)(bucket.ids as *mut c_void) as *mut u32;
+				}
+			}
+		}
+		maps.add(count).write(ProcNameMap {
+			buckets,
+			count: from.count,
+			built: from.built
+		});
+		*cache.add(count) = NONE;
+
+		// Last in its parent's subtree: what comes after moves along one, and
+		// the subtrees it's in grow by one
+		let at = *word(parent as usize, PREORDER_END) as usize;
+		std::ptr::copy(preorder.add(at), preorder.add(at + 1), count - at);
+		*preorder.add(at) = count as u32;
+		for id in 0..count {
+			if *word(id, PREORDER) as usize >= at {
+				*word(id, PREORDER) += 1;
+				*word(id, PREORDER_END) += 1;
+			}
+		}
+		let mut ancestor = parent;
+		while (ancestor as usize) < count {
+			*word(ancestor as usize, PREORDER_END) += 1;
+			ancestor = *word(ancestor as usize, PARENT);
+		}
+		*word(count, PREORDER) = at as u32;
+		*word(count, PREORDER_END) = at as u32 + 1;
+
+		*(functions.type_count as *mut u32) += 1;
+		(functions.register_typepath)(count as u32);
+		Ok(count as u32)
+	}
+}
+
+/// Sets a byte of a type's table entry.
+pub fn set_type_byte(type_id: u32, offset: usize, value: u8) -> Result<(), String> {
+	unsafe {
+		*type_entry(type_id)?.add(offset) = value;
+	}
+	Ok(())
 }
