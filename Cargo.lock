@@ -657,6 +657,7 @@ version = "0.1.0"
 dependencies = [
  "bincode",
  "debug_server",
+ "dmasm",
  "serde",
 ]
 
@@ -734,11 +735,12 @@ dependencies = [
 [[package]]
 name = "dmasm"
 version = "0.1.0"
-source = "git+https://github.com/sohpea-cloub/dmasm?branch=proc-compilation#e1fc95ee8e534df52a81b2d100f4a12e7f1267b3"
+source = "git+https://github.com/sohpea-cloub/dmasm?branch=hot-reload#8cc302805b6f590af9970e2386c59d120e1d7f83"
 dependencies = [
  "bitflags 2.13.2",
  "dreammaker",
  "nom",
+ "serde",
 ]
 
 [[package]]
@@ -1114,6 +1116,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6c49c37c09c17a53d937dfbb742eb3a961d65a994e6bcdcf37e7399d0cc8ab5e"
 dependencies = [
  "digest",
+]
+
+[[package]]
+name = "hot_reload_test"
+version = "0.1.0"
+dependencies = [
+ "bincode",
+ "debug_server",
+ "dmasm",
+ "serde",
 ]
 
 [[package]]

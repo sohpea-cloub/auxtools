@@ -1,5 +1,6 @@
 mod assemble_env;
 mod ckey_override;
+mod hot_reload;
 mod instruction_hooking;
 mod server;
 mod server_types;

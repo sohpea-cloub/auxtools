@@ -10,6 +10,7 @@ edition.workspace = true
 [dependencies]
 debug_server = { path = "../../debug_server" }
 serde = { version = "1", features = ["derive"] }
+dmasm = { workspace = true }
 bincode = "1"
 
 [lints]

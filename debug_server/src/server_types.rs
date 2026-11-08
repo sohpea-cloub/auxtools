@@ -52,7 +52,17 @@ pub enum Request {
 	Continue {
 		kind: ContinueKind
 	},
-	Pause
+	Pause,
+
+	// New requests go last, so older debug-clients' requests keep their numbers
+	/// Which BYOND version the world runs on
+	ByondVersion,
+	/// Swaps new code into procs and renumbers the lines of procs that moved.
+	/// Either all of it is applied or none of it is.
+	HotReload {
+		procs: Vec<HotReloadProc>,
+		line_moves: Vec<HotReloadLines>
+	}
 }
 
 // Message from server -> client
@@ -98,7 +108,13 @@ pub enum Response {
 	},
 	BreakpointHit {
 		reason: BreakpointReason
-	}
+	},
+
+	ByondVersion {
+		version: u32,
+		build: u32
+	},
+	HotReload(HotReloadResult)
 }
 
 #[derive(Serialize, Deserialize, Debug, Hash, PartialEq, Eq, Clone)]
@@ -162,4 +178,33 @@ pub struct Variable {
 pub struct EvalResponse {
 	pub value: String,
 	pub variables: Option<VariablesRef>
+}
+
+/// New code for a proc, as dmasm's proc compiler produced it
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct HotReloadProc {
+	pub proc: ProcRef,
+	/// The body, with DbgFile and DbgLine. They're dropped for a world built
+	/// without them.
+	pub nodes: Vec<dmasm::Node>,
+	/// Local variable names by slot
+	pub locals: Vec<String>,
+	/// Parameter names, which have to be the proc's own
+	pub params: Vec<String>
+}
+
+/// A proc whose code is unchanged but now sits on other lines
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct HotReloadLines {
+	pub proc: ProcRef,
+	/// (old line, new line) pairs
+	pub lines: Vec<(u32, u32)>
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct HotReloadResult {
+	/// Whether anything changed. When there are errors, nothing did.
+	pub applied: bool,
+	pub errors: Vec<String>,
+	pub warnings: Vec<String>
 }

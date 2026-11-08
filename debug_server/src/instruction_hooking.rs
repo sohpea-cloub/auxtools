@@ -470,6 +470,23 @@ pub fn unhook_all() {
 	}
 }
 
+/// Where the proc's breakpoints are.
+pub fn hooked_offsets(proc: &Proc) -> Vec<u32> {
+	let (start, count) = unsafe { proc.bytecode_mut_ptr() };
+	let start = start as usize;
+	let end = start + count as usize * std::mem::size_of::<u32>();
+
+	let mut offsets: Vec<u32> = ORIGINAL_BYTECODE
+		.lock()
+		.unwrap()
+		.keys()
+		.filter(|ptr| (start..end).contains(&ptr.0))
+		.map(|ptr| ((ptr.0 - start) / std::mem::size_of::<u32>()) as u32)
+		.collect();
+	offsets.sort_unstable();
+	offsets
+}
+
 /// The proc's bytecode without any of our breakpoints patched into it.
 pub fn original_bytecode(proc: &Proc) -> Vec<u32> {
 	let (start, count) = unsafe { proc.bytecode_mut_ptr() };

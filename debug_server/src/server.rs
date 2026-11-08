@@ -23,7 +23,7 @@ use super::{
 	instruction_hooking::{hook_instruction, original_bytecode, unhook_all, unhook_instruction},
 	server_types::*
 };
-use crate::mem_profiler;
+use crate::{hot_reload, mem_profiler};
 
 #[derive(Clone, Hash, PartialEq, Eq)]
 enum Variables {
@@ -92,7 +92,8 @@ enum Event {
 
 // Nothing a debug-client sends is anywhere near this big. Without a limit, any
 // stray bytes on the port get read as a length and we try to allocate it.
-const MAX_REQUEST_LEN: u32 = 1024 * 1024;
+// A hot reload of every proc that uses a changed #define can get big.
+const MAX_REQUEST_LEN: u32 = 256 * 1024 * 1024;
 
 pub struct Server {
 	events: mpsc::Receiver<Event>,
@@ -106,6 +107,7 @@ pub struct Server {
 	in_eval: bool,
 	eval_error: Option<String>,
 	conditional_breakpoints: HashMap<(raw_types::procs::ProcId, u16), String>,
+	moved_breakpoints: hot_reload::MovedBreakpoints,
 	app: Command<'static>
 }
 
@@ -178,6 +180,7 @@ impl Server {
 			in_eval: false,
 			eval_error: None,
 			conditional_breakpoints: HashMap::new(),
+			moved_breakpoints: HashMap::new(),
 			app: Self::setup_app()
 		};
 
@@ -206,6 +209,7 @@ impl Server {
 			in_eval: false,
 			eval_error: None,
 			conditional_breakpoints: HashMap::new(),
+			moved_breakpoints: HashMap::new(),
 			app: Self::setup_app()
 		})
 	}
@@ -220,41 +224,61 @@ impl Server {
 
 	fn get_line_number(&self, proc: ProcRef, offset: u32) -> Option<u32> {
 		match auxtools::Proc::find_override(proc.path, proc.override_id) {
-			Some(proc) => {
-				let mut current_line_number = None;
-				let mut reached_offset = false;
+			Some(proc) => Self::line_number_in(unsafe { proc.bytecode() }, offset),
+			None => None
+		}
+	}
 
-				let bytecode = unsafe { proc.bytecode() };
+	/// The line a frame is on. A frame that started before a hot reload runs
+	/// the code it started with, not the proc's current code.
+	fn frame_line_number(&self, frame: &debug::StackFrame) -> Option<u32> {
+		let running = unsafe { *(*frame.context).bytecode() };
+		let (current, _) = unsafe { frame.proc.bytecode_mut_ptr() };
 
-				let mut env = disassemble_env::DisassembleEnv;
-				let (nodes, _error) = dmasm::disassembler::disassemble(bytecode, &mut env);
+		if running != current {
+			if let Some(bytecode) = auxtools::bytecode_at(running) {
+				return Self::line_number_in(&bytecode, frame.offset as u32);
+			}
+		}
 
-				for node in nodes {
-					if let dmasm::Node::Instruction(ins, debug) = node {
-						if debug.offset > offset {
-							reached_offset = true;
-							break;
-						}
+		self.get_line_number(
+			ProcRef {
+				path: frame.proc.path.clone(),
+				override_id: frame.proc.override_id()
+			},
+			frame.offset as u32
+		)
+	}
 
-						if let dmasm::Instruction::DbgLine(line) = ins {
-							current_line_number = Some(line);
-						}
+	fn line_number_in(bytecode: &[u32], offset: u32) -> Option<u32> {
+		let mut current_line_number = None;
+		let mut reached_offset = false;
 
-						if debug.offset == offset {
-							reached_offset = true;
-							break;
-						}
-					}
+		let mut env = disassemble_env::DisassembleEnv;
+		let (nodes, _error) = dmasm::disassembler::disassemble(bytecode, &mut env);
+
+		for node in nodes {
+			if let dmasm::Node::Instruction(ins, debug) = node {
+				if debug.offset > offset {
+					reached_offset = true;
+					break;
 				}
 
-				if reached_offset {
-					current_line_number
-				} else {
-					None
+				if let dmasm::Instruction::DbgLine(line) = ins {
+					current_line_number = Some(line);
+				}
+
+				if debug.offset == offset {
+					reached_offset = true;
+					break;
 				}
 			}
+		}
 
-			None => None
+		if reached_offset {
+			current_line_number
+		} else {
+			None
 		}
 	}
 
@@ -546,6 +570,9 @@ impl Server {
 			}
 		};
 
+		// The client has found out where a reload moved a breakpoint to
+		self.moved_breakpoints.retain(|(id, _), at| *id != proc.id || *at != instruction.offset);
+
 		match hook_instruction(&proc, instruction.offset) {
 			Ok(()) => {
 				// The client re-sends breakpoints it already set, and no
@@ -578,9 +605,15 @@ impl Server {
 			}
 		};
 
-		self.conditional_breakpoints.remove(&(proc.id, instruction.offset as u16));
+		// It might be one a reload moved, known to the client by where it was
+		let offset = self
+			.moved_breakpoints
+			.remove(&(proc.id, instruction.offset))
+			.unwrap_or(instruction.offset);
 
-		match unhook_instruction(&proc, instruction.offset) {
+		self.conditional_breakpoints.remove(&(proc.id, offset as u16));
+
+		match unhook_instruction(&proc, offset) {
 			Ok(()) => {
 				self.send_or_disconnect(Response::BreakpointUnset { success: true });
 			}
@@ -644,7 +677,7 @@ impl Server {
 							proc: proc_ref.clone(),
 							offset: stack[i].offset as u32
 						},
-						line: self.get_line_number(proc_ref, stack[i].offset as u32)
+						line: self.frame_line_number(&stack[i])
 					});
 				}
 
@@ -983,6 +1016,44 @@ impl Server {
 		}
 	}
 
+	fn handle_hot_reload(&mut self, procs: &[HotReloadProc], line_moves: &[HotReloadLines]) {
+		// Assembling runs DM code to look up typepaths and resources, which
+		// counts as eval code (see eval_expr)
+		self.in_eval = true;
+		self.eval_error = None;
+
+		let mut warnings = vec![];
+		let result = match hot_reload::prepare(procs, line_moves, &mut warnings) {
+			Ok(prepared) => {
+				hot_reload::apply(prepared, &mut self.conditional_breakpoints, &mut self.moved_breakpoints, &mut warnings);
+				HotReloadResult {
+					applied: true,
+					errors: vec![],
+					warnings
+				}
+			}
+
+			Err(errors) => HotReloadResult {
+				applied: false,
+				errors,
+				warnings
+			}
+		};
+
+		self.in_eval = false;
+		if let Some(err) = self.eval_error.take() {
+			self.notify(format!("runtime occured during a hot reload: {}", err));
+		}
+
+		// The client might not be the one who asked, so tell it what changed
+		let changed = procs.len() + line_moves.len();
+		if result.applied && changed > 0 {
+			self.notify(format!("Hot reload: new code for {} procs, {} moved", procs.len(), line_moves.len()));
+		}
+
+		self.send_or_disconnect(Response::HotReload(result));
+	}
+
 	fn handle_disassemble(&mut self, path: &str, id: u32) -> String {
 		match auxtools::Proc::find_override(path, id) {
 			Some(proc) => {
@@ -1043,6 +1114,13 @@ impl Server {
 				self.send_or_disconnect(Response::Ack);
 				return true;
 			}
+
+			Request::ByondVersion => {
+				let (version, build) = auxtools::version::get();
+				self.send_or_disconnect(Response::ByondVersion { version, build });
+			}
+
+			Request::HotReload { procs, line_moves } => self.handle_hot_reload(&procs, &line_moves),
 
 			Request::StdDef => {
 				let stddef = crate::stddef::get_stddef().map(|x| x.to_string());
@@ -1234,6 +1312,7 @@ impl Server {
 		// Whoever connects next sets up their own breakpoints. Until then the
 		// old ones would only slow down the procs they sit in.
 		self.conditional_breakpoints.clear();
+		self.moved_breakpoints.clear();
 		self.should_catch_runtimes = true;
 		unhook_all();
 	}
