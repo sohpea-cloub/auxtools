@@ -21,8 +21,8 @@ use std::{
 
 use dmasm::reload::{diff, Changes, ParseOptions, ProcKey, Snapshot};
 use server_types::{
-	ContinueKind, HotReloadLines, HotReloadNewProc, HotReloadProc, HotReloadResult, HotReloadVarDefault, ProcRef, Request, Response,
-	DEFAULT_RELOAD_PORT
+	ContinueKind, HotReloadLines, HotReloadNewProc, HotReloadProc, HotReloadRequest, HotReloadResult, HotReloadVarDefault, ProcRef, Request,
+	Response, DEFAULT_RELOAD_PORT
 };
 
 const USAGE: &str = "\
@@ -35,9 +35,10 @@ AUXTOOLS_RELOAD_PORT (2449 unless set). A debugger can be attached at the same
 time.
 
 The world should be running the code as it is when this starts. Proc code,
-new procs, parameters, `set waitfor` and `set background`, and constant var
-defaults can change. New types and vars, verbs, and other `set` statements
-need the world rebuilt, and are refused, along with the rest of the change.
+new procs and vars, parameters, `set waitfor` and `set background`, and
+constant var defaults can change. New types, verbs, var defaults that aren't
+constants, and other `set` statements need the world rebuilt, and are
+refused, along with the rest of the change.
 
   --port N          the debug server's reload port (default 2449)
   -DNAME[=VALUE]    a define DreamMaker was given on its command line
@@ -190,7 +191,7 @@ fn proc_code(r: &dmasm::reload::ProcReload) -> HotReloadProc {
 }
 
 fn reload_request(changes: &Changes) -> Request {
-	Request::HotReload {
+	Request::HotReload(HotReloadRequest {
 		procs: changes.reloads.iter().map(proc_code).collect(),
 		new_procs: changes
 			.new_procs
@@ -202,6 +203,7 @@ fn reload_request(changes: &Changes) -> Request {
 				code: proc_code(&p.code)
 			})
 			.collect(),
+		new_vars: changes.new_vars.clone(),
 		var_defaults: changes
 			.var_defaults
 			.iter()
@@ -219,7 +221,7 @@ fn reload_request(changes: &Changes) -> Request {
 				lines: m.lines.clone()
 			})
 			.collect()
-	}
+	})
 }
 
 /// When each of the codebase's files was last changed.
@@ -302,13 +304,14 @@ impl Watcher {
 			println!("    note: {}", why);
 		}
 
-		if changes.reloads.is_empty() && changes.new_procs.is_empty() && changes.var_defaults.is_empty() && changes.line_moves.is_empty() {
-			log("no proc changed");
+		let request = reload_request(changes);
+		if matches!(&request, Request::HotReload(r) if r.is_empty()) {
+			log("nothing the world runs changed");
 			return Ok(true);
 		}
 
 		let started = Instant::now();
-		let result = match conn.request(&reload_request(changes))? {
+		let result = match conn.request(&request)? {
 			Response::HotReload(result) => result,
 			other => {
 				log(format!("the debug server answered with {:?}", other));
@@ -326,6 +329,11 @@ impl Watcher {
 			let parts: Vec<String> = [
 				list(changes.reloads.iter().map(|r| r.proc.to_string()).collect(), "procs").map(|s| format!("reloaded {}", s)),
 				list(changes.new_procs.iter().map(|p| p.code.proc.to_string()).collect(), "procs").map(|s| format!("added {}", s)),
+				list(
+					changes.new_vars.iter().map(|v| format!("{}/var/{}", v.type_path, v.var)).collect(),
+					"vars"
+				)
+				.map(|s| format!("added {}", s)),
 				list(
 					changes.var_defaults.iter().map(|d| format!("{}/var/{}", d.types[0], d.var)).collect(),
 					"vars"

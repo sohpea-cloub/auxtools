@@ -139,7 +139,7 @@ fn proc_code(r: &dmasm::reload::ProcReload) -> HotReloadProc {
 }
 
 fn reload_request(changes: &Changes) -> Request {
-	Request::HotReload {
+	Request::HotReload(HotReloadRequest {
 		procs: changes.reloads.iter().map(proc_code).collect(),
 		new_procs: changes
 			.new_procs
@@ -151,6 +151,7 @@ fn reload_request(changes: &Changes) -> Request {
 				code: proc_code(&p.code)
 			})
 			.collect(),
+		new_vars: changes.new_vars.clone(),
 		var_defaults: changes
 			.var_defaults
 			.iter()
@@ -168,7 +169,7 @@ fn reload_request(changes: &Changes) -> Request {
 				lines: m.lines.clone()
 			})
 			.collect()
-	}
+	})
 }
 
 fn expect_reload_result(response: Response) -> HotReloadResult {
@@ -500,6 +501,34 @@ fn main() {
 	assert_eq!(eval(&mut client, "initial(old_dog.legs)"), "3");
 	println!("ok: a new var default");
 
+	// New vars: an instance var, overridden by a subtype, a static var, a tmp
+	// var and a global, used by new procs. Existing instances have them.
+	let changes = source.edit(
+		"reload.dm",
+		"\tvar/legs = 3\n",
+		"\tvar/legs = 3\n\tvar/tail = 1\n\tvar/static/herd = 0\n\tvar/tmp/mood = \"calm\"\n\n/datum/animal/bird\n\ttail = 0\n\nvar/flock_size = \
+		 12\n\n/datum/animal/proc/join_herd()\n\therd++\n\treturn \"[herd] [mood] [tail] \
+		 [flock_size]\"\n\n/proc/new_bird_tail()\n\tvar/datum/animal/bird/b = new\n\treturn b.tail\n"
+	);
+	assert_eq!(changes.new_vars.len(), 4, "{:?}", changes.new_vars);
+	reload(&mut watcher, &changes);
+	assert_eq!(eval(&mut client, "old_dog.tail"), "1");
+	assert_eq!(eval(&mut client, "initial(old_dog.tail)"), "1");
+	assert_eq!(eval(&mut client, "new_bird_tail()"), "0");
+	assert_eq!(eval(&mut client, "old_dog.join_herd()"), "\"1 calm 1 12\"");
+	assert_eq!(eval(&mut client, "old_puppy.join_herd()"), "\"2 calm 1 12\"");
+	assert_eq!(eval(&mut client, "old_dog.herd"), "2");
+	assert_eq!(eval(&mut client, "flock_size"), "12");
+	assert_eq!(eval(&mut client, "(\"tail\" in old_dog.vars)"), "1");
+	println!("ok: new vars");
+
+	// The default of a var a reload added
+	let changes = source.edit("reload.dm", "\tvar/tail = 1\n", "\tvar/tail = 2\n");
+	reload(&mut watcher, &changes);
+	assert_eq!(eval(&mut client, "old_dog.tail"), "2");
+	assert_eq!(eval(&mut client, "new_bird_tail()"), "0");
+	println!("ok: the default of a new var");
+
 	// A new parameter, by name too
 	let changes = source.edit(
 		"reload.dm",
@@ -511,6 +540,17 @@ fn main() {
 	assert_eq!(eval(&mut client, "greet_named()"), "\"hi bo?\"");
 	println!("ok: a new parameter");
 
+	// A parameter whose name nothing in the world had
+	let changes = source.edit(
+		"reload.dm",
+		"/proc/greet(n, sound = \"!\")\n\treturn \"hi [n][sound]\"\n\n/proc/greet_named()\n\treturn greet(\"bo\", sound = \"?\")",
+		"/proc/greet(n, sound = \"!\", unheard_of = \"\")\n\treturn \"hi [n][sound][unheard_of]\"\n\n/proc/greet_named()\n\treturn greet(\"bo\", \
+		 unheard_of = \"~\")"
+	);
+	reload(&mut watcher, &changes);
+	assert_eq!(eval(&mut client, "greet_named()"), "\"hi bo!~\"");
+	println!("ok: a parameter with a name the world didn't have");
+
 	// set waitfor = 0: the caller no longer waits for the sleep
 	let before = eval(&mut client, "caller_sees()");
 	let changes = source.edit("reload.dm", "/proc/slow()\n\tsleep(1)", "/proc/slow()\n\tset waitfor = 0\n\tsleep(1)");
@@ -520,19 +560,15 @@ fn main() {
 
 	// Something that can't be done leaves everything as it was
 	let mut request = reload_request(&source.edit("reload.dm", "\treturn 4", "\treturn 5"));
-	if let Request::HotReload { procs, .. } = &mut request {
+	if let Request::HotReload(HotReloadRequest { procs, .. }) = &mut request {
 		let mut bad = procs[0].clone();
-		bad.params.push(dmasm::reload::Param {
-			name: "a_name_nothing_in_the_world_uses".to_owned(),
-			input: 0,
-			input_extra: 0
-		});
+		bad.proc.path = "/a_proc_the_world_doesnt_have".to_owned();
 		procs.push(bad);
 	}
 	let result = expect_reload_result(client.request(request));
 	assert!(!result.applied);
 	assert!(
-		result.errors.iter().any(|e| e.contains("a_name_nothing_in_the_world_uses")),
+		result.errors.iter().any(|e| e.contains("a_proc_the_world_doesnt_have")),
 		"{:?}",
 		result.errors
 	);
@@ -549,6 +585,7 @@ fn main() {
 	assert_eq!(eval(&mut client, "answer()"), "1");
 	assert_eq!(eval(&mut client, "few_locals()"), "1");
 	assert_eq!(eval(&mut client, "counter()"), "1");
+	assert_eq!(eval(&mut client, "old_dog.legs"), "4");
 	println!("ok: a world reboot after reloads");
 
 	println!("Hot reload tests succeeded");

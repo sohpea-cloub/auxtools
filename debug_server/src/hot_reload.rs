@@ -18,32 +18,171 @@
 //! A new var default goes into the var table of each type that inherits it,
 //! which is where instances read a var they never set.
 //!
+//! A new var gets the next var id, which names it and holds its value for a
+//! global or static var, and goes into the declared vars of its type and
+//! subtypes, and (unless static) their var tables.
+//!
 //! What a reload can't do yet, and refuses:
-//! - add static vars, or use prefabs with var overrides (`/obj{a = 1}`)
-//! - parameter names no proc or var in the world uses
+//! - use prefabs with var overrides (`/obj{a = 1}`)
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{btree_map::Entry, BTreeMap, BTreeSet, HashMap};
 
 use auxtools::{
 	raw_types,
 	runtime_tables::{self, type_fields, ProcEntryWords, NONE, PROC_FLAG_BACKGROUND, PROC_FLAG_WAITFOR},
 	Proc, StringRef
 };
-use dmasm::{assembler::AssembleEnv as _, reload::ConstValue, Instruction, Node, Opcode};
+use dmasm::{
+	assembler::AssembleEnv as _,
+	reload::{ConstValue, NewVar},
+	Instruction, Node, Opcode
+};
 
 use crate::{
 	assemble_env::AssembleEnv,
 	instruction_hooking::{hook_instruction, hooked_offsets, original_bytecode, unhook_instruction},
-	server_types::{HotReloadLines, HotReloadNewProc, HotReloadProc, HotReloadVarDefault, ProcRef}
+	server_types::{HotReloadNewProc, HotReloadProc, HotReloadRequest, HotReloadVarDefault, ProcRef}
 };
 
 /// A reload, checked and assembled, ready to apply.
 #[derive(Default)]
 pub struct Prepared {
+	new_vars: Vec<PreparedNewVar>,
 	new_procs: Vec<PreparedNewProc>,
 	code: Vec<PreparedCode>,
-	/// (type id, new var table)
-	var_tables: Vec<(u32, u32)>
+	/// (type id, field, misc id) for the types' new var tables and declared
+	/// vars
+	type_fields: Vec<(u32, usize, u32)>
+}
+
+/// A var id to add: its name's string id and the value of its global slot
+struct PreparedNewVar {
+	/// The id it will get: var ids are only ever appended
+	id: u32,
+	name: u32,
+	value: (u32, u32)
+}
+
+/// The var ids a reload adds, in the order they get them
+struct AddedVars {
+	first: u32,
+	vars: Vec<PreparedNewVar>,
+	/// Ids added to name parameters, by name
+	param_names: HashMap<String, u32>
+}
+
+impl AddedVars {
+	const fn next_id(&self) -> u32 {
+		self.first + self.vars.len() as u32
+	}
+
+	/// A var id to name a parameter: one of that name, or a new one. BYOND
+	/// only reads it back for its name, to match arguments passed by name.
+	fn param_name(&mut self, name: &str) -> Result<u32, String> {
+		if let Some(id) = variable_ids(name.as_bytes()).first().or_else(|| self.param_names.get(name)).copied() {
+			return Ok(id);
+		}
+		let id = self.next_id();
+		self.vars.push(PreparedNewVar {
+			id,
+			name: leaked_string(name)?,
+			value: (0, 0)
+		});
+		self.param_names.insert(name.to_owned(), id);
+		Ok(id)
+	}
+}
+
+/// What a reload adds that the code in it can already use, by the ids the
+/// additions will get.
+#[derive(Default)]
+struct Pending {
+	/// Procs, by path without `/proc`
+	procs: HashMap<String, u32>,
+	/// Static and global vars, by declaring type (`""` for a global) and name
+	globals: HashMap<(String, Vec<u8>), u32>
+}
+
+/// The var tables and declared vars a reload changes, by type id, as words
+/// read from the running world and changed here before they're interned.
+#[derive(Default)]
+struct TypeVars {
+	tables: BTreeMap<u32, Vec<u32>>,
+	declared: BTreeMap<u32, Vec<u32>>,
+	/// The names of var ids this reload adds
+	new_names: HashMap<u32, u32>,
+	/// Each type's parent
+	parents: Option<Vec<u32>>
+}
+
+impl TypeVars {
+	/// A type's misc entry at `field`, read the first time it's asked for
+	fn words(tables: &mut BTreeMap<u32, Vec<u32>>, type_id: u32, field: usize) -> Result<&mut Vec<u32>, String> {
+		Ok(match tables.entry(type_id) {
+			Entry::Occupied(entry) => entry.into_mut(),
+			Entry::Vacant(entry) => {
+				let id = runtime_tables::type_field(type_id, field)?;
+				entry.insert(runtime_tables::misc_words(id).ok_or_else(|| format!("couldn't read the vars of type {}", type_id))?)
+			}
+		})
+	}
+
+	/// (name, var id, tag, data) per var, sorted by name
+	fn table(&mut self, type_id: u32) -> Result<&mut Vec<u32>, String> {
+		Self::words(&mut self.tables, type_id, type_fields::VAR_TABLE)
+	}
+
+	/// (var id, flags) per var, sorted by the var ids' names
+	fn declared(&mut self, type_id: u32) -> Result<&mut Vec<u32>, String> {
+		Self::words(&mut self.declared, type_id, type_fields::DECLARED_VARS)
+	}
+
+	fn name_of(&self, var_id: u32) -> u32 {
+		self.new_names
+			.get(&var_id)
+			.copied()
+			.or_else(|| runtime_tables::variable_name(var_id))
+			.unwrap_or(u32::MAX)
+	}
+
+	/// `type_id` and every type that descends from it
+	fn subtree(&mut self, type_id: u32) -> Result<Vec<u32>, String> {
+		if self.parents.is_none() {
+			let count = runtime_tables::type_count()?;
+			self.parents = Some(
+				(0..count)
+					.map(|t| runtime_tables::type_field(t, type_fields::PARENT).unwrap_or(NONE))
+					.collect()
+			);
+		}
+		let parents = self.parents.as_ref().unwrap();
+		Ok((0..parents.len() as u32)
+			.filter(|&t| {
+				let mut at = t;
+				for _ in 0..parents.len() {
+					if at == type_id {
+						return true;
+					}
+					match parents.get(at as usize) {
+						Some(&parent) if parent != NONE => at = parent,
+						_ => return false
+					}
+				}
+				false
+			})
+			.collect())
+	}
+
+	/// Interns what changed, as (type id, field, misc id)
+	fn intern(self) -> Result<Vec<(u32, usize, u32)>, String> {
+		let mut out = vec![];
+		for (field, tables) in [(type_fields::VAR_TABLE, self.tables), (type_fields::DECLARED_VARS, self.declared)] {
+			for (type_id, words) in tables {
+				out.push((type_id, field, runtime_tables::intern_misc(&words)?));
+			}
+		}
+		Ok(out)
+	}
 }
 
 /// New contents for an existing proc's table entry.
@@ -104,37 +243,52 @@ fn strip_path(path: &str) -> String {
 
 /// Checks and assembles everything in a reload. Errors mean none of it can be
 /// applied.
-pub fn prepare(
-	procs: &[HotReloadProc],
-	new_procs: &[HotReloadNewProc],
-	var_defaults: &[HotReloadVarDefault],
-	line_moves: &[HotReloadLines],
-	warnings: &mut Vec<String>
-) -> Result<Prepared, Vec<String>> {
+pub fn prepare(request: &HotReloadRequest, warnings: &mut Vec<String>) -> Result<Prepared, Vec<String>> {
+	let HotReloadRequest {
+		procs,
+		new_procs,
+		new_vars,
+		var_defaults,
+		line_moves
+	} = request;
 	runtime_tables::available().map_err(|e| vec![format!("hot reloading isn't available on this build of BYOND: {}", e)])?;
 
 	let mut prepared = Prepared::default();
 	let mut errors = vec![];
 	let mut world_globals = WorldGlobals::default();
 
-	// New procs get the next ids, in order, and code in this reload can
-	// already call them
+	let mut pending = Pending::default();
+	let mut type_vars = TypeVars::default();
+
+	// New vars and procs get the next ids, in order, and code in this reload
+	// can already use them
+	let mut added = AddedVars {
+		first: runtime_tables::variable_count(),
+		vars: vec![],
+		param_names: HashMap::new()
+	};
+	for new in new_vars {
+		if let Err(e) = prepare_new_var(new, &mut added, &mut type_vars, &mut pending) {
+			errors.push(e);
+		}
+	}
+
 	let first_id = runtime_tables::proc_count();
-	let pending: HashMap<String, u32> = new_procs
+	pending.procs = new_procs
 		.iter()
 		.enumerate()
 		.map(|(i, new)| (strip_path(&new.code.proc.path), first_id + i as u32))
 		.collect();
 
 	for (i, new) in new_procs.iter().enumerate() {
-		match prepare_new_proc(new, first_id + i as u32, &pending, &mut world_globals) {
+		match prepare_new_proc(new, first_id + i as u32, &pending, &mut world_globals, &mut added) {
 			Ok(p) => prepared.new_procs.push(p),
 			Err(e) => errors.push(e)
 		}
 	}
 
 	for reload in procs {
-		match prepare_code(reload, &pending, &mut world_globals, warnings) {
+		match prepare_code(reload, &pending, &mut world_globals, &mut added, warnings) {
 			Ok(p) => prepared.code.push(p),
 			Err(e) => errors.push(e)
 		}
@@ -169,9 +323,16 @@ pub fn prepare(
 	}
 
 	for default in var_defaults {
-		match prepare_var_default(default) {
-			Ok(tables) => prepared.var_tables.extend(tables),
-			Err(e) => errors.push(e)
+		if let Err(e) = prepare_var_default(default, &mut type_vars) {
+			errors.push(e);
+		}
+	}
+
+	prepared.new_vars = added.vars;
+	if errors.is_empty() {
+		match type_vars.intern() {
+			Ok(fields) => prepared.type_fields = fields,
+			Err(e) => errors.push(format!("couldn't make the types' new vars: {}", e))
 		}
 	}
 
@@ -183,13 +344,7 @@ pub fn prepare(
 }
 
 /// Assembles a proc's code for the running world.
-fn assemble(
-	name: &str,
-	code: &HotReloadProc,
-	original: &[u32],
-	pending: &HashMap<String, u32>,
-	world_globals: &mut WorldGlobals
-) -> Result<Vec<u32>, String> {
+fn assemble(name: &str, code: &HotReloadProc, original: &[u32], pending: &Pending, world_globals: &mut WorldGlobals) -> Result<Vec<u32>, String> {
 	let nodes = adapt_debug_info(&code.nodes, original);
 
 	let mut env = ReloadEnv::new(original, world_globals, pending);
@@ -212,8 +367,9 @@ fn assemble(
 
 fn prepare_code(
 	reload: &HotReloadProc,
-	pending: &HashMap<String, u32>,
+	pending: &Pending,
 	world_globals: &mut WorldGlobals,
+	added: &mut AddedVars,
 	warnings: &mut Vec<String>
 ) -> Result<PreparedCode, String> {
 	let name = describe(&reload.proc);
@@ -235,7 +391,7 @@ fn prepare_code(
 		Some(locals_table(&reload.locals, entry.0[ProcEntryWords::LOCALS]).map_err(|e| format!("{}: {}", name, e))?)
 	};
 
-	let params_id = params_table(&reload.params, entry.0[ProcEntryWords::PARAMETERS]).map_err(|e| format!("{}: {}", name, e))?;
+	let params_id = params_table(&reload.params, entry.0[ProcEntryWords::PARAMETERS], added).map_err(|e| format!("{}: {}", name, e))?;
 
 	let flags = settings_flags(entry.0[ProcEntryWords::FLAGS], &reload.settings);
 
@@ -261,12 +417,6 @@ const fn settings_flags(flags: u32, settings: &dmasm::reload::ProcSettings) -> u
 		flags |= PROC_FLAG_BACKGROUND;
 	}
 	flags
-}
-
-/// The var id a local or parameter called `name` gets: one already used for
-/// that name. BYOND only reads it back for its name.
-fn name_var_id(name: &str) -> Option<u32> {
-	variable_ids(name.as_bytes()).first().copied()
 }
 
 /// A locals table with these names. `empty` is a table with none, which the
@@ -297,7 +447,7 @@ fn locals_table(names: &[String], empty: u32) -> Result<u32, String> {
 /// A new parameter table, when `params` differ from what `current` (a misc
 /// id) has. Four words per parameter: input type, a word that's 0x7D01 when
 /// there's no `in` list, the name's var id, and the input type's high bits.
-fn params_table(params: &[dmasm::reload::Param], current: u32) -> Result<Option<u32>, String> {
+fn params_table(params: &[dmasm::reload::Param], current: u32, added: &mut AddedVars) -> Result<Option<u32>, String> {
 	const NO_IN_LIST: u32 = 0x7D01;
 	let current_words = runtime_tables::misc_words(current).unwrap_or_default();
 
@@ -318,12 +468,7 @@ fn params_table(params: &[dmasm::reload::Param], current: u32) -> Result<Option<
 
 	let mut words = vec![];
 	for param in params {
-		let id = name_var_id(&param.name).ok_or_else(|| {
-			format!(
-				"parameter {} has a name no proc or var in the running world uses yet, which a reload can't add",
-				param.name
-			)
-		})?;
+		let id = added.param_name(&param.name).map_err(|e| format!("parameter {}: {}", param.name, e))?;
 		words.extend([param.input, NO_IN_LIST, id, param.input_extra]);
 	}
 	runtime_tables::intern_misc(&words).map(Some)
@@ -354,8 +499,9 @@ fn type_and_ancestors(type_id: u32) -> Vec<u32> {
 fn prepare_new_proc(
 	new: &HotReloadNewProc,
 	id: u32,
-	pending: &HashMap<String, u32>,
-	world_globals: &mut WorldGlobals
+	pending: &Pending,
+	world_globals: &mut WorldGlobals,
+	added: &mut AddedVars
 ) -> Result<PreparedNewProc, String> {
 	let shown = describe(&new.code.proc);
 	let fail = |e: String| format!("{}: {}", shown, e);
@@ -397,7 +543,7 @@ fn prepare_new_proc(
 	entry.0[ProcEntryWords::PARAMETERS] = if new.code.params.is_empty() {
 		template.0[ProcEntryWords::PARAMETERS]
 	} else {
-		params_table(&new.code.params, NONE).map_err(fail)?.unwrap()
+		params_table(&new.code.params, NONE, added).map_err(fail)?.unwrap()
 	};
 	entry.0[ProcEntryWords::NEXT_OVERRIDE] = NONE;
 
@@ -463,51 +609,95 @@ fn prepare_new_proc(
 	})
 }
 
-fn prepare_var_default(default: &HotReloadVarDefault) -> Result<Vec<(u32, u32)>, String> {
-	let fail = |e: String| format!("var {}: {}", default.var, e);
-
-	let value = match &default.value {
+/// A constant as a value's tag and data. A string's reference is kept for
+/// good, by whatever the value goes into.
+fn const_value(value: &ConstValue) -> Result<(u32, u32), String> {
+	Ok(match value {
 		ConstValue::Null => (0, 0),
 		ConstValue::Number(n) => (0x2A, n.to_bits()),
-		ConstValue::String(text) => {
-			let string = StringRef::new(text).map_err(|_| fail("couldn't make the string".to_owned()))?;
-			let id = string.get_id().0;
-			// The var tables hold it from now on
-			std::mem::forget(string);
-			(0x06, id)
-		}
+		ConstValue::String(text) => (0x06, leaked_string(text)?),
 		ConstValue::Path(path) => {
 			let (tag, data) = AssembleEnv
 				.get_type(path)
-				.ok_or_else(|| fail(format!("there's no type {} in the running world", path)))?;
+				.ok_or_else(|| format!("there's no type {} in the running world", path))?;
 			(tag as u32, data)
 		}
 		ConstValue::Resource(file) => (
 			0x0C,
 			AssembleEnv
 				.get_resource_index(file)
-				.ok_or_else(|| fail(format!("couldn't find the file {}", file)))?
+				.ok_or_else(|| format!("couldn't find the file {}", file))?
 		)
-	};
+	})
+}
+
+/// A string's id, with a reference that's never let go
+fn leaked_string(text: &str) -> Result<u32, String> {
+	let string = StringRef::new(text).map_err(|_| format!("couldn't make the string {}", text))?;
+	let id = string.get_id().0;
+	std::mem::forget(string);
+	Ok(id)
+}
+
+fn prepare_new_var(new: &NewVar, added: &mut AddedVars, type_vars: &mut TypeVars, pending: &mut Pending) -> Result<(), String> {
+	const STATIC: u32 = 1;
+	let fail = |e: String| format!("{}/var/{}: {}", new.type_path, new.var, e);
+
+	let id = added.next_id();
+	let value = const_value(&new.value).map_err(fail)?;
+	let name = leaked_string(&new.var).map_err(fail)?;
+	type_vars.new_names.insert(id, name);
+
+	if !new.type_path.is_empty() {
+		let type_id = find_type(&new.type_path).map_err(fail)?;
+		for sub in type_vars.subtree(type_id).map_err(fail)? {
+			let declared = type_vars.declared(sub).map_err(fail)?.clone();
+			let names: Vec<u32> = declared.chunks(2).map(|pair| type_vars.name_of(pair[0])).collect();
+			match names.binary_search(&name) {
+				Ok(_) => return Err(fail(format!("type {} already has a var called that", sub))),
+				Err(at) => {
+					type_vars.declared(sub).map_err(fail)?.splice(at * 2..at * 2, [id, new.flags]);
+				}
+			}
+
+			if new.flags & STATIC == 0 {
+				let table = type_vars.table(sub).map_err(fail)?;
+				let at = table.chunks(4).position(|entry| entry[0] >= name).unwrap_or(table.len() / 4);
+				if table.get(at * 4) == Some(&name) {
+					return Err(fail(format!("type {} already has a var called that", sub)));
+				}
+				table.splice(at * 4..at * 4, [name, id, value.0, value.1]);
+			}
+		}
+	}
+
+	if new.type_path.is_empty() || new.flags & STATIC != 0 {
+		pending.globals.insert((new.type_path.clone(), new.var.as_bytes().to_vec()), id);
+	}
+
+	added.vars.push(PreparedNewVar { id, name, value });
+	Ok(())
+}
+
+fn prepare_var_default(default: &HotReloadVarDefault, type_vars: &mut TypeVars) -> Result<(), String> {
+	let fail = |e: String| format!("var {}: {}", default.var, e);
+
+	let value = const_value(&default.value).map_err(fail)?;
 	let key = StringRef::new(&default.var)
 		.map_err(|_| fail("couldn't make its name".to_owned()))?
 		.get_id()
 		.0;
 
-	let mut tables = vec![];
 	for path in &default.types {
 		let type_id = find_type(path).map_err(fail)?;
-		let table = runtime_tables::type_field(type_id, type_fields::VAR_TABLE).map_err(fail)?;
-		let mut words = runtime_tables::misc_words(table).ok_or_else(|| fail(format!("couldn't read {}'s vars", path)))?;
-		// (name, var id, tag, data) per var
-		let Some(entry) = words.chunks_mut(4).find(|entry| entry[0] == key) else {
+		let table = type_vars.table(type_id).map_err(fail)?;
+		let Some(entry) = table.chunks_mut(4).find(|entry| entry[0] == key) else {
 			return Err(fail(format!("{} doesn't have it in the running world", path)));
 		};
 		entry[2] = value.0;
 		entry[3] = value.1;
-		tables.push((type_id, runtime_tables::intern_misc(&words).map_err(fail)?));
 	}
-	Ok(tables)
+	Ok(())
 }
 
 /// Swaps everything in. Breakpoints in the procs come out first and go back in
@@ -518,6 +708,14 @@ pub fn apply(
 	moved_breakpoints: &mut MovedBreakpoints,
 	warnings: &mut Vec<String>
 ) {
+	for new in &prepared.new_vars {
+		match runtime_tables::add_variable(new.name, new.value.0 as u8, new.value.1) {
+			Ok(id) if id != new.id => warnings.push(format!("a new var got id {} where {} was expected", id, new.id)),
+			Ok(_) => {}
+			Err(e) => warnings.push(format!("couldn't add a var: {}", e))
+		}
+	}
+
 	for new in &prepared.new_procs {
 		let id = match runtime_tables::add_proc(&new.entry) {
 			Ok(id) => id,
@@ -566,8 +764,8 @@ pub fn apply(
 		apply_code(p, conditions, moved_breakpoints, warnings);
 	}
 
-	for (type_id, table) in prepared.var_tables {
-		let _ = runtime_tables::set_type_field(type_id, type_fields::VAR_TABLE, table);
+	for (type_id, field, words) in prepared.type_fields {
+		let _ = runtime_tables::set_type_field(type_id, field, words);
 	}
 }
 
@@ -829,14 +1027,14 @@ impl WorldGlobals {
 struct ReloadEnv<'a> {
 	proc_globals: HashMap<Vec<u8>, Vec<u32>>,
 	world_globals: &'a mut WorldGlobals,
-	/// Procs this reload adds, by path without `/proc`, and the ids they'll get
-	pending: &'a HashMap<String, u32>,
+	/// What this reload adds
+	pending: &'a Pending,
 	/// Why a lookup failed, when that says more than the assembler's error
 	error: Option<String>
 }
 
 impl<'a> ReloadEnv<'a> {
-	fn new(original: &[u32], world_globals: &'a mut WorldGlobals, pending: &'a HashMap<String, u32>) -> Self {
+	fn new(original: &[u32], world_globals: &'a mut WorldGlobals, pending: &'a Pending) -> Self {
 		Self {
 			proc_globals: globals_in(original),
 			world_globals,
@@ -856,7 +1054,7 @@ impl dmasm::assembler::AssembleEnv for ReloadEnv<'_> {
 	}
 
 	fn get_proc_index(&mut self, path: &str) -> Option<u32> {
-		if let Some(&id) = self.pending.get(&strip_path(path)) {
+		if let Some(&id) = self.pending.procs.get(&strip_path(path)) {
 			return Some(id);
 		}
 		AssembleEnv.get_proc_index(path)
@@ -864,7 +1062,7 @@ impl dmasm::assembler::AssembleEnv for ReloadEnv<'_> {
 
 	fn get_type(&mut self, path: &str) -> Option<(u8, u32)> {
 		// A reference to a proc this reload adds
-		if let Some(&id) = self.pending.get(&strip_path(path)) {
+		if let Some(&id) = self.pending.procs.get(&strip_path(path)) {
 			return Some((raw_types::values::ValueTag::ProcRef as u8, id));
 		}
 		AssembleEnv.get_type(path)
@@ -883,18 +1081,21 @@ impl dmasm::assembler::AssembleEnv for ReloadEnv<'_> {
 			let n = scope.rsplit_once('#').and_then(|(_, n)| n.parse::<usize>().ok()).unwrap_or(0);
 			let id = self.proc_globals.get(name).and_then(|ids| ids.get(n)).copied();
 			if id.is_none() {
-				self.error = Some(format!("static local {} is new (vars can't be added in a reload)", shown));
+				self.error = Some(format!("static local {} is new, which a reload can't add yet", shown));
 			}
 			return id;
+		}
+
+		// A var this reload adds
+		let key = (scope.unwrap_or_default().to_owned(), name.to_vec());
+		if let Some(&id) = self.pending.globals.get(&key) {
+			return Some(id);
 		}
 
 		let candidates = variable_ids(name);
 		match candidates.len() {
 			0 => {
-				self.error = Some(format!(
-					"there's no global var {} in the running world (vars can't be added in a reload)",
-					shown
-				));
+				self.error = Some(format!("there's no global var {} in the running world", shown));
 				return None;
 			}
 			1 => return Some(candidates[0]),

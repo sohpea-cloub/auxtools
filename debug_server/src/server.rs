@@ -1029,31 +1029,19 @@ impl Server {
 		}
 	}
 
-	fn handle_hot_reload(
-		&mut self,
-		procs: &[HotReloadProc],
-		new_procs: &[HotReloadNewProc],
-		var_defaults: &[HotReloadVarDefault],
-		line_moves: &[HotReloadLines]
-	) {
-		let result = self.hot_reload(procs, new_procs, var_defaults, line_moves);
+	fn handle_hot_reload(&mut self, request: &HotReloadRequest) {
+		let result = self.hot_reload(request);
 		self.send_or_disconnect(Response::HotReload(result));
 	}
 
-	fn hot_reload(
-		&mut self,
-		procs: &[HotReloadProc],
-		new_procs: &[HotReloadNewProc],
-		var_defaults: &[HotReloadVarDefault],
-		line_moves: &[HotReloadLines]
-	) -> HotReloadResult {
+	fn hot_reload(&mut self, request: &HotReloadRequest) -> HotReloadResult {
 		// Assembling runs DM code to look up typepaths and resources, which
 		// counts as eval code (see eval_expr)
 		self.in_eval = true;
 		self.eval_error = None;
 
 		let mut warnings = vec![];
-		let result = match hot_reload::prepare(procs, new_procs, var_defaults, line_moves, &mut warnings) {
+		let result = match hot_reload::prepare(request, &mut warnings) {
 			Ok(prepared) => {
 				hot_reload::apply(prepared, &mut self.conditional_breakpoints, &mut self.moved_breakpoints, &mut warnings);
 				HotReloadResult {
@@ -1077,14 +1065,14 @@ impl Server {
 
 		// A reload client might have asked, so tell the debug-client what
 		// changed
-		let changed = procs.len() + new_procs.len() + var_defaults.len() + line_moves.len();
-		if result.applied && changed > 0 {
+		if result.applied && !request.is_empty() {
 			self.notify(format!(
-				"Hot reload: new code for {} procs, {} new procs, {} new var defaults, {} moved",
-				procs.len(),
-				new_procs.len(),
-				var_defaults.len(),
-				line_moves.len()
+				"Hot reload: new code for {} procs, {} new procs, {} new vars, {} new var defaults, {} moved",
+				request.procs.len(),
+				request.new_procs.len(),
+				request.new_vars.len(),
+				request.var_defaults.len(),
+				request.line_moves.len()
 			));
 		}
 
@@ -1098,12 +1086,7 @@ impl Server {
 				Response::ByondVersion { version, build }
 			}
 
-			Request::HotReload {
-				procs,
-				new_procs,
-				var_defaults,
-				line_moves
-			} => Response::HotReload(self.hot_reload(&procs, &new_procs, &var_defaults, &line_moves)),
+			Request::HotReload(request) => Response::HotReload(self.hot_reload(&request)),
 
 			_ => Response::Notification {
 				message: "the reload port only takes ByondVersion and HotReload requests".to_owned()
@@ -1183,12 +1166,7 @@ impl Server {
 				self.send_or_disconnect(Response::ByondVersion { version, build });
 			}
 
-			Request::HotReload {
-				procs,
-				new_procs,
-				var_defaults,
-				line_moves
-			} => self.handle_hot_reload(&procs, &new_procs, &var_defaults, &line_moves),
+			Request::HotReload(request) => self.handle_hot_reload(&request),
 
 			Request::StdDef => {
 				let stddef = crate::stddef::get_stddef().map(|x| x.to_string());

@@ -420,3 +420,48 @@ pub fn global_value(var_id: u32) -> Result<crate::raw_types::values::Value, Stri
 		Ok(*(*functions.global_values).add(var_id as usize))
 	}
 }
+
+/// How many var ids there are.
+pub fn variable_count() -> u32 {
+	unsafe { (*crate::raw_types::funcs::VARIABLE_NAMES).count }
+}
+
+/// The string id of a var id's name.
+pub fn variable_name(var_id: u32) -> Option<u32> {
+	unsafe {
+		let table = &*crate::raw_types::funcs::VARIABLE_NAMES;
+		(var_id < table.count).then(|| (*table.entries.add(var_id as usize)).0)
+	}
+}
+
+/// Appends a var id named `name` (a string id) whose global slot holds the
+/// value `tag`/`data`. The slot keeps a reference to it, which the caller
+/// hands over. Ids are only ever appended, so existing ones stay as they are.
+pub fn add_variable(name: u32, tag: u8, data: u32) -> Result<u32, String> {
+	let functions = functions()?;
+	unsafe {
+		let table = crate::raw_types::funcs::VARIABLE_NAMES as *mut crate::raw_types::variables::VariableNameIdTable;
+		let count = (*table).count as usize;
+		if count as u32 >= NONE {
+			return Err("the world has as many vars as BYOND can number".to_owned());
+		}
+
+		let names = (functions.crt_realloc)((*table).entries as *mut c_void, (count + 1) * 4) as *mut u32;
+		if names.is_null() {
+			return Err("out of memory growing the var names".to_owned());
+		}
+		(*table).entries = names as *const crate::raw_types::strings::StringId;
+
+		let slots = functions.global_values as *mut *mut [u32; 2];
+		let values = (functions.crt_realloc)(*slots as *mut c_void, (count + 1) * 8) as *mut [u32; 2];
+		if values.is_null() {
+			return Err("out of memory growing the var values".to_owned());
+		}
+		*slots = values;
+
+		names.add(count).write(name);
+		values.add(count).write([tag as u32, data]);
+		(*table).count += 1;
+		Ok(count as u32)
+	}
+}

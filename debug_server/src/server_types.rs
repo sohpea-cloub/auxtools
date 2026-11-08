@@ -61,15 +61,10 @@ pub enum Request {
 	// New requests go last, so older debug-clients' requests keep their numbers
 	/// Which BYOND version the world runs on
 	ByondVersion,
-	/// Swaps new code into procs, adds procs, sets new var defaults and
-	/// renumbers the lines of procs that moved. Either all of it is applied or
-	/// none of it is.
-	HotReload {
-		procs: Vec<HotReloadProc>,
-		new_procs: Vec<HotReloadNewProc>,
-		var_defaults: Vec<HotReloadVarDefault>,
-		line_moves: Vec<HotReloadLines>
-	}
+	/// Swaps new code into procs, adds vars and procs, sets new var defaults
+	/// and renumbers the lines of procs that moved. Either all of it is
+	/// applied or none of it is.
+	HotReload(HotReloadRequest)
 }
 
 // Message from server -> client
@@ -185,6 +180,29 @@ pub struct Variable {
 pub struct EvalResponse {
 	pub value: String,
 	pub variables: Option<VariablesRef>
+}
+
+/// What a hot reload changes (see `Request::HotReload`)
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct HotReloadRequest {
+	pub procs: Vec<HotReloadProc>,
+	pub new_procs: Vec<HotReloadNewProc>,
+	/// Added before anything else, so the code in the reload can use them
+	pub new_vars: Vec<dmasm::reload::NewVar>,
+	/// Applied after the new vars, so they can set the defaults of those too
+	pub var_defaults: Vec<HotReloadVarDefault>,
+	pub line_moves: Vec<HotReloadLines>
+}
+
+impl HotReloadRequest {
+	/// How many things it changes
+	pub const fn len(&self) -> usize {
+		self.procs.len() + self.new_procs.len() + self.new_vars.len() + self.var_defaults.len() + self.line_moves.len()
+	}
+
+	pub const fn is_empty(&self) -> bool {
+		self.len() == 0
+	}
 }
 
 /// New code for a proc, as dmasm's proc compiler produced it
