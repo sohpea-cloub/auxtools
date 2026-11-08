@@ -80,7 +80,8 @@ impl State {
 //
 
 enum Event {
-	// A debug-client arrived. The TcpStream is for the Server to send responses on
+	// A debug-client arrived. The TcpStream is for the Server to send responses
+	// on
 	Connected(TcpStream),
 
 	// A request from the debug-client for the Server to handle
@@ -1061,7 +1062,8 @@ impl Server {
 				self.send_or_disconnect(Response::CurrentInstruction(response));
 			}
 
-			// The following requests are special cases and handled outside of this function
+			// The following requests are special cases and handled outside of
+			// this function
 			Request::Configured | Request::Continue { .. } => {
 				self.send_or_disconnect(Response::Ack);
 			}

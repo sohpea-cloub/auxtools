@@ -59,15 +59,23 @@ impl dmasm::assembler::AssembleEnv for AssembleEnv {
 
 	// This is... pretty crazy
 	fn get_type(&mut self, path: &str) -> Option<(u8, u32)> {
-		// text2path() returns null for these two
 		match path {
+			// text2path() returns null for these two
 			"/list" => return Some((raw_types::values::ValueTag::ListTypepath as u8, 0)),
 			"/savefile" => return Some((raw_types::values::ValueTag::SaveFileTypepath as u8, 0)),
+			// text2path() gives /client's path id as the data, but the compiler
+			// always writes 0
+			"/client" => return Some((raw_types::values::ValueTag::ClientTypepath as u8, 0)),
 			_ => {}
 		}
 
-		let res = Self::eval_with_name("text2path(name)", path)?;
-		Some((res.raw.tag as u8, unsafe { res.raw.data.id }))
+		if let Some(res) = Self::eval_with_name("text2path(name)", path) {
+			return Some((res.raw.tag as u8, unsafe { res.raw.data.id }));
+		}
+
+		// A reference to a proc override, like /obj/foo/bar, has no /proc/ in
+		// its path, and text2path() doesn't know it
+		Proc::find(path).map(|p| (raw_types::values::ValueTag::ProcRef as u8, p.id.0))
 	}
 
 	// fcopy_rsc() hands back the cache entry a file already has, and adds the
