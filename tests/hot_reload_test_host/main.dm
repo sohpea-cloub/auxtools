@@ -104,3 +104,10 @@ var/mob/chain_verbs/verb_chain = new
 	return length(many)
 
 var/datum/declared/declared_one = new
+
+// Changed to code the compiler learnt late
+/proc/compiled_late()
+	return 0
+
+/proc/keyed(a, b)
+	return b

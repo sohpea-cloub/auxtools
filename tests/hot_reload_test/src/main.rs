@@ -948,6 +948,21 @@ fn main() {
 	assert_eq!(eval(&mut client, "declared_one.many_count()"), "3");
 	println!("ok: vars declared static, const and tmp, and back");
 
+	// Builtins, a key worked out and __TYPE__ in a global proc
+	let changes = source.edit(
+		"main.dm",
+		"/proc/compiled_late()\n\treturn 0",
+		concat!(
+			"/proc/compiled_late()\n",
+			"\tvar/list/got = list(cmptextEx(\"a\", \"a\", \"a\"), cmptext(\"a\", \"A\", \"b\"),",
+			" findlasttext_char(\"abcabc\", \"b\"), isnull(__TYPE__), keyed(lowertext(\"B\") = 3))\n",
+			"\treturn jointext(got, \",\")"
+		)
+	);
+	reload(&mut watcher, &changes);
+	assert_eq!(eval(&mut client, "compiled_late()"), "\"1,0,5,1,3\"");
+	println!("ok: code the compiler learnt late");
+
 	// A verb's definitions, a world proc's and a global proc's come and go
 	// among the others too
 	let definition_at = |client: &mut Client, path: &str, override_id: u32, line: u32| {
