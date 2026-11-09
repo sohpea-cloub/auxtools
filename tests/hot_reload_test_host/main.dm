@@ -25,3 +25,12 @@ var/reboot_requested = FALSE
 	// Rebooting has to happen out here. The test asks for it through the
 	// debug server, which can't shut itself down there.
 	world.Reboot()
+
+// A type's const is compiled into the code that uses it
+/datum/limits
+	var/const/MAX = 3
+
+/datum/limits/proc/max_doubled()
+	return MAX * 2
+
+var/datum/limits/kept_limits = new

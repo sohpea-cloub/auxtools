@@ -14,7 +14,7 @@ version = "0.1.0"
 [workspace.dependencies]
 lazy_static = "1"
 retour = { version = "=0.4.0-alpha.4", default-features = false }
-dmasm = { git = "https://github.com/sohpea-cloub/dmasm", branch = "hot-reload", features = ["serde"] }
+dmasm = { git = "https://github.com/sohpea-cloub/dmasm", branch = "hot-reload-gaps", features = ["serde"] }
 byond-scan = { git = "https://github.com/Absolucy/byond-scan" }
 
 # dmasm's proc compiler needs parser fixes that aren't in a SpacemanDMM

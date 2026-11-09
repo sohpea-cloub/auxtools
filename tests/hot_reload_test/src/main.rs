@@ -805,6 +805,14 @@ fn main() {
 	);
 	println!("ok: built-in vars");
 
+	// A type's const: the code that uses it is compiled again
+	assert_eq!(eval(&mut client, "kept_limits.max_doubled()"), "6");
+	let changes = source.edit("main.dm", "\tvar/const/MAX = 3\n", "\tvar/const/MAX = 7\n");
+	assert_eq!(changes.consts, ["MAX"]);
+	reload(&mut watcher, &changes);
+	assert_eq!(eval(&mut client, "kept_limits.max_doubled()"), "14");
+	println!("ok: a type's const");
+
 	// A new mob type, with a mob var of its own and its parent's verbs, and a
 	// new default for a mob var of a mob type the world has
 	let changes = source.edit(

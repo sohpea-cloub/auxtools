@@ -321,6 +321,7 @@ fn summary(changes: &Changes) -> String {
 	};
 	let parts: Vec<String> = [
 		list(changes.new_types.iter().map(|t| t.path.clone()).collect(), "types").map(|s| format!("added {}", s)),
+		list(changes.consts.clone(), "consts").map(|s| format!("compiled the code that uses {} again", s)),
 		list(changes.reloads.iter().map(|r| r.proc.to_string()).collect(), "procs").map(|s| format!("reloaded {}", s)),
 		list(changes.settings.iter().map(|c| c.proc.to_string()).collect(), "procs").map(|s| format!("set the settings of {}", s)),
 		list(changes.new_procs.iter().map(|p| p.code.proc.to_string()).collect(), "procs").map(|s| format!("added {}", s)),
