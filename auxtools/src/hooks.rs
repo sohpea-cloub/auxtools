@@ -187,6 +187,8 @@ extern "C" fn call_proc_by_id_hook(
 	_callback: u32,
 	_callback_value: u32
 ) -> u8 {
+	crate::on_proc_call();
+
 	// copy the fn out so no borrow is held while the hook runs DM code, which
 	// can call back into here or register hooks
 	let Some(hook) = PROC_HOOKS.0.borrow().get(&proc_id).map(|(hook, _)| *hook) else {
