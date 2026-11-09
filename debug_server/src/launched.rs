@@ -13,13 +13,14 @@
 
 use std::{collections::HashMap, sync::OnceLock};
 
-use auxtools::{Proc, Value, WorldLoad};
+use auxtools::{byond_string, Proc, Value, WorldLoad};
 use dmasm::reload::{ProcKey, Snapshot};
 
 use crate::{
 	connection, hot_reload,
 	server::Server,
-	server_types::{HotReloadNewProc, HotReloadProc, HotReloadRequest, ProcRef}
+	server_types::{HotReloadNewProc, HotReloadProc, HotReloadRequest, ProcRef},
+	waker
 };
 
 /// Set by the launcher: `wait` or `run`
@@ -178,6 +179,10 @@ fn ready() {
 		let _ = proc.hook(world_del);
 	}
 
+	// Where to wake it if it sleeps with no players (see `waker`)
+	if let Ok(port) = Value::WORLD.get_number(byond_string!("port")) {
+		waker::set_port(port as u16);
+	}
 	let mut server = match Server::listen() {
 		Ok(server) => server,
 		Err(e) => {

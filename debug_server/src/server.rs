@@ -20,7 +20,7 @@ use super::{
 };
 use crate::{
 	connection::{self, Connection},
-	hot_reload, mem_profiler
+	hot_reload, mem_profiler, waker
 };
 
 #[derive(Clone, Hash, PartialEq, Eq)]
@@ -221,6 +221,7 @@ impl Server {
 			thread::Builder::new()
 				.name("debug server listener".to_owned())
 				.spawn(move || Self::accept(&listener))?;
+			waker::start()?;
 		}
 		acceptor
 			.as_mut()
@@ -1272,9 +1273,10 @@ impl Server {
 				}
 
 				// Sent by a client we've since given up on
-				Event::Request(id, _) if !self.clients.contains_key(&id) => {}
+				Event::Request(id, _) if !self.clients.contains_key(&id) => waker::request_taken(),
 
 				Event::Request(id, request) => {
+					waker::request_taken();
 					self.current = Some(id);
 					return Some(request);
 				}
@@ -1382,6 +1384,11 @@ impl Server {
 	// returns true if we need to pause
 	pub fn process(&mut self) -> bool {
 		let mut should_pause = false;
+
+		waker::alive();
+		if waker::woke() {
+			self.notify("The world was asleep with no players connected (world.sleep_offline): auxtools woke it, as debuggers count as players");
+		}
 
 		while let Some(request) = self.recv_request(Wait::No) {
 			// Not `||`, that would skip every request after a Pause
@@ -1523,6 +1530,7 @@ fn read_request(stream: &mut impl Read, buf: &mut Vec<u8>) -> Result<Request, Bo
 impl ServerThread {
 	fn run(&self, id: ClientId, mut stream: Connection) {
 		let mut buf = vec![];
+		waker::client_connected();
 
 		loop {
 			let request = match read_request(&mut stream, &mut buf) {
@@ -1539,12 +1547,14 @@ impl ServerThread {
 				break;
 			}
 
+			waker::request_waiting();
 			if let Err(e) = self.events.send(Event::Request(id, request)) {
 				eprintln!("Debug server thread failed to handle request: {}", e);
 				break;
 			}
 		}
 
+		waker::client_left();
 		let _ = self.events.send(Event::Disconnected(id));
 
 		eprintln!("Debug client connection closed");

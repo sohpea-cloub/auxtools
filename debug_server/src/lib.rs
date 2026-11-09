@@ -7,6 +7,7 @@ mod launched;
 mod server;
 mod server_types;
 mod stddef;
+mod waker;
 
 #[cfg(windows)]
 mod crash_handler_windows;
