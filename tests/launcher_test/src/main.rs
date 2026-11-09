@@ -521,7 +521,11 @@ fn attach_and_reload(server: &str, library: &Path) {
 	std::fs::write(&code, source.replace("\treturn 1", "\treturn 2")).unwrap();
 	runner.wait_output("Hot reload: reloaded /value");
 	runner.wait_output("attach test: 2");
-	println!("ok: the world was hot reloaded");
+	assert!(
+		!runner.output.contains("reading all the code"),
+		"a change to a proc's code read all the code again"
+	);
+	println!("ok: the world was hot reloaded, from the changed file read on its own");
 
 	// Leaving doesn't end a world that was attached to
 	first.disconnect(json!({}));

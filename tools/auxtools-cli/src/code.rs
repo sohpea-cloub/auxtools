@@ -203,6 +203,40 @@ impl Code {
 		shown.sort();
 		self.log(format!("changed: {}", shown.join(", ")));
 
+		// One file whose procs' code changed is read again on its own
+		if let [file] = changed.iter().collect::<Vec<_>>().as_slice() {
+			let file = (*file).clone();
+			// What the world runs: what was last reloaded into it, or else what
+			// it was built from with the files read on their own since
+			let current = match watching.applied.as_mut() {
+				Some(applied) => applied,
+				None => &mut watching.built
+			};
+			match current.reload_file(&self.root, &file) {
+				Ok(reload) => {
+					watching.edited_since_built.insert(file);
+					return match self.reload(&reload.changes) {
+						None => false,
+						Some(true) => {
+							let current = match watching.applied.as_mut() {
+								Some(applied) => applied,
+								None => &mut watching.built
+							};
+							current.keep(reload);
+							self.send(Event::Changed);
+							true
+						}
+						Some(false) => true
+					};
+				}
+				Err(why) => self.log(format!(
+					"reading all the code, as {} changed more than its procs' code ({})",
+					file.display(),
+					why
+				))
+			}
+		}
+
 		let new = match self.parse() {
 			Ok(new) => new,
 			Err(e) => {
@@ -223,6 +257,7 @@ impl Code {
 			Some(true) => {
 				self.send(Event::Changed);
 				watching.applied = Some(new);
+				watching.built.clear_patches();
 				true
 			}
 			Some(false) => true
@@ -247,6 +282,7 @@ impl Code {
 
 		// Whatever was reloaded went with the old world
 		watching.applied = None;
+		watching.built.clear_patches();
 		if watching.edited_since_built.is_empty() {
 			return true;
 		}
@@ -265,6 +301,7 @@ impl Code {
 			Some(applied) => {
 				if applied {
 					watching.applied = Some(current);
+					watching.built.clear_patches();
 				}
 				true
 			}
