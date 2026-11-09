@@ -238,6 +238,8 @@ pub struct HotReloadNewProc {
 	pub name: String,
 	/// Declared on the type (`proc/name`), not overriding a parent's proc
 	pub declared: bool,
+	/// On the type's list of verbs, not of procs
+	pub verb: bool,
 	pub code: HotReloadProc
 }
 

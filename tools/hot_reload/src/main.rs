@@ -35,10 +35,10 @@ AUXTOOLS_RELOAD_PORT (2449 unless set). A debugger can be attached at the same
 time.
 
 The world should be running the code as it is when this starts. Proc code,
-new procs (more definitions of one too), definitions taken away, new types
-(not mobs), new vars and static locals, var defaults (those that aren't
-constants reach new instances), parameters and `set` statements can change.
-New mob types, most built-in vars on new types, verbs, prefabs with var
+new procs and verbs (more definitions of one too), definitions taken away,
+new types (not mobs), new vars and static locals, var defaults (those that
+aren't constants reach new instances), parameters and `set` statements can
+change. New mob types, most built-in vars on new types, prefabs with var
 overrides and new `in` list expressions need the world rebuilt, and are
 refused, along with the rest of the change.
 
@@ -205,6 +205,7 @@ fn reload_request(changes: &Changes) -> Request {
 				type_path: p.type_path.clone(),
 				name: p.name.clone(),
 				declared: p.declared,
+				verb: p.verb,
 				code: proc_code(&p.code)
 			})
 			.collect(),

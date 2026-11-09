@@ -171,3 +171,23 @@ var/datum/bag/old_bag = new
 /proc/nap_skipped(type)
 	var/datum/napper/n = new type
 	return isnull(n.nap())
+
+// Verbs
+
+/mob/helper/verb/greet()
+	set name = "Greet"
+	set category = "Helpers"
+	return "hi"
+
+/mob/helper/small
+
+var/mob/helper/small/old_helper = new
+
+/proc/verb_report(mob/m)
+	var/list/out = list()
+	for (var/v in m.verbs)
+		out += "[v:name]:[v:category]"
+	return jointext(out, ",")
+
+/proc/helper_greets(mob/helper/m)
+	return m.greet()

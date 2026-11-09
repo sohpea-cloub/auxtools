@@ -151,6 +151,7 @@ fn reload_request(changes: &Changes) -> Request {
 				type_path: p.type_path.clone(),
 				name: p.name.clone(),
 				declared: p.declared,
+				verb: p.verb,
 				code: proc_code(&p.code)
 			})
 			.collect(),
@@ -734,6 +735,42 @@ fn main() {
 	reload(&mut watcher, &changes);
 	assert_ne!(eval(&mut client, "nap_skipped(/datum/napper/cat)"), "1");
 	println!("ok: settings from the declaration");
+
+	// Verbs: a new one and an override with `..()`, which things made from
+	// then on get, settings from the declaration, and taking the override away
+	assert_eq!(eval(&mut client, "verb_report(old_helper)"), "\"Greet:Helpers\"");
+	let changes = source.edit(
+		"reload.dm",
+		"/mob/helper/small\n",
+		"/mob/helper/verb/wave()\n\tset name = \"Wave Hello\"\n\treturn \"wave\"\n\n/mob/helper/small\n\n/mob/helper/small/greet()\n\treturn \
+		 \"[..()]!\"\n"
+	);
+	reload(&mut watcher, &changes);
+	// As DreamMaker lists them: the type's own, newest first, then its parent's
+	assert_eq!(
+		eval(&mut client, "verb_report(new /mob/helper/small)"),
+		"\"Greet:Helpers,Wave Hello:,Greet:Helpers\""
+	);
+	assert_eq!(eval(&mut client, "verb_report(new /mob/helper)"), "\"Wave Hello:,Greet:Helpers\"");
+	assert_eq!(eval(&mut client, "helper_greets(new /mob/helper/small)"), "\"hi!\"");
+	assert_eq!(eval(&mut client, "verb_report(old_helper)"), "\"Greet:Helpers\"");
+	assert_eq!(eval(&mut client, "helper_greets(old_helper)"), "\"hi\"");
+	assert_eq!(eval(&mut client, "call(old_helper, \"wave\")()"), "\"wave\"");
+
+	let changes = source.edit("reload.dm", "\tset category = \"Helpers\"\n", "\tset category = \"Friends\"\n");
+	assert_eq!((changes.reloads.len(), changes.settings.len()), (1, 1));
+	reload(&mut watcher, &changes);
+	assert_eq!(eval(&mut client, "verb_report(old_helper)"), "\"Greet:Friends\"");
+	assert_eq!(
+		eval(&mut client, "verb_report(new /mob/helper/small)"),
+		"\"Greet:Friends,Wave Hello:,Greet:Friends\""
+	);
+
+	let changes = source.edit("reload.dm", "/mob/helper/small/greet()\n\treturn \"[..()]!\"\n", "");
+	reload(&mut watcher, &changes);
+	assert_eq!(eval(&mut client, "verb_report(new /mob/helper/small)"), "\"Wave Hello:,Greet:Friends\"");
+	assert_eq!(eval(&mut client, "helper_greets(new /mob/helper/small)"), "\"hi\"");
+	println!("ok: verbs");
 
 	// Something that can't be done leaves everything as it was
 	let mut request = reload_request(&source.edit("reload.dm", "\treturn 4", "\treturn 5"));

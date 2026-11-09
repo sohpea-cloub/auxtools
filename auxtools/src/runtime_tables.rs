@@ -613,6 +613,20 @@ pub fn set_type_field(type_id: u32, offset: usize, value: u32) -> Result<(), Str
 	Ok(())
 }
 
+/// Has BYOND work out a type's default appearance again, which new instances
+/// start with: it holds the type's verbs, for one. The old one stays for the
+/// instances that have it.
+pub fn forget_type_appearance(type_id: u32) -> Result<(), String> {
+	let functions = functions()?;
+	unsafe {
+		if type_id >= *functions.type_count {
+			return Err(format!("there's no type {}", type_id));
+		}
+		*(*functions.appearance_cache).add(type_id as usize) = NONE;
+	}
+	Ok(())
+}
+
 /// A type's proc name map.
 fn name_map(type_id: u32) -> Result<*mut ProcNameMap, String> {
 	let functions = functions()?;

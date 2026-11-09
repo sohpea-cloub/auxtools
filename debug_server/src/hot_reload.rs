@@ -15,6 +15,11 @@
 //! proc it overrides, and the `..()` of subtypes' procs that skipped past it
 //! is pointed at it.
 //!
+//! A new verb goes into its type's list of verbs instead, and its `..()` and
+//! those of the subtypes' verbs that skipped past it go by name. The type's
+//! and subtypes' default appearances, which hold the verbs new instances
+//! get, are worked out again.
+//!
 //! A definition taken away from the source is unlinked: it stays in the proc
 //! table, but its type's list, the proc name maps and the `..()` of other
 //! procs go past it, to what it overrode. Put back, it gets its id again.
@@ -58,6 +63,8 @@ pub struct Prepared {
 	code: Vec<PreparedCode>,
 	/// (proc, word, value) for procs' new settings
 	entry_words: Vec<(u32, usize, u32)>,
+	/// Types whose verbs change, so their default appearances do
+	appearances: BTreeSet<u32>,
 	/// (type id, field, misc id) for the types' new var tables and declared
 	/// vars
 	type_fields: Vec<(u32, usize, u32)>,
@@ -370,7 +377,12 @@ pub fn prepare(request: &HotReloadRequest, warnings: &mut Vec<String>) -> Result
 	let mut staged = StagedProcs::default();
 	for removed in removed_procs {
 		match prepare_removal(removed, &mut staged) {
-			Ok(p) => prepared.removed_procs.push(p),
+			Ok(p) => {
+				if removed.verb {
+					prepared.appearances.extend(type_vars.subtree(p.type_id).unwrap_or_default());
+				}
+				prepared.removed_procs.push(p);
+			}
 			Err(e) => errors.push(e)
 		}
 	}
@@ -398,6 +410,9 @@ pub fn prepare(request: &HotReloadRequest, warnings: &mut Vec<String>) -> Result
 		match prepare_new_proc(new, id, &pending, &mut world_globals, &mut added, &mut staged) {
 			Ok(mut p) => {
 				p.revived = revived;
+				if let Some(on_type) = p.on_type.as_ref().filter(|_| new.verb) {
+					prepared.appearances.extend(type_vars.subtree(on_type.type_id).unwrap_or_default());
+				}
 				prepared.new_procs.push(p);
 			}
 			Err(e) => errors.push(e)
@@ -496,6 +511,10 @@ pub fn prepare(request: &HotReloadRequest, warnings: &mut Vec<String>) -> Result
 			Ok(bytecode) => prepared.run_once.push((id, name, bytecode)),
 			Err(e) => errors.push(e)
 		}
+	}
+
+	if !prepared.appearances.is_empty() {
+		warnings.push("things made before the reload keep the verbs they had; things made after get them as they are now".to_owned());
 	}
 
 	prepared.new_vars = added.vars;
@@ -861,11 +880,13 @@ fn prepare_new_proc(
 		Ok(id)
 	};
 
-	// As DreamMaker writes them: `proc/` where the proc is declared
-	let path = match (new.type_path.as_str(), new.declared) {
-		("", _) => format!("/proc/{}", new.name),
-		(ty, true) => format!("{}/proc/{}", ty, new.name),
-		(ty, false) => format!("{}/{}", ty, new.name)
+	// As DreamMaker writes them: `proc/` or `verb/` where the proc is
+	// declared
+	let path = match (new.type_path.as_str(), new.declared, new.verb) {
+		("", ..) => format!("/proc/{}", new.name),
+		(ty, true, false) => format!("{}/proc/{}", ty, new.name),
+		(ty, true, true) => format!("{}/verb/{}", ty, new.name),
+		(ty, false, _) => format!("{}/{}", ty, new.name)
 	};
 
 	let mut entry = template;
@@ -886,6 +907,8 @@ fn prepare_new_proc(
 
 	let on_type = if new.type_path.is_empty() {
 		None
+	} else if new.verb {
+		Some(new_verb_on_type(&new.type_path, id, &mut entry, staged).map_err(fail)?)
 	} else {
 		let type_id = find_type(&new.type_path).map_err(fail)?;
 		let keys = [entry.0[ProcEntryWords::NAME], entry.0[ProcEntryWords::PATH_BASENAME]];
@@ -969,6 +992,54 @@ fn add_to_list(list: &mut Vec<u32>, field: usize, proc: u32) {
 	} else {
 		list.push(proc);
 	}
+}
+
+/// A new verb on a type. Verbs aren't in the proc name maps: a type's own are
+/// on its list of verbs, and a verb's `..()` goes to the newest definition of
+/// the same name on the type or its nearest ancestor.
+fn new_verb_on_type(type_path: &str, id: u32, entry: &mut ProcEntryWords, staged: &mut StagedProcs) -> Result<NewProcOnType, String> {
+	let type_id = find_type(type_path)?;
+	let name = entry.0[ProcEntryWords::PATH_BASENAME];
+	let named = |proc: &u32| staged.entry(*proc).is_some_and(|e| e.0[ProcEntryWords::PATH_BASENAME] == name);
+
+	let mut overridden = NONE;
+	for t in type_and_ancestors(type_id) {
+		if let Some(&proc) = staged.own(t, type_fields::VERBS)?.iter().find(|p| named(p)) {
+			overridden = proc;
+			break;
+		}
+	}
+	entry.0[ProcEntryWords::NEXT_OVERRIDE] = overridden;
+
+	// The `..()` of the subtypes' verbs that went past it
+	let mut relinked = vec![];
+	for sub in 0..runtime_tables::type_count()? {
+		if sub == type_id || !type_and_ancestors(sub).contains(&type_id) {
+			continue;
+		}
+		for proc in staged.own(sub, type_fields::VERBS)? {
+			if named(&proc) && staged.entry(proc).is_some_and(|e| e.0[ProcEntryWords::NEXT_OVERRIDE] == overridden) && !relinked.contains(&proc) {
+				relinked.push(proc);
+			}
+		}
+	}
+
+	for &proc in &relinked {
+		if let Some(e) = staged.entries.get_mut(&proc) {
+			e.0[ProcEntryWords::NEXT_OVERRIDE] = id;
+		} else {
+			staged.next_override.insert(proc, id);
+		}
+	}
+	staged.entries.insert(id, *entry);
+	staged.own.entry((type_id, type_fields::VERBS)).or_default().push(id);
+
+	Ok(NewProcOnType {
+		type_id,
+		field: type_fields::VERBS,
+		map_entries: vec![],
+		relinked
+	})
 }
 
 /// Which of a proc's same-named static locals a scope (`proc:PATH#N`) means
@@ -1295,6 +1366,9 @@ pub fn apply(
 	}
 	for (proc, word, value) in prepared.entry_words {
 		runtime_tables::set_proc_entry_word(raw_types::procs::ProcId(proc), word, value);
+	}
+	for type_id in prepared.appearances {
+		let _ = runtime_tables::forget_type_appearance(type_id);
 	}
 
 	for (type_id, field, words) in prepared.type_fields {
