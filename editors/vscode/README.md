@@ -1,4 +1,4 @@
-# auxtools Debugger
+# auxtools Debugger (Beta)
 
 Debug BYOND worlds in VS Code with [auxtools](https://github.com/willox/auxtools):
 breakpoints (conditional ones too, and on procs by name), pausing on runtime errors,
