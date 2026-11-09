@@ -218,6 +218,16 @@ pub fn init_on_next_world_load() {
 	WORLD_LOAD_PENDING.store(true, Ordering::Relaxed);
 }
 
+/// Shuts down what `auxtools_shutdown` does, for good: for a world that's
+/// ending, which may still run code on its way out, after
+/// [`init_on_world_load`].
+pub fn shut_down_with_world() {
+	if WORLD_LOAD.get().is_none() || get_init_level() != InitLevel::None {
+		return;
+	}
+	shutdown_partial();
+}
+
 // Work waiting for a later proc call (see `at_proc_calls`), and whether there
 // is any. Read on every DM proc call.
 static PROC_CALL_WORK: Mutex<Vec<fn() -> bool>> = Mutex::new(Vec::new());

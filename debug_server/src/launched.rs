@@ -11,7 +11,13 @@
 //! the debugger's requests are handled even when nothing else runs. This is
 //! the only way the debug server runs.
 
-use std::{collections::HashMap, sync::OnceLock};
+use std::{
+	collections::HashMap,
+	sync::{
+		atomic::{AtomicBool, Ordering},
+		OnceLock
+	}
+};
 
 use auxtools::{byond_string, Proc, Value, WorldLoad};
 use dmasm::reload::{ProcKey, Snapshot};
@@ -27,9 +33,11 @@ use crate::{
 pub const DEBUG_VAR: &str = "AUXTOOLS_DEBUG";
 
 /// The procs auxtools wants a world to have, and what the launcher's worlds
-/// get. `world/Del` runs before a reboot, which loads the world again: auxtools
-/// shuts down after the world's own `world/Del` and starts again with the next
-/// world, as worlds that call `auxtools_shutdown` there do.
+/// get. auxtools shuts down after the world's own `world/Del`, as worlds that
+/// call `auxtools_shutdown` there do, and starts again with the next world
+/// when it's a reboot (`world/Reboot` was called), which loads the world
+/// again. A world that's ending can still run code on its way out, so that
+/// doesn't start it again.
 const HELPER_PROCS: &str = r#"
 /proc/auxtools_expr_stub()
 	CRASH("auxtools_expr_stub is where the debugger evaluates expressions")
@@ -45,6 +53,13 @@ const HELPER_PROCS: &str = r#"
 /proc/auxtools_launched_world_del()
 	CRASH("the debugger's library isn't loaded")
 
+/proc/auxtools_launched_world_reboot()
+	CRASH("the debugger's library isn't loaded")
+
+/world/Reboot()
+	auxtools_launched_world_reboot()
+	return ..()
+
 /world/Del()
 	try
 		..()
@@ -56,6 +71,10 @@ const HELPER_PROCS: &str = r#"
 
 /// What the launcher's file is called in stack traces
 const HELPER_FILE: &str = "auxtools_launcher.dm";
+
+/// Set when `world/Reboot` is called, for `world/Del` to tell a reboot from
+/// the end
+static REBOOTING: AtomicBool = AtomicBool::new(false);
 
 static WORLD_LOAD: WorldLoad = WorldLoad { prepare, ready, failed };
 
@@ -178,6 +197,10 @@ fn ready() {
 	if let Some(proc) = Proc::find("/proc/auxtools_launched_world_del") {
 		let _ = proc.hook(world_del);
 	}
+	if let Some(proc) = Proc::find("/proc/auxtools_launched_world_reboot") {
+		let _ = proc.hook(world_reboot);
+	}
+	REBOOTING.store(false, Ordering::Relaxed);
 
 	// Where to wake it if it sleeps with no players (see `waker`)
 	if let Ok(port) = Value::WORLD.get_number(byond_string!("port")) {
@@ -202,7 +225,16 @@ fn ready() {
 }
 
 fn world_del(_: &Value, _: &Value, _: Vec<Value>) -> auxtools::DMResult {
-	auxtools::init_on_next_world_load();
+	if REBOOTING.swap(false, Ordering::Relaxed) {
+		auxtools::init_on_next_world_load();
+	} else {
+		auxtools::shut_down_with_world();
+	}
+	Ok(Value::NULL)
+}
+
+fn world_reboot(_: &Value, _: &Value, _: Vec<Value>) -> auxtools::DMResult {
+	REBOOTING.store(true, Ordering::Relaxed);
 	Ok(Value::NULL)
 }
 
