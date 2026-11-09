@@ -37,12 +37,15 @@
 //! instance: its type and a proc that sets the vars, added to the world's
 //! table of those, which code names by its id.
 
-use std::collections::{btree_map::Entry, BTreeMap, BTreeSet, HashMap, HashSet};
+use std::{
+	collections::{btree_map::Entry, BTreeMap, BTreeSet, HashMap, HashSet},
+	sync::Mutex
+};
 
 use auxtools::{
 	raw_types,
 	runtime_tables::{self, type_fields, ProcEntryWords, NONE},
-	Proc, StringRef
+	shutdown, Proc, StringRef
 };
 use dmasm::{
 	assembler::AssembleEnv as _,
@@ -141,9 +144,7 @@ impl StagedInstances {
 
 		// As DreamMaker makes them, named as BYOND names them when it loads
 		// the world
-		let mut entry = Proc::find("/proc/auxtools_expr_stub")
-			.and_then(|stub| runtime_tables::proc_entry(stub.id))
-			.ok_or_else(|| "couldn't find /proc/auxtools_expr_stub to copy a proc entry from".to_owned())?;
+		let mut entry = proc_template()?;
 		for word in [
 			ProcEntryWords::NAME,
 			ProcEntryWords::DESC,
@@ -355,7 +356,9 @@ struct PreparedNewProc {
 	/// id: the proc table still has it, so the override ids stay right
 	revived: bool,
 	local_names: Vec<String>,
-	on_type: Option<NewProcOnType>
+	on_type: Option<NewProcOnType>,
+	/// The keys a world proc goes under in the world's own name map
+	on_world: Vec<u32>
 }
 
 /// A definition of a proc on a type that's unlinked: it stays in the proc
@@ -798,9 +801,7 @@ fn in_list_proc(
 	added: &mut AddedVars
 ) -> Result<u32, String> {
 	let shown = format!("parameter {}'s `in` list", param);
-	let template = Proc::find("/proc/auxtools_expr_stub")
-		.and_then(|stub| runtime_tables::proc_entry(stub.id))
-		.ok_or_else(|| "couldn't find /proc/auxtools_expr_stub to copy a proc entry from".to_owned())?;
+	let template = proc_template()?;
 	let code = value_code(code.clone());
 	let bytecode = assemble(&shown, &code, &[], pending, world_globals, added)?;
 
@@ -917,7 +918,7 @@ fn prepare_init_proc(
 	let current = (current != NONE).then(|| Proc::from_id(raw_types::procs::ProcId(current))).flatten();
 	let template = match &current {
 		Some(proc) => runtime_tables::proc_entry(proc.id),
-		None => Proc::find("/proc/auxtools_expr_stub").and_then(|stub| runtime_tables::proc_entry(stub.id))
+		None => proc_template().ok()
 	}
 	.ok_or_else(|| fail("couldn't find a proc entry to copy".to_owned()))?;
 	let original = current.as_ref().map(original_bytecode).unwrap_or_default();
@@ -1018,11 +1019,9 @@ fn prepare_new_proc(
 	let shown = describe(&new.code.proc);
 	let fail = |e: String| format!("{}: {}", shown, e);
 
-	// Copied from a plain proc every debuggable world has, like BYOND copies
-	// an existing proc for the init procs it makes
-	let template = Proc::find("/proc/auxtools_expr_stub")
-		.and_then(|stub| runtime_tables::proc_entry(stub.id))
-		.ok_or_else(|| fail("couldn't find /proc/auxtools_expr_stub to copy a proc entry from".to_owned()))?;
+	// Copied from a plain proc, like BYOND copies an existing proc for the
+	// init procs it makes
+	let template = proc_template().map_err(fail)?;
 
 	let bytecode = assemble(&shown, &new.code, &[], pending, world_globals, added)?;
 
@@ -1061,7 +1060,17 @@ fn prepare_new_proc(
 	};
 	entry.0[ProcEntryWords::NEXT_OVERRIDE] = NONE;
 
-	let on_type = if new.type_path.is_empty() {
+	// The world isn't a type. A new world proc goes in the world's own name
+	// map when it's added (see `add_world_proc`).
+	let mut on_world = vec![];
+	if new.type_path == "/world" && !new.verb {
+		on_world.push(entry.0[ProcEntryWords::NAME]);
+		if entry.0[ProcEntryWords::PATH_BASENAME] != on_world[0] {
+			on_world.push(entry.0[ProcEntryWords::PATH_BASENAME]);
+		}
+	}
+
+	let on_type = if new.type_path.is_empty() || !on_world.is_empty() {
 		None
 	} else if new.verb {
 		Some(new_verb_on_type(&new.type_path, id, &mut entry, staged).map_err(fail)?)
@@ -1132,7 +1141,8 @@ fn prepare_new_proc(
 		id,
 		revived: false,
 		local_names: new.code.locals.clone(),
-		on_type
+		on_type,
+		on_world
 	})
 }
 
@@ -1584,6 +1594,12 @@ pub fn apply(
 			}
 		}
 
+		if !new.on_world.is_empty() {
+			if let Err(e) = add_world_proc(id, new.on_world.clone()) {
+				warnings.push(format!("couldn't add a proc to the world's procs: {}", e));
+			}
+		}
+
 		if let Some(proc) = Proc::from_id(raw_types::procs::ProcId(id)) {
 			let (ptr, _) = unsafe { proc.bytecode_mut_ptr() };
 			auxtools::debug::set_local_names(ptr, new.local_names.clone());
@@ -1786,10 +1802,83 @@ fn adapt_debug_info(nodes: &[Node], original: &[u32]) -> Vec<Node> {
 		.collect()
 }
 
-/// Whether the world was built with DEBUG, as the procs every debuggable world
-/// has show
+// World procs waiting for the world's proc names to be built (see
+// `add_world_proc`): their ids and keys
+static WAITING_WORLD_PROCS: Mutex<Vec<(u32, Vec<u32>)>> = Mutex::new(Vec::new());
+
+/// Puts a proc first under its keys in the world's proc names, with `..()`
+/// going to what was first. BYOND builds the names once the global vars'
+/// initial values are worked out, before `world/New`, and what's there before
+/// is lost: until then the proc waits, and goes in at the first proc call
+/// after.
+fn add_world_proc(id: u32, keys: Vec<u32>) -> Result<(), String> {
+	if runtime_tables::world_names_built()? {
+		return name_world_proc(id, &keys);
+	}
+	WAITING_WORLD_PROCS.lock().unwrap().push((id, keys));
+	auxtools::at_proc_calls(add_waiting_world_procs);
+	Ok(())
+}
+
+fn add_waiting_world_procs() -> bool {
+	if !runtime_tables::world_names_built().unwrap_or(false) {
+		return false;
+	}
+	for (id, keys) in std::mem::take(&mut *WAITING_WORLD_PROCS.lock().unwrap()) {
+		if let Err(e) = name_world_proc(id, &keys) {
+			eprintln!("auxtools: couldn't add a proc to the world's procs: {}", e);
+		}
+	}
+	true
+}
+
+fn name_world_proc(id: u32, keys: &[u32]) -> Result<(), String> {
+	for (k, &key) in keys.iter().enumerate() {
+		let mut procs = runtime_tables::world_named_procs(key)?;
+		procs.retain(|&proc| proc != id);
+		if k == 0 {
+			runtime_tables::set_proc_entry_word(
+				raw_types::procs::ProcId(id),
+				ProcEntryWords::NEXT_OVERRIDE,
+				procs.first().copied().unwrap_or(NONE)
+			);
+		}
+		procs.insert(0, id);
+		runtime_tables::set_world_named_procs(key, &procs)?;
+	}
+	Ok(())
+}
+
+/// The proc entry new procs are made from: a plain global proc with no
+/// parameters. Every debuggable world has the expression stub, and a world
+/// that a launcher started gets one; stddef.dm's `/icon/proc/Width` is the
+/// same in every world, which is what that one is made from.
+fn proc_template() -> Result<ProcEntryWords, String> {
+	Proc::find("/proc/auxtools_expr_stub")
+		.or_else(|| Proc::find("/icon/proc/Width"))
+		.and_then(|proc| runtime_tables::proc_entry(proc.id))
+		.ok_or_else(|| "couldn't find a proc entry to copy (/proc/auxtools_expr_stub or /icon/proc/Width)".to_owned())
+}
+
+// Worked out once per world
+static WORLD_HAS_DEBUG_INFO: Mutex<Option<bool>> = Mutex::new(None);
+
+/// Whether the world was built with DEBUG, which gives every proc in its code
+/// a DbgFile first (not stddef.dm's). Read off the world's own procs: the
+/// expression stub can be one we compiled.
 fn world_has_debug_info() -> bool {
-	Proc::find("/proc/auxtools_expr_stub").is_some_and(|stub| original_bytecode(&stub).first() == Some(&Opcode::DbgFile.word()))
+	let mut known = WORLD_HAS_DEBUG_INFO.lock().unwrap();
+	*known.get_or_insert_with(|| {
+		(0..)
+			.map_while(|id| Proc::from_id(raw_types::procs::ProcId(id)))
+			.any(|proc| original_bytecode(&proc).first() == Some(&Opcode::DbgFile.word()))
+	})
+}
+
+#[shutdown]
+fn forget_world() {
+	*WORLD_HAS_DEBUG_INFO.lock().unwrap() = None;
+	WAITING_WORLD_PROCS.lock().unwrap().clear();
 }
 
 /// `bytecode` with its DbgLines renumbered, or `None` when none changes.

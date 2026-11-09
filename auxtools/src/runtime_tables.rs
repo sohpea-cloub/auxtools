@@ -154,6 +154,12 @@ struct Functions {
 	/// Mob types, by the id a mob typepath value has (see `MobType`)
 	mob_count: *const u32,
 	mobs: *const *mut MobType,
+	/// The world's procs by name. The world isn't a type, and has a map of
+	/// its own, built from the world's proc list once the global vars' initial
+	/// values are worked out (`built` is 0 until then, and what's put in it
+	/// before is lost).
+	world_name_map: *mut ProcNameMap,
+
 	/// One Value per var id: a global var's value, and the default of a
 	/// type's declared var. A new frame's locals start as their var ids'
 	/// values.
@@ -305,6 +311,19 @@ mod recipes {
 	};
 
 	// The loader of the mob types: the count is operand 0, the table 1
+	// The world's proc name map: looking a proc up by name on the world
+	// pushes it (the push's operand).
+	pub const WORLD_NAME_MAP: Recipe = Recipe {
+		name: "world_name_map",
+		versions: CHECKED,
+		anchor: Anchor::Signature(
+			SignatureTreatment::NoOffset,
+			"F6 45 08 02 0F 84 ?? ?? ?? ?? FF 75 20 FF 75 10 FF 75 0C 68 ?? ?? ?? ?? E8 ?? ?? ?? ?? 83 C4 10"
+		),
+		hops: &[],
+		extract: Extract::Offset(20)
+	};
+
 	pub const MOB_COUNT: Recipe = Recipe {
 		name: "mob_count",
 		versions: CHECKED,
@@ -411,6 +430,8 @@ fn resolve() -> Result<Functions, String> {
 			instances: find(&INSTANCES)? as *const *mut Instance,
 			mob_count: find(&MOB_COUNT)? as *const u32,
 			mobs: find(&MOBS)? as *const *mut MobType,
+			// The code holds the map's address
+			world_name_map: (find(&WORLD_NAME_MAP)? as *const *mut ProcNameMap).read_unaligned(),
 			global_values: find(&GLOBAL_VALUES)? as *const *const crate::raw_types::values::Value
 		})
 	}
@@ -552,6 +573,19 @@ mod recipes {
 	};
 
 	// The loader of the mob types: the count is operand 0, the table 1
+	// The world's proc name map: looking a proc up by name on the world
+	// stores it as an argument (the store's operand) and jumps to the lookup.
+	pub const WORLD_NAME_MAP: Recipe = Recipe {
+		name: "world_name_map",
+		versions: CHECKED,
+		anchor: Anchor::Signature(
+			SignatureTreatment::NoOffset,
+			"0F B6 45 ?? 89 7D 0C C7 45 08 ?? ?? ?? ?? 89 45 14 89 F0 0F B6 F0 89 75 10 8D 65 F4 5B 5E 5F 5D E9"
+		),
+		hops: &[],
+		extract: Extract::Offset(10)
+	};
+
 	pub const MOB_COUNT: Recipe = Recipe {
 		name: "mob_count",
 		versions: CHECKED,
@@ -647,6 +681,8 @@ fn resolve() -> Result<Functions, String> {
 			instances: find(&INSTANCES)? as *const *mut Instance,
 			mob_count: find(&MOB_COUNT)? as *const u32,
 			mobs: find(&MOBS)? as *const *mut MobType,
+			// The code holds the map's address
+			world_name_map: (find(&WORLD_NAME_MAP)? as *const *mut ProcNameMap).read_unaligned(),
 			global_values: find(&GLOBAL_VALUES)? as *const *const crate::raw_types::values::Value
 		})
 	}
@@ -917,7 +953,15 @@ unsafe fn buckets<'a>(map: *mut ProcNameMap) -> &'a [ProcNameBucket] {
 
 /// The procs a name (its string id) finds on a type, most derived first.
 pub fn named_procs(type_id: u32, key: u32) -> Result<Vec<u32>, String> {
-	let map = name_map(type_id)?;
+	named_procs_in(name_map(type_id)?, key)
+}
+
+/// The procs a name finds on the world, most derived first.
+pub fn world_named_procs(key: u32) -> Result<Vec<u32>, String> {
+	named_procs_in(functions()?.world_name_map, key)
+}
+
+fn named_procs_in(map: *mut ProcNameMap, key: u32) -> Result<Vec<u32>, String> {
 	unsafe {
 		let buckets = buckets(map);
 		Ok(match buckets.binary_search_by_key(&key, |bucket| bucket.key) {
@@ -930,8 +974,24 @@ pub fn named_procs(type_id: u32, key: u32) -> Result<Vec<u32>, String> {
 /// Gives a name these procs on a type, adding the name if the type's map
 /// doesn't have it. The old buffer is let go, and the new one is the map's own.
 pub fn set_named_procs(type_id: u32, key: u32, procs: &[u32]) -> Result<(), String> {
+	set_named_procs_in(name_map(type_id)?, key, procs)
+}
+
+/// Whether the world's proc name map is built. It's built from the world's
+/// proc list once the global vars' initial values are worked out, before
+/// `world/New`; what's put in it before then is lost.
+pub fn world_names_built() -> Result<bool, String> {
+	unsafe { Ok((*functions()?.world_name_map).built != 0) }
+}
+
+/// Gives a name these procs on the world, as [`set_named_procs`] does on a
+/// type.
+pub fn set_world_named_procs(key: u32, procs: &[u32]) -> Result<(), String> {
+	set_named_procs_in(functions()?.world_name_map, key, procs)
+}
+
+fn set_named_procs_in(map: *mut ProcNameMap, key: u32, procs: &[u32]) -> Result<(), String> {
 	let functions = functions()?;
-	let map = name_map(type_id)?;
 	unsafe {
 		let count = buckets(map).len();
 		let at = match buckets(map).binary_search_by_key(&key, |bucket| bucket.key) {
