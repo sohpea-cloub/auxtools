@@ -70,8 +70,19 @@ pub mod type_fields {
 	pub const ICON: usize = 0x10;
 	pub const ICON_STATE: usize = 0x14;
 	pub const TEXT: usize = 0x18;
-	/// Bit 1 opacity, bit 2 density
+	pub const MAPTEXT: usize = 0x1C;
+	/// 16 bits each
+	pub const MAPTEXT_X: usize = 0x20;
+	pub const MAPTEXT_Y: usize = 0x22;
+	pub const MAPTEXT_WIDTH: usize = 0x24;
+	pub const MAPTEXT_HEIGHT: usize = 0x26;
+	/// Bit 1 opacity, bit 2 density, then `gender` (bits 6-7),
+	/// `mouse_drop_zone` (bit 8), `mouse_opacity` (bits 12-13),
+	/// `animate_movement` (bits 10, 14-15) and the low 11 bits of
+	/// `appearance_flags` (from bit 21)
 	pub const FLAGS: usize = 0x28;
+	/// The rest of `appearance_flags`, from bit 0
+	pub const FLAGS_HIGH: usize = 0x2C;
 	/// A byte
 	pub const DIR: usize = 0x32;
 	/// Pointers to the type's own transform (6 floats) and color matrix (20)
@@ -92,7 +103,8 @@ pub mod type_fields {
 	/// Misc id: (var id, tag, data) for the vars the type sets, as the .dmb has
 	/// them; only read when the world starts
 	pub const OWN_OVERRIDES: usize = 0x6C;
-	/// Misc id: built-in vars set otherwise than in the record (inherited)
+	/// Misc id: built-in vars set otherwise than in the record, its parent's
+	/// too: the name's string id, then the value as bytecode has it
 	pub const BUILTIN_VALUES: usize = 0x74;
 	/// Misc id: every var the type has, (name string id, var id, tag, data)
 	/// per var, sorted by name. Instances read their defaults from here.
@@ -1051,6 +1063,14 @@ pub fn add_type(parent: u32, path: u32) -> Result<u32, String> {
 		(functions.register_typepath)(count as u32);
 		Ok(count as u32)
 	}
+}
+
+/// Sets 16 bits of a type's table entry.
+pub fn set_type_half(type_id: u32, offset: usize, value: u16) -> Result<(), String> {
+	unsafe {
+		*(type_entry(type_id)?.add(offset) as *mut u16) = value;
+	}
+	Ok(())
 }
 
 /// Sets a byte of a type's table entry.

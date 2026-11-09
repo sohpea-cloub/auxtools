@@ -156,6 +156,7 @@ fn reload_request(changes: &Changes) -> Request {
 			})
 			.collect(),
 		removed_procs: changes.removed_procs.clone(),
+		builtin_defaults: changes.builtin_defaults.clone(),
 		new_vars: changes.new_vars.clone(),
 		init_procs: changes
 			.init_procs
@@ -805,6 +806,42 @@ fn main() {
 	reload(&mut watcher, &changes);
 	assert_eq!(eval(&mut client, "prefab_report()"), "\"custom 11 11 crate 3 1\"");
 	println!("ok: new prefabs");
+
+	// Built-in vars: on a new type (a field, flags and listed ones), and new
+	// defaults on a type the world has, which subtypes that don't set them get
+	let changes = source.edit(
+		"reload.dm",
+		"/proc/first_def()\n",
+		"/obj/crate/fancy\n\talpha = 100\n\tpixel_x = 4\n\tmaptext = \"hi\"\n\tmaptext_width = 64\n\tgender = \"female\"\n\tappearance_flags = \
+		 2049\n\tmouse_opacity = 0\n\tcolor = \"#ff0000\"\n\n/proc/builtin_report(type)\n\tvar/obj/o = new type\n\treturn \"[o.name] [o.alpha] \
+		 [o.pixel_x] [o.pixel_y] [o.maptext] [o.maptext_width] [o.gender] [o.appearance_flags] [o.mouse_opacity] [o.color]\"\n\n/proc/first_def()\n"
+	);
+	reload(&mut watcher, &changes);
+	assert_eq!(
+		eval(&mut client, "builtin_report(/obj/crate/fancy)"),
+		"\"crate 100 4 0 hi 64 female 2049 0 #ff0000\""
+	);
+	let changes = source.edit(
+		"reload.dm",
+		"/obj/crate\n\tname = \"crate\"\n",
+		"/obj/crate\n\tname = \"box\"\n\tpixel_y = 3\n"
+	);
+	assert_eq!(changes.builtin_defaults.len(), 2, "{:?}", changes.builtin_defaults);
+	reload(&mut watcher, &changes);
+	assert_eq!(eval(&mut client, "builtin_report(/obj/crate)"), "\"box 255 0 3  32 neuter 0 1 \"");
+	assert_eq!(
+		eval(&mut client, "builtin_report(/obj/crate/big_crate)"),
+		"\"box 255 0 3  32 neuter 0 1 \""
+	);
+	assert_eq!(
+		eval(&mut client, "builtin_report(/obj/crate/fancy)"),
+		"\"box 100 4 3 hi 64 female 2049 0 #ff0000\""
+	);
+	assert_eq!(
+		eval(&mut client, "builtin_report(/obj/crate/big_crate/huge)"),
+		"\"huge crate 255 0 3  32 neuter 0 1 \""
+	);
+	println!("ok: built-in vars");
 
 	// Something that can't be done leaves everything as it was
 	let mut request = reload_request(&source.edit("reload.dm", "\treturn 4", "\treturn 5"));

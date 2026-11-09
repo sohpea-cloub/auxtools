@@ -66,8 +66,11 @@ pub struct Prepared {
 	code: Vec<PreparedCode>,
 	/// (proc, word, value) for procs' new settings
 	entry_words: Vec<(u32, usize, u32)>,
-	/// Types whose verbs change, so their default appearances do
+	/// Types whose verbs or built-in vars change, so their default
+	/// appearances do
 	appearances: BTreeSet<u32>,
+	/// New values of built-in vars, by type
+	builtin_writes: Vec<(u32, Vec<BuiltinWrite>)>,
 	/// (type id, field, misc id) for the types' new var tables and declared
 	/// vars
 	type_fields: Vec<(u32, usize, u32)>,
@@ -415,6 +418,7 @@ pub fn prepare(request: &HotReloadRequest, warnings: &mut Vec<String>) -> Result
 		removed_procs,
 		new_vars,
 		var_defaults,
+		builtin_defaults,
 		init_procs,
 		line_moves
 	} = request;
@@ -555,6 +559,24 @@ pub fn prepare(request: &HotReloadRequest, warnings: &mut Vec<String>) -> Result
 			errors.push(e);
 		}
 	}
+	for default in builtin_defaults {
+		let writes = builtin_writes(&default.var, &default.value).map_err(|e| format!("{}: {}", default.var, e));
+		match writes {
+			Ok(writes) => {
+				for path in &default.types {
+					match find_type(path) {
+						Ok(type_id) => {
+							prepared.builtin_writes.push((type_id, writes.clone()));
+							prepared.appearances.insert(type_id);
+						}
+						Err(e) => errors.push(e)
+					}
+				}
+			}
+			Err(e) => errors.push(e)
+		}
+	}
+
 	// Initial values that aren't constants, which can use anything else the
 	// reload adds
 	for (id, name, init) in std::mem::take(&mut added.run_once) {
@@ -573,7 +595,8 @@ pub fn prepare(request: &HotReloadRequest, warnings: &mut Vec<String>) -> Result
 	}
 
 	if !prepared.appearances.is_empty() {
-		warnings.push("things made before the reload keep the verbs they had; things made after get them as they are now".to_owned());
+		warnings
+			.push("things made before the reload keep the verbs and built-in values they had; things made after get them as they are now".to_owned());
 	}
 
 	prepared.new_vars = added.vars;
@@ -1230,60 +1253,146 @@ pub fn add_types(new_types: &[NewType]) -> Result<usize, Vec<String>> {
 }
 
 fn add_type(new: &NewType) -> Result<(), String> {
-	use runtime_tables::{set_type_byte, set_type_field};
-	const OPACITY: u32 = 1;
-	const DENSITY: u32 = 2;
-
 	// Everything is worked out before the type exists
 	let parent = find_type(&new.parent)?;
-	let mut words = vec![];
-	let mut dir = None;
-	let mut flags = runtime_tables::type_field(parent, type_fields::FLAGS)?;
+	let mut writes = vec![];
 	for (field, value) in &new.fields {
-		let number = || match value {
-			ConstValue::Number(n) => Ok(*n),
-			ConstValue::Null => Ok(0.0),
-			_ => Err(format!("{} has to be a number", field))
-		};
-		let string = || match value {
-			ConstValue::Null => Ok(NONE),
-			ConstValue::String(text) => leaked_string(text),
-			_ => Err(format!("{} has to be text", field))
-		};
-		match field.as_str() {
-			"name" => words.push((type_fields::NAME, string()?)),
-			"desc" => words.push((type_fields::DESC, string()?)),
-			"icon_state" => words.push((type_fields::ICON_STATE, string()?)),
-			"text" => words.push((type_fields::TEXT, string()?)),
-			"suffix" => words.push((type_fields::SUFFIX, string()?)),
-			"icon" => words.push((type_fields::ICON, match value {
-				ConstValue::Null => NONE,
-				ConstValue::Resource(file) => AssembleEnv
-					.get_resource_index(file)
-					.ok_or_else(|| format!("couldn't find the file {}", file))?,
-				_ => return Err("icon has to be a file".to_owned())
-			})),
-			"layer" => words.push((type_fields::LAYER, number()?.to_bits())),
-			"dir" => dir = Some(number()? as u8),
-			"density" | "opacity" => {
-				let bit = if field == "density" { DENSITY } else { OPACITY };
-				if number()? != 0.0 {
-					flags |= bit;
-				} else {
-					flags &= !bit;
-				}
-			}
-			other => return Err(format!("{} isn't a field of a type's record", other))
-		}
+		writes.extend(builtin_writes(field, value).map_err(|e| format!("{}: {}", field, e))?);
 	}
-
 	let id = runtime_tables::add_type(parent, leaked_string(&new.path)?)?;
-	let _ = set_type_field(id, type_fields::FLAGS, flags);
-	for (offset, word) in words {
-		let _ = set_type_field(id, offset, word);
-	}
-	if let Some(dir) = dir {
-		let _ = set_type_byte(id, type_fields::DIR, dir);
+	write_builtins(id, &writes)
+}
+
+/// A change to a type's table entry that sets a built-in var.
+#[derive(Clone, Debug)]
+enum BuiltinWrite {
+	Word(usize, u32),
+	Half(usize, u16),
+	Byte(usize, u8),
+	/// Bits of a word: offset, mask, bits
+	Bits(usize, u32, u32),
+	/// An entry of the type's list of built-in values: the var name's string
+	/// id, and the value as bytecode has it
+	Listed(u32, Vec<u32>)
+}
+
+/// How a type keeps a built-in var's value (see `type_fields`), as found by
+/// comparing types that set each one in a probe world.
+fn builtin_writes(var: &str, value: &ConstValue) -> Result<Vec<BuiltinWrite>, String> {
+	use BuiltinWrite::*;
+	let number = || match value {
+		ConstValue::Number(n) => Ok(*n),
+		ConstValue::Null => Ok(0.0),
+		_ => Err("has to be a number".to_owned())
+	};
+	let string = || match value {
+		ConstValue::Null => Ok(NONE),
+		ConstValue::String(text) => leaked_string(text),
+		_ => Err("has to be text".to_owned())
+	};
+	let bits = |offset: usize, mask: u32, on: bool| Bits(offset, mask, if on { mask } else { 0 });
+	Ok(match var {
+		"name" => vec![Word(type_fields::NAME, string()?)],
+		"desc" => vec![Word(type_fields::DESC, string()?)],
+		"icon_state" => vec![Word(type_fields::ICON_STATE, string()?)],
+		"text" => vec![Word(type_fields::TEXT, string()?)],
+		"suffix" => vec![Word(type_fields::SUFFIX, string()?)],
+		"maptext" => vec![Word(type_fields::MAPTEXT, string()?)],
+		"icon" => vec![Word(type_fields::ICON, match value {
+			ConstValue::Null => NONE,
+			ConstValue::Resource(file) => AssembleEnv
+				.get_resource_index(file)
+				.ok_or_else(|| format!("couldn't find the file {}", file))?,
+			_ => return Err("has to be a file".to_owned())
+		})],
+		"layer" => vec![Word(type_fields::LAYER, number()?.to_bits())],
+		"dir" => vec![Byte(type_fields::DIR, number()? as u8)],
+		"maptext_x" => vec![Half(type_fields::MAPTEXT_X, number()? as i16 as u16)],
+		"maptext_y" => vec![Half(type_fields::MAPTEXT_Y, number()? as i16 as u16)],
+		"maptext_width" => vec![Half(type_fields::MAPTEXT_WIDTH, number()? as u16)],
+		"maptext_height" => vec![Half(type_fields::MAPTEXT_HEIGHT, number()? as u16)],
+		"opacity" => vec![bits(type_fields::FLAGS, 0x1, number()? != 0.0)],
+		"density" => vec![bits(type_fields::FLAGS, 0x2, number()? != 0.0)],
+		"mouse_drop_zone" => vec![bits(type_fields::FLAGS, 0x100, number()? != 0.0)],
+		"gender" => {
+			let gender = match value {
+				ConstValue::String(g) if g == "neuter" => 0,
+				ConstValue::String(g) if g == "male" => 1,
+				ConstValue::String(g) if g == "female" => 2,
+				ConstValue::String(g) if g == "plural" => 3,
+				_ => return Err("has to be \"neuter\", \"male\", \"female\" or \"plural\"".to_owned())
+			};
+			vec![Bits(type_fields::FLAGS, 0xC0, gender << 6)]
+		}
+		// 1, the default, is 0
+		"mouse_opacity" => vec![Bits(type_fields::FLAGS, 0x3000, ((number()? as i32 - 1) as u32 & 3) << 12)],
+		"animate_movement" => {
+			let bits = match number()? as i32 {
+				0 => 0xC400,
+				1 => 0,
+				2 => 0x4000,
+				3 | -1 => 0x8000,
+				_ => return Err("has to be -1, 0, 1, 2 or 3".to_owned())
+			};
+			vec![Bits(type_fields::FLAGS, 0xC400, bits)]
+		}
+		"appearance_flags" => {
+			let flags = number()? as u32;
+			if flags >= 1 << 12 {
+				return Err("has flags BYOND doesn't keep for a type".to_owned());
+			}
+			vec![
+				Bits(type_fields::FLAGS, 0x7FF << 21, (flags & 0x7FF) << 21),
+				Bits(type_fields::FLAGS_HIGH, 1, flags >> 11),
+			]
+		}
+		"alpha" | "blend_mode" | "color" | "invisibility" | "infra_luminosity" | "luminosity" | "pixel_x" | "pixel_y" | "pixel_w" | "pixel_z"
+		| "plane" | "render_source" | "render_target" | "bound_x" | "bound_y" | "bound_width" | "bound_height" | "step_size" | "step_x"
+		| "step_y" | "glide_size" | "screen_loc" | "vis_flags" | "mouse_drag_pointer" | "mouse_drop_pointer" | "mouse_over_pointer" | "override" => {
+			let (tag, data) = const_value(value)?;
+			// As `PushVal` has it: a number's two halves after its tag, or
+			// the top byte of the data in the tag word
+			let words = if tag == 0x2A {
+				vec![tag, data >> 16, data & 0xFFFF]
+			} else {
+				vec![tag | ((data & 0xFF_0000) >> 8), data & 0xFFFF]
+			};
+			vec![Listed(leaked_string(var)?, words)]
+		}
+		_ => return Err("isn't a built-in var a reload can set".to_owned())
+	})
+}
+
+/// Sets built-in vars on a type.
+fn write_builtins(type_id: u32, writes: &[BuiltinWrite]) -> Result<(), String> {
+	use runtime_tables::{set_type_byte, set_type_field, set_type_half, type_field};
+	for write in writes {
+		match write {
+			BuiltinWrite::Word(offset, word) => set_type_field(type_id, *offset, *word)?,
+			BuiltinWrite::Half(offset, half) => set_type_half(type_id, *offset, *half)?,
+			BuiltinWrite::Byte(offset, byte) => set_type_byte(type_id, *offset, *byte)?,
+			BuiltinWrite::Bits(offset, mask, bits) => {
+				let word = type_field(type_id, *offset)?;
+				set_type_field(type_id, *offset, (word & !mask) | bits)?;
+			}
+			BuiltinWrite::Listed(name, value) => {
+				// The others, then this one
+				let list = runtime_tables::misc_words(type_field(type_id, type_fields::BUILTIN_VALUES)?).unwrap_or_default();
+				let mut words = vec![];
+				let mut at = 0;
+				while at < list.len() {
+					let len = if list.get(at + 1).is_some_and(|tag| tag & 0xFF == 0x2A) { 4 } else { 3 };
+					let entry = &list[at..(at + len).min(list.len())];
+					if entry[0] != *name {
+						words.extend_from_slice(entry);
+					}
+					at += len;
+				}
+				words.push(*name);
+				words.extend_from_slice(value);
+				set_type_field(type_id, type_fields::BUILTIN_VALUES, runtime_tables::intern_misc(&words)?)?;
+			}
+		}
 	}
 	Ok(())
 }
@@ -1518,12 +1627,16 @@ pub fn apply(
 	for (proc, word, value) in prepared.entry_words {
 		runtime_tables::set_proc_entry_word(raw_types::procs::ProcId(proc), word, value);
 	}
-	for type_id in prepared.appearances {
-		let _ = runtime_tables::forget_type_appearance(type_id);
-	}
-
 	for (type_id, field, words) in prepared.type_fields {
 		let _ = runtime_tables::set_type_field(type_id, field, words);
+	}
+	for (type_id, writes) in &prepared.builtin_writes {
+		if let Err(e) = write_builtins(*type_id, writes) {
+			warnings.push(format!("couldn't set a built-in var: {}", e));
+		}
+	}
+	for &type_id in &prepared.appearances {
+		let _ = runtime_tables::forget_type_appearance(type_id);
 	}
 
 	// As the world does when it starts, with everything else in place. They

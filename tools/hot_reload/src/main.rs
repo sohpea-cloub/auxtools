@@ -36,11 +36,11 @@ time.
 
 The world should be running the code as it is when this starts. Proc code,
 new procs and verbs (more definitions of one too), definitions taken away,
-new types (not mobs), new vars and static locals, var defaults (those that
-aren't constants reach new instances), parameters, `in` lists, prefabs and
-`set` statements can change. New mob types and most built-in vars on new
-types need the world rebuilt, and are refused, along with the rest of the
-change.
+new types (not mobs), new vars and static locals, var defaults (built-in
+ones too; those that aren't constants reach new instances), parameters, `in`
+lists, prefabs and `set` statements can change. New mob types, changed var
+declarations and parent types, and the few built-in vars a reload can't set
+need the world rebuilt, and are refused, along with the rest of the change.
 
   --port N          the debug server's reload port (default 2449)
   -DNAME[=VALUE]    a define DreamMaker was given on its command line
@@ -210,6 +210,7 @@ fn reload_request(changes: &Changes) -> Request {
 			})
 			.collect(),
 		removed_procs: changes.removed_procs.clone(),
+		builtin_defaults: changes.builtin_defaults.clone(),
 		new_vars: changes.new_vars.clone(),
 		init_procs: changes
 			.init_procs
@@ -353,7 +354,12 @@ impl Watcher {
 				)
 				.map(|s| format!("added {}", s)),
 				list(
-					changes.var_defaults.iter().map(|d| format!("{}/var/{}", d.types[0], d.var)).collect(),
+					changes
+						.var_defaults
+						.iter()
+						.chain(&changes.builtin_defaults)
+						.map(|d| format!("{}/var/{}", d.types[0], d.var))
+						.collect(),
 					"vars"
 				)
 				.map(|s| format!("set the default of {}", s)),
