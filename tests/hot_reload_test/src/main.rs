@@ -794,6 +794,18 @@ fn main() {
 	assert_eq!(eval(&mut client, "pick_from(8)"), "8");
 	println!("ok: new in lists");
 
+	// New prefabs, one used twice
+	let changes = source.edit(
+		"reload.dm",
+		"/proc/first_def()\n",
+		"/proc/prefab_report()\n\tvar/obj/crate/a = new /obj/crate{capacity = 11; name = \"custom\"}()\n\tvar/obj/crate/b = new /obj/crate{capacity \
+		 = 11; name = \"custom\"}()\n\tvar/obj/crate/c = new /obj/crate{capacity = 3}\n\treturn \"[a.name] [a.capacity] [b.capacity] [c.name] \
+		 [c.capacity] [istype(c, /obj/crate)]\"\n\n/proc/first_def()\n"
+	);
+	reload(&mut watcher, &changes);
+	assert_eq!(eval(&mut client, "prefab_report()"), "\"custom 11 11 crate 3 1\"");
+	println!("ok: new prefabs");
+
 	// Something that can't be done leaves everything as it was
 	let mut request = reload_request(&source.edit("reload.dm", "\treturn 4", "\treturn 5"));
 	if let Request::HotReload(HotReloadRequest { procs, .. }) = &mut request {

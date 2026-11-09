@@ -33,10 +33,9 @@
 //!
 //! A new `in` list expression on a parameter is a proc that returns the list,
 //! as DreamMaker makes them, added to the world's list of those; the
-//! parameter names it by its index.
-//!
-//! What a reload can't do yet, and refuses:
-//! - use prefabs with var overrides (`/obj{a = 1}`)
+//! parameter names it by its index. A new prefab (`/obj{a = 1}`) is an
+//! instance: its type and a proc that sets the vars, added to the world's
+//! table of those, which code names by its id.
 
 use std::collections::{btree_map::Entry, BTreeMap, BTreeSet, HashMap, HashSet};
 
@@ -75,7 +74,10 @@ pub struct Prepared {
 	/// (var id, name, bytecode) for initial values to work out once
 	run_once: Vec<(u32, String, Vec<u32>)>,
 	/// Procs that return parameters' `in` lists, by the index each gets
-	in_lists: Vec<(u32, ProcEntryWords)>
+	in_lists: Vec<(u32, ProcEntryWords)>,
+	/// New prefab instances, with their init procs' entries, which get the
+	/// next ids
+	instances: Vec<(u32, runtime_tables::Instance, ProcEntryWords)>
 }
 
 /// A var id to add: its name's string id and the value of its global slot
@@ -98,7 +100,62 @@ struct AddedVars {
 	/// How many procs that return `in` lists the world has, and the ones to
 	/// add, by the index each gets
 	in_lists_before: u32,
-	in_lists: Vec<(u32, ProcEntryWords)>
+	in_lists: Vec<(u32, ProcEntryWords)>,
+	instances: StagedInstances
+}
+
+/// Prefab instances (`/obj{a = 1}`): the world's, and the ones a reload adds
+/// after them, each with its init proc's entry and code
+#[derive(Default)]
+struct StagedInstances {
+	existing: Option<Vec<runtime_tables::Instance>>,
+	new: Vec<(runtime_tables::Instance, ProcEntryWords, Vec<u32>)>
+}
+
+impl StagedInstances {
+	/// The id of an instance of `path` (whose typepath value is `tag` and
+	/// `data`) that runs `init`: one the world has, or a new one.
+	fn find_or_add(&mut self, path: &str, (tag, data): (u8, u32), init: &[u32]) -> Result<u32, String> {
+		let existing = match &mut self.existing {
+			Some(existing) => existing,
+			none => none.insert(runtime_tables::instances()?)
+		};
+		let runs_init = |proc: u32| {
+			runtime_tables::proc_entry(raw_types::procs::ProcId(proc))
+				.and_then(|entry| runtime_tables::misc_words(entry.0[ProcEntryWords::BYTECODE]))
+				.is_some_and(|code| code == init)
+		};
+		if let Some(id) = existing
+			.iter()
+			.position(|i| i.tag == tag && i.data == data && i.init != NONE && runs_init(i.init))
+		{
+			return Ok(id as u32);
+		}
+		let count = existing.len() as u32;
+		if let Some(id) = self.new.iter().position(|(i, _, code)| i.tag == tag && i.data == data && code == init) {
+			return Ok(count + id as u32);
+		}
+
+		// As DreamMaker makes them, named as BYOND names them when it loads
+		// the world
+		let mut entry = Proc::find("/proc/auxtools_expr_stub")
+			.and_then(|stub| runtime_tables::proc_entry(stub.id))
+			.ok_or_else(|| "couldn't find /proc/auxtools_expr_stub to copy a proc entry from".to_owned())?;
+		for word in [
+			ProcEntryWords::NAME,
+			ProcEntryWords::DESC,
+			ProcEntryWords::CATEGORY,
+			ProcEntryWords::PATH_BASENAME,
+			ProcEntryWords::PARAMETERS,
+			ProcEntryWords::NEXT_OVERRIDE
+		] {
+			entry.0[word] = NONE;
+		}
+		entry.0[ProcEntryWords::PATH] = leaked_string(&format!("{}/proc/(map_init)", path))?;
+		entry.0[ProcEntryWords::BYTECODE] = runtime_tables::intern_misc(init)?;
+		self.new.push((runtime_tables::Instance { tag, data, init: NONE }, entry, init.to_vec()));
+		Ok(count + self.new.len() as u32 - 1)
+	}
 }
 
 impl AddedVars {
@@ -378,7 +435,8 @@ pub fn prepare(request: &HotReloadRequest, warnings: &mut Vec<String>) -> Result
 		param_names: HashMap::new(),
 		run_once: vec![],
 		in_lists_before: runtime_tables::in_list_count().unwrap_or(0),
-		in_lists: vec![]
+		in_lists: vec![],
+		instances: StagedInstances::default()
 	};
 	for new in new_vars {
 		if let Err(e) = prepare_new_var(new, &mut added, &mut type_vars, &mut pending) {
@@ -520,6 +578,14 @@ pub fn prepare(request: &HotReloadRequest, warnings: &mut Vec<String>) -> Result
 
 	prepared.new_vars = added.vars;
 	prepared.in_lists = added.in_lists;
+	let first_instance = added.instances.existing.as_ref().map_or(0, Vec::len) as u32;
+	prepared.instances = added
+		.instances
+		.new
+		.into_iter()
+		.enumerate()
+		.map(|(n, (instance, entry, _))| (first_instance + n as u32, instance, entry))
+		.collect();
 	if errors.is_empty() {
 		match type_vars.intern() {
 			Ok(fields) => prepared.type_fields = fields,
@@ -545,8 +611,16 @@ fn assemble(
 ) -> Result<Vec<u32>, String> {
 	let nodes = adapt_debug_info(&code.nodes, original);
 
-	let mut env = ReloadEnv::new(original, world_globals, pending);
-	env.new_statics = new_statics(code, &env.proc_globals, added).map_err(|e| format!("{}: {}", name, e))?;
+	let proc_globals = globals_in(original);
+	let new_statics = new_statics(code, &proc_globals, added).map_err(|e| format!("{}: {}", name, e))?;
+	let mut env = ReloadEnv {
+		proc_globals,
+		world_globals,
+		pending,
+		new_statics,
+		instances: &mut added.instances,
+		error: None
+	};
 	let bytecode = match dmasm::assembler::assemble(&nodes, &mut env) {
 		Ok(bytecode) => bytecode,
 		Err(e) => return Err(format!("{}: {}", name, env.error.take().unwrap_or_else(|| describe_assemble_error(&e))))
@@ -1393,6 +1467,15 @@ pub fn apply(
 			auxtools::debug::set_local_names(ptr, new.local_names.clone());
 		}
 	}
+	for (expected, instance, entry) in &prepared.instances {
+		let added =
+			runtime_tables::add_proc(entry).and_then(|init| runtime_tables::add_instance(runtime_tables::Instance { init: init.0, ..*instance }));
+		match added {
+			Ok(id) if id != *expected => warnings.push(format!("a prefab got id {} where {} was expected", id, expected)),
+			Ok(_) => {}
+			Err(e) => warnings.push(format!("couldn't add a prefab: {}", e))
+		}
+	}
 	// (BYOND gives a proc the id of another with the same entry, which is
 	// as good)
 	for (expected, entry) in &prepared.in_lists {
@@ -1725,20 +1808,9 @@ struct ReloadEnv<'a> {
 	/// The proc's static locals the running world doesn't have yet, by scope
 	/// and name
 	new_statics: HashMap<(String, Vec<u8>), u32>,
+	instances: &'a mut StagedInstances,
 	/// Why a lookup failed, when that says more than the assembler's error
 	error: Option<String>
-}
-
-impl<'a> ReloadEnv<'a> {
-	fn new(original: &[u32], world_globals: &'a mut WorldGlobals, pending: &'a Pending) -> Self {
-		Self {
-			proc_globals: globals_in(original),
-			world_globals,
-			pending,
-			new_statics: HashMap::new(),
-			error: None
-		}
-	}
 }
 
 impl dmasm::assembler::AssembleEnv for ReloadEnv<'_> {
@@ -1767,6 +1839,20 @@ impl dmasm::assembler::AssembleEnv for ReloadEnv<'_> {
 
 	fn get_resource_index(&mut self, path: &str) -> Option<u32> {
 		AssembleEnv.get_resource_index(path)
+	}
+
+	fn get_instance(&mut self, path: &str, init: &[u32]) -> Option<u32> {
+		let Some(value) = AssembleEnv.get_type(path) else {
+			self.error = Some(format!("there's no type {} in the running world", path));
+			return None;
+		};
+		match self.instances.find_or_add(path, value, init) {
+			Ok(id) => Some(id),
+			Err(e) => {
+				self.error = Some(format!("{}{{...}}: {}", path, e));
+				None
+			}
+		}
 	}
 
 	fn get_global_index(&mut self, name: &[u8], scope: Option<&str>) -> Option<u32> {

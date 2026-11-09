@@ -135,6 +135,10 @@ struct Functions {
 	/// parameter's `in` list word has (`(index << 8) | 0x40`)
 	in_list_count: *const u32,
 	in_list_procs: *const *mut u32,
+	/// Prefab instances (`/obj{a = 1}`, and the types placed on the map), by
+	/// the id a value with tag 0x29 has: 12 bytes each (see `Instance`)
+	instance_count: *const u32,
+	instances: *const *mut Instance,
 	/// One Value per var id: a global var's value, and the default of a
 	/// type's declared var. A new frame's locals start as their var ids'
 	/// values.
@@ -285,6 +289,26 @@ mod recipes {
 		extract: Extract::AbsMem(OperandSelect::NthAbsMem(2))
 	};
 
+	// The loader of the prefab instances: the count is operand 0, the table 1
+	const INSTANCE_LOADER: &str = "A3 ?? ?? ?? ?? 8D 34 40 C1 E6 02 56 FF D3 83 C4 04 85 F6 74 08 85 C0 0F 84 ?? ?? ?? ?? 33 DB A3 ?? ?? ?? ?? 39 \
+	                               1D ?? ?? ?? ?? 76 ?? 33 F6 A1 ?? ?? ?? ?? 03 C6 57 50 E8";
+
+	pub const INSTANCE_COUNT: Recipe = Recipe {
+		name: "instance_count",
+		versions: CHECKED,
+		anchor: Anchor::Signature(SignatureTreatment::NoOffset, INSTANCE_LOADER),
+		hops: &[],
+		extract: Extract::AbsMem(OperandSelect::NthAbsMem(0))
+	};
+
+	pub const INSTANCES: Recipe = Recipe {
+		name: "instances",
+		versions: CHECKED,
+		anchor: Anchor::Signature(SignatureTreatment::NoOffset, INSTANCE_LOADER),
+		hops: &[],
+		extract: Extract::AbsMem(OperandSelect::NthAbsMem(1))
+	};
+
 	// Builds before 1687 don't check for NONE
 	pub const REGISTER_TYPEPATH: Recipe = Recipe {
 		name: "register_typepath",
@@ -348,6 +372,8 @@ fn resolve() -> Result<Functions, String> {
 			appearance_cache: find(&APPEARANCE_CACHE)? as *const *mut u32,
 			in_list_count: find(&IN_LIST_COUNT)? as *const u32,
 			in_list_procs: find(&IN_LIST_PROCS)? as *const *mut u32,
+			instance_count: find(&INSTANCE_COUNT)? as *const u32,
+			instances: find(&INSTANCES)? as *const *mut Instance,
 			global_values: find(&GLOBAL_VALUES)? as *const *const crate::raw_types::values::Value
 		})
 	}
@@ -488,6 +514,26 @@ mod recipes {
 		extract: Extract::AbsMem(OperandSelect::NthAbsMem(2))
 	};
 
+	// The loader of the prefab instances: the count is operand 0, the table 1
+	const INSTANCE_LOADER: &str = "6B D8 0C 83 EC 0C A3 ?? ?? ?? ?? 53 E8 ?? ?? ?? ?? 83 C4 10 85 DB 74 08 85 C0 0F 84 ?? ?? ?? ?? A3 ?? ?? ?? ?? \
+	                               31 DB EB ?? 6B C3 0C 03 05 ?? ?? ?? ?? 57 57 56 50 E8";
+
+	pub const INSTANCE_COUNT: Recipe = Recipe {
+		name: "instance_count",
+		versions: CHECKED,
+		anchor: Anchor::Signature(SignatureTreatment::NoOffset, INSTANCE_LOADER),
+		hops: &[],
+		extract: Extract::AbsMem(OperandSelect::NthAbsMem(0))
+	};
+
+	pub const INSTANCES: Recipe = Recipe {
+		name: "instances",
+		versions: CHECKED,
+		anchor: Anchor::Signature(SignatureTreatment::NoOffset, INSTANCE_LOADER),
+		hops: &[],
+		extract: Extract::AbsMem(OperandSelect::NthAbsMem(1))
+	};
+
 	// Builds before 1687 don't check for NONE
 	pub const REGISTER_TYPEPATH: Recipe = Recipe {
 		name: "register_typepath",
@@ -540,6 +586,8 @@ fn resolve() -> Result<Functions, String> {
 			appearance_cache: find(&APPEARANCE_CACHE)? as *const *mut u32,
 			in_list_count: find(&IN_LIST_COUNT)? as *const u32,
 			in_list_procs: find(&IN_LIST_PROCS)? as *const *mut u32,
+			instance_count: find(&INSTANCE_COUNT)? as *const u32,
+			instances: find(&INSTANCES)? as *const *mut Instance,
 			global_values: find(&GLOBAL_VALUES)? as *const *const crate::raw_types::values::Value
 		})
 	}
@@ -662,6 +710,48 @@ pub fn set_type_field(type_id: u32, offset: usize, value: u32) -> Result<(), Str
 		*(type_entry(type_id)?.add(offset) as *mut u32) = value;
 	}
 	Ok(())
+}
+
+/// A prefab instance: a type, and the proc that sets the vars it overrides
+/// on each new instance (named `TYPE/proc/(map_init)`).
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Instance {
+	/// The type's typepath value: its tag and data
+	pub tag: u8,
+	pub data: u32,
+	/// NONE for a type placed on the map as it is
+	pub init: u32
+}
+
+/// The world's prefab instances, by id.
+pub fn instances() -> Result<Vec<Instance>, String> {
+	let functions = functions()?;
+	unsafe {
+		let count = *functions.instance_count as usize;
+		let table = *functions.instances;
+		if count == 0 || table.is_null() {
+			return Ok(vec![]);
+		}
+		Ok(std::slice::from_raw_parts(table, count).to_vec())
+	}
+}
+
+/// Adds a prefab instance, and returns its id.
+pub fn add_instance(instance: Instance) -> Result<u32, String> {
+	let functions = functions()?;
+	unsafe {
+		let count = *functions.instance_count;
+		let table = functions.instances as *mut *mut Instance;
+		let grown = (functions.crt_realloc)(*table as *mut c_void, (count as usize + 1) * std::mem::size_of::<Instance>()) as *mut Instance;
+		if grown.is_null() {
+			return Err("out of memory growing the prefab instances".to_owned());
+		}
+		*grown.add(count as usize) = instance;
+		*table = grown;
+		*(functions.instance_count as *mut u32) = count + 1;
+		Ok(count)
+	}
 }
 
 /// How many procs that return `in` lists the world has.
