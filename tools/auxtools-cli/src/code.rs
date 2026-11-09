@@ -365,6 +365,11 @@ fn summary(changes: &Changes) -> String {
 		)
 		.map(|s| format!("added {}", s)),
 		list(
+			changes.redeclared.iter().map(|v| format!("{}/var/{}", v.type_path, v.var)).collect(),
+			"vars"
+		)
+		.map(|s| format!("declared {} another way", s)),
+		list(
 			changes
 				.var_defaults
 				.iter()
@@ -421,6 +426,7 @@ pub fn reload_request(changes: &Changes) -> HotReloadRequest {
 		removed_procs: changes.removed_procs.clone(),
 		builtin_defaults: changes.builtin_defaults.clone(),
 		new_vars: changes.new_vars.clone(),
+		redeclared: changes.redeclared.clone(),
 		init_procs: changes
 			.init_procs
 			.iter()

@@ -151,6 +151,7 @@ fn reload_request(changes: &Changes) -> Request {
 		removed_procs: changes.removed_procs.clone(),
 		builtin_defaults: changes.builtin_defaults.clone(),
 		new_vars: changes.new_vars.clone(),
+		redeclared: changes.redeclared.clone(),
 		init_procs: changes
 			.init_procs
 			.iter()
@@ -915,6 +916,37 @@ fn main() {
 	assert_eq!(eval(&mut client, "the_chain.say()"), "\"14\"");
 	assert!(definition_at(&mut client, 1, source.line_of("main.dm", "\treturn ..() + \"4\"")));
 	println!("ok: definitions added and taken away among a type's others");
+
+	// A var made static: one value for all, which the code that uses it reads
+	assert_eq!(eval(&mut client, "declared_one.read_count()"), "1");
+	let changes = source.edit("main.dm", "\tvar/count = 1", "\tvar/static/count = 7");
+	assert_eq!(changes.redeclared.len(), 1);
+	reload(&mut watcher, &changes);
+	assert_eq!(eval(&mut client, "declared_one.read_count()"), "7");
+	eval(&mut client, "declared_one.count = 8");
+	assert_eq!(eval(&mut client, "(new /datum/declared/sub).read_count()"), "8");
+	// Back again, with a subtype that sets it: each type has its own default
+	let changes = source.edit_many("main.dm", &[
+		("\tvar/static/count = 7", "\tvar/count = 2"),
+		("/datum/declared/sub\n", "/datum/declared/sub\n\tcount = 3\n")
+	]);
+	reload(&mut watcher, &changes);
+	assert_eq!(eval(&mut client, "(new /datum/declared).read_count()"), "2");
+	assert_eq!(eval(&mut client, "(new /datum/declared/sub).read_count()"), "3");
+	// A const, and a tmp
+	assert_eq!(eval(&mut client, "issaved(declared_one.count)"), "1");
+	let changes = source.edit_many("main.dm", &[
+		("\tvar/shared = 10", "\tvar/const/shared = 11"),
+		("\tvar/count = 2", "\tvar/tmp/count = 2")
+	]);
+	reload(&mut watcher, &changes);
+	assert_eq!(eval(&mut client, "declared_one.read_shared()"), "11");
+	assert_eq!(eval(&mut client, "issaved(declared_one.count)"), "0");
+	// A static whose value is worked out once
+	let changes = source.edit("main.dm", "\tvar/many = null", "\tvar/static/list/many = list(1, 2, 3)");
+	reload(&mut watcher, &changes);
+	assert_eq!(eval(&mut client, "declared_one.many_count()"), "3");
+	println!("ok: vars declared static, const and tmp, and back");
 
 	// A verb's definitions, a world proc's and a global proc's come and go
 	// among the others too

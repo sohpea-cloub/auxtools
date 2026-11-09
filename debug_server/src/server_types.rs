@@ -234,6 +234,10 @@ pub struct HotReloadRequest {
 	pub removed_procs: Vec<dmasm::reload::RemovedProc>,
 	/// Added before anything else, so the code in the reload can use them
 	pub new_vars: Vec<dmasm::reload::NewVar>,
+	/// Vars declared another way, after the new vars and before the var
+	/// defaults, which can be for them
+	#[serde(default)]
+	pub redeclared: Vec<dmasm::reload::Redeclared>,
 	/// Applied after the new vars, so they can set the defaults of those too
 	pub var_defaults: Vec<HotReloadVarDefault>,
 	/// New defaults of built-in vars, which types keep in their records
@@ -246,7 +250,7 @@ pub struct HotReloadRequest {
 impl HotReloadRequest {
 	/// How many things it changes
 	pub const fn len(&self) -> usize {
-		self.new_types.len() + self.procs.len() + self.settings.len() + self.new_procs.len() + self.removed_procs.len() + self.new_vars.len() + self.var_defaults.len() + self.builtin_defaults.len() + self.init_procs.len() + self.line_moves.len()
+		self.new_types.len() + self.procs.len() + self.settings.len() + self.new_procs.len() + self.removed_procs.len() + self.new_vars.len() + self.redeclared.len() + self.var_defaults.len() + self.builtin_defaults.len() + self.init_procs.len() + self.line_moves.len()
 	}
 
 	pub const fn is_empty(&self) -> bool {

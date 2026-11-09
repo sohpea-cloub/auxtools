@@ -1047,6 +1047,22 @@ pub fn set_global_value(var_id: u32, value: crate::Value) -> Result<(), String> 
 	Ok(())
 }
 
+/// Puts a value, as its tag and data words, in a var id's global slot, which
+/// takes over whatever reference they hold (as `add_variable` does). What was
+/// there is let go.
+pub fn set_global_words(var_id: u32, tag: u8, data: u32) -> Result<(), String> {
+	let functions = functions()?;
+	unsafe {
+		if var_id >= variable_count() {
+			return Err(format!("there's no var id {}", var_id));
+		}
+		let slot = (*functions.global_values as *mut [u32; 2]).add(var_id as usize);
+		drop(crate::Value::from_raw_owned(*(slot as *const crate::raw_types::values::Value)));
+		slot.write([tag as u32, data]);
+	}
+	Ok(())
+}
+
 /// The value of a var id's global slot (see `Functions::global_values`).
 pub fn global_value(var_id: u32) -> Result<crate::raw_types::values::Value, String> {
 	let functions = functions()?;

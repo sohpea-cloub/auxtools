@@ -85,3 +85,22 @@ var/mob/chain_verbs/verb_chain = new
 
 /solo()
 	return "another"
+
+// Vars declared another way later
+/datum/declared
+	var/count = 1
+	var/shared = 10
+	var/many = null
+
+/datum/declared/sub
+
+/datum/declared/proc/read_count()
+	return count
+
+/datum/declared/proc/read_shared()
+	return shared
+
+/datum/declared/proc/many_count()
+	return length(many)
+
+var/datum/declared/declared_one = new

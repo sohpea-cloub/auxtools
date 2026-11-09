@@ -49,7 +49,7 @@ use auxtools::{
 };
 use dmasm::{
 	assembler::AssembleEnv as _,
-	reload::{ConstValue, InList, NewType, NewVar, ProcSettings, RemovedProc},
+	reload::{ConstValue, InList, NewType, NewVar, ProcSettings, Redeclared, RemovedProc},
 	Instruction, Node, Opcode
 };
 
@@ -81,6 +81,8 @@ pub struct Prepared {
 	type_fields: Vec<(u32, usize, u32)>,
 	/// (var id, name, bytecode) for initial values to work out once
 	run_once: Vec<(u32, String, Vec<u32>)>,
+	/// (var id, value) for the global slots of vars that are static now
+	global_values: Vec<(u32, (u32, u32))>,
 	/// Procs that return parameters' `in` lists, by the index each gets
 	in_lists: Vec<(u32, ProcEntryWords)>,
 	/// New prefab instances, with their init procs' entries, which get the
@@ -463,6 +465,7 @@ pub fn prepare(request: &HotReloadRequest, warnings: &mut Vec<String>) -> Result
 		new_procs,
 		removed_procs,
 		new_vars,
+		redeclared,
 		var_defaults,
 		builtin_defaults,
 		init_procs,
@@ -490,6 +493,11 @@ pub fn prepare(request: &HotReloadRequest, warnings: &mut Vec<String>) -> Result
 	};
 	for new in new_vars {
 		if let Err(e) = prepare_new_var(new, &mut added, &mut type_vars, &mut pending) {
+			errors.push(e);
+		}
+	}
+	for var in redeclared {
+		if let Err(e) = prepare_redeclared(var, &mut added, &mut type_vars, &mut pending, &mut prepared.global_values) {
 			errors.push(e);
 		}
 	}
@@ -1656,6 +1664,59 @@ fn prepare_new_var(new: &NewVar, added: &mut AddedVars, type_vars: &mut TypeVars
 	Ok(())
 }
 
+/// A var declared another way: its flags on the type and the subtypes, which
+/// have it in their var tables unless it's static now. Code in the reload
+/// that uses a var that's static now can find its global.
+fn prepare_redeclared(
+	var: &Redeclared,
+	added: &mut AddedVars,
+	type_vars: &mut TypeVars,
+	pending: &mut Pending,
+	global_values: &mut Vec<(u32, (u32, u32))>
+) -> Result<(), String> {
+	const STATIC: u32 = 1;
+	let fail = |e: String| format!("{}/var/{}: {}", var.type_path, var.var, e);
+
+	let type_id = find_type(&var.type_path).map_err(fail)?;
+	let name = StringRef::new(&var.var)
+		.map_err(|_| fail("couldn't make its name".to_owned()))?
+		.get_id()
+		.0;
+	let declared = type_vars.declared(type_id).map_err(fail)?.clone();
+	let id = declared
+		.chunks(2)
+		.map(|pair| pair[0])
+		.find(|&id| type_vars.name_of(id) == name)
+		.ok_or_else(|| fail("the running world doesn't have it".to_owned()))?;
+
+	for sub in type_vars.subtree(type_id).map_err(fail)? {
+		if let Some(pair) = type_vars.declared(sub).map_err(fail)?.chunks_mut(2).find(|pair| pair[0] == id) {
+			pair[1] = var.flags;
+		}
+		let table = type_vars.table(sub).map_err(fail)?;
+		let at = table.chunks(4).position(|entry| entry[0] >= name).unwrap_or(table.len() / 4);
+		let there = table.get(at * 4) == Some(&name);
+		if var.flags & STATIC != 0 {
+			if there {
+				table.drain(at * 4..at * 4 + 4);
+			}
+		} else if !there {
+			// The defaults follow
+			table.splice(at * 4..at * 4, [name, id, 0, 0]);
+		}
+	}
+
+	if var.flags & STATIC != 0 {
+		pending.globals.insert((var.type_path.clone(), var.var.as_bytes().to_vec()), id);
+		if let Some(init) = &var.init {
+			added.run_once.push((id, format!("{}/var/{}", var.type_path, var.var), (**init).clone()));
+		} else if let Some(value) = &var.value {
+			global_values.push((id, const_value(value).map_err(fail)?));
+		}
+	}
+	Ok(())
+}
+
 fn prepare_var_default(default: &HotReloadVarDefault, type_vars: &mut TypeVars) -> Result<(), String> {
 	let fail = |e: String| format!("var {}: {}", default.var, e);
 
@@ -1846,6 +1907,12 @@ pub fn apply<T>(
 	}
 	for &type_id in &prepared.appearances {
 		let _ = runtime_tables::forget_type_appearance(type_id);
+	}
+
+	for (id, (tag, data)) in prepared.global_values {
+		if let Err(e) = runtime_tables::set_global_words(id, tag as u8, data) {
+			warnings.push(format!("couldn't set a static var's value: {}", e));
+		}
 	}
 
 	// As the world does when it starts, with everything else in place. They
