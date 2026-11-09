@@ -92,21 +92,9 @@ pub struct Sources {
 }
 
 impl Sources {
-	/// Parses the codebase `dme` is the environment of. Errors in it only
-	/// leave procs out.
-	pub fn parse(dme: &Path) -> Result<Self, String> {
-		let dme = std::path::absolute(dme).map_err(|e| format!("{}: {}", dme.display(), e))?;
-		let root = dme.parent().map(Path::to_owned).unwrap_or_default();
-
-		let ctx = Context::default();
-		let pp = dreammaker::Preprocessor::new(&ctx, dme.clone()).map_err(|e| format!("couldn't read {}: {}", dme.display(), e))?;
-		let mut parser = dreammaker::Parser::new(&ctx, pp);
-		parser.enable_procs();
-		let tree = parser.parse_object_tree();
-		Ok(Self::from_tree(&ctx, &tree, root))
-	}
-
-	fn from_tree(ctx: &Context, tree: &ObjectTree, root: PathBuf) -> Self {
+	/// The procs in a parse of the codebase whose .dme is in `root`. Errors in
+	/// the code only leave procs out.
+	pub fn from_tree(ctx: &Context, tree: &ObjectTree, root: PathBuf) -> Self {
 		let mut sources = Self {
 			root,
 			by_file: HashMap::new(),
@@ -251,7 +239,8 @@ mod tests {
 		)
 		.unwrap();
 
-		let sources = Sources::parse(&dir.join("w.dme")).unwrap();
+		let snapshot = dmasm::reload::Snapshot::parse(&dir.join("w.dme"), &Default::default()).unwrap();
+		let sources = Sources::from_tree(snapshot.context(), snapshot.tree(), dir.clone());
 		let code = dir.join("code.dm");
 		let code = code.to_str().unwrap();
 		assert!(sources.has_file(code));

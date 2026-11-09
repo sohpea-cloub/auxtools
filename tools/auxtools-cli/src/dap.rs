@@ -9,7 +9,7 @@ use std::{
 	}
 };
 
-use dap_types::{Event, EventMessage, OutputEvent, ProtocolMessage, ResponseMessage};
+use dap_types::{Breakpoint, Event, EventMessage, OutputEvent, ProtocolMessage, ResponseMessage};
 
 /// Reads one message, or `None` at the end of the input.
 pub fn read_message(input: &mut impl BufRead) -> io::Result<Option<String>> {
@@ -104,4 +104,16 @@ impl Output {
 			..Default::default()
 		});
 	}
+}
+
+/// A breakpoint changed: `reason` is `changed`, `new` or `removed`. Not one
+/// of dap_types' events.
+#[derive(serde::Serialize)]
+pub struct BreakpointEvent {
+	pub reason: String,
+	pub breakpoint: Breakpoint
+}
+
+impl Event for BreakpointEvent {
+	const EVENT: &'static str = "breakpoint";
 }

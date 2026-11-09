@@ -2,8 +2,8 @@
 //! against a world with none of auxtools' procs in it: it has to load the
 //! debugger itself, stop at breakpoints, pick up again after the world
 //! reboots, and go away when the world ends. Then a world launched without
-//! debugging is found with `--list`, and two more launchers attach to it at
-//! once.
+//! debugging is found with `--list`, two more launchers attach to it at once,
+//! and the first hot reloads it.
 //!
 //! Build the launcher and the debug library first:
 //! `cargo build -p auxtools-cli -p debug_server -p launcher_test`, then run this
@@ -352,7 +352,7 @@ fn main() {
 	println!("ok: the launcher exited");
 	let _ = std::fs::remove_file(host_file("rebooted"));
 
-	attach(&server, &library);
+	attach_and_reload(&server, &library);
 	println!("all ok");
 }
 
@@ -368,10 +368,10 @@ fn line_of(file: &Path, text: &str) -> u64 {
 	source.lines().position(|line| line.starts_with(text)).expect("no such line") as u64 + 1
 }
 
-/// A world launched without debugging, found with `--list`, and attached to by
-/// two launchers at once
-fn attach(server: &str, library: &Path) {
-	// A copy, so the world's files are its own
+/// A world launched without debugging, found with `--list`, attached to by
+/// two launchers at once, and hot reloaded by the one that launched it
+fn attach_and_reload(server: &str, library: &Path) {
+	// A copy, so the code can be edited
 	let dir = std::env::temp_dir().join(format!("launcher_test_attach-{}", std::process::id()));
 	std::fs::create_dir_all(&dir).unwrap();
 	for file in ["attach_host.dme", "attach_host.dm"] {
@@ -398,7 +398,8 @@ fn attach(server: &str, library: &Path) {
 	runner.event("initialized");
 	runner.request("configurationDone", json!({}));
 	runner.wait_output("attach test: 1");
-	println!("ok: a world launched without debugging runs");
+	runner.wait_output("Hot reload: watching");
+	println!("ok: a world launched without debugging runs, and its code is watched");
 
 	let list = Command::new(next_to_us(if cfg!(windows) { "auxtools.exe" } else { "auxtools" }))
 		.arg("--list")
@@ -442,11 +443,18 @@ fn attach(server: &str, library: &Path) {
 	first.event("continued");
 	println!("ok: two launchers attached, both stopped at one's breakpoint, the other let it carry on");
 
+	// The launcher that started it reloads it as the code changes
+	let source = std::fs::read_to_string(&code).unwrap();
+	std::fs::write(&code, source.replace("\treturn 1", "\treturn 2")).unwrap();
+	runner.wait_output("Hot reload: reloaded /value");
+	runner.wait_output("attach test: 2");
+	println!("ok: the world was hot reloaded");
+
 	// Leaving doesn't end a world that was attached to
 	first.disconnect(json!({}));
 	second.disconnect(json!({ "terminateDebuggee": false }));
-	let seen = runner.output.matches("attach test: 1").count();
-	runner.wait_count("attach test: 1", seen + 2);
+	let seen = runner.output.matches("attach test: 2").count();
+	runner.wait_count("attach test: 2", seen + 2);
 	println!("ok: the attached launchers left, and the world carries on");
 
 	std::fs::write(dir.join("stop"), "yes").unwrap();

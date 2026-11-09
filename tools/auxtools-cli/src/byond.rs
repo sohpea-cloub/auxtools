@@ -147,10 +147,12 @@ mod registry {
 	}
 }
 
-/// Builds `dme`, handing each line DreamMaker prints to `print`
-pub fn build_with(bin: &Path, dme: &Path, print: impl Fn(String) + Send + Sync + 'static) -> Result<(), String> {
+/// Builds `dme` with `defines` (`NAME` or `NAME=VALUE`), handing each line
+/// DreamMaker prints to `print`
+pub fn build_with(bin: &Path, dme: &Path, defines: &[String], print: impl Fn(String) + Send + Sync + 'static) -> Result<(), String> {
 	let mut command = Command::new(bin.join(compiler()));
 	command.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+	command.args(defines.iter().map(|define| format!("-D{}", define)));
 	// From the .dme's directory, which DreamMaker names files relative to
 	match (dme.parent().filter(|dir| !dir.as_os_str().is_empty()), dme.file_name()) {
 		(Some(dir), Some(name)) => command.current_dir(dir).arg(name),

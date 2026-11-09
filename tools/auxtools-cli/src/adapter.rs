@@ -4,12 +4,12 @@
 //! The adapter either launches a world, with the debug library loaded into
 //! it, or attaches to one already running it, by process id. Either way it
 //! connects to the world's local socket, as any number of other clients can,
-//! and connects again after each reboot. Other launchers can attach to a world
-//! it runs without debugging (noDebug) too.
+//! and connects again after each reboot. Without debugging (noDebug) it stays
+//! connected for hot reloading, and other launchers can still attach.
 //!
 //! One thread handles everything here, in the order it happens: the client's
-//! messages, the world connecting, the parse of its code finishing, and the
-//! world exiting. The client's breakpoints are kept so
+//! messages, the world connecting, the world's code being read (and changed,
+//! see `code`), and the world exiting. The client's breakpoints are kept so
 //! they can be set again in each world that connects.
 
 use std::{
@@ -17,7 +17,7 @@ use std::{
 	io::BufReader,
 	path::{Path, PathBuf},
 	sync::{mpsc, Arc, Mutex},
-	time::Duration
+	time::{Duration, Instant}
 };
 
 use dap_types::*;
@@ -31,6 +31,7 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use crate::{
+	code,
 	dap::{self, Output},
 	debuggee::Debuggee,
 	sources::{strip_declaration, Place, Sources, Stddef}
@@ -63,7 +64,7 @@ pub enum Input {
 		generation: u64,
 		reason: String
 	},
-	Parsed(Result<Sources, String>),
+	Code(code::Event),
 	/// The world the adapter launched exited
 	GameExited(Option<i32>),
 	/// The process attached to is gone
@@ -77,7 +78,8 @@ pub enum Input {
 struct LaunchArguments {
 	#[serde(default)]
 	no_debug: bool,
-	/// The world's environment. Breakpoints and stack traces need it.
+	/// The world's environment. Breakpoints, stack traces and hot reloading
+	/// need it.
 	dme: Option<PathBuf>,
 	/// The world to run, if it isn't the .dme's .dmb
 	dmb: Option<PathBuf>,
@@ -87,6 +89,13 @@ struct LaunchArguments {
 	/// Build the .dme first
 	#[serde(default)]
 	build: bool,
+	/// DreamMaker's `-D` defines, `NAME` or `NAME=VALUE`, for building and
+	/// reading the code
+	#[serde(default)]
+	defines: Vec<String>,
+	/// Swap changed code into the world as files are saved
+	#[serde(default = "yes")]
+	hot_reload: bool,
 	/// What follows the .dmb on the program's command line, if not the
 	/// defaults
 	args: Option<Vec<String>>,
@@ -102,10 +111,26 @@ struct AttachArguments {
 	/// The process running the world, as a number or a string of one
 	process_id: Value,
 	/// The world's environment, if it isn't next to the .dmb it runs
-	dme: Option<PathBuf>
+	dme: Option<PathBuf>,
+	#[serde(default)]
+	defines: Vec<String>,
+	/// Off by default: whoever launched the world might be reloading it too
+	#[serde(default)]
+	hot_reload: bool
+}
+
+const fn yes() -> bool {
+	true
 }
 
 type Handled = Result<Value, String>;
+
+/// The world's code, once it's known where it is
+struct CodeSettings {
+	dme: Option<PathBuf>,
+	defines: Vec<String>,
+	hot_reload: bool
+}
 
 pub struct Adapter {
 	out: Arc<Output>,
@@ -118,21 +143,25 @@ pub struct Adapter {
 	/// The world the adapter launched
 	game: Option<Game>,
 
-	/// The world's environment, if it's known, until the world connects and
-	/// it's parsed
-	dme: Option<Option<PathBuf>>,
-	parsing: bool,
+	/// How to read the code, until the world first connects
+	code_settings: Option<CodeSettings>,
+	/// The code's thread, while it's listening
+	code: Option<mpsc::Sender<code::Command>>,
+	hot_reload: bool,
+	/// Whether the code has been read (or couldn't be) once
+	code_read: bool,
 	sources: Option<Sources>,
 	stddef: Option<Stddef>,
 
 	debuggee: Option<Debuggee>,
 	generation: u64,
-	/// The connected world waits for its code to be parsed before it's
-	/// configured
+	/// The connected world waits for the code's thread before it's configured
 	waiting_for_code: bool,
 	/// Whether the client has been told it can set breakpoints
 	initialized: bool,
 	last_error: Arc<Mutex<String>>,
+	/// When the last reload was asked for, to say how long it took
+	reload_started: Option<Instant>,
 
 	/// The client's breakpoints by file, with the ids they were given
 	breakpoints: BTreeMap<String, Vec<(i64, SourceBreakpoint)>>,
@@ -165,8 +194,10 @@ pub fn run() {
 		debugging: true,
 		pid: None,
 		game: None,
-		dme: None,
-		parsing: false,
+		code_settings: None,
+		code: None,
+		hot_reload: false,
+		code_read: false,
 		sources: None,
 		stddef: None,
 		debuggee: None,
@@ -174,6 +205,7 @@ pub fn run() {
 		waiting_for_code: false,
 		initialized: false,
 		last_error: Arc::new(Mutex::new(String::new())),
+		reload_started: None,
 		breakpoints: BTreeMap::new(),
 		next_breakpoint_id: 1,
 		function_breakpoints: vec![],
@@ -215,7 +247,7 @@ impl Adapter {
 				}
 			}
 			Input::ConnectionClosed { generation, reason } => self.connection_closed(generation, &reason),
-			Input::Parsed(result) => self.parsed(result),
+			Input::Code(event) => self.code_event(event),
 			Input::GameExited(code) => {
 				match code {
 					Some(code) => self.out.console(format!("The world exited with code {}", code)),
@@ -238,6 +270,7 @@ impl Adapter {
 	fn ended(&mut self, exit_code: i32) {
 		self.pid = None;
 		self.debuggee = None;
+		self.code = None;
 		self.out.event(TerminatedEvent::default());
 		self.out.event(ExitedEvent { exitCode: exit_code.into() });
 
@@ -338,7 +371,7 @@ impl Adapter {
 		if args.build {
 			let dme = dme.as_ref().ok_or("there's no .dme to build")?;
 			let out = self.out.clone();
-			byond::build_with(&bin, dme, move |line| out.console(line))?;
+			byond::build_with(&bin, dme, &args.defines, move |line| out.console(line))?;
 		}
 		if !dmb.is_file() {
 			return Err(format!("there's no {}", dmb.display()));
@@ -350,7 +383,11 @@ impl Adapter {
 		};
 
 		self.debugging = !args.no_debug;
-		self.dme = Some(dme.filter(|dme| dme.is_file()));
+		self.code_settings = Some(CodeSettings {
+			dme: dme.filter(|dme| dme.is_file()),
+			defines: args.defines,
+			hot_reload: args.hot_reload
+		});
 
 		let default_args = match server {
 			Server::DreamDaemon if cfg!(windows) => vec!["-trusted".to_owned(), "-close".to_owned()],
@@ -403,7 +440,11 @@ impl Adapter {
 			)
 		})?;
 
-		self.dme = Some(args.dme);
+		self.code_settings = Some(CodeSettings {
+			dme: args.dme,
+			defines: args.defines,
+			hot_reload: args.hot_reload
+		});
 		self.pid = Some(pid);
 		self.out.console(format!("Attaching to process {}", pid));
 		self.started();
@@ -466,28 +507,32 @@ impl Adapter {
 		self.set.clear();
 
 		// It hangs up straight away if it's on its way to a reboot
-		if !matches!(self.request(&AuxRequest::ByondVersion), Ok(AuxResponse::ByondVersion { .. })) {
-			return;
-		}
+		let byond = match self.request(&AuxRequest::ByondVersion) {
+			Ok(AuxResponse::ByondVersion { version, build }) => (version, build),
+			_ => return
+		};
 		if self.stddef.is_none() {
 			if let Ok(AuxResponse::StdDef(Some(text))) = self.request(&AuxRequest::StdDef) {
 				self.stddef = Some(Stddef::new(text));
 			}
 		}
 
-		match self.dme.take() {
-			Some(dme) => self.parse(dme),
+		match self.code_settings.take() {
+			Some(settings) => self.start_code(settings),
 			None => self.out.console("The world restarted")
 		}
-		self.waiting_for_code = self.parsing;
+		self.waiting_for_code = match &self.code {
+			Some(code) => code.send(code::Command::Connected { byond }).is_ok() && (self.hot_reload || !self.code_read),
+			None => false
+		};
 		if !self.waiting_for_code {
 			self.ready();
 		}
 	}
 
-	/// Parses the world's code in the background, if it can be found
-	fn parse(&mut self, dme: Option<PathBuf>) {
-		let dme = dme.or_else(|| {
+	/// Starts reading the world's code, if it can be found
+	fn start_code(&mut self, settings: CodeSettings) {
+		let dme = settings.dme.or_else(|| {
 			// The world's command line says which .dmb it runs
 			let AuxResponse::WorldInfo { args, cwd } = self.request(&AuxRequest::WorldInfo).ok()? else {
 				return None;
@@ -496,30 +541,87 @@ impl Adapter {
 			dme.is_file().then_some(dme)
 		});
 		let Some(dme) = dme else {
-			self.out.console("Couldn't find the world's code (dme), so breakpoints won't work");
+			self.out
+				.console("Couldn't find the world's code (dme), so breakpoints and hot reloading won't work");
+			self.code_read = true;
 			return;
 		};
 
-		self.parsing = true;
-		let inputs = self.inputs.clone();
-		std::thread::spawn(move || {
-			let _ = inputs.send(Input::Parsed(Sources::parse(&dme)));
-		});
+		self.hot_reload = settings.hot_reload;
+		let options = code::Options {
+			dme,
+			defines: settings.defines.iter().map(|define| code::parse_define(define)).collect(),
+			hot_reload: settings.hot_reload
+		};
+		self.code = Some(code::start(options, self.out.clone(), self.inputs.clone()));
 	}
 
-	fn parsed(&mut self, result: Result<Sources, String>) {
-		self.parsing = false;
-		match result {
-			Ok(sources) => self.sources = Some(sources),
-			Err(e) => self.out.console(format!("Couldn't read the code, so breakpoints won't work: {}", e))
-		}
-		if self.waiting_for_code {
-			self.waiting_for_code = false;
-			self.ready();
+	fn code_event(&mut self, event: code::Event) {
+		match event {
+			code::Event::Parsed(sources) => {
+				self.sources = Some(*sources);
+				// Reloaded code moves lines: the breakpoints go where the
+				// client has them now
+				if self.code_read && !self.waiting_for_code && self.debuggee.is_some() && self.debugging {
+					self.reapply_breakpoints();
+				}
+				self.code_read = true;
+			}
+			code::Event::Failed(e) => {
+				self.out.console(format!("Couldn't read the code, so breakpoints won't work: {}", e));
+				self.code_read = true;
+				self.code = None;
+				if self.waiting_for_code {
+					self.waiting_for_code = false;
+					self.ready();
+				}
+			}
+			code::Event::Ready => {
+				if self.waiting_for_code {
+					self.waiting_for_code = false;
+					self.ready();
+				}
+			}
+			code::Event::Reload { request, summary } => {
+				let applied = self.reload(*request, &summary);
+				if let Some(code) = &self.code {
+					let _ = code.send(code::Command::Reloaded(applied));
+				}
+			}
 		}
 	}
 
-	/// The world's code has been read: give it the breakpoints and let it run
+	/// Swaps code into the world. Whether it was.
+	fn reload(&mut self, request: aux::HotReloadRequest, summary: &str) -> bool {
+		self.reload_started = Some(Instant::now());
+		let result = match self.request(&AuxRequest::HotReload(request)) {
+			Ok(AuxResponse::HotReload(result)) => result,
+			Ok(other) => {
+				self.out.console(format!("Hot reload: not reloaded: {}", unexpected(other)));
+				return false;
+			}
+			Err(e) => {
+				self.out.console(format!("Hot reload: not reloaded: {}", e));
+				return false;
+			}
+		};
+
+		let took = self.reload_started.take().map_or(0, |started| started.elapsed().as_millis());
+		if result.applied {
+			self.out.console(format!("Hot reload: {} in {} ms", summary, took));
+		} else {
+			self.out.console("Hot reload: not reloaded:");
+		}
+		for e in &result.errors {
+			self.out.console(format!("    {}", e));
+		}
+		for w in &result.warnings {
+			self.out.console(format!("    warning: {}", w));
+		}
+		result.applied
+	}
+
+	/// The world has the code it should: give it the breakpoints and let it run
 	fn ready(&mut self) {
 		if !self.initialized {
 			// The client sets its breakpoints, then says it's done
@@ -541,6 +643,19 @@ impl Adapter {
 			let _ = self.apply_function_breakpoints();
 		}
 		let _ = self.ack(&AuxRequest::Configured);
+	}
+
+	/// Sets every breakpoint again, telling the client where they are now
+	fn reapply_breakpoints(&mut self) {
+		let files: Vec<String> = self.breakpoints.keys().cloned().collect();
+		for file in files {
+			for breakpoint in self.apply_breakpoints(&file) {
+				self.out.event(dap::BreakpointEvent {
+					reason: "changed".to_owned(),
+					breakpoint
+				});
+			}
+		}
 	}
 
 	fn connection_closed(&mut self, generation: u64, reason: &str) {

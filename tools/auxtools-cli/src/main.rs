@@ -2,9 +2,11 @@
 //! the Debug Adapter Protocol on stdin and stdout. It starts a world in
 //! DreamSeeker or DreamDaemon with the debug library loaded into it, which
 //! needs nothing from the world's code, or attaches to one already running it,
-//! and passes on what the world prints.
+//! and passes on what the world prints. It hot reloads the world's code as
+//! files are saved, with or without debugging.
 
 mod adapter;
+mod code;
 mod dap;
 mod debuggee;
 mod sources;
@@ -30,7 +32,7 @@ fn main() {
 		),
 		["--build", dme, rest @ ..] if rest.len() <= 1 => {
 			let built = auxtools_cli::byond::bin_dir(rest.first().map(std::path::Path::new))
-				.and_then(|bin| auxtools_cli::byond::build_with(&bin, std::path::Path::new(dme), |line| println!("{}", line)));
+				.and_then(|bin| auxtools_cli::byond::build_with(&bin, std::path::Path::new(dme), &[], |line| println!("{}", line)));
 			if let Err(e) = built {
 				eprintln!("{}", e);
 				std::process::exit(1);
