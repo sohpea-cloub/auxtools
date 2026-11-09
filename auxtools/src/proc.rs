@@ -59,6 +59,26 @@ impl Proc {
 	/// The override id of a proc set apart (see [`Proc::set_apart`])
 	pub const APART: u32 = u32::MAX;
 
+	/// The definitions of a path, by override id
+	pub fn overrides<S: Into<String>>(path: S) -> Vec<Self> {
+		let path = strip_path(path.into());
+		PROCS_BY_NAME.with(|h| h.borrow().get(&path).cloned().unwrap_or_default())
+	}
+
+	/// Numbers a path's definitions again, in the order given: for a hot
+	/// reload that adds definitions among the others or takes some away. Those
+	/// left out aren't found by [`Proc::find_override`] any more.
+	pub fn set_overrides<S: Into<String>>(path: S, procs: Vec<Self>) {
+		let path = strip_path(path.into());
+		PROC_OVERRIDE_IDS.with(|override_ids| {
+			let mut override_ids = override_ids.borrow_mut();
+			for (i, proc) in procs.iter().enumerate() {
+				override_ids.insert(proc.id, i as u32);
+			}
+		});
+		PROCS_BY_NAME.with(|h| h.borrow_mut().insert(path, procs));
+	}
+
 	/// BYOND's own record for this proc.
 	///
 	/// Don't hold on to the pointer. BYOND moves its whole proc table whenever

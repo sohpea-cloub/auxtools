@@ -356,9 +356,9 @@ struct PreparedNewProc {
 	entry: ProcEntryWords,
 	/// The id it will get: procs are only ever appended
 	id: u32,
-	/// Whether it's a definition a reload removed, coming back under its old
-	/// id: the proc table still has it, so the override ids stay right
-	revived: bool,
+	/// Where it goes among its path's definitions (its override id), which
+	/// are numbered again once it's there
+	place: ProcRef,
 	local_names: Vec<String>,
 	on_type: Option<NewProcOnType>,
 	/// The keys a world proc goes under in the world's own name map
@@ -468,29 +468,18 @@ pub fn prepare(request: &HotReloadRequest, warnings: &mut Vec<String>) -> Result
 		}
 	}
 
-	// New procs get the next ids, in order, except a definition an earlier
-	// reload removed, which comes back as itself
-	let mut next_id = runtime_tables::proc_count();
-	let ids: Vec<(u32, bool)> = new_procs
-		.iter()
-		.map(|new| match Proc::find_override(&new.code.proc.path, new.code.proc.override_id) {
-			Some(proc) => (proc.id.0, true),
-			None => {
-				next_id += 1;
-				(next_id - 1, false)
-			}
-		})
-		.collect();
+	// New procs get the next ids, in order
+	let first_id = runtime_tables::proc_count();
+	let ids: Vec<u32> = (first_id..).take(new_procs.len()).collect();
 	pending.procs = new_procs
 		.iter()
 		.zip(&ids)
-		.map(|(new, &(id, _))| (strip_path(&new.code.proc.path), id))
+		.map(|(new, &id)| (strip_path(&new.code.proc.path), id))
 		.collect();
 
-	for (new, &(id, revived)) in new_procs.iter().zip(&ids) {
+	for (new, &id) in new_procs.iter().zip(&ids) {
 		match prepare_new_proc(new, id, &pending, &mut world_globals, &mut added, &mut staged) {
-			Ok(mut p) => {
-				p.revived = revived;
+			Ok(p) => {
 				if let Some(on_type) = p.on_type.as_ref().filter(|_| new.verb) {
 					prepared.appearances.extend(type_vars.subtree(on_type.type_id).unwrap_or_default());
 				}
@@ -1135,8 +1124,16 @@ fn prepare_new_proc(
 		let type_id = find_type(&new.type_path).map_err(fail)?;
 		let keys = [entry.0[ProcEntryWords::NAME], entry.0[ProcEntryWords::PATH_BASENAME]];
 
-		// What the name finds on the type now is what the new proc overrides
-		let overridden = staged.named_procs(type_id, keys[0]).map_err(fail)?.first().copied().unwrap_or(NONE);
+		// What the name finds on the type now is what the new proc overrides,
+		// unless it goes among the type's own definitions: then it overrides
+		// the one before it (or what the first overrode)
+		let own = own_definitions(staged, type_id, keys[0]).map_err(fail)?;
+		let at = new.code.proc.override_id as usize;
+		let overridden = match (own.get(at), at.checked_sub(1).and_then(|below| own.get(below))) {
+			(Some(_), Some(&below)) => below,
+			(Some(&first), None) => staged.entry(first).map_or(NONE, |e| e.0[ProcEntryWords::NEXT_OVERRIDE]),
+			(None, _) => staged.named_procs(type_id, keys[0]).map_err(fail)?.first().copied().unwrap_or(NONE)
+		};
 		entry.0[ProcEntryWords::NEXT_OVERRIDE] = overridden;
 
 		// The type and every subtype gets it, after the procs of the types in
@@ -1145,9 +1142,9 @@ fn prepare_new_proc(
 		let mut relinked = vec![];
 		for sub in 0..runtime_tables::type_count().map_err(fail)? {
 			let line = type_and_ancestors(sub);
-			let Some(depth) = line.iter().position(|&t| t == type_id) else {
+			if !line.contains(&type_id) {
 				continue;
-			};
+			}
 
 			for (k, &key) in keys.iter().enumerate() {
 				if k == 1 && key == keys[0] {
@@ -1159,13 +1156,12 @@ fn prepare_new_proc(
 				map_entries.push((sub, key, procs));
 			}
 
-			// The `..()` of the last proc below it in the chain went past it
-			if depth > 0 {
-				for proc in staged.own(sub, type_fields::PROCS).map_err(fail)? {
-					if let Some(e) = staged.entry(proc) {
-						if e.0[ProcEntryWords::NAME] == keys[0] && e.0[ProcEntryWords::NEXT_OVERRIDE] == overridden && !relinked.contains(&proc) {
-							relinked.push(proc);
-						}
+			// The `..()` of the proc after it in the chain (the type's own
+			// next definition, or the last below it) went past it
+			for proc in staged.own(sub, type_fields::PROCS).map_err(fail)? {
+				if let Some(e) = staged.entry(proc) {
+					if e.0[ProcEntryWords::NAME] == keys[0] && e.0[ProcEntryWords::NEXT_OVERRIDE] == overridden && !relinked.contains(&proc) {
+						relinked.push(proc);
 					}
 				}
 			}
@@ -1196,7 +1192,7 @@ fn prepare_new_proc(
 	Ok(PreparedNewProc {
 		entry,
 		id,
-		revived: false,
+		place: new.code.proc.clone(),
 		local_names: new.code.locals.clone(),
 		on_type,
 		on_world
@@ -1615,10 +1611,6 @@ pub fn apply<T>(
 
 	// All of them first: one can relink another's `..()`
 	for new in &prepared.new_procs {
-		if new.revived {
-			runtime_tables::set_proc_entry(raw_types::procs::ProcId(new.id), &new.entry);
-			continue;
-		}
 		match runtime_tables::add_proc(&new.entry) {
 			Ok(id) if id.0 != new.id => {
 				// Code in this reload calls it by the id it expected
@@ -1708,6 +1700,7 @@ pub fn apply<T>(
 	if runtime_tables::proc_count() > procs_before {
 		Proc::add_to_table(raw_types::procs::ProcId(procs_before));
 	}
+	renumber(&prepared.removed_procs, &prepared.new_procs);
 
 	let mut renames = prepared.renames;
 	for p in prepared.code {
@@ -1926,6 +1919,57 @@ fn name_world_proc(id: u32, keys: &[u32]) -> Result<(), String> {
 		runtime_tables::set_world_named_procs(key, &procs)?;
 	}
 	Ok(())
+}
+
+/// A type's own definitions of a proc, first to last (each one's `..()` goes
+/// to the one before), as the reload has them so far
+fn own_definitions(staged: &StagedProcs, type_id: u32, name: u32) -> Result<Vec<u32>, String> {
+	let own: Vec<u32> = staged
+		.own(type_id, type_fields::PROCS)?
+		.into_iter()
+		.filter(|&p| staged.entry(p).is_some_and(|e| e.0[ProcEntryWords::NAME] == name))
+		.collect();
+	let next = |p: u32| staged.entry(p).map_or(NONE, |e| e.0[ProcEntryWords::NEXT_OVERRIDE]);
+	// The last is the one no other's `..()` goes to
+	let mut chain = vec![];
+	let mut at = own.iter().copied().find(|&p| !own.iter().any(|&q| next(q) == p));
+	while let Some(p) = at {
+		chain.push(p);
+		at = Some(next(p)).filter(|n| own.contains(n) && !chain.contains(n));
+	}
+	chain.reverse();
+	Ok(chain)
+}
+
+/// Numbers the definitions of the paths a reload added to or took from again,
+/// as the source has them: the ones taken away drop out, and new ones go
+/// where they were put
+fn renumber(removed: &[PreparedRemoval], added: &[PreparedNewProc]) {
+	let mut paths: Vec<String> = vec![];
+	let removed_ids: HashSet<u32> = removed.iter().map(|r| r.id).collect();
+	let added_ids: HashSet<u32> = added.iter().map(|a| a.id).collect();
+	for id in removed.iter().map(|r| r.id).chain(added_ids.iter().copied()) {
+		if let Some(proc) = Proc::from_id(raw_types::procs::ProcId(id)) {
+			if !paths.contains(&proc.path) {
+				paths.push(proc.path.clone());
+			}
+		}
+	}
+	for path in paths {
+		let mut procs: Vec<Proc> = Proc::overrides(path.as_str())
+			.into_iter()
+			.filter(|p| !removed_ids.contains(&p.id.0) && !added_ids.contains(&p.id.0))
+			.collect();
+		let mut new: Vec<&PreparedNewProc> = added.iter().filter(|a| strip_path(&a.place.path) == path).collect();
+		new.sort_by_key(|a| a.place.override_id);
+		for a in new {
+			if let Some(proc) = Proc::from_id(raw_types::procs::ProcId(a.id)) {
+				let at = (a.place.override_id as usize).min(procs.len());
+				procs.insert(at, proc);
+			}
+		}
+		Proc::set_overrides(path.as_str(), procs);
+	}
 }
 
 /// The proc entry new procs are made from: a plain global proc with no

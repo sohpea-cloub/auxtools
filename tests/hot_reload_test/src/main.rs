@@ -870,6 +870,43 @@ fn main() {
 	assert_eq!(eval(&mut client, "answer()"), "4");
 	println!("ok: a reload that can't be done in full changes nothing");
 
+	// A definition among a type's others goes where the source has it in the
+	// `..()` chain, and the world numbers them again as the source does
+	let changes = source.edit(
+		"main.dm",
+		"/datum/chain/say()\n\treturn ..() + \"3\"",
+		"/datum/chain/say()\n\treturn ..() + \"2\"\n\n/datum/chain/say()\n\treturn ..() + \"3\""
+	);
+	assert_eq!(changes.new_procs.len(), 1);
+	let result = reload(&mut watcher, &changes);
+	assert!(result.warnings.is_empty(), "{:?}", result.warnings);
+	assert_eq!(eval(&mut client, "the_chain.say()"), "\"123\"");
+	let definition_at = |client: &mut Client, override_id: u32, line: u32| {
+		matches!(
+			client.request(Request::Offset {
+				proc: ProcRef {
+					path: "/datum/chain/say".to_owned(),
+					override_id
+				},
+				line
+			}),
+			Response::Offset { offset: Some(_) }
+		)
+	};
+	assert!(definition_at(&mut client, 1, source.line_of("main.dm", "\treturn ..() + \"2\"")));
+	assert!(definition_at(&mut client, 2, source.line_of("main.dm", "\treturn ..() + \"3\"")));
+	// The one after it is known by its new number now
+	let changes = source.edit("main.dm", "\treturn ..() + \"3\"", "\treturn ..() + \"4\"");
+	reload(&mut watcher, &changes);
+	assert_eq!(eval(&mut client, "the_chain.say()"), "\"124\"");
+	// And one taken out of the middle
+	let changes = source.edit("main.dm", "/datum/chain/say()\n\treturn ..() + \"2\"\n\n", "");
+	assert_eq!(changes.removed_procs.len(), 1);
+	reload(&mut watcher, &changes);
+	assert_eq!(eval(&mut client, "the_chain.say()"), "\"14\"");
+	assert!(definition_at(&mut client, 1, source.line_of("main.dm", "\treturn ..() + \"4\"")));
+	println!("ok: definitions added and taken away among a type's others");
+
 	// A world/Del of the world's own: the source's numbers hold, with the
 	// debugger's own world/Del set apart, and it stays beneath that one
 	let changes = source.edit(

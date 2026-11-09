@@ -45,3 +45,12 @@ var/datum/limits/kept_limits = new
 /datum/limits/proc/label()
 	set name = "Label"
 	return "labelled"
+
+// Definitions of one proc, whose `..()` calls make a chain
+/datum/chain/proc/say()
+	return "1"
+
+/datum/chain/say()
+	return ..() + "3"
+
+var/datum/chain/the_chain = new
