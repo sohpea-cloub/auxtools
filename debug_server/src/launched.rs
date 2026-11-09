@@ -72,6 +72,12 @@ const HELPER_PROCS: &str = r#"
 /// What the launcher's file is called in stack traces
 const HELPER_FILE: &str = "auxtools_launcher.dm";
 
+/// The helpers that override the world's procs. They're set apart from the
+/// world's own definitions (see [`Proc::set_apart`]), so those keep the
+/// numbers their source gives them, and stay the most derived when a reload
+/// adds more.
+const HELPER_OVERRIDES: [&str; 2] = ["/world/Del", "/world/Reboot"];
+
 /// Set when `world/Reboot` is called, for `world/Del` to tell a reboot from
 /// the end
 static REBOOTING: AtomicBool = AtomicBool::new(false);
@@ -201,6 +207,13 @@ fn ready() {
 		let _ = proc.hook(world_reboot);
 	}
 	REBOOTING.store(false, Ordering::Relaxed);
+	for path in HELPER_OVERRIDES {
+		// Ours is the last
+		if let Some(proc) = overrides(path).checked_sub(1).and_then(|last| Proc::find_override(path, last)) {
+			proc.set_apart();
+			hot_reload::pin_world_proc(proc.id.0);
+		}
+	}
 
 	// Where to wake it if it sleeps with no players (see `waker`)
 	if let Ok(port) = Value::WORLD.get_number(byond_string!("port")) {

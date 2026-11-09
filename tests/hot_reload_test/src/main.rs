@@ -870,11 +870,30 @@ fn main() {
 	assert_eq!(eval(&mut client, "answer()"), "4");
 	println!("ok: a reload that can't be done in full changes nothing");
 
+	// A world/Del of the world's own: the source's numbers hold, with the
+	// debugger's own world/Del set apart, and it stays beneath that one
+	let changes = source.edit(
+		"main.dm",
+		"var/datum/limits/kept_limits = new\n",
+		"var/datum/limits/kept_limits = new\n\n/world/Del()\n\tworld.log << \"world/Del says bye\"\n\t..()\n"
+	);
+	assert_eq!(changes.new_procs.len(), 1);
+	assert_eq!(changes.new_procs[0].code.proc.override_id, 0);
+	let result = reload(&mut watcher, &changes);
+	assert!(result.warnings.is_empty(), "{:?}", result.warnings);
+	offset_of(
+		&mut client,
+		"/world/Del",
+		source.line_of("main.dm", "\tworld.log << \"world/Del says bye\"")
+	);
+	println!("ok: a world/Del of the world's own, numbered as its source has it");
+
 	// Shutting auxtools down puts back what the world had, which BYOND frees
 	// itself. The world then starts again from its .dmb.
 	eval(&mut client, "request_reboot()");
 	client.wait_closed();
 	let mut client = world.connect();
+	assert!(world.output().contains("world/Del says bye"), "the world's own world/Del didn't run");
 	assert_eq!(eval(&mut client, "answer()"), "1");
 	assert_eq!(eval(&mut client, "few_locals()"), "1");
 	assert_eq!(eval(&mut client, "counter()"), "1");

@@ -56,6 +56,9 @@ fn entry_by_id(id: raw_types::procs::ProcId) -> *mut raw_types::procs::ProcEntry
 }
 
 impl Proc {
+	/// The override id of a proc set apart (see [`Proc::set_apart`])
+	pub const APART: u32 = u32::MAX;
+
 	/// BYOND's own record for this proc.
 	///
 	/// Don't hold on to the pointer. BYOND moves its whole proc table whenever
@@ -70,7 +73,8 @@ impl Proc {
 		get_proc(path)
 	}
 
-	/// Finds the n'th re-defined proc with the given path
+	/// Finds the n'th re-defined proc with the given path. [`Proc::APART`]
+	/// finds the one set apart.
 	pub fn find_override<S: Into<String>>(path: S, override_id: u32) -> Option<Self> {
 		get_proc_override(path, override_id)
 	}
@@ -181,6 +185,27 @@ impl Proc {
 		Err(runtime!("External proc call failed"))
 	}
 
+	/// Takes the proc out of the numbering of its path's definitions, for one
+	/// that isn't the world's own code, like the procs a debugger adds: the
+	/// world's own keep the numbers their source gives them, and so do the ones
+	/// added after. One proc per path can be set apart, and its override id is
+	/// [`Proc::APART`].
+	pub fn set_apart(&self) {
+		PROC_OVERRIDE_IDS.with(|override_ids| {
+			let mut override_ids = override_ids.borrow_mut();
+			PROCS_BY_NAME.with(|h| {
+				if let Some(procs) = h.borrow_mut().get_mut(&self.path) {
+					procs.retain(|proc| proc.id != self.id);
+					for (i, proc) in procs.iter().enumerate() {
+						override_ids.insert(proc.id, i as u32);
+					}
+				}
+			});
+			override_ids.insert(self.id, Self::APART);
+		});
+		PROCS_APART.with(|apart| apart.borrow_mut().insert(self.path.clone(), self.clone()));
+	}
+
 	pub fn override_id(&self) -> u32 {
 		PROC_OVERRIDE_IDS.with(|override_ids| match override_ids.borrow().get(&self.id) {
 			Some(id) => *id,
@@ -198,6 +223,7 @@ impl fmt::Debug for Proc {
 
 thread_local!(static PROCS_BY_NAME: RefCell<HashMap<String, Vec<Proc>, RandomState>> = RefCell::new(HashMap::with_hasher(RandomState::default())));
 thread_local!(static PROC_OVERRIDE_IDS: RefCell<FxHashMap<raw_types::procs::ProcId, u32>> = RefCell::new(FxHashMap::default()));
+thread_local!(static PROCS_APART: RefCell<HashMap<String, Proc, RandomState>> = RefCell::new(HashMap::with_hasher(RandomState::default())));
 
 fn strip_path(p: String) -> String {
 	p.replace("/proc/", "/").replace("/verb/", "/")
@@ -239,10 +265,14 @@ fn register_proc(proc: Proc) {
 pub fn clear_procs() {
 	PROCS_BY_NAME.with(|h| h.borrow_mut().clear());
 	PROC_OVERRIDE_IDS.with(|override_ids| override_ids.borrow_mut().clear());
+	PROCS_APART.with(|apart| apart.borrow_mut().clear());
 }
 
 pub fn get_proc_override<S: Into<String>>(path: S, override_id: u32) -> Option<Proc> {
 	let s = strip_path(path.into());
+	if override_id == Proc::APART {
+		return PROCS_APART.with(|apart| apart.borrow().get(&s).cloned());
+	}
 	PROCS_BY_NAME.with(|h| h.borrow().get(&s)?.get(override_id as usize).cloned())
 }
 

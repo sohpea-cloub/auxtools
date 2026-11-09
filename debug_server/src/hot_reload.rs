@@ -1872,11 +1872,19 @@ fn adapt_debug_info(nodes: &[Node], original: &[u32]) -> Vec<Node> {
 // `add_world_proc`): their ids and keys
 static WAITING_WORLD_PROCS: Mutex<Vec<(u32, Vec<u32>)>> = Mutex::new(Vec::new());
 
-/// Puts a proc first under its keys in the world's proc names, with `..()`
-/// going to what was first. BYOND builds the names once the global vars'
-/// initial values are worked out, before `world/New`, and what's there before
-/// is lost: until then the proc waits, and goes in at the first proc call
-/// after.
+/// The debugger's own world procs (see `launched`), which stay the most
+/// derived: a world proc a reload adds goes beneath them
+static PINNED_WORLD_PROCS: Mutex<Vec<u32>> = Mutex::new(Vec::new());
+
+pub fn pin_world_proc(id: u32) {
+	PINNED_WORLD_PROCS.lock().unwrap().push(id);
+}
+
+/// Puts a proc first under its keys in the world's proc names (after the
+/// debugger's own), with `..()` going to what was first. BYOND builds the names
+/// once the global vars' initial values are worked out, before `world/New`, and
+/// what's there before is lost: until then the proc waits, and goes in at the
+/// first proc call after.
 fn add_world_proc(id: u32, keys: Vec<u32>) -> Result<(), String> {
 	if runtime_tables::world_names_built()? {
 		return name_world_proc(id, &keys);
@@ -1899,17 +1907,22 @@ fn add_waiting_world_procs() -> bool {
 }
 
 fn name_world_proc(id: u32, keys: &[u32]) -> Result<(), String> {
+	let pinned = PINNED_WORLD_PROCS.lock().unwrap().clone();
 	for (k, &key) in keys.iter().enumerate() {
 		let mut procs = runtime_tables::world_named_procs(key)?;
 		procs.retain(|&proc| proc != id);
+		let at = procs.iter().take_while(|proc| pinned.contains(proc)).count();
 		if k == 0 {
 			runtime_tables::set_proc_entry_word(
 				raw_types::procs::ProcId(id),
 				ProcEntryWords::NEXT_OVERRIDE,
-				procs.first().copied().unwrap_or(NONE)
+				procs.get(at).copied().unwrap_or(NONE)
 			);
+			if let Some(&above) = at.checked_sub(1).and_then(|i| procs.get(i)) {
+				runtime_tables::set_proc_entry_word(raw_types::procs::ProcId(above), ProcEntryWords::NEXT_OVERRIDE, id);
+			}
 		}
-		procs.insert(0, id);
+		procs.insert(at, id);
 		runtime_tables::set_world_named_procs(key, &procs)?;
 	}
 	Ok(())
@@ -1945,6 +1958,7 @@ fn world_has_debug_info() -> bool {
 fn forget_world() {
 	*WORLD_HAS_DEBUG_INFO.lock().unwrap() = None;
 	WAITING_WORLD_PROCS.lock().unwrap().clear();
+	PINNED_WORLD_PROCS.lock().unwrap().clear();
 }
 
 /// `bytecode` with its DbgLines renumbered, or `None` when none changes.
