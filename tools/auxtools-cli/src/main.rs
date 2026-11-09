@@ -11,7 +11,7 @@ mod cli;
 mod code;
 mod dap;
 mod debuggee;
-mod sources;
+mod stddef;
 
 const USAGE: &str = "\
 auxtools: the debug adapter for auxtools' debugger

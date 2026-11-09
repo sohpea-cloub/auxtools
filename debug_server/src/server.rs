@@ -417,18 +417,26 @@ impl Server {
 
 		for node in nodes {
 			if let dmasm::Node::Instruction(ins, debug) = node {
-				if debug.offset > offset {
+				if debug.offset > offset && !reached_offset {
 					reached_offset = true;
-					break;
+					if current_line_number.is_some() {
+						break;
+					}
 				}
 
 				if let dmasm::Instruction::DbgLine(line) = ins {
 					current_line_number = Some(line);
+					// Before its first line, a proc is at its first line
+					if reached_offset {
+						break;
+					}
 				}
 
 				if debug.offset == offset {
 					reached_offset = true;
-					break;
+					if current_line_number.is_some() {
+						break;
+					}
 				}
 			}
 		}

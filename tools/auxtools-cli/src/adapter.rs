@@ -34,7 +34,7 @@ use crate::{
 	code,
 	dap::{self, Output},
 	debuggee::Debuggee,
-	sources::{strip_declaration, Place, Sources, Stddef}
+	stddef::{strip_declaration, Stddef}
 };
 
 /// The exception filter that pauses on runtime errors
@@ -45,6 +45,8 @@ const STDDEF_REFERENCE: i64 = 1;
 const EXIT_GRACE: Duration = Duration::from_secs(5);
 /// The proc the debug library leaves sleeping in a loop
 const KEEPALIVE: &str = "/auxtools_keepalive";
+/// The file the debug library's own procs are in
+const HELPER_FILE: &str = "auxtools_launcher.dm";
 /// Where the key for function breakpoints' records is
 const FUNCTION_BREAKPOINTS: &str = "<functions>";
 /// How often to try the world's socket while it isn't listening
@@ -150,7 +152,9 @@ pub struct Adapter {
 	hot_reload: bool,
 	/// Whether the code has been read (or couldn't be) once
 	code_read: bool,
-	sources: Option<Sources>,
+	/// The directory the world's code is in, which the world names its files
+	/// relative to
+	root: Option<PathBuf>,
 	stddef: Option<Stddef>,
 
 	debuggee: Option<Debuggee>,
@@ -198,7 +202,7 @@ pub fn run() {
 		code: None,
 		hot_reload: false,
 		code_read: false,
-		sources: None,
+		root: None,
 		stddef: None,
 		debuggee: None,
 		generation: 0,
@@ -532,7 +536,8 @@ impl Adapter {
 			None => self.out.console("The world restarted")
 		}
 		self.waiting_for_code = match &self.code {
-			Some(code) => code.send(code::Command::Connected { byond }).is_ok() && (self.hot_reload || !self.code_read),
+			// A world that restarted waits for its reloads again
+			Some(code) => code.send(code::Command::Connected { byond }).is_ok() && self.code_read,
 			None => false
 		};
 		if !self.waiting_for_code {
@@ -540,24 +545,28 @@ impl Adapter {
 		}
 	}
 
-	/// Starts reading the world's code, if it can be found
+	/// Finds the world's code, and starts reading it to hot reload it. The
+	/// world says where its procs are itself, so it's read only for that.
 	fn start_code(&mut self, settings: CodeSettings) {
 		let dme = settings.dme.or_else(|| {
 			// The world's command line says which .dmb it runs
 			let AuxResponse::WorldInfo { args, cwd } = self.request(&AuxRequest::WorldInfo).ok()? else {
 				return None;
 			};
-			let dme = local::world_dmb(&args, &cwd)?.with_extension("dme");
-			dme.is_file().then_some(dme)
+			Some(local::world_dmb(&args, &cwd)?.with_extension("dme"))
 		});
-		let Some(dme) = dme else {
-			self.out
-				.console("Couldn't find the world's code (dme), so breakpoints and hot reloading won't work");
+		self.root = dme.as_ref().and_then(|dme| std::path::absolute(dme).ok()?.parent().map(Path::to_owned));
+		self.hot_reload = settings.hot_reload;
+		if !settings.hot_reload {
+			self.code_read = true;
+			return;
+		}
+		let Some(dme) = dme.filter(|dme| dme.is_file()) else {
+			self.out.console("Couldn't find the world's code (dme), so hot reloading won't work");
 			self.code_read = true;
 			return;
 		};
 
-		self.hot_reload = settings.hot_reload;
 		let options = code::Options {
 			dme,
 			defines: settings.defines.iter().map(|define| code::parse_define(define)).collect(),
@@ -568,8 +577,7 @@ impl Adapter {
 
 	fn code_event(&mut self, event: code::Event) {
 		match event {
-			code::Event::Parsed(sources) => {
-				self.sources = Some(*sources);
+			code::Event::Changed => {
 				// Reloaded code moves lines: the breakpoints go where the
 				// client has them now
 				if self.code_read && !self.waiting_for_code && self.debuggee.is_some() && self.debugging {
@@ -578,7 +586,7 @@ impl Adapter {
 				self.code_read = true;
 			}
 			code::Event::Failed(e) => {
-				self.out.console(format!("Couldn't read the code, so breakpoints won't work: {}", e));
+				self.out.console(format!("Couldn't read the code, so hot reloading won't work: {}", e));
 				self.code_read = true;
 				self.code = None;
 				if self.waiting_for_code {
@@ -747,6 +755,16 @@ impl Adapter {
 		json(SetBreakpointsResponse { breakpoints })
 	}
 
+	/// What the world calls a file of its code: its path from the code's
+	/// directory. Otherwise the world matches the end of the path.
+	fn world_file_name(&self, path: &str) -> String {
+		let path = Path::new(path);
+		match self.root.as_ref().and_then(|root| path.strip_prefix(root).ok()) {
+			Some(relative) => relative.to_string_lossy().replace('\\', "/"),
+			None => path.to_string_lossy().into_owned()
+		}
+	}
+
 	/// Sets a file's breakpoints in the world, in place of the ones it had
 	fn apply_breakpoints(&mut self, path: &str) -> Vec<Breakpoint> {
 		self.unset(path);
@@ -770,36 +788,21 @@ impl Adapter {
 				breakpoints.push(unverified("the world runs without debugging"));
 				continue;
 			}
-			let Some(sources) = &self.sources else {
-				breakpoints.push(unverified("the world's code hasn't been read"));
-				continue;
-			};
 			if self.debuggee.is_none() {
 				breakpoints.push(unverified("the world isn't running"));
 				continue;
 			}
-			let Some(id) = sources.proc_at(path, line as u32) else {
-				breakpoints.push(unverified(if sources.has_file(path) {
-					"not in a proc"
-				} else {
-					"not in the world's code"
-				}));
-				continue;
-			};
-			let proc = ProcRef {
-				path: id.path.clone(),
-				override_id: id.override_id
-			};
 
-			let offset = match self.request(&AuxRequest::Offset {
-				proc: proc.clone(),
+			// The world knows which of its procs have code on the line
+			let instructions = match self.request(&AuxRequest::Locate {
+				file: self.world_file_name(path),
 				line: line as u32
 			}) {
-				Ok(AuxResponse::Offset { offset: Some(offset) }) => offset,
-				Ok(AuxResponse::Offset { offset: None }) => {
-					breakpoints.push(unverified("no code on this line"));
+				Ok(AuxResponse::Locate { instructions }) if instructions.is_empty() => {
+					breakpoints.push(unverified("no code on or after this line in the world's code"));
 					continue;
 				}
+				Ok(AuxResponse::Locate { instructions }) => instructions,
 				Ok(other) => {
 					breakpoints.push(unverified(&unexpected(other)));
 					continue;
@@ -810,18 +813,29 @@ impl Adapter {
 				}
 			};
 
-			let instruction = InstructionRef { proc, offset };
-			breakpoints.push(match self.set_breakpoint(&instruction, condition) {
-				Ok(Some(set_line)) => Breakpoint {
+			let mut result = None;
+			for instruction in instructions {
+				match self.set_breakpoint(&instruction, condition.clone()) {
+					Ok(Some(set_line)) => {
+						result.get_or_insert(Ok(set_line));
+					}
+					Ok(None) => {}
+					Err(e) => {
+						result.get_or_insert(Err(e));
+					}
+				}
+				set.push(instruction);
+			}
+			breakpoints.push(match result {
+				Some(Ok(set_line)) => Breakpoint {
 					id: Some(number),
 					verified: true,
 					line: Some(set_line.unwrap_or(line as u32).into()),
 					..Default::default()
 				},
-				Ok(None) => unverified("the world couldn't set it"),
-				Err(e) => unverified(&e)
+				Some(Err(e)) => unverified(&e),
+				None => unverified("the world couldn't set it")
 			});
-			set.push(instruction);
 		}
 		self.set.insert(path.to_owned(), set);
 		breakpoints
@@ -969,17 +983,24 @@ impl Adapter {
 				..Default::default()
 			};
 
-			match self.sources.as_ref().and_then(|sources| sources.place(&proc.path, proc.override_id)) {
-				Some(Place::File { path, line }) => {
+			// The world says which file the proc is in, but for stddef.dm's
+			match &frame.file {
+				// One of the debug library's own
+				Some(file) if file == HELPER_FILE => dap_frame.presentationHint = Some(StackFramePresentationHint::Subtle),
+				Some(file) => {
+					let file = file.replace('\\', "/");
+					let path = match &self.root {
+						Some(root) => root.join(&file),
+						None => PathBuf::from(&file)
+					};
 					dap_frame.source = Some(Source {
 						name: path.file_name().map(|name| name.to_string_lossy().into_owned()),
 						path: Some(path.to_string_lossy().into_owned()),
 						..Default::default()
 					});
-					dap_frame.line = (*line).into();
 				}
-				Some(Place::Stddef) => {
-					if let Some(line) = self.stddef.as_ref().and_then(|stddef| stddef.line(&proc.path, proc.override_id)) {
+				None => match self.stddef.as_ref().and_then(|stddef| stddef.line(&proc.path, proc.override_id)) {
+					Some(line) => {
 						dap_frame.source = Some(Source {
 							name: Some("stddef.dm".to_owned()),
 							sourceReference: Some(STDDEF_REFERENCE),
@@ -987,9 +1008,8 @@ impl Adapter {
 						});
 						dap_frame.line = line.into();
 					}
+					None => dap_frame.presentationHint = Some(StackFramePresentationHint::Subtle)
 				}
-				// One of the debug library's own
-				None => dap_frame.presentationHint = Some(StackFramePresentationHint::Subtle)
 			}
 			if let Some(line) = frame.line {
 				dap_frame.line = line.into();

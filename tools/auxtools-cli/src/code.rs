@@ -18,7 +18,7 @@ use std::{
 use dmasm::reload::{diff, Changes, ParseOptions, ProcKey, Snapshot};
 use auxtools_cli::server_types::{HotReloadInitProc, HotReloadLines, HotReloadNewProc, HotReloadProc, HotReloadRequest, HotReloadVarDefault, ProcRef};
 
-use crate::{adapter::Input, dap::Output, sources::Sources};
+use crate::{adapter::Input, dap::Output};
 
 /// How often to look for changed files
 const INTERVAL: Duration = Duration::from_millis(500);
@@ -32,8 +32,8 @@ pub struct Options {
 
 /// From the code's thread to the adapter
 pub enum Event {
-	/// The code, as of the latest parse the world runs
-	Parsed(Box<Sources>),
+	/// The code the world runs changed, and its lines may have moved
+	Changed,
 	Failed(String),
 	/// Done with the world that last connected: it has the code it should, as
 	/// far as it can be given it, and can be let run
@@ -117,10 +117,6 @@ impl Code {
 		Snapshot::parse(&self.options.dme, &self.parse_options)
 	}
 
-	fn sources(&self, snapshot: &Snapshot) -> Box<Sources> {
-		Box::new(Sources::from_tree(snapshot.context(), snapshot.tree(), self.root.clone()))
-	}
-
 	fn run(mut self) {
 		// What DM_VERSION is, and so what's compiled, depends on the BYOND the
 		// world runs on: the code is read once it connects
@@ -141,7 +137,7 @@ impl Code {
 				return;
 			}
 		};
-		if !self.send(Event::Parsed(self.sources(&built))) || !self.send(Event::Ready) || !self.options.hot_reload {
+		if !self.send(Event::Changed) || !self.send(Event::Ready) || !self.options.hot_reload {
 			return;
 		}
 
@@ -225,7 +221,7 @@ impl Code {
 		match self.reload(&changes) {
 			None => false,
 			Some(true) => {
-				self.send(Event::Parsed(self.sources(&new)));
+				self.send(Event::Changed);
 				watching.applied = Some(new);
 				true
 			}
@@ -246,7 +242,7 @@ impl Code {
 			}
 			watching.applied = None;
 			watching.edited_since_built.clear();
-			return self.send(Event::Parsed(self.sources(&watching.built)));
+			return self.send(Event::Changed);
 		}
 
 		// Whatever was reloaded went with the old world

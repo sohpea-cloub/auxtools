@@ -160,7 +160,7 @@
 						"properties": {
 							"dme": {
 								"type": "string",
-								"description": "The world's .dme. Breakpoints, stack traces and hot reloading need it.",
+								"description": "The world's .dme. Its directory is where the world's files are, and hot reloading reads it.",
 								"default": "${workspaceFolder}/${workspaceFolderBasename}.dme"
 							},
 							"dmb": {

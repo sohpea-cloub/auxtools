@@ -35,7 +35,7 @@ Launch options:
 
 | Option | What it does |
 |---|---|
-| `dme` | The world's `.dme`. Breakpoints, stack traces and hot reloading need it. |
+| `dme` | The world's `.dme`. Its directory is where the world's files are, and hot reloading reads it. |
 | `dmb` | The world to run, if it isn't the `.dme`'s `.dmb`. |
 | `server` | `dreamseeker`, `dreamdaemon`, or `dd` (Windows' DreamDaemon without a window, whose output shows in the debug console). |
 | `build` | Build the `.dme` first. |
