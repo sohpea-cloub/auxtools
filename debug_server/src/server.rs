@@ -1445,7 +1445,6 @@ impl Server {
 		let Some(mut client) = self.clients.remove(&id) else {
 			return;
 		};
-		eprintln!("Debug server disconnecting a client");
 		let _ = Self::send(&mut client.connection, &Response::Disconnect);
 		if self.current == Some(id) {
 			self.current = None;
@@ -1532,18 +1531,10 @@ impl ServerThread {
 		let mut buf = vec![];
 		waker::client_connected();
 
-		loop {
-			let request = match read_request(&mut stream, &mut buf) {
-				Ok(request) => request,
-
-				Err(e) => {
-					eprintln!("Debug server thread read error: {}", e);
-					break;
-				}
-			};
-
+		// Until it says goodbye or hangs up, which clients come and go by, so
+		// neither is worth a line in the world's log
+		while let Ok(request) = read_request(&mut stream, &mut buf) {
 			if let Request::Disconnect = request {
-				eprintln!("Debug client disconnected");
 				break;
 			}
 
@@ -1556,8 +1547,6 @@ impl ServerThread {
 
 		waker::client_left();
 		let _ = self.events.send(Event::Disconnected(id));
-
-		eprintln!("Debug client connection closed");
 	}
 }
 

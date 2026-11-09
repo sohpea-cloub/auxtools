@@ -412,7 +412,7 @@ impl Adapter {
 		)?;
 		self.pid = Some(game.pid());
 		self.game = Some(game);
-		self.started();
+		self.started(None);
 		Ok(Value::Null)
 	}
 
@@ -431,7 +431,7 @@ impl Adapter {
 		}
 		// It's there, so there's an answer straight away, if it runs the
 		// debug library at all
-		local::connect(pid).map_err(|e| {
+		let stream = local::connect(pid).map_err(|e| {
 			format!(
 				"process {} isn't a world with this version of auxtools' debugger in it (protocol {}): {}",
 				pid,
@@ -447,18 +447,28 @@ impl Adapter {
 		});
 		self.pid = Some(pid);
 		self.out.console(format!("Attaching to process {}", pid));
-		self.started();
+		self.started(Some(stream));
 		Ok(Value::Null)
 	}
 
-	/// The world is running: connect to it
-	fn started(&mut self) {
+	/// The world is running: connect to it, unless that's done
+	fn started(&mut self, stream: Option<Stream>) {
 		// Without debugging, there are no breakpoints to wait for
 		if !self.debugging {
 			self.initialized = true;
 			self.out.event(InitializedEvent);
 		}
-		self.connect();
+		match stream {
+			// Handled once the client has its answer
+			Some(stream) => {
+				self.generation += 1;
+				let _ = self.inputs.send(Input::Connected {
+					generation: self.generation,
+					stream
+				});
+			}
+			None => self.connect()
+		}
 	}
 
 	/// Connects to the world when it listens, in the background
