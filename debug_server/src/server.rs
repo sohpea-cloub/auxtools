@@ -140,6 +140,14 @@ pub struct Server {
 	in_eval: bool,
 	eval_error: Option<String>,
 	breakpoints: Breakpoints,
+	/// Why the world is paused, while it is
+	paused: Option<BreakpointReason>,
+	/// The client that asked for the world to stay paused once every client
+	/// has gone (`Request::HoldPause`)
+	hold: Option<ClientId>,
+	/// The procs in each file (as `Request::Locate` spells them), and how many
+	/// procs the world had when they were counted
+	procs_by_file: Option<(u32, HashMap<String, Vec<u32>>)>,
 	moved_breakpoints: hot_reload::MovedBreakpoints,
 	app: Command<'static>
 }
@@ -204,6 +212,9 @@ impl Server {
 			eval_error: None,
 			breakpoints: HashMap::new(),
 			moved_breakpoints: HashMap::new(),
+			paused: None,
+			hold: None,
+			procs_by_file: None,
 			app: Self::setup_app()
 		})
 	}
@@ -309,6 +320,92 @@ impl Server {
 			},
 			frame.offset as u32
 		)
+	}
+
+	/// The file a proc is in, if its code starts with DbgFile
+	fn file_of(proc: &Proc) -> Option<String> {
+		let dbg_file = dmasm::Opcode::DbgFile.word();
+		let bytecode = unsafe { proc.bytecode() };
+		let id = match bytecode {
+			[op, id, ..] if *op == dbg_file => *id,
+			// A breakpoint at its start hides it
+			[_, ..] => match crate::instruction_hooking::original_bytecode(proc).as_slice() {
+				[op, id, ..] if *op == dbg_file => *id,
+				_ => return None
+			},
+			[] => return None
+		};
+		let name = unsafe { StringRef::from_id(raw_types::strings::StringId(id)) };
+		Some(String::from_utf8_lossy(name.data()).into_owned())
+	}
+
+	/// Where each proc with code on `line` of `file` has it
+	fn locate(&mut self, file: &str, line: u32) -> Vec<InstructionRef> {
+		let normalize = |path: &str| path.replace('\\', "/").to_ascii_lowercase();
+		let wanted = normalize(file);
+		let same = |file: &str| file == wanted || file.ends_with(&format!("/{}", wanted)) || wanted.ends_with(&format!("/{}", file));
+
+		// Counted again when procs were added
+		let count = auxtools::runtime_tables::proc_count();
+		if self.procs_by_file.as_ref().is_none_or(|(counted, _)| *counted != count) {
+			let mut by_file: HashMap<String, Vec<u32>> = HashMap::new();
+			for id in 0..count {
+				if let Some(file) = Proc::from_id(raw_types::procs::ProcId(id)).and_then(|proc| Self::file_of(&proc)) {
+					by_file.entry(normalize(&file)).or_default().push(id);
+				}
+			}
+			self.procs_by_file = Some((count, by_file));
+		}
+		let ids: Vec<u32> = self.procs_by_file.as_ref().map_or(vec![], |(_, by_file)| {
+			by_file
+				.iter()
+				.filter(|(file, _)| same(file))
+				.flat_map(|(_, ids)| ids.iter().copied())
+				.collect()
+		});
+
+		// A line with no code of its own (a proc's declaration, a comment, the
+		// middle of a statement) has its breakpoint on the next one that has
+		let procs: Vec<(ProcRef, Vec<u32>)> = ids
+			.into_iter()
+			.filter_map(|id| Proc::from_id(raw_types::procs::ProcId(id)))
+			.map(|proc| {
+				let lines = Self::lines_of(&proc);
+				let proc = ProcRef {
+					path: proc.path.clone(),
+					override_id: proc.override_id()
+				};
+				(proc, lines)
+			})
+			.collect();
+		let Some(line) = procs.iter().flat_map(|(_, lines)| lines.iter().copied()).filter(|&l| l >= line).min() else {
+			return vec![];
+		};
+
+		let mut found = vec![];
+		for (proc, lines) in procs {
+			if !lines.contains(&line) {
+				continue;
+			}
+			if let Some(offset) = self.get_offset(proc.clone(), line) {
+				found.push(InstructionRef { proc, offset });
+			}
+		}
+		found
+	}
+
+	/// The lines a proc has code on (its DbgLines)
+	fn lines_of(proc: &Proc) -> Vec<u32> {
+		let bytecode = crate::instruction_hooking::original_bytecode(proc);
+		let mut env = disassemble_env::DisassembleEnv;
+		let (nodes, _error) = dmasm::disassembler::disassemble(&bytecode, &mut env);
+		nodes
+			.into_iter()
+			.filter_map(|node| match node {
+				dmasm::Node::Instruction(dmasm::Instruction::DbgLine(line), _) => Some(line),
+				_ => None
+			})
+			.collect()
 	}
 
 	fn line_number_in(bytecode: &[u32], offset: u32) -> Option<u32> {
@@ -739,7 +836,8 @@ impl Server {
 							proc: proc_ref.clone(),
 							offset: stack[i].offset as u32
 						},
-						line: self.frame_line_number(&stack[i])
+						line: self.frame_line_number(&stack[i]),
+						file: Self::file_of(&stack[i].proc)
 					});
 				}
 
@@ -1222,6 +1320,21 @@ impl Server {
 
 			Request::HotReload(request) => self.handle_hot_reload(&request),
 
+			Request::Status => {
+				let paused = self.paused.clone();
+				self.send_or_disconnect(Response::Status { paused });
+			}
+
+			Request::HoldPause => {
+				self.hold = self.current;
+				self.send_or_disconnect(Response::Ack);
+			}
+
+			Request::Locate { file, line } => {
+				let instructions = self.locate(&file, line);
+				self.send_or_disconnect(Response::Locate { instructions });
+			}
+
 			Request::WorldInfo => {
 				let (args, cwd) = crate::launched::command_line();
 				self.send_or_disconnect(Response::WorldInfo { args, cwd });
@@ -1318,7 +1431,7 @@ impl Server {
 		// unless someone wants them
 		let wanted = match reason {
 			BreakpointReason::Runtime(_) => self.clients.values().any(|client| client.catch_runtimes),
-			_ => !self.clients.is_empty()
+			_ => !self.clients.is_empty() || self.hold.is_some()
 		};
 		if !wanted {
 			return ContinueKind::Continue;
@@ -1359,10 +1472,16 @@ impl Server {
 		}
 
 		self.notify(format!("Pausing execution (reason: {:?})", reason));
+		self.paused = Some(reason.clone());
 		self.broadcast(Response::BreakpointHit { reason }, None);
 
-		while !self.clients.is_empty() {
-			let Some(request) = self.recv_request(Wait::WhileClients) else {
+		loop {
+			// Held, it waits for clients to come back
+			let wait = if self.hold.is_some() { Wait::Forever } else { Wait::WhileClients };
+			if wait == Wait::WhileClients && self.clients.is_empty() {
+				break;
+			}
+			let Some(request) = self.recv_request(wait) else {
 				break;
 			};
 
@@ -1372,6 +1491,8 @@ impl Server {
 				self.send_or_disconnect(Response::Ack);
 				self.broadcast(Response::Resumed, self.current);
 				self.state = None;
+				self.paused = None;
+				self.hold = None;
 				return kind;
 			}
 
@@ -1388,6 +1509,7 @@ impl Server {
 
 		// Every client left
 		self.state = None;
+		self.paused = None;
 		ContinueKind::Continue
 	}
 
@@ -1458,6 +1580,10 @@ impl Server {
 		let _ = Self::send(&mut client.connection, &Response::Disconnect);
 		if self.current == Some(id) {
 			self.current = None;
+		}
+		// A hold on a pause that hasn't come yet goes with its client
+		if self.hold == Some(id) && self.paused.is_none() {
+			self.hold = None;
 		}
 
 		let mut unclaimed = vec![];

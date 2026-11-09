@@ -3,7 +3,8 @@
 //! debugger itself, stop at breakpoints, pick up again after the world
 //! reboots, and go away when the world ends. Then a world launched without
 //! debugging is found with `--list`, two more launchers attach to it at once,
-//! and the first hot reloads it.
+//! and the first hot reloads it. Last, the launcher's command line pauses it
+//! and looks around, a command at a time.
 //!
 //! Build the launcher and the debug library first:
 //! `cargo build -p auxtools-cli -p debug_server -p launcher_test`, then run this
@@ -356,6 +357,78 @@ fn main() {
 	println!("all ok");
 }
 
+/// Runs the launcher with `args`, for its exit code and what it printed
+fn launcher_command(args: &[&str]) -> (i32, String) {
+	let out = Command::new(next_to_us(if cfg!(windows) { "auxtools.exe" } else { "auxtools" }))
+		.args(args)
+		.output()
+		.unwrap();
+	let printed = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+	(out.status.code().unwrap_or(-1), printed)
+}
+
+/// The command line, a command at a time: each connects, does it and leaves,
+/// and the world stays paused between them
+fn command_line(pid: u64, code: &Path) {
+	let pid = pid.to_string();
+	let run = |args: &[&str], code: i32| {
+		let args: Vec<&str> = ["--pid", pid.as_str()].iter().chain(args).copied().collect();
+		let (got, printed) = launcher_command(&args);
+		assert_eq!(got, code, "`{}` gave {}, not {}: {}", args.join(" "), got, code, printed);
+		printed
+	};
+
+	assert_eq!(run(&["status"], 0).trim(), "running");
+	let printed = run(&["wait", "--timeout", "1"], 2);
+	assert!(printed.contains("timed out"), "wait said {}", printed);
+
+	let line = line_of(code, "\treturn 2").to_string();
+	let printed = run(&["wait", "--break", &format!("attach_host.dm:{}", line), "--timeout", "60"], 0);
+	assert!(
+		printed.starts_with("paused at a breakpoint\n#0 /value  attach_host.dm:") && printed.contains("#1 /run_until_stopped"),
+		"wait said {}",
+		printed
+	);
+	let printed = run(&["status"], 0);
+	assert!(printed.starts_with("paused at a breakpoint"), "it didn't stay paused: {}", printed);
+	run(&["continue"], 0);
+
+	// A line with no code of its own breaks on the next that has
+	let declared = line_of(code, "/proc/value()");
+	let printed = run(&["wait", "--break", &format!("attach_host.dm:{}", declared), "--timeout", "60"], 0);
+	assert!(
+		printed.starts_with(&format!("paused at a breakpoint\n#0 /value  attach_host.dm:{}\n", declared + 1)),
+		"wait said {}",
+		printed
+	);
+	assert_eq!(run(&["eval", "6", "*", "7"], 0).trim(), "42");
+	let printed = run(&["next"], 0);
+	assert!(printed.starts_with("paused after a step\n#0 /run_until_stopped"), "next said {}", printed);
+	let printed = run(&["vars"], 0);
+	assert!(printed.contains("locals:"), "vars said {}", printed);
+	assert_eq!(run(&["continue"], 0).trim(), "running");
+	assert_eq!(
+		run(&["continue"], 1).trim(),
+		"the world is running: `pause` it, or `wait` for it to pause"
+	);
+	println!("ok: the command line waited for a breakpoint, looked around, stepped and let the world carry on");
+
+	let printed = run(&["pause"], 0);
+	assert!(
+		printed.starts_with("paused where it was asked to\n#0 /run_until_stopped"),
+		"pause said {}",
+		printed
+	);
+	let printed = run(&["wait", "--break", "/proc/value"], 0);
+	assert!(printed.starts_with("already paused"), "wait said {}", printed);
+	run(&["continue"], 0);
+	let printed = run(&["wait", "--break", "/proc/value", "--if", "1 == 2", "--timeout", "2"], 2);
+	assert!(printed.contains("timed out"), "wait said {}", printed);
+	let printed = run(&["wait", "--break", "nowhere.dm:3"], 1);
+	assert!(printed.contains("no proc in nowhere.dm"), "wait said {}", printed);
+	println!("ok: the command line paused the world, and its waits time out and say what's wrong");
+}
+
 fn test_args() -> Option<Vec<String>> {
 	std::env::var("LAUNCHER_TEST_ARGS")
 		.ok()
@@ -456,6 +529,11 @@ fn attach_and_reload(server: &str, library: &Path) {
 	let seen = runner.output.matches("attach test: 2").count();
 	runner.wait_count("attach test: 2", seen + 2);
 	println!("ok: the attached launchers left, and the world carries on");
+
+	command_line(pid, &code);
+	let seen = runner.output.matches("attach test: 2").count();
+	runner.wait_count("attach test: 2", seen + 1);
+	println!("ok: the world carries on after the command line let it");
 
 	std::fs::write(dir.join("stop"), "yes").unwrap();
 	runner.event("terminated");

@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 /// The version of the messages here. Bump it by hand with any change a client
 /// and a world built before it wouldn't agree on: it's in the name of the
 /// world's socket, so a client only finds worlds that speak its version.
-pub const PROTOCOL_VERSION: u32 = 1;
+pub const PROTOCOL_VERSION: u32 = 2;
 
 /// The local socket the world in process `pid` listens on, when it has the
 /// debug library: `auxtools-debug-v1-1234`
@@ -72,7 +72,22 @@ pub enum Request {
 	HotReload(HotReloadRequest),
 	/// The program's command line and working directory, which say which world
 	/// it runs
-	WorldInfo
+	WorldInfo,
+	/// Whether the world is paused, and why
+	Status,
+	/// Keeps the world paused (now, or at its next pause) after every client
+	/// has gone, until one tells it to carry on: for clients that come and go,
+	/// like the launcher's command line. Forgotten if the client that asked
+	/// leaves before a pause.
+	HoldPause,
+	/// Where each proc with code on a line of a file has it, found in the
+	/// world's code (its DbgFile and DbgLine). `file` can be the path the world
+	/// was built with, a path that ends with it, or its end. A line with no
+	/// code of its own gives the next line that has.
+	Locate {
+		file: String,
+		line: u32
+	}
 }
 
 // Message from server -> client
@@ -130,7 +145,13 @@ pub enum Response {
 		cwd: String
 	},
 	/// Another client let the world carry on from a pause
-	Resumed
+	Resumed,
+	Status {
+		paused: Option<BreakpointReason>
+	},
+	Locate {
+		instructions: Vec<InstructionRef>
+	}
 }
 
 #[derive(Serialize, Deserialize, Debug, Hash, PartialEq, Eq, Clone)]
@@ -145,7 +166,7 @@ pub struct InstructionRef {
 	pub offset: u32
 }
 
-#[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub enum BreakpointReason {
 	Breakpoint,
 	Step,
@@ -171,7 +192,10 @@ pub struct Stack {
 pub struct StackFrame {
 	pub id: u32,
 	pub instruction: InstructionRef,
-	pub line: Option<u32>
+	pub line: Option<u32>,
+	/// The file its proc is in, as its DbgFile names it (a world built with
+	/// DEBUG has them)
+	pub file: Option<String>
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]

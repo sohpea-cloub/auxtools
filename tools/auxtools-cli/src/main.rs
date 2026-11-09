@@ -3,9 +3,11 @@
 //! DreamSeeker or DreamDaemon with the debug library loaded into it, which
 //! needs nothing from the world's code, or attaches to one already running it,
 //! and passes on what the world prints. It hot reloads the world's code as
-//! files are saved, with or without debugging.
+//! files are saved, with or without debugging. It also takes one command to a
+//! running world from the command line (see `cli`).
 
 mod adapter;
+mod cli;
 mod code;
 mod dap;
 mod debuggee;
@@ -19,10 +21,14 @@ auxtools --list                         list the running worlds that can be
                                         attached to, as JSON
 auxtools --build DME [BYOND]            build DME with DreamMaker, from the BYOND
                                         installed in BYOND or the usual places
-auxtools --version";
+auxtools --version
+";
 
 fn main() {
 	let args: Vec<String> = std::env::args().skip(1).collect();
+	if args.first().is_some_and(|a| cli::is_command(a)) {
+		cli::run(&args);
+	}
 	match args.iter().map(String::as_str).collect::<Vec<_>>().as_slice() {
 		[] => adapter::run(),
 		["--version"] => println!("auxtools {}", env!("CARGO_PKG_VERSION")),
@@ -39,7 +45,7 @@ fn main() {
 			}
 		}
 		_ => {
-			eprintln!("{}", USAGE);
+			eprintln!("{}{}", USAGE, cli::USAGE);
 			std::process::exit(2);
 		}
 	}
