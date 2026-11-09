@@ -7,7 +7,7 @@ impl AssembleEnv {
 	// what it evaluates to
 	fn eval_with_name(code: &str, arg: &str) -> Option<Value> {
 		let arg = Value::from_string(arg).ok()?;
-		let expr = dmasm::compiler::compile_expr(code, &["name"]).unwrap();
+		let expr = dmasm::compiler::compile_expr_for(code, &["name"], crate::world_byond()).unwrap();
 		let assembly = dmasm::assembler::assemble(&expr, &mut Self).unwrap();
 
 		let proc = Proc::find("/proc/auxtools_expr_stub")?;

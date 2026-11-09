@@ -155,7 +155,8 @@ fn helper_procs() -> Result<HotReloadRequest, String> {
 	let mut parser = dreammaker::Parser::new(&ctx, pp);
 	parser.enable_procs();
 	let tree = parser.parse_object_tree();
-	let snapshot = Snapshot::from_tree(ctx, tree);
+	let mut snapshot = Snapshot::from_tree(ctx, tree);
+	snapshot.set_byond(crate::world_byond());
 
 	let mut request = HotReloadRequest::default();
 	let keys: Vec<ProcKey> = snapshot.procs().cloned().collect();

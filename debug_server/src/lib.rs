@@ -40,6 +40,12 @@ pub static WORLD_ENDS: AtomicU32 = AtomicU32::new(0);
 /// may touch the server.
 pub struct WorldEnded;
 
+/// The build the world runs on, which code compiled for it has to match
+pub(crate) fn world_byond() -> dmasm::ByondVersion {
+	let (major, build) = auxtools::version::get();
+	dmasm::ByondVersion::new(major, build)
+}
+
 /// What to do about a panic that got as far as the code BYOND called
 fn recover(payload: &(dyn std::any::Any + Send), server: &mut server::Server) {
 	if !payload.is::<WorldEnded>() {

@@ -1069,7 +1069,7 @@ impl Server {
 		let arg_names: Vec<&str> = args.iter().map(|(name, ..)| name.as_str()).collect();
 		let arg_values: Vec<&Value> = args.iter().map(|(_, value, _)| value).collect();
 
-		let expr = match dmasm::compiler::compile_expr(command, &arg_names) {
+		let expr = match dmasm::compiler::compile_expr_for(command, &arg_names, crate::world_byond()) {
 			Ok(expr) => expr,
 			Err(err) => {
 				self.notify(format!("{}", err));
