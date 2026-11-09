@@ -60,6 +60,12 @@ enum DebuggerAction {
 
 static mut CURRENT_ACTION: DebuggerAction = DebuggerAction::None;
 
+/// When the pause being waited for was asked for
+static mut PAUSE_ASKED: Option<std::time::Instant> = None;
+/// How long a pause passes over the debugger's own helper procs, waiting for
+/// the world's code to run. A world that's doing nothing else pauses in one.
+const PAUSE_PATIENCE: std::time::Duration = std::time::Duration::from_secs(1);
+
 static mut DEFERRED_INSTRUCTION_REPLACE: UnsafeCell<Option<(Vec<u32>, *mut u32)>> = UnsafeCell::new(None);
 
 #[derive(PartialEq, Eq, Hash)]
@@ -210,6 +216,13 @@ fn handle_runtime(error: &str) {
 	}
 }
 
+/// Whether the code running is one of the debugger's own helper procs, like
+/// the loop that keeps a launched world awake
+unsafe fn in_helper(ctx: *mut raw_types::procs::ExecutionContext) -> bool {
+	let id = unsafe { (**(*ctx).proc_instance()).proc };
+	Proc::from_id(id).is_some_and(|proc| proc.path.trim_start_matches("/proc").starts_with("/auxtools_"))
+}
+
 impl InstructionHook for Server {
 	fn handle_instruction(&mut self, ctx: *mut raw_types::procs::ExecutionContext) {
 		// Always handle the deferred instruction replacement first - everything
@@ -232,6 +245,7 @@ impl InstructionHook for Server {
 		if !in_eval && server.process() {
 			unsafe {
 				CURRENT_ACTION = DebuggerAction::Pause;
+				PAUSE_ASKED = Some(std::time::Instant::now());
 			}
 		}
 
@@ -248,6 +262,8 @@ impl InstructionHook for Server {
 
 			match action {
 				DebuggerAction::None => {}
+
+				DebuggerAction::Pause if PAUSE_ASKED.is_some_and(|asked| asked.elapsed() < PAUSE_PATIENCE) && in_helper(ctx) => {}
 
 				DebuggerAction::Pause => {
 					CURRENT_ACTION = DebuggerAction::None;
