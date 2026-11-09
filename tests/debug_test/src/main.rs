@@ -125,6 +125,8 @@ fn main() {
 
 	let mut client = world.connect();
 	let clean_disassembly = eval(&mut client, None, &dis_command);
+	assert_eq!(eval(&mut client, None, "helper.greet(\"you\")"), "\"hi you\"");
+	println!("ok: evaluating a verb call");
 	set_breakpoint(&mut client, BREAKPOINT_TARGET, None);
 	expect_breakpoint_in(&mut client, BREAKPOINT_TARGET);
 	println!("ok: breakpoint hit");

@@ -62,3 +62,10 @@ var/reboot_requested = FALSE
 	spawn()
 		main_loop()
 	. = ..()
+
+// Evaluated expressions call verbs as well as procs
+/mob/helper/verb/greet(who as text)
+	set name = "Greet Someone"
+	return "hi [who]"
+
+var/mob/helper/helper = new
