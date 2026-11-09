@@ -20,7 +20,8 @@ mod mem_profiler_stub;
 
 use std::{
 	cell::UnsafeCell,
-	panic::{catch_unwind, AssertUnwindSafe}
+	panic::{catch_unwind, AssertUnwindSafe},
+	sync::atomic::{AtomicU32, Ordering}
 };
 
 pub(crate) use ::instruction_hooking::disassemble_env::DisassembleEnv;
@@ -31,8 +32,24 @@ use mem_profiler_stub as mem_profiler;
 
 pub static mut DEBUG_SERVER: UnsafeCell<Option<server::Server>> = UnsafeCell::new(None);
 
+/// Bumped each time the world ends: a reboot, or the program shutting down
+pub static WORLD_ENDS: AtomicU32 = AtomicU32::new(0);
+
+/// Unwinds out of the debug server when DM code it ran (an expression
+/// evaluated) ended the world, and the server with it: nothing on the way out
+/// may touch the server.
+pub struct WorldEnded;
+
+/// What to do about a panic that got as far as the code BYOND called
+fn recover(payload: &(dyn std::any::Any + Send), server: &mut server::Server) {
+	if !payload.is::<WorldEnded>() {
+		server.recover_from_panic();
+	}
+}
+
 #[shutdown]
 fn debugger_shutdown() {
+	WORLD_ENDS.fetch_add(1, Ordering::Relaxed);
 	// INSTRUCTION_HOOKS are cleared on shutdown so we don't need to worry about
 	// that.
 	unsafe {
@@ -53,8 +70,8 @@ impl InstructionHook for DebugServerInstructionHook<'static> {
 		// BYOND calls this through extern "C" code, and a panic that gets back
 		// out there aborts the whole game. Losing the debugger is the better
 		// deal.
-		if catch_unwind(AssertUnwindSafe(|| debug_server.handle_instruction(ctx))).is_err() {
-			debug_server.recover_from_panic();
+		if let Err(payload) = catch_unwind(AssertUnwindSafe(|| debug_server.handle_instruction(ctx))) {
+			recover(&*payload, debug_server);
 		}
 	}
 }

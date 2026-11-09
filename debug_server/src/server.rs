@@ -989,7 +989,17 @@ impl Server {
 
 		proc.set_bytecode(assembly);
 
-		match proc.call(&arg_values) {
+		let ends = crate::WORLD_ENDS.load(std::sync::atomic::Ordering::Relaxed);
+		let result = proc.call(&arg_values);
+		if crate::WORLD_ENDS.load(std::sync::atomic::Ordering::Relaxed) != ends {
+			// The expression ended the world (`world.Reboot()`), and this
+			// server with it. The values were the old world's.
+			std::mem::forget(result);
+			std::mem::forget(args);
+			std::panic::resume_unwind(Box::new(crate::WorldEnded));
+		}
+
+		match result {
 			Ok(res) => {
 				if let Ok(list) = res.as_list() {
 					// The rest are the potentially mutated parameters. We need

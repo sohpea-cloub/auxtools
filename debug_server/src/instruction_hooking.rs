@@ -203,9 +203,9 @@ fn handle_runtime(error: &str) {
 		CURRENT_ACTION = handle_breakpoint(ctx, BreakpointReason::Runtime(error.to_string()));
 	});
 
-	if result.is_err() {
+	if let Err(payload) = result {
 		if let Some(server) = unsafe { &mut *DEBUG_SERVER.get() } {
-			server.recover_from_panic();
+			crate::recover(&*payload, server);
 		}
 	}
 }
