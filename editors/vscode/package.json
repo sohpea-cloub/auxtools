@@ -27,7 +27,8 @@
 		"onDebugDynamicConfigurations:auxtools",
 		"onCommand:auxtools.pickWorld",
 		"onDebugInitialConfigurations",
-		"workspaceContains:**/*.dme"
+		"workspaceContains:**/*.dme",
+		"workspaceContains:**/*.dmb"
 	],
 	"contributes": {
 		"languages": [
@@ -158,14 +159,14 @@
 				"configurationAttributes": {
 					"launch": {
 						"properties": {
-							"dme": {
-								"type": "string",
-								"description": "The world's .dme. Its directory is where the world's files are, and hot reloading reads it.",
-								"default": "${workspaceFolder}/${workspaceFolderBasename}.dme"
-							},
 							"dmb": {
 								"type": "string",
-								"description": "The world to run, if it isn't the .dme's .dmb"
+								"description": "The world to run",
+								"default": "${workspaceFolder}/${workspaceFolderBasename}.dmb"
+							},
+							"dme": {
+								"type": "string",
+								"description": "The world's .dme, if it isn't the one next to the .dmb. Its directory is where the world's files are, and hot reloading reads it."
 							},
 							"server": {
 								"type": "string",
@@ -184,7 +185,7 @@
 							"build": {
 								"type": "boolean",
 								"description": "Build the .dme with DreamMaker first",
-								"default": true
+								"default": false
 							},
 							"defines": {
 								"type": "array",
@@ -258,33 +259,30 @@
 						"type": "auxtools",
 						"request": "launch",
 						"name": "Debug world",
-						"dme": "${workspaceFolder}/${workspaceFolderBasename}.dme",
-						"build": true
+						"dmb": "${workspaceFolder}/${workspaceFolderBasename}.dmb"
 					}
 				],
 				"configurationSnippets": [
 					{
 						"label": "auxtools: Debug in DreamSeeker",
-						"description": "Build the world and debug it in DreamSeeker",
+						"description": "Debug the built world in DreamSeeker",
 						"body": {
 							"type": "auxtools",
 							"request": "launch",
 							"name": "Debug in DreamSeeker",
-							"dme": "^\"\\${workspaceFolder}/${1:world}.dme\"",
-							"server": "dreamseeker",
-							"build": true
+							"dmb": "^\"\\${workspaceFolder}/${1:world}.dmb\"",
+							"server": "dreamseeker"
 						}
 					},
 					{
 						"label": "auxtools: Debug in DreamDaemon",
-						"description": "Build the world and debug it in DreamDaemon",
+						"description": "Debug the built world in DreamDaemon",
 						"body": {
 							"type": "auxtools",
 							"request": "launch",
 							"name": "Debug in DreamDaemon",
-							"dme": "^\"\\${workspaceFolder}/${1:world}.dme\"",
-							"server": "dreamdaemon",
-							"build": true
+							"dmb": "^\"\\${workspaceFolder}/${1:world}.dmb\"",
+							"server": "dreamdaemon"
 						}
 					},
 					{

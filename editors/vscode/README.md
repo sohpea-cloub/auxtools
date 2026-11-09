@@ -13,8 +13,9 @@ language extension alongside it.
 
 ## Debugging a world
 
-- Press F5 in a workspace with a `.dme`: it's built with DreamMaker, then run in
-  DreamSeeker (Windows) or DreamDaemon (Linux) with the debugger attached.
+- Press F5 in a workspace with a built world (`.dmb`): it's run in DreamSeeker
+  (Windows) or DreamDaemon (Linux) with the debugger attached. With more than one
+  `.dmb`, you pick which.
 - Or run **auxtools: Debug in DreamSeeker** or **auxtools: Debug in DreamDaemon**
   from the command palette, or the **Run without debugging** versions.
 - For a configuration you can keep, add one to `launch.json` (**Add Configuration...**
@@ -25,9 +26,8 @@ language extension alongside it.
 	"type": "auxtools",
 	"request": "launch",
 	"name": "Debug in DreamDaemon",
-	"dme": "${workspaceFolder}/tgstation.dme",
-	"server": "dreamdaemon",
-	"build": true
+	"dmb": "${workspaceFolder}/tgstation.dmb",
+	"server": "dreamdaemon"
 }
 ```
 
@@ -35,10 +35,10 @@ Launch options:
 
 | Option | What it does |
 |---|---|
-| `dme` | The world's `.dme`. Its directory is where the world's files are, and hot reloading reads it. |
-| `dmb` | The world to run, if it isn't the `.dme`'s `.dmb`. |
+| `dmb` | The world to run. |
+| `dme` | The world's `.dme`, if it isn't the one next to the `.dmb`. Its directory is where the world's files are, and hot reloading reads it. |
 | `server` | `dreamseeker`, `dreamdaemon`, or `dd` (Windows' DreamDaemon without a window, whose output shows in the debug console). |
-| `build` | Build the `.dme` first. |
+| `build` | Build the `.dme` with DreamMaker first (off unless set). |
 | `defines` | DreamMaker's `-D` defines (`NAME` or `NAME=VALUE`), for building and reading the code. |
 | `hotReload` | Swap changed code into the running world as files are saved (on unless set to `false`). |
 | `byondPath` | Where BYOND is installed, if it isn't found. |

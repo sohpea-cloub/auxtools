@@ -51,14 +51,15 @@ function ensureExecutable(file) {
 	}
 }
 
-// The workspace's .dme files, most likely first: a .dme named after its
-// folder, then shallower ones
-async function findEnvironments(folder) {
-	const pattern = folder ? new vscode.RelativePattern(folder, "**/*.dme") : "**/*.dme";
+// The workspace's files with `extension` (".dme" or ".dmb"), most likely
+// first: one named after its folder, then shallower ones
+async function findFiles(extension, folder) {
+	const glob = `**/*${extension}`;
+	const pattern = folder ? new vscode.RelativePattern(folder, glob) : glob;
 	const found = await vscode.workspace.findFiles(pattern, "**/node_modules/**", 50);
 	const score = (uri) => {
 		const owner = vscode.workspace.getWorkspaceFolder(uri);
-		const named = owner && path.basename(uri.fsPath, ".dme") === owner.name ? 0 : 1;
+		const named = owner && path.basename(uri.fsPath, extension) === owner.name ? 0 : 1;
 		return [named, uri.fsPath.split(/[\\/]/).length];
 	};
 	return found.sort((a, b) => {
@@ -67,11 +68,11 @@ async function findEnvironments(folder) {
 	});
 }
 
-// One .dme, asking when there's a choice
-async function pickEnvironment(folder) {
-	const found = await findEnvironments(folder);
+// One built world (.dmb) to run, asking when there's a choice
+async function pickWorldFile(folder) {
+	const found = await findFiles(".dmb", folder);
 	if (found.length === 0) {
-		vscode.window.showErrorMessage("There's no .dme in the workspace to debug.");
+		vscode.window.showErrorMessage("There's no .dmb in the workspace to run. Build the world first (Tasks: Run Build Task).");
 		return undefined;
 	}
 	if (found.length === 1) {
@@ -133,15 +134,14 @@ function defaultServer() {
 	return process.platform === "win32" ? "dreamseeker" : "dreamdaemon";
 }
 
-// A launch configuration for a .dme
-function launchConfiguration(dme, server, name) {
+// A launch configuration for a .dmb. Its .dme is the one next to it.
+function launchConfiguration(dmb, server, name) {
 	return {
 		type: DEBUG_TYPE,
 		request: "launch",
-		name: name || `Debug ${path.basename(dme)}`,
-		dme,
+		name: name || `Debug ${path.basename(dmb)}`,
+		dmb,
 		server: server || defaultServer(),
-		build: true,
 	};
 }
 
@@ -151,21 +151,21 @@ class ConfigurationProvider {
 	}
 
 	async provideDebugConfigurations(folder) {
-		const found = await findEnvironments(folder);
-		const dme = found.length > 0 ? found[0].fsPath : "${workspaceFolder}/${workspaceFolderBasename}.dme";
+		const found = await findFiles(".dmb", folder);
+		const dmb = found.length > 0 ? found[0].fsPath : "${workspaceFolder}/${workspaceFolderBasename}.dmb";
 		const servers = process.platform === "win32" ? ["dreamseeker", "dreamdaemon"] : ["dreamdaemon"];
-		return servers.map((server) => launchConfiguration(dme, server, `Debug in ${server === "dreamseeker" ? "DreamSeeker" : "DreamDaemon"}`));
+		return servers.map((server) => launchConfiguration(dmb, server, `Debug in ${server === "dreamseeker" ? "DreamSeeker" : "DreamDaemon"}`));
 	}
 
 	// Fills in what a configuration leaves out, including all of it when
 	// there's no launch.json
 	async resolveDebugConfiguration(folder, config) {
 		if (!config.type && !config.request && !config.name) {
-			const dme = await pickEnvironment(folder);
-			if (!dme) {
+			const dmb = await pickWorldFile(folder);
+			if (!dmb) {
 				return undefined;
 			}
-			config = launchConfiguration(dme.fsPath);
+			config = launchConfiguration(dmb.fsPath);
 		}
 		if (config.request === "attach" && !config.processId) {
 			config.processId = await pickWorld(this.context);
@@ -205,7 +205,7 @@ class BuildTaskProvider {
 	}
 
 	async provideTasks() {
-		const found = await findEnvironments();
+		const found = await findFiles(".dme");
 		return found.map((uri) => this.task({ type: TASK_TYPE, dme: uri.fsPath }, vscode.workspace.getWorkspaceFolder(uri)));
 	}
 
@@ -242,17 +242,17 @@ async function attach() {
 	});
 }
 
-// A command that starts a world from one of the workspace's .dme files
+// A command that starts a world from one of the workspace's .dmb files
 function startCommand(server, noDebug) {
 	return async () => {
 		const editor = vscode.window.activeTextEditor;
 		const folder = editor ? vscode.workspace.getWorkspaceFolder(editor.document.uri) : undefined;
-		const dme = await pickEnvironment(folder);
-		if (!dme) {
+		const dmb = await pickWorldFile(folder);
+		if (!dmb) {
 			return;
 		}
-		const name = `${noDebug ? "Run" : "Debug"} ${path.basename(dme.fsPath)}`;
-		await vscode.debug.startDebugging(vscode.workspace.getWorkspaceFolder(dme), launchConfiguration(dme.fsPath, server, name), { noDebug });
+		const name = `${noDebug ? "Run" : "Debug"} ${path.basename(dmb.fsPath)}`;
+		await vscode.debug.startDebugging(vscode.workspace.getWorkspaceFolder(dmb), launchConfiguration(dmb.fsPath, server, name), { noDebug });
 	};
 }
 
