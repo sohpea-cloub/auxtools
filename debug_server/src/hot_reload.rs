@@ -31,6 +31,10 @@
 //! global or static var, and goes into the declared vars of its type and
 //! subtypes, and (unless static) their var tables.
 //!
+//! A new `in` list expression on a parameter is a proc that returns the list,
+//! as DreamMaker makes them, added to the world's list of those; the
+//! parameter names it by its index.
+//!
 //! What a reload can't do yet, and refuses:
 //! - use prefabs with var overrides (`/obj{a = 1}`)
 
@@ -69,7 +73,9 @@ pub struct Prepared {
 	/// vars
 	type_fields: Vec<(u32, usize, u32)>,
 	/// (var id, name, bytecode) for initial values to work out once
-	run_once: Vec<(u32, String, Vec<u32>)>
+	run_once: Vec<(u32, String, Vec<u32>)>,
+	/// Procs that return parameters' `in` lists, by the index each gets
+	in_lists: Vec<(u32, ProcEntryWords)>
 }
 
 /// A var id to add: its name's string id and the value of its global slot
@@ -88,7 +94,11 @@ struct AddedVars {
 	param_names: HashMap<String, u32>,
 	/// Global and static vars whose initial values aren't constants: the id,
 	/// what to call it, and the code that returns the value
-	run_once: Vec<(u32, String, dmasm::reload::ProcReload)>
+	run_once: Vec<(u32, String, dmasm::reload::ProcReload)>,
+	/// How many procs that return `in` lists the world has, and the ones to
+	/// add, by the index each gets
+	in_lists_before: u32,
+	in_lists: Vec<(u32, ProcEntryWords)>
 }
 
 impl AddedVars {
@@ -366,7 +376,9 @@ pub fn prepare(request: &HotReloadRequest, warnings: &mut Vec<String>) -> Result
 		first: runtime_tables::variable_count(),
 		vars: vec![],
 		param_names: HashMap::new(),
-		run_once: vec![]
+		run_once: vec![],
+		in_lists_before: runtime_tables::in_list_count().unwrap_or(0),
+		in_lists: vec![]
 	};
 	for new in new_vars {
 		if let Err(e) = prepare_new_var(new, &mut added, &mut type_vars, &mut pending) {
@@ -485,21 +497,10 @@ pub fn prepare(request: &HotReloadRequest, warnings: &mut Vec<String>) -> Result
 			errors.push(e);
 		}
 	}
-
 	// Initial values that aren't constants, which can use anything else the
 	// reload adds
 	for (id, name, init) in std::mem::take(&mut added.run_once) {
-		let code = HotReloadProc {
-			proc: ProcRef {
-				path: init.proc.path.clone(),
-				override_id: 0
-			},
-			nodes: init.nodes,
-			locals: init.locals,
-			params: vec![],
-			settings: init.settings,
-			statics: vec![]
-		};
+		let code = value_code(init);
 		if !code.locals.is_empty() {
 			errors.push(format!(
 				"{}: working out its initial value needs locals, which a reload can't give it yet",
@@ -518,6 +519,7 @@ pub fn prepare(request: &HotReloadRequest, warnings: &mut Vec<String>) -> Result
 	}
 
 	prepared.new_vars = added.vars;
+	prepared.in_lists = added.in_lists;
 	if errors.is_empty() {
 		match type_vars.intern() {
 			Ok(fields) => prepared.type_fields = fields,
@@ -588,7 +590,8 @@ fn prepare_code(
 		Some(locals_table(&reload.locals, entry.0[ProcEntryWords::LOCALS]).map_err(|e| format!("{}: {}", name, e))?)
 	};
 
-	let params_id = params_table(&reload.params, entry.0[ProcEntryWords::PARAMETERS], added).map_err(|e| format!("{}: {}", name, e))?;
+	let params_id =
+		params_table(&reload.params, entry.0[ProcEntryWords::PARAMETERS], pending, world_globals, added).map_err(|e| format!("{}: {}", name, e))?;
 
 	let settings = match &reload.settings {
 		Some(settings) => settings_words(&entry, settings, &reload.proc.path).map_err(|e| format!("{}: {}", name, e))?,
@@ -672,7 +675,64 @@ fn locals_table(names: &[String], empty: u32) -> Result<u32, String> {
 /// A new parameter table, when `params` differ from what `current` (a misc
 /// id) has. Four words per parameter: input type, where an `in` list takes
 /// its choices from, the name's var id, and the input type's high bits.
-fn params_table(params: &[dmasm::reload::Param], current: u32, added: &mut AddedVars) -> Result<Option<u32>, String> {
+/// dmasm's code for a value (an initial value or an `in` list), as a proc to
+/// assemble.
+fn value_code(code: dmasm::reload::ProcReload) -> HotReloadProc {
+	HotReloadProc {
+		proc: ProcRef {
+			path: code.proc.path,
+			override_id: 0
+		},
+		nodes: code.nodes,
+		locals: code.locals,
+		params: vec![],
+		settings: code.settings,
+		statics: vec![]
+	}
+}
+
+/// A proc that returns a parameter's new `in` list, as DreamMaker makes them:
+/// no path or name, and `return` the list. Returns its parameter word.
+fn in_list_proc(
+	param: &str,
+	code: &dmasm::reload::ProcReload,
+	pending: &Pending,
+	world_globals: &mut WorldGlobals,
+	added: &mut AddedVars
+) -> Result<u32, String> {
+	let shown = format!("parameter {}'s `in` list", param);
+	let template = Proc::find("/proc/auxtools_expr_stub")
+		.and_then(|stub| runtime_tables::proc_entry(stub.id))
+		.ok_or_else(|| "couldn't find /proc/auxtools_expr_stub to copy a proc entry from".to_owned())?;
+	let code = value_code(code.clone());
+	let bytecode = assemble(&shown, &code, &[], pending, world_globals, added)?;
+
+	let mut entry = template;
+	for word in [
+		ProcEntryWords::PATH,
+		ProcEntryWords::NAME,
+		ProcEntryWords::DESC,
+		ProcEntryWords::CATEGORY,
+		ProcEntryWords::PATH_BASENAME,
+		ProcEntryWords::NEXT_OVERRIDE
+	] {
+		entry.0[word] = NONE;
+	}
+	entry.0[ProcEntryWords::BYTECODE] = runtime_tables::intern_misc(&bytecode)?;
+	entry.0[ProcEntryWords::LOCALS] = locals_table(&code.locals, template.0[ProcEntryWords::LOCALS])?;
+
+	let index = added.in_lists_before + added.in_lists.len() as u32;
+	added.in_lists.push((index, entry));
+	Ok((index << 8) | 0x40)
+}
+
+fn params_table(
+	params: &[dmasm::reload::Param],
+	current: u32,
+	pending: &Pending,
+	world_globals: &mut WorldGlobals,
+	added: &mut AddedVars
+) -> Result<Option<u32>, String> {
 	let current_words = runtime_tables::misc_words(current).unwrap_or_default();
 	let name_of = |words: &[u32]| {
 		unsafe { StringRef::from_variable_id(raw_types::strings::VariableId(words[2])) }
@@ -688,14 +748,11 @@ fn params_table(params: &[dmasm::reload::Param], current: u32, added: &mut Added
 
 	let mut in_lists = vec![];
 	for param in params {
-		in_lists.push(match param.in_list {
-			InList::Builtin(word) => word,
-			InList::Kept => current_in_list(&param.name).ok_or_else(|| {
-				format!(
-					"parameter {} has an `in` list expression the running proc doesn't, which a reload can't make yet",
-					param.name
-				)
-			})?
+		in_lists.push(match &param.in_list {
+			InList::Builtin(word) => *word,
+			InList::Kept => current_in_list(&param.name)
+				.ok_or_else(|| format!("parameter {} has an `in` list expression the running proc doesn't", param.name))?,
+			InList::New(code) => in_list_proc(&param.name, code, pending, world_globals, added)?
 		});
 	}
 
@@ -901,7 +958,9 @@ fn prepare_new_proc(
 	entry.0[ProcEntryWords::PARAMETERS] = if new.code.params.is_empty() {
 		template.0[ProcEntryWords::PARAMETERS]
 	} else {
-		params_table(&new.code.params, NONE, added).map_err(fail)?.unwrap()
+		params_table(&new.code.params, NONE, pending, world_globals, added)
+			.map_err(fail)?
+			.unwrap()
 	};
 	entry.0[ProcEntryWords::NEXT_OVERRIDE] = NONE;
 
@@ -1332,6 +1391,15 @@ pub fn apply(
 		if let Some(proc) = Proc::from_id(raw_types::procs::ProcId(id)) {
 			let (ptr, _) = unsafe { proc.bytecode_mut_ptr() };
 			auxtools::debug::set_local_names(ptr, new.local_names.clone());
+		}
+	}
+	// (BYOND gives a proc the id of another with the same entry, which is
+	// as good)
+	for (expected, entry) in &prepared.in_lists {
+		match runtime_tables::add_proc(entry).and_then(runtime_tables::add_in_list) {
+			Ok(index) if index != *expected => warnings.push(format!("an `in` list got index {} where {} was expected", index, expected)),
+			Ok(_) => {}
+			Err(e) => warnings.push(format!("couldn't add an `in` list: {}", e))
 		}
 	}
 	for init in &prepared.init_procs {

@@ -784,6 +784,16 @@ fn main() {
 	assert_eq!(eval(&mut client, "first_def()"), "\"first\"");
 	println!("ok: another definition of a global proc");
 
+	// A new `in` list expression (which only a client's command would show)
+	let changes = source.edit(
+		"reload.dm",
+		"/proc/first_def()\n",
+		"/proc/pick_from(n in list(7, 8, 9))\n\treturn n\n\n/proc/first_def()\n"
+	);
+	reload(&mut watcher, &changes);
+	assert_eq!(eval(&mut client, "pick_from(8)"), "8");
+	println!("ok: new in lists");
+
 	// Something that can't be done leaves everything as it was
 	let mut request = reload_request(&source.edit("reload.dm", "\treturn 4", "\treturn 5"));
 	if let Request::HotReload(HotReloadRequest { procs, .. }) = &mut request {

@@ -37,10 +37,10 @@ time.
 The world should be running the code as it is when this starts. Proc code,
 new procs and verbs (more definitions of one too), definitions taken away,
 new types (not mobs), new vars and static locals, var defaults (those that
-aren't constants reach new instances), parameters and `set` statements can
-change. New mob types, most built-in vars on new types, prefabs with var
-overrides and new `in` list expressions need the world rebuilt, and are
-refused, along with the rest of the change.
+aren't constants reach new instances), parameters, `in` lists and `set`
+statements can change. New mob types, most built-in vars on new types and
+prefabs with var overrides need the world rebuilt, and are refused, along
+with the rest of the change.
 
   --port N          the debug server's reload port (default 2449)
   -DNAME[=VALUE]    a define DreamMaker was given on its command line

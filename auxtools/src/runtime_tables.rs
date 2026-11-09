@@ -131,6 +131,10 @@ struct Functions {
 	/// Each type's default appearance, worked out when first needed (NONE
 	/// until then)
 	appearance_cache: *const *mut u32,
+	/// The procs that return parameters' `in` lists, by the index a
+	/// parameter's `in` list word has (`(index << 8) | 0x40`)
+	in_list_count: *const u32,
+	in_list_procs: *const *mut u32,
 	/// One Value per var id: a global var's value, and the default of a
 	/// type's declared var. A new frame's locals start as their var ids'
 	/// values.
@@ -259,6 +263,28 @@ mod recipes {
 		extract: Extract::AbsMem(OperandSelect::NthAbsMem(10))
 	};
 
+	// The loader of the procs that return parameters' `in` lists: the count
+	// is operand 1, the table 2 (after the `lea` of its size)
+	const IN_LIST_LOADER: &str = "8D 34 85 00 00 00 00 83 C4 04 A3 ?? ?? ?? ?? 56 FF D3 83 C4 04 85 F6 74 08 85 C0 0F 84 ?? ?? ?? ?? 33 F6 A3 ?? ?? \
+	                              ?? ?? 39 35 ?? ?? ?? ?? 76 ?? 80 3D ?? ?? ?? ?? 00 57 74 ?? E8 ?? ?? ?? ?? 8B C8 EB ?? E8 ?? ?? ?? ?? 0F B7 C8 A1 \
+	                              ?? ?? ?? ?? 83 C4 04 89 0C B0";
+
+	pub const IN_LIST_COUNT: Recipe = Recipe {
+		name: "in_list_count",
+		versions: CHECKED,
+		anchor: Anchor::Signature(SignatureTreatment::NoOffset, IN_LIST_LOADER),
+		hops: &[],
+		extract: Extract::AbsMem(OperandSelect::NthAbsMem(1))
+	};
+
+	pub const IN_LIST_PROCS: Recipe = Recipe {
+		name: "in_list_procs",
+		versions: CHECKED,
+		anchor: Anchor::Signature(SignatureTreatment::NoOffset, IN_LIST_LOADER),
+		hops: &[],
+		extract: Extract::AbsMem(OperandSelect::NthAbsMem(2))
+	};
+
 	// Builds before 1687 don't check for NONE
 	pub const REGISTER_TYPEPATH: Recipe = Recipe {
 		name: "register_typepath",
@@ -320,6 +346,8 @@ fn resolve() -> Result<Functions, String> {
 			name_maps: find(&NAME_MAPS)? as *const *mut ProcNameMap,
 			preorder: find(&PREORDER)? as *const *mut u32,
 			appearance_cache: find(&APPEARANCE_CACHE)? as *const *mut u32,
+			in_list_count: find(&IN_LIST_COUNT)? as *const u32,
+			in_list_procs: find(&IN_LIST_PROCS)? as *const *mut u32,
 			global_values: find(&GLOBAL_VALUES)? as *const *const crate::raw_types::values::Value
 		})
 	}
@@ -439,6 +467,27 @@ mod recipes {
 		extract: Extract::AbsMem(OperandSelect::NthAbsMem(6))
 	};
 
+	// The loader of the procs that return parameters' `in` lists: the count
+	// is operand 1, the table 2 (after the `lea` of its size)
+	const IN_LIST_LOADER: &str = "83 EC 0C 8D 1C 85 00 00 00 00 A3 ?? ?? ?? ?? 53 E8 ?? ?? ?? ?? 83 C4 10 85 DB 74 08 85 C0 0F 84 ?? ?? ?? ?? A3 ?? \
+	                              ?? ?? ?? 31 DB EB ?? 83 EC 0C 56 E8 ?? ?? ?? ?? 83 C4 10 8B 15 ?? ?? ?? ?? 89 04 9A";
+
+	pub const IN_LIST_COUNT: Recipe = Recipe {
+		name: "in_list_count",
+		versions: CHECKED,
+		anchor: Anchor::Signature(SignatureTreatment::NoOffset, IN_LIST_LOADER),
+		hops: &[],
+		extract: Extract::AbsMem(OperandSelect::NthAbsMem(1))
+	};
+
+	pub const IN_LIST_PROCS: Recipe = Recipe {
+		name: "in_list_procs",
+		versions: CHECKED,
+		anchor: Anchor::Signature(SignatureTreatment::NoOffset, IN_LIST_LOADER),
+		hops: &[],
+		extract: Extract::AbsMem(OperandSelect::NthAbsMem(2))
+	};
+
 	// Builds before 1687 don't check for NONE
 	pub const REGISTER_TYPEPATH: Recipe = Recipe {
 		name: "register_typepath",
@@ -489,6 +538,8 @@ fn resolve() -> Result<Functions, String> {
 			name_maps: find(&NAME_MAPS)? as *const *mut ProcNameMap,
 			preorder: find(&PREORDER)? as *const *mut u32,
 			appearance_cache: find(&APPEARANCE_CACHE)? as *const *mut u32,
+			in_list_count: find(&IN_LIST_COUNT)? as *const u32,
+			in_list_procs: find(&IN_LIST_PROCS)? as *const *mut u32,
 			global_values: find(&GLOBAL_VALUES)? as *const *const crate::raw_types::values::Value
 		})
 	}
@@ -611,6 +662,29 @@ pub fn set_type_field(type_id: u32, offset: usize, value: u32) -> Result<(), Str
 		*(type_entry(type_id)?.add(offset) as *mut u32) = value;
 	}
 	Ok(())
+}
+
+/// How many procs that return `in` lists the world has.
+pub fn in_list_count() -> Result<u32, String> {
+	Ok(unsafe { *functions()?.in_list_count })
+}
+
+/// Adds a proc that returns a parameter's `in` list, and returns the index
+/// the parameter's word (`(index << 8) | 0x40`) gives it.
+pub fn add_in_list(proc: ProcId) -> Result<u32, String> {
+	let functions = functions()?;
+	unsafe {
+		let count = *functions.in_list_count;
+		let table = functions.in_list_procs as *mut *mut u32;
+		let grown = (functions.crt_realloc)(*table as *mut c_void, (count as usize + 1) * 4) as *mut u32;
+		if grown.is_null() {
+			return Err("out of memory growing the `in` list procs".to_owned());
+		}
+		*grown.add(count as usize) = proc.0;
+		*table = grown;
+		*(functions.in_list_count as *mut u32) = count + 1;
+		Ok(count)
+	}
 }
 
 /// Has BYOND work out a type's default appearance again, which new instances
