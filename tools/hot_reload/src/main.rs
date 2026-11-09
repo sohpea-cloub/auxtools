@@ -2,36 +2,33 @@
 //! world running auxtools' debug server.
 //!
 //! The work of finding and compiling what changed is dmasm's
-//! (`dmasm::reload`), so dm-langserver can do the same thing later. This only
+//! (`dmasm::reload`), so the launcher can do the same thing later. This only
 //! watches files and talks to the debug server.
-
-// The debug server's message types aren't exported from its cdylib, so they
-// are pulled in as source, like tests/debug_test does
-#[allow(dead_code)]
-#[path = "../../../debug_server/src/server_types.rs"]
-mod server_types;
 
 use std::{
 	collections::{HashMap, HashSet},
-	io::{ErrorKind, Read, Write},
-	net::{Ipv4Addr, TcpStream},
+	io::ErrorKind,
 	path::{Path, PathBuf},
+	sync::mpsc,
 	time::{Duration, Instant, SystemTime}
 };
 
 use dmasm::reload::{diff, Changes, ParseOptions, ProcKey, Snapshot};
-use server_types::{
-	ContinueKind, HotReloadInitProc, HotReloadLines, HotReloadNewProc, HotReloadProc, HotReloadRequest, HotReloadResult, HotReloadVarDefault,
-	ProcRef, Request, Response, DEFAULT_RELOAD_PORT
+use auxtools_cli::{
+	local::{self, Shared},
+	server_types::{
+		HotReloadInitProc, HotReloadLines, HotReloadNewProc, HotReloadProc, HotReloadRequest, HotReloadResult, HotReloadVarDefault, ProcRef, Request,
+		Response
+	}
 };
 
 const USAGE: &str = "\
-usage: hot_reload WORLD.dme [options]
+usage: hot_reload WORLD.dme --pid PID [options]
 
 Watches the code of WORLD.dme and hot reloads the procs that change into the
-running world. The world has to run auxtools' debug server (any
-AUXTOOLS_DEBUG_MODE but NONE), which listens for watchers on its reload port,
-AUXTOOLS_RELOAD_PORT (2449 unless set). A debugger can be attached at the same
+world running in process PID. The world has to be one the launcher started,
+with debugging or without (`auxtools --list` lists them): its debug
+server takes any number of clients, and debuggers can be there at the same
 time.
 
 The world should be running the code as it is when this starts. Proc code,
@@ -42,20 +39,20 @@ lists, prefabs and `set` statements can change. Changed var declarations and
 parent types, and the few built-in vars a reload can't set (`ckey`, ...),
 need the world rebuilt, and are refused, along with the rest of the change.
 
-  --port N          the debug server's reload port (default 2449)
+  --pid PID         the world's process
   -DNAME[=VALUE]    a define DreamMaker was given on its command line
   --interval MS     how often to look for changes (default 500)";
 
 struct Options {
 	dme: PathBuf,
-	port: u16,
+	pid: u32,
 	defines: Vec<(String, Option<String>)>,
 	interval: Duration
 }
 
 fn parse_args() -> Result<Options, String> {
 	let mut dme = None;
-	let mut port = DEFAULT_RELOAD_PORT;
+	let mut pid = None;
 	let mut defines = vec![];
 	let mut interval = Duration::from_millis(500);
 
@@ -63,7 +60,7 @@ fn parse_args() -> Result<Options, String> {
 	while let Some(arg) = args.next() {
 		let mut value = |name: &str| args.next().ok_or_else(|| format!("{} needs a value", name));
 		match arg.as_str() {
-			"--port" => port = value("--port")?.parse().map_err(|e| format!("--port: {}", e))?,
+			"--pid" => pid = Some(value("--pid")?.parse().map_err(|e| format!("--pid: {}", e))?),
 			"--interval" => interval = Duration::from_millis(value("--interval")?.parse().map_err(|e| format!("--interval: {}", e))?),
 			"-h" | "--help" => return Err(String::new()),
 			_ if arg.starts_with("-D") => {
@@ -83,7 +80,7 @@ fn parse_args() -> Result<Options, String> {
 	let dme = std::fs::canonicalize(&dme).map_err(|e| format!("{}: {}", dme.display(), e))?;
 	Ok(Options {
 		dme,
-		port,
+		pid: pid.ok_or("which world? (--pid)")?,
 		defines,
 		interval
 	})
@@ -94,45 +91,38 @@ fn log(message: impl std::fmt::Display) {
 	println!("[{:02}:{:02}:{:02}] {}", secs / 3600 % 24, secs / 60 % 60, secs % 60, message);
 }
 
-/// The connection to the debug server.
-struct Connection(TcpStream);
+/// The connection to the debug server, read on a thread of its own
+struct Connection {
+	writer: Shared,
+	messages: mpsc::Receiver<std::io::Result<Response>>
+}
 
 impl Connection {
-	fn connect(port: u16) -> std::io::Result<Self> {
-		let stream = TcpStream::connect((Ipv4Addr::LOCALHOST, port))?;
-		stream.set_nodelay(true)?;
-		Ok(Self(stream))
+	fn connect(pid: u32) -> std::io::Result<Self> {
+		let writer = Shared::new(local::connect(pid)?);
+		let mut reader = writer.clone();
+		let (sender, messages) = mpsc::channel();
+		std::thread::spawn(move || loop {
+			let message = local::receive(&mut reader);
+			let end = message.is_err();
+			if sender.send(message).is_err() || end {
+				return;
+			}
+		});
+		Ok(Self { writer, messages })
 	}
 
 	fn send(&mut self, request: &Request) -> std::io::Result<()> {
-		let data = bincode::serialize(request).map_err(std::io::Error::other)?;
-		self.0.write_all(&(data.len() as u32).to_le_bytes())?;
-		self.0.write_all(&data)?;
-		self.0.flush()
-	}
-
-	fn read_message(&mut self) -> std::io::Result<Response> {
-		let mut len = [0u8; 4];
-		self.0.read_exact(&mut len)?;
-		let mut data = vec![0u8; u32::from_le_bytes(len) as usize];
-		self.0.read_exact(&mut data)?;
-		bincode::deserialize(&data).map_err(std::io::Error::other)
+		local::send(&mut self.writer, request)
 	}
 
 	/// Deals with what the debug server says unasked. Err means it's gone.
-	fn handle(&mut self, response: Response) -> std::io::Result<Option<Response>> {
-		match response {
-			Response::Notification { .. } => Ok(None),
+	fn handle(response: std::io::Result<Response>) -> std::io::Result<Option<Response>> {
+		match response? {
+			// The world pausing for a debugger, and carrying on, are the
+			// debugger's business
+			Response::Notification { .. } | Response::BreakpointHit { .. } | Response::Resumed => Ok(None),
 			Response::Disconnect => Err(std::io::Error::new(ErrorKind::ConnectionAborted, "the debug server hung up")),
-			// The reload port never sends these, but on the debugger's port
-			// don't leave the world stuck
-			Response::BreakpointHit { reason } => {
-				log(format!("the world paused ({:?}); telling it to go on", reason));
-				self.send(&Request::Continue {
-					kind: ContinueKind::Continue
-				})?;
-				Ok(None)
-			}
 			response => Ok(Some(response))
 		}
 	}
@@ -140,12 +130,12 @@ impl Connection {
 	/// The answer to the last request.
 	fn recv(&mut self) -> std::io::Result<Response> {
 		loop {
-			let message = self.read_message()?;
-			if let Some(response) = self.handle(message)? {
-				// The Ack for a Continue sent from handle()
-				if !matches!(response, Response::Ack) {
-					return Ok(response);
-				}
+			let message = self
+				.messages
+				.recv()
+				.map_err(|_| std::io::Error::new(ErrorKind::ConnectionAborted, "the debug server hung up"))?;
+			if let Some(response) = Self::handle(message)? {
+				return Ok(response);
 			}
 		}
 	}
@@ -157,21 +147,15 @@ impl Connection {
 
 	/// Reads whatever the debug server sent unasked, to notice it going away.
 	fn poll(&mut self) -> std::io::Result<()> {
-		self.0.set_nonblocking(true)?;
-		let mut byte = [0u8; 1];
-		let waiting = match self.0.peek(&mut byte) {
-			Ok(0) => Err(std::io::Error::new(ErrorKind::ConnectionAborted, "the debug server hung up")),
-			Ok(_) => Ok(true),
-			Err(e) if e.kind() == ErrorKind::WouldBlock => Ok(false),
-			Err(e) => Err(e)
-		};
-		self.0.set_nonblocking(false)?;
-
-		if waiting? {
-			let message = self.read_message()?;
-			self.handle(message)?;
+		loop {
+			match self.messages.try_recv() {
+				Ok(message) => {
+					Self::handle(message)?;
+				}
+				Err(mpsc::TryRecvError::Empty) => return Ok(()),
+				Err(mpsc::TryRecvError::Disconnected) => return Err(std::io::Error::new(ErrorKind::ConnectionAborted, "the debug server hung up"))
+			}
 		}
-		Ok(())
 	}
 }
 
@@ -469,15 +453,19 @@ fn main() {
 
 	let mut watcher: Option<Watcher> = None;
 	let mut options = Some(options);
-	let port = options.as_ref().unwrap().port;
+	let pid = options.as_ref().unwrap().pid;
 	let mut waiting = false;
 
 	loop {
-		let mut conn = match Connection::connect(port) {
+		let mut conn = match Connection::connect(pid) {
 			Ok(conn) => conn,
 			Err(_) => {
+				if !local::alive(pid) {
+					log(format!("process {} has ended", pid));
+					return;
+				}
 				if watcher.is_none() && !waiting {
-					log(format!("waiting for the debug server on port {}", port));
+					log(format!("waiting for the debug server in process {}", pid));
 				}
 				waiting = true;
 				std::thread::sleep(Duration::from_secs(1));

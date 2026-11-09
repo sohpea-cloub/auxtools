@@ -2,12 +2,17 @@
 
 use serde::{Deserialize, Serialize};
 
-#[allow(dead_code)]
-pub const DEFAULT_PORT: u16 = 2448;
+/// The version of the messages here. Bump it by hand with any change a client
+/// and a world built before it wouldn't agree on: it's in the name of the
+/// world's socket, so a client only finds worlds that speak its version.
+pub const PROTOCOL_VERSION: u32 = 1;
 
-/// Where hot reload watchers connect by default (see `Request::HotReload`)
+/// The local socket the world in process `pid` listens on, when it has the
+/// debug library: `auxtools-debug-v1-1234`
 #[allow(dead_code)]
-pub const DEFAULT_RELOAD_PORT: u16 = 2449;
+pub fn world_socket_name(pid: u32) -> String {
+	format!("auxtools-debug-v{}-{}", PROTOCOL_VERSION, pid)
+}
 
 // Message from client -> server
 #[derive(Serialize, Deserialize, Debug)]
@@ -64,7 +69,10 @@ pub enum Request {
 	/// Swaps new code into procs, adds vars and procs, sets new var defaults
 	/// and renumbers the lines of procs that moved. Either all of it is
 	/// applied or none of it is.
-	HotReload(HotReloadRequest)
+	HotReload(HotReloadRequest),
+	/// The program's command line and working directory, which say which world
+	/// it runs
+	WorldInfo
 }
 
 // Message from server -> client
@@ -116,7 +124,13 @@ pub enum Response {
 		version: u32,
 		build: u32
 	},
-	HotReload(HotReloadResult)
+	HotReload(HotReloadResult),
+	WorldInfo {
+		args: Vec<String>,
+		cwd: String
+	},
+	/// Another client let the world carry on from a pause
+	Resumed
 }
 
 #[derive(Serialize, Deserialize, Debug, Hash, PartialEq, Eq, Clone)]

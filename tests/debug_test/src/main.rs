@@ -1,6 +1,9 @@
-//! Runs a tiny world with the debug server loaded and pokes it the way
-//! dm-langserver would, to make sure the debugger can't take the game down.
+//! Runs a tiny world with the debug server loaded into it, as the launcher
+//! does, and pokes it the way the launcher would, to make sure the debugger
+//! can't take the game down.
 
+// Shared with hot_reload_test, which uses the parts this doesn't
+#[allow(dead_code)]
 mod client;
 
 // test_runner already knows how to find BYOND, and the debug server's message
@@ -13,14 +16,9 @@ mod paths;
 #[path = "../../../debug_server/src/server_types.rs"]
 mod server_types;
 
-use std::{
-	net::{Ipv4Addr, TcpListener},
-	path::PathBuf,
-	process::{Child, Command},
-	time::Duration
-};
+use std::{path::PathBuf, process::Command, time::Duration};
 
-use client::Client;
+use client::{Client, World};
 use paths::ByondCommand;
 use server_types::{BreakpointReason, BreakpointSetResult, InstructionRef, ProcRef, Request, Response};
 
@@ -28,38 +26,11 @@ use server_types::{BreakpointReason, BreakpointSetResult, InstructionRef, ProcRe
 const BREAKPOINT_TARGET: &str = "/breakpoint_target";
 const TICK_MARKER: &str = "/tick_marker";
 
-struct World(Child);
-
-impl Drop for World {
-	fn drop(&mut self) {
-		let _ = self.0.kill();
-		let _ = self.0.wait();
-	}
-}
-
-fn find_debug_server() -> PathBuf {
-	let mut path = std::env::current_exe().unwrap();
-	path.pop();
-
-	#[cfg(unix)]
-	path.push("libdebug_server.so");
-
-	#[cfg(windows)]
-	path.push("debug_server.dll");
-
-	assert!(path.is_file(), "couldn't find debug_server");
-	path
-}
-
 fn host_file(name: &str) -> PathBuf {
 	let mut path = std::env::current_dir().unwrap();
 	path.push("tests/debug_test_host");
 	path.push(name);
 	path
-}
-
-fn free_port() -> u16 {
-	TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap().local_addr().unwrap().port()
 }
 
 fn start_of(proc: &str) -> InstructionRef {
@@ -148,23 +119,11 @@ fn main() {
 		.unwrap();
 	assert!(res.success(), "dreammaker build failed");
 
-	let port = free_port();
-
-	let _world = World(
-		Command::new(paths::find_dreamdaemon())
-			.with_byond_paths()
-			.env("AUXTOOLS_DEBUG_DLL", find_debug_server())
-			.env("AUXTOOLS_DEBUG_PORT", port.to_string())
-			.arg(host_file("debug_test_host.dmb"))
-			.arg("-trusted")
-			.arg("-close")
-			.spawn()
-			.unwrap()
-	);
+	let world = World::start(&host_file("debug_test_host.dmb"), &[]);
 
 	let dis_command = format!("#dis {}", BREAKPOINT_TARGET);
 
-	let mut client = Client::connect(port);
+	let mut client = world.connect();
 	let clean_disassembly = eval(&mut client, None, &dis_command);
 	set_breakpoint(&mut client, BREAKPOINT_TARGET, None);
 	expect_breakpoint_in(&mut client, BREAKPOINT_TARGET);
@@ -217,7 +176,7 @@ fn main() {
 	assert!(text.contains("/proc/main_loop"), "unexpected callee text: {}", text);
 	assert_eq!(fields[..2], ["proc = /proc/main_loop", "file = \"debug_test_host.dm\""]);
 	assert!(fields[2].starts_with("line = "), "unexpected line: {}", fields[2]);
-	assert_eq!(fields[3..6], ["src = null", "usr = null", "args = /list {len = 1}"]);
+	assert_eq!(fields[3..6], ["src = null", "usr = null", "args = /list {len = 0}"]);
 	assert!(fields[6].starts_with("caller = "), "unexpected caller: {}", fields[6]);
 	println!("ok: a callee shows its proc");
 
@@ -245,41 +204,39 @@ fn main() {
 	expect_breakpoint_in(&mut client, TICK_MARKER);
 	println!("ok: conditional breakpoint that calls a proc with a breakpoint");
 
-	// dm-langserver re-sends every breakpoint without unsetting it first, so
+	// A debugger can re-send a breakpoint without unsetting it first, so
 	// this is how a condition gets removed
 	set_breakpoint(&mut client, BREAKPOINT_TARGET, None);
 	client.resume();
 	expect_breakpoint_in(&mut client, BREAKPOINT_TARGET);
 	println!("ok: re-setting a breakpoint drops its old condition");
 
+	for proc in [BREAKPOINT_TARGET, TICK_MARKER] {
+		let response = client.request(Request::BreakpointUnset { instruction: start_of(proc) });
+		assert!(
+			matches!(response, Response::BreakpointUnset { success: true }),
+			"couldn't unset {}: {:?}",
+			proc,
+			response
+		);
+	}
+
+	// Runtime errors don't pause it when the launcher says not to
+	client.send(Request::CatchRuntimes { should_catch: false });
 	eval(&mut client, None, "start_runtimes()");
 	client.resume();
-	drop(client);
 	// start_runtimes() gives two seconds of runtime errors, wait them out
 	std::thread::sleep(Duration::from_secs(3));
-
-	let mut client = Client::connect(port);
 	pause(&mut client);
-	println!("ok: survived runtime errors with the debugger gone, and it can attach again");
-
+	println!("ok: survived runtime errors, and still answers");
 	client.resume();
-	client.send(Request::Disconnect);
-	drop(client);
-
-	let mut client = Client::connect(port);
-	let response = client.request(Request::Stacks);
-	assert!(matches!(response, Response::Stacks { .. }), "expected Stacks, got {:?}", response);
-	println!("ok: attaching again after a clean detach");
 
 	eval(&mut client, None, "request_reboot()");
 	client.wait_closed();
-	// The old world hangs up on us a moment before it stops listening. Don't
-	// get picked up by its last accept().
-	std::thread::sleep(Duration::from_millis(500));
 
-	let mut client = Client::connect(port);
+	let mut client = world.connect();
 	pause(&mut client);
-	println!("ok: attaching again after a world reboot");
+	println!("ok: the world connects again after a reboot");
 
 	println!("Debug server tests succeeded");
 }

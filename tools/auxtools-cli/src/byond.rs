@@ -1,0 +1,190 @@
+//! Finding BYOND's programs, and building a .dme with DreamMaker.
+
+use std::{
+	io::{BufRead, BufReader},
+	path::{Path, PathBuf},
+	process::{Command, Stdio},
+	sync::Arc
+};
+
+/// Which BYOND program hosts the world
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Server {
+	/// The client, which hosts the world itself (Windows only)
+	DreamSeeker,
+	/// DreamDaemon, with its window on Windows
+	DreamDaemon,
+	/// Windows' DreamDaemon without a window (`dd.exe`), whose output can be
+	/// shown
+	Dd
+}
+
+impl Server {
+	/// The program's file name, in BYOND's `bin` directory
+	pub const fn program(self) -> &'static str {
+		if cfg!(windows) {
+			match self {
+				Self::DreamSeeker => "dreamseeker.exe",
+				Self::DreamDaemon => "dreamdaemon.exe",
+				Self::Dd => "dd.exe"
+			}
+		} else {
+			// Linux has the one
+			"DreamDaemon"
+		}
+	}
+
+	pub const fn default_for_platform() -> Self {
+		if cfg!(windows) {
+			Self::DreamSeeker
+		} else {
+			Self::DreamDaemon
+		}
+	}
+}
+
+/// The program that compiles a .dme
+const fn compiler() -> &'static str {
+	if cfg!(windows) {
+		"dm.exe"
+	} else {
+		"DreamMaker"
+	}
+}
+
+/// BYOND's `bin` directory: in `byond_path` when given, else where BYOND is
+/// installed.
+pub fn bin_dir(byond_path: Option<&Path>) -> Result<PathBuf, String> {
+	let candidates: Vec<PathBuf> = match byond_path {
+		Some(path) => vec![path.to_owned()],
+		None => installed()
+	};
+
+	for dir in &candidates {
+		for bin in [dir.join("bin"), dir.to_owned()] {
+			if bin.join(compiler()).is_file() || bin.join(Server::default_for_platform().program()).is_file() {
+				return Ok(bin);
+			}
+		}
+	}
+
+	match byond_path {
+		Some(path) => Err(format!("there's no BYOND in {} (byondPath)", path.display())),
+		None => Err("couldn't find BYOND; set byondPath to the directory it's installed in".to_owned())
+	}
+}
+
+/// Where BYOND is usually installed
+fn installed() -> Vec<PathBuf> {
+	let mut dirs = vec![];
+
+	// byondsetup sets it on Linux
+	if let Some(system) = std::env::var_os("BYOND_SYSTEM") {
+		dirs.push(PathBuf::from(system));
+	}
+
+	#[cfg(windows)]
+	{
+		dirs.extend(registry::install_path());
+		for var in ["ProgramFiles(x86)", "ProgramFiles"] {
+			if let Some(dir) = std::env::var_os(var) {
+				dirs.push(PathBuf::from(dir).join("BYOND"));
+			}
+		}
+	}
+
+	#[cfg(unix)]
+	{
+		if let Some(home) = std::env::var_os("HOME") {
+			dirs.push(PathBuf::from(home).join("byond"));
+		}
+		dirs.push(PathBuf::from("/usr/local/byond"));
+		dirs.push(PathBuf::from("/usr/share/byond"));
+	}
+
+	dirs
+}
+
+#[cfg(windows)]
+mod registry {
+	use std::{os::windows::ffi::OsStringExt, path::PathBuf, ptr::null_mut};
+
+	use winapi::{
+		shared::{minwindef::HKEY, winerror::ERROR_SUCCESS},
+		um::winreg::{RegGetValueW, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, RRF_RT_REG_SZ}
+	};
+
+	/// Where BYOND's installer says it put it
+	pub fn install_path() -> Vec<PathBuf> {
+		[HKEY_LOCAL_MACHINE, HKEY_CURRENT_USER]
+			.into_iter()
+			.filter_map(|root| read(root, "SOFTWARE\\Dantom\\BYOND", "installpath"))
+			.collect()
+	}
+
+	fn read(root: HKEY, key: &str, value: &str) -> Option<PathBuf> {
+		let wide = |s: &str| s.encode_utf16().chain([0]).collect::<Vec<u16>>();
+		let (key, value) = (wide(key), wide(value));
+		let mut buf = vec![0u16; 1024];
+		let mut size = (buf.len() * 2) as u32;
+		let status = unsafe {
+			RegGetValueW(
+				root,
+				key.as_ptr(),
+				value.as_ptr(),
+				RRF_RT_REG_SZ,
+				null_mut(),
+				buf.as_mut_ptr() as _,
+				&mut size
+			)
+		};
+		if status != ERROR_SUCCESS as i32 {
+			return None;
+		}
+		let len = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
+		Some(PathBuf::from(std::ffi::OsString::from_wide(&buf[..len])))
+	}
+}
+
+/// Builds `dme`, handing each line DreamMaker prints to `print`
+pub fn build_with(bin: &Path, dme: &Path, print: impl Fn(String) + Send + Sync + 'static) -> Result<(), String> {
+	let mut command = Command::new(bin.join(compiler()));
+	command.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+	// From the .dme's directory, which DreamMaker names files relative to
+	match (dme.parent().filter(|dir| !dir.as_os_str().is_empty()), dme.file_name()) {
+		(Some(dir), Some(name)) => command.current_dir(dir).arg(name),
+		_ => command.arg(dme)
+	};
+	#[cfg(unix)]
+	command.env("LD_LIBRARY_PATH", bin);
+
+	print(format!("Building {}", dme.display()));
+	let mut child = command
+		.spawn()
+		.map_err(|e| format!("couldn't run {}: {}", bin.join(compiler()).display(), e))?;
+	let print = Arc::new(print);
+	let stderr = child.stderr.take().map(|stderr| {
+		let print = print.clone();
+		std::thread::spawn(move || {
+			for line in BufReader::new(stderr).lines().map_while(Result::ok) {
+				print(line);
+			}
+		})
+	});
+	if let Some(stdout) = child.stdout.take() {
+		for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+			print(line);
+		}
+	}
+	if let Some(stderr) = stderr {
+		let _ = stderr.join();
+	}
+
+	let status = child.wait().map_err(|e| e.to_string())?;
+	if status.success() {
+		Ok(())
+	} else {
+		Err(format!("{} didn't build", dme.display()))
+	}
+}

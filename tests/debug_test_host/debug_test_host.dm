@@ -1,15 +1,5 @@
-#if DM_VERSION < 515
-#define call_ext call
-#endif
-
-/proc/auxtools_stack_trace(msg)
-	CRASH(msg)
-
-/proc/auxtools_expr_stub()
-	CRASH("auxtools not loaded")
-
-/proc/enable_debugging(mode, port)
-	CRASH("auxtools not loaded")
+// Started with the debug library loaded into it, which adds the procs it
+// needs: this has none of auxtools' own.
 
 var/runtimes_left = 0
 var/reboot_requested = FALSE
@@ -34,8 +24,8 @@ var/reboot_requested = FALSE
 /proc/pixloc_sample()
 	return pixloc(1, 1, 1)
 
-// Two seconds of runtime errors, then quiet again. The test detaches while
-// they are going and comes back after they stop.
+// Two seconds of runtime errors, then quiet again. The debugger is told not
+// to pause on them.
 /proc/start_runtimes()
 	runtimes_left = 20
 
@@ -46,7 +36,7 @@ var/reboot_requested = FALSE
 /proc/request_reboot()
 	reboot_requested = TRUE
 
-/proc/main_loop(debug_dll)
+/proc/main_loop()
 	// a callee only reads while its proc is running, so the test looks at this one
 	var/callee/this_proc = callee
 	while (!reboot_requested)
@@ -58,9 +48,9 @@ var/reboot_requested = FALSE
 				make_runtime()
 		sleep(1)
 
-	// Shutting down has to happen out here. The debugger evaluates
-	// request_reboot() from inside the debug server, which can't free itself.
-	call_ext(debug_dll, "auxtools_shutdown")()
+	// Rebooting has to happen out here. The debugger evaluates
+	// request_reboot() from inside the debug server, which can't shut itself
+	// down there.
 	world.Reboot()
 
 /world/New()
@@ -69,14 +59,6 @@ var/reboot_requested = FALSE
 	maxy = 5
 	maxz = 1
 
-	var/debug_dll = world.GetConfig("env", "AUXTOOLS_DEBUG_DLL")
-	var/init_result = call_ext(debug_dll, "auxtools_init")()
-	world.log << "init_result = [init_result]"
-	ASSERT(init_result == "SUCCESS")
-
-	// No port given, so it comes from AUXTOOLS_DEBUG_PORT
-	enable_debugging("BACKGROUND")
-
 	spawn()
-		main_loop(debug_dll)
+		main_loop()
 	. = ..()

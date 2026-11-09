@@ -9,11 +9,11 @@ Code Documentation: https://auxtools.willox.dev
 ## Features
 Code Coverage - A tool to generate cobertura code coverage XML reports for a codebase. Note that, due to a [BYOND issue](http://www.byond.com/forum/post/108025) it requires some additional work to have properly un-mangled file names in the report.
 
-Debug Server - Working with SpaceManiac's [SpacemanDMM](https://github.com/SpaceManiac/SpacemanDMM), Auxtools interfaces with the debugger frontend to provide debugger information and management of breakpoints.
+Debug Server - A debugger for DM: breakpoints (conditional ones, and on procs by name), pausing on runtime errors, stepping, stack traces, variables and expression evaluation. A world gets it by being started with the debug library loaded into it (`auxtools_cli::game`, in `tools/auxtools-cli`), and its code needs nothing added: the library is loaded before the world (`LD_PRELOAD` on Linux; on Windows a call put in front of the program's entry point), initialises when the world makes its first proc call, and adds the procs it needs, including one that sleeps in a loop so requests are answered in a world that runs no code of its own. The world then listens on a local socket (a named pipe on Windows) named after its process and the protocol's version, `auxtools-debug-vN-PID` (`PROTOCOL_VERSION` in `server_types.rs`, bumped by hand when the messages change, so clients only find worlds they can talk to), for any number of debuggers at once. Each has its own breakpoints and its own say on pausing for runtime errors; a pause stops the world for all of them, and any can let it carry on. After `world.Reboot()` they connect again. The debug server doesn't listen on a network port, and worlds don't load the library themselves (an `enable_debugging()` call in a world's code does nothing). `tests/debug_test`, `tests/hot_reload_test` and `tools/debug_client`, a stand-in debugger that runs a real codebase to one breakpoint, start worlds this way and talk to the debug server directly.
 
 *Dissassembly*  - When currently stopped at a breakpoint, enter the `#dis` command into the Debug Console in VSC to see the DM bytecode for the current proc. You can also provide it any arbitrary proc path like `#dis /mob/proc/Life`.
 
-*Hot reloading* (experimental) - Changed procs can be swapped into a running world without a restart. `tools/hot_reload` watches a codebase's source, compiles the procs that change with [dmasm](https://github.com/willox/dmasm)'s proc compiler, and sends them to the debug server's reload port (`AUXTOOLS_RELOAD_PORT`, 2449 unless set, `NONE` to turn it off), which is open whenever debugging is: `hot_reload path/to/world.dme -DNAME...` with the defines the world was built with. A debugger can be attached at the same time, and is told about each reload. Proc code, new procs and verbs (more definitions of one too), definitions taken away, new types (mobs too), new vars and static locals, var defaults (built-in ones like `name` and `pixel_x` too; those that aren't constants reach new instances), parameters, `in` lists, prefabs (`/obj{a = 1}`) and `set` statements can change, on Windows and Linux. Things made before a reload keep the verbs and built-in values they had. Changed var declarations and parent types, and the few built-in vars a reload can't set (`ckey`, ...), need a rebuild, and the watcher says so. `tests/hot_reload_test` shows what it does.
+*Hot reloading* (experimental) - Changed procs can be swapped into a running world without a restart. `tools/hot_reload` watches a codebase's source, compiles the procs that change with [dmasm](https://github.com/willox/dmasm)'s proc compiler, and sends them to the debug server of a world the launcher started, as one more of its clients: `hot_reload path/to/world.dme --pid PID -DNAME...` with the world's process and the defines it was built with. Debuggers can be there at the same time, and are told about each reload. Proc code, new procs and verbs (more definitions of one too), definitions taken away, new types (mobs too), new vars and static locals, var defaults (built-in ones like `name` and `pixel_x` too; those that aren't constants reach new instances), parameters, `in` lists, prefabs (`/obj{a = 1}`) and `set` statements can change, on Windows and Linux. Things made before a reload keep the verbs and built-in values they had. Changed var declarations and parent types, and the few built-in vars a reload can't set (`ckey`, ...), need a rebuild, and the watcher says so. `tests/hot_reload_test` shows what it does.
 
 ## Supported BYOND versions
 
@@ -21,7 +21,7 @@ Debug Server - Working with SpaceManiac's [SpacemanDMM](https://github.com/Space
 
 The patterns are run by [byond-scan](https://github.com/Absolucy/byond-scan) and live in `auxtools/src/symbols/`. They are copies of the ones in the byond-re repo's `byond_catalog`, which checks each against every local build, so a change to one has to land in both.
 
-What was run on Linux (516.1687): the `auxtest` suite, and `debug_test`, which sets breakpoints, evaluates expressions and re-attaches through a stand-in for the debugger. The code coverage tool's report was checked on Windows and Linux 1687 against a world with a known set of lines. Stepping and breakpoints with a real debugger attached were not tested on either platform.
+What was run on Linux (516.1687): the `auxtest` suite, and `debug_test`, which sets breakpoints, evaluates expressions and follows a world reboot through a stand-in for the launcher. The code coverage tool's report was checked on Windows and Linux 1687 against a world with a known set of lines. Stepping and breakpoints with a real debugger attached were not tested on either platform.
 
 ## Dependencies
 
@@ -85,14 +85,14 @@ To compile in release mode (recommended for speed):
 Linux:
 ```sh
 export PKG_CONFIG_ALLOW_CROSS=1
-cargo build --release --target i686-unknown-linux-gnu
+cargo build --workspace --release --target i686-unknown-linux-gnu
 # output: target/i686-unknown-linux-gnu/release/libauxtools.so,libdebug_server.so,libauxcov.so
 ```
 
 Windows:
 
 ```sh
-cargo build --release --target i686-pc-windows-msvc
+cargo build --workspace --release --target i686-pc-windows-msvc
 # output: target/i686-pc-windows-msvc/release/auxtools.dll,debug_server.dll,auxcov.dll
 ```
 

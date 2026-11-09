@@ -16,43 +16,15 @@ mod server_types;
 
 use std::{
 	collections::HashSet,
-	net::{Ipv4Addr, TcpListener},
 	path::{Path, PathBuf},
-	process::{Child, Command},
+	process::Command,
 	time::{Duration, Instant}
 };
 
-use client::Client;
+use client::{Client, World};
 use dmasm::reload::{diff, Changes, ParseOptions, Snapshot};
 use paths::ByondCommand;
 use server_types::*;
-
-struct World(Child);
-
-impl Drop for World {
-	fn drop(&mut self) {
-		let _ = self.0.kill();
-		let _ = self.0.wait();
-	}
-}
-
-fn find_debug_server() -> PathBuf {
-	let mut path = std::env::current_exe().unwrap();
-	path.pop();
-
-	#[cfg(unix)]
-	path.push("libdebug_server.so");
-
-	#[cfg(windows)]
-	path.push("debug_server.dll");
-
-	assert!(path.is_file(), "couldn't find debug_server");
-	path
-}
-
-fn free_port() -> u16 {
-	TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap().local_addr().unwrap().port()
-}
 
 /// The world's source, in a copy the test can edit, and how it was last
 /// parsed.
@@ -68,16 +40,28 @@ impl Source {
 		let _ = std::fs::remove_dir_all(&dir);
 		std::fs::create_dir_all(&dir).unwrap();
 
-		let host = std::env::current_dir().unwrap().join("tests/hot_reload_test_host");
-		for file in ["hot_reload_test_host.dme", "main.dm", "reload.dm"] {
-			std::fs::copy(host.join(file), dir.join(file)).unwrap();
-		}
-
-		Source {
+		let source = Source {
 			dir,
 			options: ParseOptions::default(),
 			snapshot: None
+		};
+		source.copy_files();
+		source
+	}
+
+	fn copy_files(&self) {
+		let host = std::env::current_dir().unwrap().join("tests/hot_reload_test_host");
+		for file in ["hot_reload_test_host.dme", "main.dm", "reload.dm"] {
+			std::fs::copy(host.join(file), self.dir.join(file)).unwrap();
 		}
+	}
+
+	/// Puts the source back as the world was built from it, which is what a
+	/// rebooted world runs, and parses it
+	fn restore(&mut self) {
+		self.copy_files();
+		self.snapshot = None;
+		self.parse();
 	}
 
 	fn dme(&self) -> PathBuf {
@@ -263,25 +247,14 @@ fn main() {
 	let res = Command::new(paths::find_dm()).with_byond_paths().arg(source.dme()).status().unwrap();
 	assert!(res.success(), "dreammaker build failed");
 
-	let port = free_port();
-	let reload_port = free_port();
-	let _world = World(
-		Command::new(paths::find_dreamdaemon())
-			.with_byond_paths()
-			.env("AUXTOOLS_DEBUG_DLL", find_debug_server())
-			.env("AUXTOOLS_DEBUG_PORT", port.to_string())
-			.env("AUXTOOLS_RELOAD_PORT", reload_port.to_string())
-			.arg(source.dir.join("hot_reload_test_host.dmb"))
-			.arg("-trusted")
-			.arg("-close")
-			.spawn()
-			.unwrap()
-	);
+	let world = World::start(&source.dir.join("hot_reload_test_host.dmb"), &[]);
 
 	// A debugger and a watcher, attached at the same time. The watcher sends
 	// the reloads, except where the debugger's own connection is tested.
-	let mut client = Client::connect(port);
-	let mut watcher = Client::connect(reload_port);
+	let mut client = world.connect();
+	// Each client says whether it wants runtime errors
+	client.send(Request::CatchRuntimes { should_catch: true });
+	let mut watcher = world.connect_watcher();
 
 	// Parsed as DreamMaker does for the BYOND version the world runs on
 	let (version, build) = match watcher.request(Request::ByondVersion) {
@@ -342,17 +315,6 @@ fn main() {
 	reload(&mut watcher, &changes);
 	assert_eq!(eval(&mut client, "counter()"), "12");
 	println!("ok: a static local keeps its value");
-
-	// The watcher doesn't need a debugger there
-	client.send(Request::Disconnect);
-	client.wait_closed();
-	let changes = source.edit("reload.dm", "/proc/answer()\n\treturn 2", "/proc/answer()\n\treturn 20");
-	reload(&mut watcher, &changes);
-	let mut client = Client::connect(port);
-	assert_eq!(eval(&mut client, "answer()"), "20");
-	let changes = source.edit("reload.dm", "/proc/answer()\n\treturn 20", "/proc/answer()\n\treturn 2");
-	reload(&mut watcher, &changes);
-	println!("ok: reloading with no debugger attached");
 
 	// A breakpoint stays on its line, and the watcher can reload while the
 	// debugger has the world paused.: with new code it stays on the same line,
@@ -431,8 +393,8 @@ fn main() {
 	// A proc auxtools hooked never runs its bytecode
 	let changes = source.edit(
 		"main.dm",
-		"/proc/enable_debugging(mode, port)\n\tCRASH(\"auxtools not loaded\")",
-		"/proc/enable_debugging(mode, port)\n\tCRASH(\"auxtools still not loaded\")"
+		"/proc/auxtools_launched_world_del()\n\tCRASH(\"auxtools not loaded\")",
+		"/proc/auxtools_launched_world_del()\n\tCRASH(\"auxtools still not loaded\")"
 	);
 	let result = reload(&mut watcher, &changes);
 	assert!(
@@ -889,14 +851,27 @@ fn main() {
 	// itself. The world then starts again from its .dmb.
 	eval(&mut client, "request_reboot()");
 	client.wait_closed();
-	// The old world hangs up a moment before it stops listening
-	std::thread::sleep(Duration::from_millis(500));
-	let mut client = Client::connect(port);
+	let mut client = world.connect();
 	assert_eq!(eval(&mut client, "answer()"), "1");
 	assert_eq!(eval(&mut client, "few_locals()"), "1");
 	assert_eq!(eval(&mut client, "counter()"), "1");
 	assert_eq!(eval(&mut client, "old_dog.legs"), "4");
 	println!("ok: a world reboot after reloads");
+
+	// The watcher doesn't need a debugger there. With the debugger gone, the
+	// world says what it runs.
+	client.send(Request::Disconnect);
+	client.wait_closed();
+	let mut watcher = world.connect_watcher();
+	source.restore();
+	let changes = source.edit("reload.dm", "/proc/tick()\n", "/proc/tick()\n\tworld.log << \"tick says [answer()]\"\n");
+	reload(&mut watcher, &changes);
+	let start = Instant::now();
+	while !world.output().contains("tick says 1") {
+		assert!(start.elapsed() < Duration::from_secs(10), "the reloaded tick() never ran");
+		std::thread::sleep(Duration::from_millis(100));
+	}
+	println!("ok: reloading with no debugger attached");
 
 	println!("Hot reload tests succeeded");
 }

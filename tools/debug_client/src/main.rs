@@ -1,31 +1,33 @@
-//! Stands in for dm-langserver against a real codebase: waits for a
-//! DreamDaemon launched with `AUXTOOLS_DEBUG_MODE=LAUNCHED`, sets one
-//! breakpoint, and when it hits does what VS Code does on a stop (stacks,
-//! frames, scopes, arguments, locals) and then evaluates the given watches.
-//! Every message is printed, so a crash shows which request caused it.
-
-// The debug server's message types aren't exported from its cdylib, so they
-// are pulled in as source, like tests/debug_test does
-#[allow(dead_code)]
-#[path = "../../../debug_server/src/server_types.rs"]
-mod server_types;
+//! Stands in for the launcher against a real codebase: starts the world with
+//! the debug library in it, as the launcher does, sets one breakpoint, and when
+//! it hits does what VS Code does on a stop (stacks, frames, scopes, arguments,
+//! locals) and then evaluates the given watches. Every message is printed, so a
+//! crash shows which request caused it.
 
 use std::{
+	collections::HashMap,
 	io::{Read, Write},
-	net::{TcpListener, TcpStream},
-	path::Path,
+	path::{Path, PathBuf},
 	time::Duration
 };
 
-use server_types::{ContinueKind, EvalResponse, InstructionRef, ProcRef, Request, Response, DEFAULT_PORT};
+use auxtools_cli::{
+	byond::{self, Server},
+	game::{Game, Launch},
+	local::{self, Shared},
+	server_types::{ContinueKind, EvalResponse, InstructionRef, ProcRef, Request, Response}
+};
 
 const USAGE: &str = "\
-usage: debug_client --proc PATH --line N [options] [WATCH...]
+usage: debug_client WORLD.dmb --proc PATH --line N [options] [WATCH...]
 
-Listens for DreamDaemon started with AUXTOOLS_DEBUG_MODE=LAUNCHED and
-AUXTOOLS_DEBUG_PORT set to the same port.
+Starts the world in DreamDaemon with the debug library loaded into it, as the
+launcher does, and ends it when done.
 
-  --port N            port to listen on (default 2448)
+  --byond DIR         where BYOND is (default: where it's installed)
+  --library PATH      the debug library (default: the one next to debug_client)
+  --arg ARG           an argument for DreamDaemon after the .dmb, in place of
+                      -trusted (repeat it for more)
   --proc PATH         proc to break in, as the debugger names it, e.g. /obj/item/Initialize
   --override N        override id of that proc (default 0)
   --line N            source line to break on
@@ -37,7 +39,10 @@ A WATCH is evaluated in the top frame like a VS Code watch; prefix it with
 `repl:` to evaluate it like the debug console does.";
 
 struct Options {
-	port: u16,
+	dmb: PathBuf,
+	byond: Option<PathBuf>,
+	library: Option<PathBuf>,
+	args: Vec<String>,
 	proc: ProcRef,
 	line: u32,
 	condition: Option<String>,
@@ -47,7 +52,10 @@ struct Options {
 }
 
 fn parse_args() -> Result<Options, String> {
-	let mut port = DEFAULT_PORT;
+	let mut dmb = None;
+	let mut byond = None;
+	let mut library = None;
+	let mut game_args = vec![];
 	let mut proc = None;
 	let mut override_id = 0;
 	let mut line = None;
@@ -60,7 +68,9 @@ fn parse_args() -> Result<Options, String> {
 	while let Some(arg) = args.next() {
 		let mut value = |name: &str| args.next().ok_or_else(|| format!("{} needs a value", name));
 		match arg.as_str() {
-			"--port" => port = value("--port")?.parse().map_err(|e| format!("--port: {}", e))?,
+			"--byond" => byond = Some(PathBuf::from(value("--byond")?)),
+			"--library" => library = Some(PathBuf::from(value("--library")?)),
+			"--arg" => game_args.push(value("--arg")?),
 			"--proc" => proc = Some(value("--proc")?),
 			"--override" => override_id = value("--override")?.parse().map_err(|e| format!("--override: {}", e))?,
 			"--line" => line = Some(value("--line")?.parse().map_err(|e| format!("--line: {}", e))?),
@@ -69,12 +79,20 @@ fn parse_args() -> Result<Options, String> {
 			"--wait-file" => wait_file = Some(value("--wait-file")?),
 			"-h" | "--help" => return Err(String::new()),
 			_ if arg.starts_with("--") => return Err(format!("unknown option {}", arg)),
+			_ if dmb.is_none() => dmb = Some(PathBuf::from(arg)),
 			_ => watches.push(arg)
 		}
 	}
 
+	if game_args.is_empty() {
+		game_args.push("-trusted".to_owned());
+	}
+
 	Ok(Options {
-		port,
+		dmb: dmb.ok_or("the .dmb is required")?,
+		byond,
+		library,
+		args: game_args,
 		proc: ProcRef {
 			path: proc.ok_or("--proc is required")?,
 			override_id
@@ -87,7 +105,7 @@ fn parse_args() -> Result<Options, String> {
 	})
 }
 
-struct Connection(TcpStream);
+struct Connection(Shared);
 
 impl Connection {
 	fn send(&mut self, request: &Request) {
@@ -188,11 +206,25 @@ fn main() {
 		}
 	};
 
-	let listener = TcpListener::bind(("127.0.0.1", options.port)).unwrap();
-	println!("== listening on {}", options.port);
-	let (stream, _) = listener.accept().unwrap();
-	let mut conn = Connection(stream);
-	println!("== DreamDaemon connected");
+	let game = match start(&options) {
+		Ok(game) => game,
+		Err(e) => {
+			eprintln!("{}", e);
+			std::process::exit(1);
+		}
+	};
+	// It listens once the world has loaded
+	let stream = loop {
+		if let Ok(stream) = local::connect(game.pid()) {
+			break stream;
+		}
+		if !local::alive(game.pid()) {
+			std::process::exit(1);
+		}
+		std::thread::sleep(Duration::from_millis(100));
+	};
+	let mut conn = Connection(Shared::new(stream));
+	println!("== connected to DreamDaemon");
 
 	let offset = match conn.request(Request::Offset {
 		proc: options.proc.clone(),
@@ -237,4 +269,28 @@ fn main() {
 	// Long enough to see the world carry on before we let go of it
 	std::thread::sleep(Duration::from_secs(3));
 	conn.send(&Request::Disconnect);
+	game.kill();
+}
+
+/// Starts the world, which waits for us
+fn start(options: &Options) -> Result<Game, String> {
+	let bin = byond::bin_dir(options.byond.as_deref())?;
+	let library = match &options.library {
+		Some(library) => library.clone(),
+		None => {
+			let name = if cfg!(windows) { "debug_server.dll" } else { "libdebug_server.so" };
+			std::env::current_exe().map_err(|e| e.to_string())?.with_file_name(name)
+		}
+	};
+	Game::start(
+		Launch {
+			program: bin.join(Server::Dd.program()),
+			dmb: &options.dmb,
+			args: &options.args,
+			env: &HashMap::new(),
+			debug: Some((library, true))
+		},
+		|_, line| print!("  | {}", line),
+		|code| println!("== the world exited ({:?})", code)
+	)
 }

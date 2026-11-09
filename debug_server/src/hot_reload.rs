@@ -1516,9 +1516,11 @@ fn prepare_var_default(default: &HotReloadVarDefault, type_vars: &mut TypeVars) 
 
 /// Swaps everything in. Breakpoints in the procs come out first and go back in
 /// on the same lines (where the lines moved, on the lines they moved to).
-pub fn apply(
+/// `breakpoints` are what's known about each breakpoint, by where it is: they
+/// move with it.
+pub fn apply<T>(
 	prepared: Prepared,
-	conditions: &mut HashMap<(raw_types::procs::ProcId, u16), String>,
+	breakpoints: &mut HashMap<(raw_types::procs::ProcId, u16), T>,
 	moved_breakpoints: &mut MovedBreakpoints,
 	warnings: &mut Vec<String>
 ) {
@@ -1651,7 +1653,7 @@ pub fn apply(
 	}
 
 	for p in prepared.code {
-		apply_code(p, conditions, moved_breakpoints, warnings);
+		apply_code(p, breakpoints, moved_breakpoints, warnings);
 	}
 	for (proc, word, value) in prepared.entry_words {
 		runtime_tables::set_proc_entry_word(raw_types::procs::ProcId(proc), word, value);
@@ -1687,9 +1689,9 @@ pub fn apply(
 	}
 }
 
-fn apply_code(
+fn apply_code<T>(
 	p: PreparedCode,
-	conditions: &mut HashMap<(raw_types::procs::ProcId, u16), String>,
+	breakpoints: &mut HashMap<(raw_types::procs::ProcId, u16), T>,
 	moved_breakpoints: &mut MovedBreakpoints,
 	warnings: &mut Vec<String>
 ) {
@@ -1703,13 +1705,13 @@ fn apply_code(
 		auxtools::debug::set_local_names(old_ptr, names);
 	}
 
-	let breakpoints: Vec<(u32, u32, Option<String>)> = hooked_offsets(&p.proc)
+	let hooked: Vec<(u32, u32, Option<T>)> = hooked_offsets(&p.proc)
 		.into_iter()
 		.filter_map(|offset| {
 			let line = line_at(&old_bytecode, offset)?;
-			let condition = conditions.remove(&(p.proc.id, offset as u16));
+			let known = breakpoints.remove(&(p.proc.id, offset as u16));
 			let _ = unhook_instruction(&p.proc, offset);
-			Some((offset, line, condition))
+			Some((offset, line, known))
 		})
 		.collect();
 
@@ -1730,7 +1732,7 @@ fn apply_code(
 	let (new_ptr, _) = unsafe { p.proc.bytecode_mut_ptr() };
 	auxtools::debug::set_local_names(new_ptr, local_names);
 
-	for (old_offset, line, condition) in breakpoints {
+	for (old_offset, line, known) in hooked {
 		let line = match &p.lines {
 			Some(lines) => map_line(line, lines),
 			None => line
@@ -1760,8 +1762,8 @@ fn apply_code(
 			continue;
 		}
 
-		if let Some(condition) = condition {
-			conditions.insert((p.proc.id, offset as u16), condition);
+		if let Some(known) = known {
+			breakpoints.insert((p.proc.id, offset as u16), known);
 		}
 		for key in known_as.into_iter().chain([(p.proc.id, old_offset)]) {
 			if key.1 != offset {

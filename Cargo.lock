@@ -194,6 +194,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "auxtools-cli"
+version = "0.1.0"
+dependencies = [
+ "bincode",
+ "dmasm",
+ "interprocess",
+ "libc",
+ "serde",
+ "winapi",
+]
+
+[[package]]
 name = "auxtools-impl"
 version = "0.1.0"
 dependencies = [
@@ -630,6 +642,7 @@ dependencies = [
 name = "debug_client"
 version = "0.1.0"
 dependencies = [
+ "auxtools-cli",
  "bincode",
  "dmasm",
  "serde",
@@ -643,7 +656,9 @@ dependencies = [
  "bincode",
  "clap 3.2.25",
  "dmasm",
+ "dreammaker",
  "instruction_hooking",
+ "interprocess",
  "lazy_static",
  "region",
  "retour",
@@ -655,6 +670,7 @@ dependencies = [
 name = "debug_test"
 version = "0.1.0"
 dependencies = [
+ "auxtools-cli",
  "bincode",
  "debug_server",
  "dmasm",
@@ -742,6 +758,12 @@ dependencies = [
  "nom",
  "serde",
 ]
+
+[[package]]
+name = "doctest-file"
+version = "1.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c2db04e74f0a9a93103b50e90b96024c9b2bdca8bce6a632ec71b88736d3d359"
 
 [[package]]
 name = "dreammaker"
@@ -1122,15 +1144,15 @@ dependencies = [
 name = "hot_reload"
 version = "0.1.0"
 dependencies = [
- "bincode",
+ "auxtools-cli",
  "dmasm",
- "serde",
 ]
 
 [[package]]
 name = "hot_reload_test"
 version = "0.1.0"
 dependencies = [
+ "auxtools-cli",
  "bincode",
  "debug_server",
  "dmasm",
@@ -1469,6 +1491,19 @@ name = "interpolator"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "71dd52191aae121e8611f1e8dc3e324dd0dd1dee1e6dd91d10ee07a3cfb4d9d8"
+
+[[package]]
+name = "interprocess"
+version = "2.4.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a4a4fff6c51dece332bdbf3af5fe376c49cfc8dced782725e95be0bb489e35d7"
+dependencies = [
+ "doctest-file",
+ "libc",
+ "recvmsg",
+ "widestring",
+ "windows-sys 0.61.2",
+]
 
 [[package]]
 name = "interval-tree"
@@ -2155,6 +2190,12 @@ dependencies = [
  "crossbeam-deque",
  "crossbeam-utils",
 ]
+
+[[package]]
+name = "recvmsg"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d3edd4d5d42c92f0a659926464d4cce56b562761267ecf0f469d85b7de384175"
 
 [[package]]
 name = "regex"
@@ -3200,6 +3241,12 @@ dependencies = [
  "js-sys",
  "wasm-bindgen",
 ]
+
+[[package]]
+name = "widestring"
+version = "1.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "72069c3113ab32ab29e5584db3c6ec55d416895e60715417b5b883a357c3e471"
 
 [[package]]
 name = "winapi"
