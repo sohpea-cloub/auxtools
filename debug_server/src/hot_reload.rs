@@ -69,6 +69,8 @@ pub struct Prepared {
 	code: Vec<PreparedCode>,
 	/// (proc, word, value) for procs' new settings
 	entry_words: Vec<(u32, usize, u32)>,
+	/// Procs given new names, for the name maps
+	renames: Vec<Rename>,
 	/// Types whose verbs or built-in vars change, so their default
 	/// appearances do
 	appearances: BTreeSet<u32>,
@@ -334,6 +336,8 @@ struct PreparedCode {
 	params_id: Option<u32>,
 	/// (word, value) for the entry's new settings
 	settings: Vec<(usize, u32)>,
+	/// Where the settings give it a new name
+	rename: Option<Rename>,
 	/// The new code's local names, when they're new
 	local_names: Option<Vec<String>>,
 	/// How the proc's lines moved. `None` for new code, where a breakpoint
@@ -518,9 +522,7 @@ pub fn prepare(request: &HotReloadRequest, warnings: &mut Vec<String>) -> Result
 		let words = find(&proc_ref).and_then(|proc| {
 			let entry = runtime_tables::proc_entry(proc.id).ok_or_else(|| format!("{}: couldn't read its table entry", describe(&proc_ref)))?;
 			let words = settings_words(&entry, &change.settings, &proc_ref.path)?;
-			if let Some(warning) = renamed(&proc, &entry, &words) {
-				warnings.push(warning);
-			}
+			prepared.renames.extend(renamed(&proc, &entry, &words));
 			Ok(words.into_iter().map(move |(word, value)| (proc.id.0, word, value)))
 		});
 		match words {
@@ -549,6 +551,7 @@ pub fn prepare(request: &HotReloadRequest, warnings: &mut Vec<String>) -> Result
 					locals_id: None,
 					params_id: None,
 					settings: vec![],
+					rename: None,
 					local_names: None,
 					lines: Some(moved.lines.clone())
 				}),
@@ -697,9 +700,7 @@ fn prepare_code(
 		Some(settings) => settings_words(&entry, settings, &reload.proc.path).map_err(|e| format!("{}: {}", name, e))?,
 		None => vec![]
 	};
-	if let Some(warning) = renamed(&proc, &entry, &settings) {
-		warnings.push(warning);
-	}
+	let rename = renamed(&proc, &entry, &settings);
 
 	Ok(PreparedCode {
 		proc,
@@ -709,6 +710,7 @@ fn prepare_code(
 		locals_id,
 		params_id,
 		settings,
+		rename,
 		local_names: Some(reload.locals.clone()),
 		lines: None
 	})
@@ -734,17 +736,72 @@ fn settings_words(entry: &ProcEntryWords, settings: &ProcSettings, path: &str) -
 	Ok(words.into_iter().filter(|&(word, value)| entry.0[word] != value).collect())
 }
 
-/// A warning for a proc (not a verb) that `words` gives a new name: the proc
-/// name maps, which `call()` by name uses, still have the old one.
-fn renamed(proc: &Proc, entry: &ProcEntryWords, words: &[(usize, u32)]) -> Option<String> {
-	if !words.iter().any(|&(word, _)| word == ProcEntryWords::NAME) || entry.0[ProcEntryWords::NAME] == NONE {
+/// A proc (not a verb) that a reload gives a new name, in the proc name maps
+/// that `call()` by name uses: its type's and the subtypes'
+#[derive(Clone, Copy)]
+struct Rename {
+	proc: u32,
+	type_id: u32,
+	from: u32,
+	to: u32,
+	/// The name of its path, which it's also found by
+	basename: u32
+}
+
+/// What `words` renames, if they give `proc` a new name the maps have to
+/// follow
+fn renamed(proc: &Proc, entry: &ProcEntryWords, words: &[(usize, u32)]) -> Option<Rename> {
+	let to = words.iter().find(|&&(word, _)| word == ProcEntryWords::NAME)?.1;
+	let from = entry.0[ProcEntryWords::NAME];
+	if from == NONE || from == to {
 		return None;
 	}
 	let path = strip_path(&proc.path);
 	let (type_path, _) = path.rsplit_once('/')?;
 	let type_id = find_type(type_path).ok()?;
-	let on_map = runtime_tables::named_procs(type_id, entry.0[ProcEntryWords::NAME]).is_ok_and(|procs| procs.contains(&proc.id.0));
-	on_map.then(|| format!("{}: call() by name finds it by its old name, not its new one", proc.path))
+	let on_map = runtime_tables::named_procs(type_id, from).is_ok_and(|procs| procs.contains(&proc.id.0));
+	on_map.then_some(Rename {
+		proc: proc.id.0,
+		type_id,
+		from,
+		to,
+		basename: entry.0[ProcEntryWords::PATH_BASENAME]
+	})
+}
+
+/// Moves a renamed proc to its new name in the maps of its type and the
+/// subtypes, among the procs there most derived first
+fn rename(r: Rename) -> Result<(), String> {
+	let depth = |id: u32| {
+		Proc::from_id(raw_types::procs::ProcId(id))
+			.and_then(|p| {
+				let path = strip_path(&p.path);
+				let (type_path, _) = path.rsplit_once('/')?;
+				find_type(type_path).ok()
+			})
+			.map_or(0, |t| type_and_ancestors(t).len())
+	};
+	let own_depth = depth(r.proc);
+	for sub in 0..runtime_tables::type_count()? {
+		if !type_and_ancestors(sub).contains(&r.type_id) {
+			continue;
+		}
+		// Still found by its path's name
+		if r.from != r.basename {
+			let mut old = runtime_tables::named_procs(sub, r.from)?;
+			if let Some(at) = old.iter().position(|&p| p == r.proc) {
+				old.remove(at);
+				runtime_tables::set_named_procs(sub, r.from, &old)?;
+			}
+		}
+		let mut new = runtime_tables::named_procs(sub, r.to)?;
+		if !new.contains(&r.proc) {
+			let at = new.iter().position(|&p| depth(p) < own_depth).unwrap_or(new.len());
+			new.insert(at, r.proc);
+			runtime_tables::set_named_procs(sub, r.to, &new)?;
+		}
+	}
+	Ok(())
 }
 
 /// A locals table with these names. `empty` is a table with none, which the
@@ -1652,8 +1709,15 @@ pub fn apply<T>(
 		Proc::add_to_table(raw_types::procs::ProcId(procs_before));
 	}
 
+	let mut renames = prepared.renames;
 	for p in prepared.code {
+		renames.extend(p.rename);
 		apply_code(p, breakpoints, moved_breakpoints, warnings);
+	}
+	for r in renames {
+		if let Err(e) = rename(r) {
+			warnings.push(format!("call() by name might not find a renamed proc by its new name: {}", e));
+		}
 	}
 	for (proc, word, value) in prepared.entry_words {
 		runtime_tables::set_proc_entry_word(raw_types::procs::ProcId(proc), word, value);

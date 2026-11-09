@@ -820,6 +820,14 @@ fn main() {
 	assert_eq!(eval(&mut client, "kept_limits.thing_count()"), "0");
 	println!("ok: a var declared with another type");
 
+	// A proc's new name, which call() by name finds it by
+	assert_eq!(eval(&mut client, "call(kept_limits, \"Label\")()"), "\"labelled\"");
+	let changes = source.edit("main.dm", "\tset name = \"Label\"\n", "\tset name = \"Tag\"\n");
+	reload(&mut watcher, &changes);
+	assert_eq!(eval(&mut client, "call(kept_limits, \"Tag\")()"), "\"labelled\"");
+	assert_eq!(eval(&mut client, "call(kept_limits, \"label\")()"), "\"labelled\"");
+	println!("ok: a proc's new name");
+
 	// A new mob type, with a mob var of its own and its parent's verbs, and a
 	// new default for a mob var of a mob type the world has
 	let changes = source.edit(

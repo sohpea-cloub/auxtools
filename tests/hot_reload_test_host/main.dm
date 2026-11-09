@@ -40,3 +40,8 @@ var/datum/limits/kept_limits = new
 
 /datum/limits/proc/thing_count()
 	return length(things)
+
+// A proc whose `set name` changes, which call() by name follows
+/datum/limits/proc/label()
+	set name = "Label"
+	return "labelled"
