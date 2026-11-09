@@ -9,7 +9,7 @@ Code Documentation: https://auxtools.willox.dev
 ## Features
 Code Coverage - A tool to generate cobertura code coverage XML reports for a codebase. Note that, due to a [BYOND issue](http://www.byond.com/forum/post/108025) it requires some additional work to have properly un-mangled file names in the report.
 
-Debug Server - A debugger for DM: breakpoints (conditional ones, and on procs by name), pausing on runtime errors, stepping, stack traces, variables and expression evaluation. A world gets it by being started with the debug library loaded into it (`auxtools_cli::game`, in `tools/auxtools-cli`), and its code needs nothing added: the library is loaded before the world (`LD_PRELOAD` on Linux; on Windows a call put in front of the program's entry point), initialises when the world makes its first proc call, and adds the procs it needs, including one that sleeps in a loop so requests are answered in a world that runs no code of its own. The world then listens on a local socket (a named pipe on Windows) named after its process and the protocol's version, `auxtools-debug-vN-PID` (`PROTOCOL_VERSION` in `server_types.rs`, bumped by hand when the messages change, so clients only find worlds they can talk to), for any number of debuggers at once. Each has its own breakpoints and its own say on pausing for runtime errors; a pause stops the world for all of them, and any can let it carry on. After `world.Reboot()` they connect again. The debug server doesn't listen on a network port, and worlds don't load the library themselves (an `enable_debugging()` call in a world's code does nothing). `tests/debug_test`, `tests/hot_reload_test` and `tools/debug_client`, a stand-in debugger that runs a real codebase to one breakpoint, start worlds this way and talk to the debug server directly.
+Debug Server - A debugger for DM: breakpoints (conditional ones, and on procs by name), pausing on runtime errors, stepping, stack traces, variables and expression evaluation. It's used through its launcher (`tools/auxtools-cli`), a debug adapter that talks DAP on stdin and stdout for a client like VS Code, which builds the world, starts it in DreamSeeker, DreamDaemon or `dd.exe` (DreamDaemon on Linux) with the debug library loaded into it, shows the world's output in the debug console, and exits when the world does. The world's code needs nothing added: the library is loaded before the world (`LD_PRELOAD` on Linux; on Windows a call put in front of the program's entry point), initialises when the world makes its first proc call, and adds the procs it needs, including one that sleeps in a loop so requests are answered in a world that runs no code of its own. After `world.Reboot()` it connects again and gets the breakpoints back. Every world it starts, with debugging or without, listens on a local socket (a named pipe on Windows) named after its process and the protocol's version, `auxtools-debug-vN-PID` (`PROTOCOL_VERSION` in `server_types.rs`, bumped by hand when the messages change, so launchers only find worlds they can talk to), for any number of debuggers at once: `auxtools --list` lists them, and another launcher can attach to one. Each has its own breakpoints and its own say on pausing for runtime errors; a pause stops the world for all of them, and any can let it carry on. `tests/launcher_test` drives the launcher like VS Code would. The launcher is the only way to debug: the debug server doesn't listen on a network port, and worlds don't load the library themselves (an `enable_debugging()` call in a world's code does nothing). The launcher is also a library (`auxtools_cli::game`) for what talks to the debug server directly: `tests/debug_test`, `tests/hot_reload_test` and `tools/debug_client`, a stand-in debugger that runs a real codebase to one breakpoint.
 
 *Dissassembly*  - When currently stopped at a breakpoint, enter the `#dis` command into the Debug Console in VSC to see the DM bytecode for the current proc. You can also provide it any arbitrary proc path like `#dis /mob/proc/Life`.
 
@@ -22,6 +22,8 @@ Debug Server - A debugger for DM: breakpoints (conditional ones, and on procs by
 The patterns are run by [byond-scan](https://github.com/Absolucy/byond-scan) and live in `auxtools/src/symbols/`. They are copies of the ones in the byond-re repo's `byond_catalog`, which checks each against every local build, so a change to one has to land in both.
 
 What was run on Linux (516.1687): the `auxtest` suite, and `debug_test`, which sets breakpoints, evaluates expressions and follows a world reboot through a stand-in for the launcher. The code coverage tool's report was checked on Windows and Linux 1687 against a world with a known set of lines. Stepping and breakpoints with a real debugger attached were not tested on either platform.
+
+The launcher's test (`tests/launcher_test`: breakpoints, a runtime error, a reboot and the world's exit, in a world with no auxtools procs; then a world run without debugging, found with `--list` and attached to by two launchers at once) was run on Linux 516.1688, and under Wine on Windows 516.1688 with `dd.exe` (its first part also with `dreamseeker.exe` and `dreamdaemon.exe`).
 
 ## Dependencies
 
@@ -86,14 +88,14 @@ Linux:
 ```sh
 export PKG_CONFIG_ALLOW_CROSS=1
 cargo build --workspace --release --target i686-unknown-linux-gnu
-# output: target/i686-unknown-linux-gnu/release/libauxtools.so,libdebug_server.so,libauxcov.so
+# output: target/i686-unknown-linux-gnu/release/libauxtools.so,libdebug_server.so,libauxcov.so,auxtools
 ```
 
 Windows:
 
 ```sh
 cargo build --workspace --release --target i686-pc-windows-msvc
-# output: target/i686-pc-windows-msvc/release/auxtools.dll,debug_server.dll,auxcov.dll
+# output: target/i686-pc-windows-msvc/release/auxtools.dll,debug_server.dll,auxcov.dll,auxtools.exe
 ```
 
 [Rust]: https://rust-lang.org
@@ -106,5 +108,5 @@ cargo build --workspace --release --target i686-pc-windows-msvc
 Auxtools is licensed under the [MIT license](https://en.wikipedia.org/wiki/MIT_License).
 See [LICENSE](./LICENSE) for more details.
 
-The Auxtool Debug Server (located @ ./debug_server) and Auxcov Code Coverage tool (located @ ./auxcov) is licensed under the [GPL 3.0 license](https://www.gnu.org/licenses/gpl-3.0.en.html).
-See [debug_server/LICENSE](./debug_server/LICENSE) or [auxcov/LICENSE](./auxcov/LICENSE) for more details.
+The Auxtool Debug Server (located @ ./debug_server), its launcher (located @ ./tools/auxtools-cli) and Auxcov Code Coverage tool (located @ ./auxcov) are licensed under the [GPL 3.0 license](https://www.gnu.org/licenses/gpl-3.0.en.html).
+See [debug_server/LICENSE](./debug_server/LICENSE), [tools/auxtools-cli/LICENSE](./tools/auxtools-cli/LICENSE) or [auxcov/LICENSE](./auxcov/LICENSE) for more details.

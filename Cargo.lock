@@ -198,10 +198,13 @@ name = "auxtools-cli"
 version = "0.1.0"
 dependencies = [
  "bincode",
+ "dap-types",
  "dmasm",
+ "dreammaker",
  "interprocess",
  "libc",
  "serde",
+ "serde_json",
  "winapi",
 ]
 
@@ -636,6 +639,16 @@ checksum = "32a2785755761f3ddc1492979ce1e48d2c00d09311c39e4466429188f3dd6501"
 dependencies = [
  "quote",
  "syn 2.0.119",
+]
+
+[[package]]
+name = "dap-types"
+version = "0.0.0"
+dependencies = [
+ "foldhash",
+ "serde",
+ "serde_derive",
+ "serde_json",
 ]
 
 [[package]]
@@ -1555,6 +1568,14 @@ dependencies = [
  "cfg-if",
  "futures-util",
  "wasm-bindgen",
+]
+
+[[package]]
+name = "launcher_test"
+version = "0.1.0"
+dependencies = [
+ "debug_server",
+ "serde_json",
 ]
 
 [[package]]
