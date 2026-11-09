@@ -36,10 +36,10 @@ time.
 
 The world should be running the code as it is when this starts. Proc code,
 new procs and verbs (more definitions of one too), definitions taken away,
-new types (not mobs), new vars and static locals, var defaults (built-in
+new types (mobs too), new vars and static locals, var defaults (built-in
 ones too; those that aren't constants reach new instances), parameters, `in`
-lists, prefabs and `set` statements can change. New mob types, changed var
-declarations and parent types, and the few built-in vars a reload can't set
+lists, prefabs and `set` statements can change. Changed var declarations and
+parent types, and the few built-in vars a reload can't set (`ckey`, ...),
 need the world rebuilt, and are refused, along with the rest of the change.
 
   --port N          the debug server's reload port (default 2449)

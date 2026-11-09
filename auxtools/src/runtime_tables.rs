@@ -151,6 +151,9 @@ struct Functions {
 	/// the id a value with tag 0x29 has: 12 bytes each (see `Instance`)
 	instance_count: *const u32,
 	instances: *const *mut Instance,
+	/// Mob types, by the id a mob typepath value has (see `MobType`)
+	mob_count: *const u32,
+	mobs: *const *mut MobType,
 	/// One Value per var id: a global var's value, and the default of a
 	/// type's declared var. A new frame's locals start as their var ids'
 	/// values.
@@ -301,6 +304,26 @@ mod recipes {
 		extract: Extract::AbsMem(OperandSelect::NthAbsMem(2))
 	};
 
+	// The loader of the mob types: the count is operand 0, the table 1
+	pub const MOB_COUNT: Recipe = Recipe {
+		name: "mob_count",
+		versions: CHECKED,
+		anchor: Anchor::Signature(SignatureTreatment::NoOffset, MOB_LOADER),
+		hops: &[],
+		extract: Extract::AbsMem(OperandSelect::NthAbsMem(0))
+	};
+
+	pub const MOBS: Recipe = Recipe {
+		name: "mobs",
+		versions: CHECKED,
+		anchor: Anchor::Signature(SignatureTreatment::NoOffset, MOB_LOADER),
+		hops: &[],
+		extract: Extract::AbsMem(OperandSelect::NthAbsMem(1))
+	};
+
+	const MOB_LOADER: &str =
+		"89 35 ?? ?? ?? ?? C1 E6 04 56 FF D3 83 C4 04 85 F6 74 08 85 C0 0F 84 ?? ?? ?? ?? 33 DB A3 ?? ?? ?? ?? 39 1D ?? ?? ?? ?? 76";
+
 	// The loader of the prefab instances: the count is operand 0, the table 1
 	const INSTANCE_LOADER: &str = "A3 ?? ?? ?? ?? 8D 34 40 C1 E6 02 56 FF D3 83 C4 04 85 F6 74 08 85 C0 0F 84 ?? ?? ?? ?? 33 DB A3 ?? ?? ?? ?? 39 \
 	                               1D ?? ?? ?? ?? 76 ?? 33 F6 A1 ?? ?? ?? ?? 03 C6 57 50 E8";
@@ -386,6 +409,8 @@ fn resolve() -> Result<Functions, String> {
 			in_list_procs: find(&IN_LIST_PROCS)? as *const *mut u32,
 			instance_count: find(&INSTANCE_COUNT)? as *const u32,
 			instances: find(&INSTANCES)? as *const *mut Instance,
+			mob_count: find(&MOB_COUNT)? as *const u32,
+			mobs: find(&MOBS)? as *const *mut MobType,
 			global_values: find(&GLOBAL_VALUES)? as *const *const crate::raw_types::values::Value
 		})
 	}
@@ -526,6 +551,26 @@ mod recipes {
 		extract: Extract::AbsMem(OperandSelect::NthAbsMem(2))
 	};
 
+	// The loader of the mob types: the count is operand 0, the table 1
+	pub const MOB_COUNT: Recipe = Recipe {
+		name: "mob_count",
+		versions: CHECKED,
+		anchor: Anchor::Signature(SignatureTreatment::NoOffset, MOB_LOADER),
+		hops: &[],
+		extract: Extract::AbsMem(OperandSelect::NthAbsMem(0))
+	};
+
+	pub const MOBS: Recipe = Recipe {
+		name: "mobs",
+		versions: CHECKED,
+		anchor: Anchor::Signature(SignatureTreatment::NoOffset, MOB_LOADER),
+		hops: &[],
+		extract: Extract::AbsMem(OperandSelect::NthAbsMem(1))
+	};
+
+	const MOB_LOADER: &str = "89 C7 83 C4 10 89 FB 83 EC 0C 89 3D ?? ?? ?? ?? C1 E3 04 53 E8 ?? ?? ?? ?? 83 C4 10 85 DB 74 08 85 C0 0F 84 ?? ?? ?? \
+	                          ?? A3 ?? ?? ?? ?? 31 DB 85 FF 74 ?? 89 D8 83 EC 08 C1 E0 04 03 05";
+
 	// The loader of the prefab instances: the count is operand 0, the table 1
 	const INSTANCE_LOADER: &str = "6B D8 0C 83 EC 0C A3 ?? ?? ?? ?? 53 E8 ?? ?? ?? ?? 83 C4 10 85 DB 74 08 85 C0 0F 84 ?? ?? ?? ?? A3 ?? ?? ?? ?? \
 	                               31 DB EB ?? 6B C3 0C 03 05 ?? ?? ?? ?? 57 57 56 50 E8";
@@ -600,6 +645,8 @@ fn resolve() -> Result<Functions, String> {
 			in_list_procs: find(&IN_LIST_PROCS)? as *const *mut u32,
 			instance_count: find(&INSTANCE_COUNT)? as *const u32,
 			instances: find(&INSTANCES)? as *const *mut Instance,
+			mob_count: find(&MOB_COUNT)? as *const u32,
+			mobs: find(&MOBS)? as *const *mut MobType,
 			global_values: find(&GLOBAL_VALUES)? as *const *const crate::raw_types::values::Value
 		})
 	}
@@ -724,6 +771,20 @@ pub fn set_type_field(type_id: u32, offset: usize, value: u32) -> Result<(), Str
 	Ok(())
 }
 
+/// A mob type's entry in the mob table, which a mob typepath value's data
+/// is an index of.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MobType {
+	pub type_id: u32,
+	/// String id
+	pub key: u32,
+	pub sight: u32,
+	pub see_in_dark: u8,
+	pub see_invisible: u8,
+	pub padding: u16
+}
+
 /// A prefab instance: a type, and the proc that sets the vars it overrides
 /// on each new instance (named `TYPE/proc/(map_init)`).
 #[repr(C)]
@@ -734,6 +795,37 @@ pub struct Instance {
 	pub data: u32,
 	/// NONE for a type placed on the map as it is
 	pub init: u32
+}
+
+/// The typepath value tag of a mob type
+const MOB_TYPEPATH: u8 = 0x08;
+
+/// Adds a mob type to the mob table, and returns its index.
+fn add_mob_type(mob: MobType) -> Result<u32, String> {
+	let functions = functions()?;
+	unsafe {
+		let count = *functions.mob_count;
+		let table = functions.mobs as *mut *mut MobType;
+		let grown = (functions.crt_realloc)(*table as *mut c_void, (count as usize + 1) * std::mem::size_of::<MobType>()) as *mut MobType;
+		if grown.is_null() {
+			return Err("out of memory growing the mob table".to_owned());
+		}
+		*grown.add(count as usize) = mob;
+		*table = grown;
+		*(functions.mob_count as *mut u32) = count + 1;
+		Ok(count)
+	}
+}
+
+/// Sets a mob type's `key`, `sight`, `see_in_dark` and `see_invisible`.
+pub fn set_mob_type(type_id: u32, set: impl FnOnce(&mut MobType)) -> Result<(), String> {
+	let functions = functions()?;
+	unsafe {
+		let mobs = std::slice::from_raw_parts_mut(*functions.mobs, *functions.mob_count as usize);
+		let mob = mobs.iter_mut().find(|m| m.type_id == type_id).ok_or("it isn't a mob type")?;
+		set(mob);
+	}
+	Ok(())
 }
 
 /// The world's prefab instances, by id.
@@ -1060,6 +1152,24 @@ pub fn add_type(parent: u32, path: u32) -> Result<u32, String> {
 		*word(count, PREORDER_END) = at as u32 + 1;
 
 		*(functions.type_count as *mut u32) += 1;
+
+		// A mob type has a place in the mob table, which its typepath value
+		// names, starting as its parent's
+		if *(word(parent as usize, TYPEPATH) as *const u8) == 0 {
+			(functions.register_typepath)(parent);
+		}
+		if *(word(parent as usize, TYPEPATH) as *const u8) == MOB_TYPEPATH {
+			let mobs = std::slice::from_raw_parts(*functions.mobs, *functions.mob_count as usize);
+			let from = mobs
+				.iter()
+				.find(|m| m.type_id == parent)
+				.copied()
+				.ok_or("its parent isn't in the mob table")?;
+			add_mob_type(MobType {
+				type_id: count as u32,
+				..from
+			})?;
+		}
 		(functions.register_typepath)(count as u32);
 		Ok(count as u32)
 	}

@@ -843,6 +843,31 @@ fn main() {
 	);
 	println!("ok: built-in vars");
 
+	// A new mob type, with a mob var of its own and its parent's verbs, and a
+	// new default for a mob var of a mob type the world has
+	let changes = source.edit(
+		"reload.dm",
+		"/proc/first_def()\n",
+		"/mob/helper/tiny\n\tname = \"tiny\"\n\tsee_in_dark = 6\n\n/proc/mob_report(type)\n\tvar/mob/m = new type\n\treturn \"[m.type] [m.name] \
+		 [m.sight] [m.see_in_dark] [istype(m, /mob/helper)] [ismob(m)] [verb_report(m)]\"\n\n/proc/first_def()\n"
+	);
+	assert_eq!(changes.new_types.len(), 1, "{:?}", changes.refused);
+	reload(&mut watcher, &changes);
+	assert_eq!(
+		eval(&mut client, "mob_report(/mob/helper/tiny)"),
+		"\"/mob/helper/tiny tiny 0 6 1 1 Wave Hello:,Greet:Friends\""
+	);
+	assert_eq!(eval(&mut client, "helper_greets(new /mob/helper/tiny)"), "\"hi\"");
+	assert_eq!(eval(&mut client, "text2path(\"/mob/helper/tiny\")"), "/mob/helper/tiny");
+	assert_eq!(eval(&mut client, "length(typesof(/mob/helper))"), "3");
+	let changes = source.edit("reload.dm", "/mob/helper/small\n", "/mob/helper/small\n\tsight = 4\n");
+	reload(&mut watcher, &changes);
+	assert_eq!(
+		eval(&mut client, "mob_report(/mob/helper/small)"),
+		"\"/mob/helper/small small 4 2 1 1 Wave Hello:,Greet:Friends\""
+	);
+	println!("ok: new mob types");
+
 	// Something that can't be done leaves everything as it was
 	let mut request = reload_request(&source.edit("reload.dm", "\treturn 4", "\treturn 5"));
 	if let Request::HotReload(HotReloadRequest { procs, .. }) = &mut request {

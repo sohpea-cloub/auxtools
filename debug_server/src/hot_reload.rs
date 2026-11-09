@@ -1273,7 +1273,10 @@ enum BuiltinWrite {
 	Bits(usize, u32, u32),
 	/// An entry of the type's list of built-in values: the var name's string
 	/// id, and the value as bytecode has it
-	Listed(u32, Vec<u32>)
+	Listed(u32, Vec<u32>),
+	/// A mob type's `key` (a string id), `sight`, `see_in_dark` or
+	/// `see_invisible`, in the mob table
+	Mob(&'static str, u32)
 }
 
 /// How a type keeps a built-in var's value (see `type_fields`), as found by
@@ -1359,6 +1362,10 @@ fn builtin_writes(var: &str, value: &ConstValue) -> Result<Vec<BuiltinWrite>, St
 			};
 			vec![Listed(leaked_string(var)?, words)]
 		}
+		"key" => vec![Mob("key", string()?)],
+		"sight" => vec![Mob("sight", number()? as u32)],
+		"see_in_dark" => vec![Mob("see_in_dark", number()? as u32)],
+		"see_invisible" => vec![Mob("see_invisible", number()? as u32)],
 		_ => return Err("isn't a built-in var a reload can set".to_owned())
 	})
 }
@@ -1392,6 +1399,12 @@ fn write_builtins(type_id: u32, writes: &[BuiltinWrite]) -> Result<(), String> {
 				words.extend_from_slice(value);
 				set_type_field(type_id, type_fields::BUILTIN_VALUES, runtime_tables::intern_misc(&words)?)?;
 			}
+			BuiltinWrite::Mob(var, value) => runtime_tables::set_mob_type(type_id, |mob| match *var {
+				"key" => mob.key = *value,
+				"sight" => mob.sight = *value,
+				"see_in_dark" => mob.see_in_dark = *value as u8,
+				_ => mob.see_invisible = *value as u8
+			})?
 		}
 	}
 	Ok(())
