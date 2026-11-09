@@ -37,11 +37,10 @@ time.
 The world should be running the code as it is when this starts. Proc code,
 new procs (more definitions of one too), definitions taken away, new types
 (not mobs), new vars and static locals, var defaults (those that aren't
-constants reach new instances), parameters, `set waitfor` and `set
-background` can change. New mob types, most built-in vars on new types,
-verbs, prefabs with var overrides, new `in` list expressions and other `set`
-statements need the world rebuilt, and are refused, along with the rest of
-the change.
+constants reach new instances), parameters and `set` statements can change.
+New mob types, most built-in vars on new types, verbs, prefabs with var
+overrides and new `in` list expressions need the world rebuilt, and are
+refused, along with the rest of the change.
 
   --port N          the debug server's reload port (default 2449)
   -DNAME[=VALUE]    a define DreamMaker was given on its command line
@@ -189,7 +188,7 @@ fn proc_code(r: &dmasm::reload::ProcReload) -> HotReloadProc {
 		nodes: r.nodes.clone(),
 		locals: r.locals.clone(),
 		params: r.params.clone(),
-		settings: r.settings,
+		settings: r.settings.clone(),
 		statics: r.statics.clone()
 	}
 }
@@ -198,6 +197,7 @@ fn reload_request(changes: &Changes) -> Request {
 	Request::HotReload(HotReloadRequest {
 		new_types: changes.new_types.clone(),
 		procs: changes.reloads.iter().map(proc_code).collect(),
+		settings: changes.settings.clone(),
 		new_procs: changes
 			.new_procs
 			.iter()
@@ -343,6 +343,7 @@ impl Watcher {
 			let parts: Vec<String> = [
 				list(changes.new_types.iter().map(|t| t.path.clone()).collect(), "types").map(|s| format!("added {}", s)),
 				list(changes.reloads.iter().map(|r| r.proc.to_string()).collect(), "procs").map(|s| format!("reloaded {}", s)),
+				list(changes.settings.iter().map(|c| c.proc.to_string()).collect(), "procs").map(|s| format!("set the settings of {}", s)),
 				list(changes.new_procs.iter().map(|p| p.code.proc.to_string()).collect(), "procs").map(|s| format!("added {}", s)),
 				list(changes.removed_procs.iter().map(|p| p.proc.to_string()).collect(), "procs").map(|s| format!("unlinked {}", s)),
 				list(

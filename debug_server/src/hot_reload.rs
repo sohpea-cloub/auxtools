@@ -33,12 +33,12 @@ use std::collections::{btree_map::Entry, BTreeMap, BTreeSet, HashMap, HashSet};
 
 use auxtools::{
 	raw_types,
-	runtime_tables::{self, type_fields, ProcEntryWords, NONE, PROC_FLAG_BACKGROUND, PROC_FLAG_WAITFOR},
+	runtime_tables::{self, type_fields, ProcEntryWords, NONE},
 	Proc, StringRef
 };
 use dmasm::{
 	assembler::AssembleEnv as _,
-	reload::{ConstValue, InList, NewType, NewVar, RemovedProc},
+	reload::{ConstValue, InList, NewType, NewVar, ProcSettings, RemovedProc},
 	Instruction, Node, Opcode
 };
 
@@ -56,6 +56,8 @@ pub struct Prepared {
 	new_procs: Vec<PreparedNewProc>,
 	init_procs: Vec<PreparedInitProc>,
 	code: Vec<PreparedCode>,
+	/// (proc, word, value) for procs' new settings
+	entry_words: Vec<(u32, usize, u32)>,
 	/// (type id, field, misc id) for the types' new var tables and declared
 	/// vars
 	type_fields: Vec<(u32, usize, u32)>,
@@ -252,7 +254,8 @@ struct PreparedCode {
 	bytecode_id: u32,
 	locals_id: Option<u32>,
 	params_id: Option<u32>,
-	flags: Option<u32>,
+	/// (word, value) for the entry's new settings
+	settings: Vec<(usize, u32)>,
 	/// The new code's local names, when they're new
 	local_names: Option<Vec<String>>,
 	/// How the proc's lines moved. `None` for new code, where a breakpoint
@@ -333,6 +336,7 @@ pub fn prepare(request: &HotReloadRequest, warnings: &mut Vec<String>) -> Result
 	let HotReloadRequest {
 		new_types: _,
 		procs,
+		settings,
 		new_procs,
 		removed_procs,
 		new_vars,
@@ -414,6 +418,25 @@ pub fn prepare(request: &HotReloadRequest, warnings: &mut Vec<String>) -> Result
 		}
 	}
 
+	for change in settings {
+		let proc_ref = ProcRef {
+			path: change.proc.path.clone(),
+			override_id: change.proc.override_id
+		};
+		let words = find(&proc_ref).and_then(|proc| {
+			let entry = runtime_tables::proc_entry(proc.id).ok_or_else(|| format!("{}: couldn't read its table entry", describe(&proc_ref)))?;
+			let words = settings_words(&entry, &change.settings, &proc_ref.path)?;
+			if let Some(warning) = renamed(&proc, &entry, &words) {
+				warnings.push(warning);
+			}
+			Ok(words.into_iter().map(move |(word, value)| (proc.id.0, word, value)))
+		});
+		match words {
+			Ok(words) => prepared.entry_words.extend(words),
+			Err(e) => errors.push(e)
+		}
+	}
+
 	for moved in line_moves {
 		let proc = match find(&moved.proc) {
 			Ok(proc) => proc,
@@ -433,7 +456,7 @@ pub fn prepare(request: &HotReloadRequest, warnings: &mut Vec<String>) -> Result
 					bytecode_id,
 					locals_id: None,
 					params_id: None,
-					flags: None,
+					settings: vec![],
 					local_names: None,
 					lines: Some(moved.lines.clone())
 				}),
@@ -548,7 +571,13 @@ fn prepare_code(
 
 	let params_id = params_table(&reload.params, entry.0[ProcEntryWords::PARAMETERS], added).map_err(|e| format!("{}: {}", name, e))?;
 
-	let flags = settings_flags(entry.0[ProcEntryWords::FLAGS], &reload.settings);
+	let settings = match &reload.settings {
+		Some(settings) => settings_words(&entry, settings, &reload.proc.path).map_err(|e| format!("{}: {}", name, e))?,
+		None => vec![]
+	};
+	if let Some(warning) = renamed(&proc, &entry, &settings) {
+		warnings.push(warning);
+	}
 
 	Ok(PreparedCode {
 		proc,
@@ -557,21 +586,43 @@ fn prepare_code(
 		bytecode_id,
 		locals_id,
 		params_id,
-		flags: (flags != entry.0[ProcEntryWords::FLAGS]).then_some(flags),
+		settings,
 		local_names: Some(reload.locals.clone()),
 		lines: None
 	})
 }
 
-const fn settings_flags(flags: u32, settings: &dmasm::reload::ProcSettings) -> u32 {
-	let mut flags = flags & !(PROC_FLAG_WAITFOR | PROC_FLAG_BACKGROUND);
-	if settings.waitfor {
-		flags |= PROC_FLAG_WAITFOR;
+/// The words of a proc's table entry that its settings make, where they
+/// aren't what `entry` has: the flags, `set src` and invisibility, and the
+/// name, description and category. `path` is the proc's path.
+fn settings_words(entry: &ProcEntryWords, settings: &ProcSettings, path: &str) -> Result<Vec<(usize, u32)>, String> {
+	let string = |text: Option<&str>| text.map_or(Ok(NONE), leaked_string);
+	// Without `set name`, the name in its path with spaces for underscores
+	let basename = path.rsplit('/').next().unwrap_or(path).replace('_', " ");
+	let words = [
+		(
+			ProcEntryWords::FLAGS,
+			(entry.0[ProcEntryWords::FLAGS] & !ProcSettings::FLAGS) | settings.flags()
+		),
+		(ProcEntryWords::SETTINGS, settings.packed()),
+		(ProcEntryWords::NAME, string(Some(settings.name.as_deref().unwrap_or(&basename)))?),
+		(ProcEntryWords::DESC, string(settings.desc.as_deref())?),
+		(ProcEntryWords::CATEGORY, string(settings.category.as_deref())?)
+	];
+	Ok(words.into_iter().filter(|&(word, value)| entry.0[word] != value).collect())
+}
+
+/// A warning for a proc (not a verb) that `words` gives a new name: the proc
+/// name maps, which `call()` by name uses, still have the old one.
+fn renamed(proc: &Proc, entry: &ProcEntryWords, words: &[(usize, u32)]) -> Option<String> {
+	if !words.iter().any(|&(word, _)| word == ProcEntryWords::NAME) || entry.0[ProcEntryWords::NAME] == NONE {
+		return None;
 	}
-	if settings.background {
-		flags |= PROC_FLAG_BACKGROUND;
-	}
-	flags
+	let path = strip_path(&proc.path);
+	let (type_path, _) = path.rsplit_once('/')?;
+	let type_id = find_type(type_path).ok()?;
+	let on_map = runtime_tables::named_procs(type_id, entry.0[ProcEntryWords::NAME]).is_ok_and(|procs| procs.contains(&proc.id.0));
+	on_map.then(|| format!("{}: call() by name finds it by its old name, not its new one", proc.path))
 }
 
 /// A locals table with these names. `empty` is a table with none, which the
@@ -810,22 +861,20 @@ fn prepare_new_proc(
 		Ok(id)
 	};
 
-	// As DreamMaker writes them: `proc/` where the proc is declared, and a
-	// name with spaces for underscores, which is what calls by name use
+	// As DreamMaker writes them: `proc/` where the proc is declared
 	let path = match (new.type_path.as_str(), new.declared) {
 		("", _) => format!("/proc/{}", new.name),
 		(ty, true) => format!("{}/proc/{}", ty, new.name),
 		(ty, false) => format!("{}/{}", ty, new.name)
 	};
-	let call_name = new.name.replace('_', " ");
 
 	let mut entry = template;
 	entry.0[ProcEntryWords::PATH] = string(&path)?;
-	entry.0[ProcEntryWords::NAME] = string(&call_name)?;
-	entry.0[ProcEntryWords::DESC] = NONE;
-	entry.0[ProcEntryWords::CATEGORY] = NONE;
 	entry.0[ProcEntryWords::PATH_BASENAME] = string(&new.name)?;
-	entry.0[ProcEntryWords::FLAGS] = settings_flags(template.0[ProcEntryWords::FLAGS], &new.code.settings);
+	let settings = new.code.settings.clone().unwrap_or_default();
+	for (word, value) in settings_words(&entry, &settings, &new.name).map_err(fail)? {
+		entry.0[word] = value;
+	}
 	entry.0[ProcEntryWords::BYTECODE] = runtime_tables::intern_misc(&bytecode).map_err(fail)?;
 	entry.0[ProcEntryWords::LOCALS] = locals_table(&new.code.locals, template.0[ProcEntryWords::LOCALS]).map_err(fail)?;
 	entry.0[ProcEntryWords::PARAMETERS] = if new.code.params.is_empty() {
@@ -1244,6 +1293,9 @@ pub fn apply(
 	for p in prepared.code {
 		apply_code(p, conditions, moved_breakpoints, warnings);
 	}
+	for (proc, word, value) in prepared.entry_words {
+		runtime_tables::set_proc_entry_word(raw_types::procs::ProcId(proc), word, value);
+	}
 
 	for (type_id, field, words) in prepared.type_fields {
 		let _ = runtime_tables::set_type_field(type_id, field, words);
@@ -1304,8 +1356,8 @@ fn apply_code(
 	if let Some(params) = p.params_id {
 		runtime_tables::set_proc_entry_word(p.proc.id, ProcEntryWords::PARAMETERS, params);
 	}
-	if let Some(flags) = p.flags {
-		runtime_tables::set_proc_entry_word(p.proc.id, ProcEntryWords::FLAGS, flags);
+	for (word, value) in p.settings {
+		runtime_tables::set_proc_entry_word(p.proc.id, word, value);
 	}
 
 	let (new_ptr, _) = unsafe { p.proc.bytecode_mut_ptr() };

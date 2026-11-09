@@ -31,11 +31,10 @@ impl ProcEntryWords {
 	pub const PARAMETERS: usize = 9;
 	pub const PATH: usize = 0;
 	pub const PATH_BASENAME: usize = 4;
+	/// A verb's `set src` (its range, then its kind) and invisibility, a byte
+	/// each
+	pub const SETTINGS: usize = 6;
 }
-
-/// `ProcEntry::flags`: `set waitfor` (on unless set to 0) and `set background`.
-pub const PROC_FLAG_WAITFOR: u32 = 0x04;
-pub const PROC_FLAG_BACKGROUND: u32 = 0x100;
 
 /// No proc, string or misc entry.
 pub const NONE: u32 = 0xFFFF;

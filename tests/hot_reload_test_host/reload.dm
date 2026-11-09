@@ -156,3 +156,18 @@ var/datum/bag/old_bag = new
 /proc/crate_report(type)
 	var/obj/crate/c = new type
 	return "[c.name]|[c.desc]|[c.icon_state]|[c.density]|[c.capacity]|[c.describe_crate()]|[c.contents_log[1]]|[c.text]"
+
+// An override gets its settings from the declaration
+
+/datum/napper/proc/nap()
+	set waitfor = FALSE
+	sleep(1)
+	return 1
+
+/datum/napper/cat/nap()
+	sleep(1)
+	return 2
+
+/proc/nap_skipped(type)
+	var/datum/napper/n = new type
+	return isnull(n.nap())

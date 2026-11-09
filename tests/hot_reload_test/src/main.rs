@@ -134,7 +134,7 @@ fn proc_code(r: &dmasm::reload::ProcReload) -> HotReloadProc {
 		nodes: r.nodes.clone(),
 		locals: r.locals.clone(),
 		params: r.params.clone(),
-		settings: r.settings,
+		settings: r.settings.clone(),
 		statics: r.statics.clone()
 	}
 }
@@ -143,6 +143,7 @@ fn reload_request(changes: &Changes) -> Request {
 	Request::HotReload(HotReloadRequest {
 		new_types: changes.new_types.clone(),
 		procs: changes.reloads.iter().map(proc_code).collect(),
+		settings: changes.settings.clone(),
 		new_procs: changes
 			.new_procs
 			.iter()
@@ -720,6 +721,19 @@ fn main() {
 	reload(&mut watcher, &changes);
 	assert_eq!(eval(&mut client, "caller_sees()"), "1", "before the change it was {}", before);
 	println!("ok: set waitfor");
+
+	// An override's settings come from the declaration, so a change there
+	// reaches it, though its code is the same
+	assert_eq!(eval(&mut client, "nap_skipped(/datum/napper/cat)"), "1");
+	let changes = source.edit(
+		"reload.dm",
+		"\tset waitfor = FALSE\n\tsleep(1)\n\treturn 1",
+		"\tset waitfor = TRUE\n\tsleep(1)\n\treturn 1"
+	);
+	assert_eq!((changes.reloads.len(), changes.settings.len()), (1, 1));
+	reload(&mut watcher, &changes);
+	assert_ne!(eval(&mut client, "nap_skipped(/datum/napper/cat)"), "1");
+	println!("ok: settings from the declaration");
 
 	// Something that can't be done leaves everything as it was
 	let mut request = reload_request(&source.edit("reload.dm", "\treturn 4", "\treturn 5"));

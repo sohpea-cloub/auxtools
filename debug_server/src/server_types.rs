@@ -189,6 +189,8 @@ pub struct HotReloadRequest {
 	/// be applied, they stay: nothing uses them.
 	pub new_types: Vec<dmasm::reload::NewType>,
 	pub procs: Vec<HotReloadProc>,
+	/// Procs whose code is as it was, but not their settings
+	pub settings: Vec<dmasm::reload::SettingsChange>,
 	pub new_procs: Vec<HotReloadNewProc>,
 	/// Definitions on types that are gone, unlinked before new procs are added
 	pub removed_procs: Vec<dmasm::reload::RemovedProc>,
@@ -204,7 +206,7 @@ pub struct HotReloadRequest {
 impl HotReloadRequest {
 	/// How many things it changes
 	pub const fn len(&self) -> usize {
-		self.new_types.len() + self.procs.len() + self.new_procs.len() + self.removed_procs.len() + self.new_vars.len() + self.var_defaults.len() + self.init_procs.len() + self.line_moves.len()
+		self.new_types.len() + self.procs.len() + self.settings.len() + self.new_procs.len() + self.removed_procs.len() + self.new_vars.len() + self.var_defaults.len() + self.init_procs.len() + self.line_moves.len()
 	}
 
 	pub const fn is_empty(&self) -> bool {
@@ -222,7 +224,8 @@ pub struct HotReloadProc {
 	/// Local variable names by slot
 	pub locals: Vec<String>,
 	pub params: Vec<dmasm::reload::Param>,
-	pub settings: dmasm::reload::ProcSettings,
+	/// `None` where they're as they were
+	pub settings: Option<dmasm::reload::ProcSettings>,
 	/// Its static locals, for those the running proc doesn't have yet
 	pub statics: Vec<dmasm::reload::StaticVar>
 }
