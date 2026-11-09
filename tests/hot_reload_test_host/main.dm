@@ -54,3 +54,34 @@ var/datum/limits/kept_limits = new
 	return ..() + "3"
 
 var/datum/chain/the_chain = new
+
+// Definitions of a verb, of a world proc and of a global proc, which come and
+// go among the others too
+/mob/chain_verbs/verb/speak()
+	return "a"
+
+/mob/chain_verbs/verb/other()
+	return "o"
+
+/mob/chain_verbs/speak()
+	return ..() + "c"
+
+var/mob/chain_verbs/verb_chain = new
+
+/proc/verb_names(mob/m)
+	var/list/names = list()
+	for (var/v in m.verbs)
+		names += "[v:name]"
+	return jointext(names, ",")
+
+/world/proc/chant()
+	return "x"
+
+/world/chant()
+	return ..() + "z"
+
+/proc/solo()
+	return "declared"
+
+/solo()
+	return "another"

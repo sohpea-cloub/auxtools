@@ -199,8 +199,14 @@ struct StagedProcs {
 	entries: HashMap<u32, ProcEntryWords>,
 	/// New procs and verbs, by the type they're on and its list's field
 	own: HashMap<(u32, usize), Vec<u32>>,
+	/// New verbs that go after another on their type's list, rather than
+	/// first
+	listed_after: HashMap<u32, u32>,
 	/// Procs taken out of their types' lists
-	removed: HashSet<u32>
+	removed: HashSet<u32>,
+	/// The world's definitions of a proc, by path, first to last (each one's
+	/// `..()` goes to the one before)
+	world: HashMap<String, Vec<u32>>
 }
 
 impl StagedProcs {
@@ -222,13 +228,24 @@ impl StagedProcs {
 		Some(entry)
 	}
 
+	/// The world's definitions of `path` (without `/proc`), as the reload
+	/// has them so far
+	fn world_definitions(&mut self, path: &str) -> &mut Vec<u32> {
+		self.world
+			.entry(path.to_owned())
+			.or_insert_with(|| Proc::overrides(path).iter().map(|p| p.id.0).collect())
+	}
+
 	/// The procs (`type_fields::PROCS`) or verbs (`VERBS`) a type defines
 	/// itself, as its list will have them
 	fn own(&self, type_id: u32, field: usize) -> Result<Vec<u32>, String> {
 		let mut procs = runtime_tables::misc_words(runtime_tables::type_field(type_id, field)?).unwrap_or_default();
 		procs.retain(|proc| !self.removed.contains(proc));
 		for &proc in self.own.get(&(type_id, field)).into_iter().flatten() {
-			add_to_list(&mut procs, field, proc);
+			match self.listed_after.get(&proc).and_then(|after| procs.iter().position(|p| p == after)) {
+				Some(at) if !procs.contains(&proc) => procs.insert(at + 1, proc),
+				_ => add_to_list(&mut procs, field, proc)
+			}
 		}
 		Ok(procs)
 	}
@@ -361,8 +378,8 @@ struct PreparedNewProc {
 	place: ProcRef,
 	local_names: Vec<String>,
 	on_type: Option<NewProcOnType>,
-	/// The keys a world proc goes under in the world's own name map
-	on_world: Vec<u32>
+	/// Where a world proc goes in the world's own name map
+	on_world: Option<WorldEdit>
 }
 
 /// A definition of a proc on a type that's unlinked: it stays in the proc
@@ -370,6 +387,7 @@ struct PreparedNewProc {
 /// past it.
 struct PreparedRemoval {
 	id: u32,
+	/// `NONE` for a global proc's or the world's: neither is on a type
 	type_id: u32,
 	/// The type's list it's on: `type_fields::PROCS` or `VERBS`
 	field: usize,
@@ -377,7 +395,9 @@ struct PreparedRemoval {
 	map_entries: Vec<(u32, u32, Vec<u32>)>,
 	/// Procs whose `..()` went to it, and go to what it overrode now
 	relinked: Vec<u32>,
-	next: u32
+	next: u32,
+	/// How a world proc comes out of the world's own name map
+	on_world: Option<WorldEdit>
 }
 
 /// What adding a proc to a type changes besides the proc table.
@@ -388,7 +408,26 @@ struct NewProcOnType {
 	/// (type id, name key, procs) for each proc name map that gets it
 	map_entries: Vec<(u32, u32, Vec<u32>)>,
 	/// Procs whose `..()` goes to the new proc now
-	relinked: Vec<u32>
+	relinked: Vec<u32>,
+	/// Where it goes on the list: after this one, or where `add_to_list`
+	/// puts it
+	after: Option<u32>
+}
+
+/// A change to the world's own proc names (see `edit_world_names`)
+#[derive(Clone)]
+enum WorldEdit {
+	/// A proc goes under `keys`, its `..()` going to `below`, beneath the
+	/// definition `above` (whose `..()` goes to it), or else the newest
+	Add {
+		id: u32,
+		keys: Vec<u32>,
+		below: u32,
+		above: Option<u32>
+	},
+	/// A proc comes out from under `keys`, and what called it with `..()`
+	/// calls what it did
+	Remove { id: u32, keys: Vec<u32> }
 }
 
 /// Where reloads moved breakpoints, by the offset the debug-client set them at,
@@ -1000,6 +1039,30 @@ fn prepare_removal(removed: &RemovedProc, staged: &mut StagedProcs) -> Result<Pr
 	let id = find(&proc_ref)?.id.0;
 	let entry = staged.entry(id).ok_or_else(|| fail("couldn't read its table entry".to_owned()))?;
 	let next = entry.0[ProcEntryWords::NEXT_OVERRIDE];
+
+	// A global proc's stays for the code that calls it, and is only numbered
+	// apart. The world's comes out of its own name map.
+	if removed.type_path.is_empty() || (removed.type_path == "/world" && !removed.verb) {
+		let on_world = if removed.type_path.is_empty() {
+			None
+		} else {
+			staged.world_definitions(&strip_path(&proc_ref.path)).retain(|&p| p != id);
+			Some(WorldEdit::Remove {
+				id,
+				keys: world_keys(&entry)
+			})
+		};
+		return Ok(PreparedRemoval {
+			id,
+			type_id: NONE,
+			field: type_fields::PROCS,
+			map_entries: vec![],
+			relinked: vec![],
+			next,
+			on_world
+		});
+	}
+
 	let type_id = find_type(&removed.type_path).map_err(fail)?;
 	let field = if removed.verb { type_fields::VERBS } else { type_fields::PROCS };
 	// Verbs aren't in the proc name maps
@@ -1050,7 +1113,8 @@ fn prepare_removal(removed: &RemovedProc, staged: &mut StagedProcs) -> Result<Pr
 		field,
 		map_entries,
 		relinked,
-		next
+		next,
+		on_world: None
 	})
 }
 
@@ -1107,19 +1171,33 @@ fn prepare_new_proc(
 	entry.0[ProcEntryWords::NEXT_OVERRIDE] = NONE;
 
 	// The world isn't a type. A new world proc goes in the world's own name
-	// map when it's added (see `add_world_proc`).
-	let mut on_world = vec![];
+	// map when it's added (see `edit_world_names`), between the definitions
+	// before and after it.
+	let at = new.code.proc.override_id as usize;
+	let mut on_world = None;
 	if new.type_path == "/world" && !new.verb {
-		on_world.push(entry.0[ProcEntryWords::NAME]);
-		if entry.0[ProcEntryWords::PATH_BASENAME] != on_world[0] {
-			on_world.push(entry.0[ProcEntryWords::PATH_BASENAME]);
-		}
+		let definitions = staged.world_definitions(&strip_path(&new.code.proc.path));
+		let at = at.min(definitions.len());
+		let below = at.checked_sub(1).map_or(NONE, |below| definitions[below]);
+		let new_ids: Vec<u32> = staged.entries.keys().copied().collect();
+		let definitions = staged.world_definitions(&strip_path(&new.code.proc.path));
+		// The world has this one already: new ones go in in order
+		let above = definitions[at..].iter().copied().find(|p| !new_ids.contains(p));
+		definitions.insert(at, id);
+		entry.0[ProcEntryWords::NEXT_OVERRIDE] = below;
+		staged.entries.insert(id, entry);
+		on_world = Some(WorldEdit::Add {
+			id,
+			keys: world_keys(&entry),
+			below,
+			above
+		});
 	}
 
-	let on_type = if new.type_path.is_empty() || !on_world.is_empty() {
+	let on_type = if new.type_path.is_empty() || on_world.is_some() {
 		None
 	} else if new.verb {
-		Some(new_verb_on_type(&new.type_path, id, &mut entry, staged).map_err(fail)?)
+		Some(new_verb_on_type(&new.type_path, id, at, &mut entry, staged).map_err(fail)?)
 	} else {
 		let type_id = find_type(&new.type_path).map_err(fail)?;
 		let keys = [entry.0[ProcEntryWords::NAME], entry.0[ProcEntryWords::PATH_BASENAME]];
@@ -1127,8 +1205,7 @@ fn prepare_new_proc(
 		// What the name finds on the type now is what the new proc overrides,
 		// unless it goes among the type's own definitions: then it overrides
 		// the one before it (or what the first overrode)
-		let own = own_definitions(staged, type_id, keys[0]).map_err(fail)?;
-		let at = new.code.proc.override_id as usize;
+		let own = own_definitions(staged, type_id, type_fields::PROCS, ProcEntryWords::NAME, keys[0]).map_err(fail)?;
 		let overridden = match (own.get(at), at.checked_sub(1).and_then(|below| own.get(below))) {
 			(Some(_), Some(&below)) => below,
 			(Some(&first), None) => staged.entry(first).map_or(NONE, |e| e.0[ProcEntryWords::NEXT_OVERRIDE]),
@@ -1185,7 +1262,8 @@ fn prepare_new_proc(
 			type_id,
 			field: type_fields::PROCS,
 			map_entries,
-			relinked
+			relinked,
+			after: None
 		})
 	};
 
@@ -1213,32 +1291,50 @@ fn add_to_list(list: &mut Vec<u32>, field: usize, proc: u32) {
 	}
 }
 
-/// A new verb on a type. Verbs aren't in the proc name maps: a type's own are
-/// on its list of verbs, and a verb's `..()` goes to the newest definition of
-/// the same name on the type or its nearest ancestor.
-fn new_verb_on_type(type_path: &str, id: u32, entry: &mut ProcEntryWords, staged: &mut StagedProcs) -> Result<NewProcOnType, String> {
+/// A new verb on a type, as definition `at` of its name there. Verbs aren't in
+/// the proc name maps: a type's own are on its list of verbs, newest first,
+/// and a verb's `..()` goes to the definition before it on the type, or to the
+/// newest of the same name on its nearest ancestor.
+fn new_verb_on_type(type_path: &str, id: u32, at: usize, entry: &mut ProcEntryWords, staged: &mut StagedProcs) -> Result<NewProcOnType, String> {
 	let type_id = find_type(type_path)?;
 	let name = entry.0[ProcEntryWords::PATH_BASENAME];
-	let named = |proc: &u32| staged.entry(*proc).is_some_and(|e| e.0[ProcEntryWords::PATH_BASENAME] == name);
 
-	let mut overridden = NONE;
-	for t in type_and_ancestors(type_id) {
-		if let Some(&proc) = staged.own(t, type_fields::VERBS)?.iter().find(|p| named(p)) {
-			overridden = proc;
-			break;
+	let own = own_definitions(staged, type_id, type_fields::VERBS, ProcEntryWords::PATH_BASENAME, name)?;
+	let below = match at.checked_sub(1).and_then(|below| own.get(below)) {
+		Some(&below) => below,
+		None => {
+			let mut overridden = NONE;
+			for t in type_and_ancestors(type_id).into_iter().skip(1) {
+				if let Some(&newest) = own_definitions(staged, t, type_fields::VERBS, ProcEntryWords::PATH_BASENAME, name)?.last() {
+					overridden = newest;
+					break;
+				}
+			}
+			overridden
 		}
-	}
-	entry.0[ProcEntryWords::NEXT_OVERRIDE] = overridden;
+	};
+	entry.0[ProcEntryWords::NEXT_OVERRIDE] = below;
 
-	// The `..()` of the subtypes' verbs that went past it
+	// One the type has after it calls this one with `..()` now, and it's
+	// listed after that one. Otherwise it's the newest, and the subtypes'
+	// verbs that called the one it overrides call it.
 	let mut relinked = vec![];
-	for sub in 0..runtime_tables::type_count()? {
-		if sub == type_id || !type_and_ancestors(sub).contains(&type_id) {
-			continue;
-		}
-		for proc in staged.own(sub, type_fields::VERBS)? {
-			if named(&proc) && staged.entry(proc).is_some_and(|e| e.0[ProcEntryWords::NEXT_OVERRIDE] == overridden) && !relinked.contains(&proc) {
-				relinked.push(proc);
+	let after = own.get(at).copied();
+	match after {
+		Some(above) => relinked.push(above),
+		None => {
+			for sub in 0..runtime_tables::type_count()? {
+				if sub == type_id || !type_and_ancestors(sub).contains(&type_id) {
+					continue;
+				}
+				for proc in staged.own(sub, type_fields::VERBS)? {
+					let calls_below = staged
+						.entry(proc)
+						.is_some_and(|e| e.0[ProcEntryWords::PATH_BASENAME] == name && e.0[ProcEntryWords::NEXT_OVERRIDE] == below);
+					if below != NONE && calls_below && !relinked.contains(&proc) {
+						relinked.push(proc);
+					}
+				}
 			}
 		}
 	}
@@ -1252,13 +1348,27 @@ fn new_verb_on_type(type_path: &str, id: u32, entry: &mut ProcEntryWords, staged
 	}
 	staged.entries.insert(id, *entry);
 	staged.own.entry((type_id, type_fields::VERBS)).or_default().push(id);
+	if let Some(after) = after {
+		staged.listed_after.insert(id, after);
+	}
 
 	Ok(NewProcOnType {
 		type_id,
 		field: type_fields::VERBS,
 		map_entries: vec![],
-		relinked
+		relinked,
+		after
 	})
+}
+
+/// The keys a world proc goes under in the world's name map: its name, and
+/// its path's name where that's another
+fn world_keys(entry: &ProcEntryWords) -> Vec<u32> {
+	let mut keys = vec![entry.0[ProcEntryWords::NAME]];
+	if entry.0[ProcEntryWords::PATH_BASENAME] != keys[0] {
+		keys.push(entry.0[ProcEntryWords::PATH_BASENAME]);
+	}
+	keys
 }
 
 /// Which of a proc's same-named static locals a scope (`proc:PATH#N`) means
@@ -1588,6 +1698,14 @@ pub fn apply<T>(
 	let procs_before = runtime_tables::proc_count();
 
 	for removal in &prepared.removed_procs {
+		if let Some(edit) = &removal.on_world {
+			if let Err(e) = edit_world_names(edit.clone()) {
+				warnings.push(format!("couldn't take a proc out of the world's procs: {}", e));
+			}
+		}
+		if removal.type_id == NONE {
+			continue;
+		}
 		let procs = runtime_tables::type_field(removal.type_id, removal.field).unwrap_or(NONE);
 		let mut list = runtime_tables::misc_words(procs).unwrap_or_default();
 		list.retain(|&proc| proc != removal.id);
@@ -1626,7 +1744,10 @@ pub fn apply<T>(
 		if let Some(on_type) = &new.on_type {
 			let procs = runtime_tables::type_field(on_type.type_id, on_type.field).unwrap_or(NONE);
 			let mut list = runtime_tables::misc_words(procs).unwrap_or_default();
-			add_to_list(&mut list, on_type.field, id);
+			match on_type.after.and_then(|after| list.iter().position(|&p| p == after)) {
+				Some(at) if !list.contains(&id) => list.insert(at + 1, id),
+				_ => add_to_list(&mut list, on_type.field, id)
+			}
 			match runtime_tables::intern_misc(&list) {
 				Ok(list) => {
 					let _ = runtime_tables::set_type_field(on_type.type_id, on_type.field, list);
@@ -1645,8 +1766,8 @@ pub fn apply<T>(
 			}
 		}
 
-		if !new.on_world.is_empty() {
-			if let Err(e) = add_world_proc(id, new.on_world.clone()) {
+		if let Some(edit) = &new.on_world {
+			if let Err(e) = edit_world_names(edit.clone()) {
 				warnings.push(format!("couldn't add a proc to the world's procs: {}", e));
 			}
 		}
@@ -1861,9 +1982,9 @@ fn adapt_debug_info(nodes: &[Node], original: &[u32]) -> Vec<Node> {
 		.collect()
 }
 
-// World procs waiting for the world's proc names to be built (see
-// `add_world_proc`): their ids and keys
-static WAITING_WORLD_PROCS: Mutex<Vec<(u32, Vec<u32>)>> = Mutex::new(Vec::new());
+// Changes to the world's proc names waiting for them to be built (see
+// `edit_world_names`)
+static WAITING_WORLD_EDITS: Mutex<Vec<WorldEdit>> = Mutex::new(Vec::new());
 
 /// The debugger's own world procs (see `launched`), which stay the most
 /// derived: a world proc a reload adds goes beneath them
@@ -1873,62 +1994,86 @@ pub fn pin_world_proc(id: u32) {
 	PINNED_WORLD_PROCS.lock().unwrap().push(id);
 }
 
-/// Puts a proc first under its keys in the world's proc names (after the
-/// debugger's own), with `..()` going to what was first. BYOND builds the names
-/// once the global vars' initial values are worked out, before `world/New`, and
-/// what's there before is lost: until then the proc waits, and goes in at the
-/// first proc call after.
-fn add_world_proc(id: u32, keys: Vec<u32>) -> Result<(), String> {
+/// Changes the world's proc names. BYOND builds them once the global vars'
+/// initial values are worked out, before `world/New`, and what's there before
+/// is lost: until then the change waits, and is made at the first proc call
+/// after.
+fn edit_world_names(edit: WorldEdit) -> Result<(), String> {
 	if runtime_tables::world_names_built()? {
-		return name_world_proc(id, &keys);
+		return edit_built_world_names(&edit);
 	}
-	WAITING_WORLD_PROCS.lock().unwrap().push((id, keys));
-	auxtools::at_proc_calls(add_waiting_world_procs);
+	WAITING_WORLD_EDITS.lock().unwrap().push(edit);
+	auxtools::at_proc_calls(make_waiting_world_edits);
 	Ok(())
 }
 
-fn add_waiting_world_procs() -> bool {
+fn make_waiting_world_edits() -> bool {
 	if !runtime_tables::world_names_built().unwrap_or(false) {
 		return false;
 	}
-	for (id, keys) in std::mem::take(&mut *WAITING_WORLD_PROCS.lock().unwrap()) {
-		if let Err(e) = name_world_proc(id, &keys) {
-			eprintln!("auxtools: couldn't add a proc to the world's procs: {}", e);
+	for edit in std::mem::take(&mut *WAITING_WORLD_EDITS.lock().unwrap()) {
+		if let Err(e) = edit_built_world_names(&edit) {
+			eprintln!("auxtools: couldn't change the world's procs: {}", e);
 		}
 	}
 	true
 }
 
-fn name_world_proc(id: u32, keys: &[u32]) -> Result<(), String> {
-	let pinned = PINNED_WORLD_PROCS.lock().unwrap().clone();
-	for (k, &key) in keys.iter().enumerate() {
-		let mut procs = runtime_tables::world_named_procs(key)?;
-		procs.retain(|&proc| proc != id);
-		let at = procs.iter().take_while(|proc| pinned.contains(proc)).count();
-		if k == 0 {
-			runtime_tables::set_proc_entry_word(
-				raw_types::procs::ProcId(id),
-				ProcEntryWords::NEXT_OVERRIDE,
-				procs.get(at).copied().unwrap_or(NONE)
-			);
-			if let Some(&above) = at.checked_sub(1).and_then(|i| procs.get(i)) {
-				runtime_tables::set_proc_entry_word(raw_types::procs::ProcId(above), ProcEntryWords::NEXT_OVERRIDE, id);
+fn edit_built_world_names(edit: &WorldEdit) -> Result<(), String> {
+	let set_next = |proc: u32, next: u32| runtime_tables::set_proc_entry_word(raw_types::procs::ProcId(proc), ProcEntryWords::NEXT_OVERRIDE, next);
+	let next_of = |proc: u32| runtime_tables::proc_entry(raw_types::procs::ProcId(proc)).map_or(NONE, |e| e.0[ProcEntryWords::NEXT_OVERRIDE]);
+	match edit {
+		WorldEdit::Add { id, keys, below, above } => {
+			let pinned = PINNED_WORLD_PROCS.lock().unwrap().clone();
+			set_next(*id, *below);
+			for (k, &key) in keys.iter().enumerate() {
+				// Most derived first
+				let mut procs = runtime_tables::world_named_procs(key)?;
+				procs.retain(|proc| proc != id);
+				let at = match above.and_then(|above| procs.iter().position(|&p| p == above)) {
+					Some(at) => at + 1,
+					None => procs.iter().take_while(|proc| pinned.contains(proc)).count()
+				};
+				if k == 0 {
+					if let Some(&over) = at.checked_sub(1).and_then(|i| procs.get(i)) {
+						set_next(over, *id);
+					}
+				}
+				procs.insert(at, *id);
+				runtime_tables::set_world_named_procs(key, &procs)?;
 			}
 		}
-		procs.insert(at, id);
-		runtime_tables::set_world_named_procs(key, &procs)?;
+		WorldEdit::Remove { id, keys } => {
+			let next = next_of(*id);
+			for &key in keys {
+				let mut procs = runtime_tables::world_named_procs(key)?;
+				for &proc in &procs {
+					if proc != *id && next_of(proc) == *id {
+						set_next(proc, next);
+					}
+				}
+				procs.retain(|proc| proc != id);
+				runtime_tables::set_world_named_procs(key, &procs)?;
+			}
+		}
 	}
 	Ok(())
 }
 
-/// A type's own definitions of a proc, first to last (each one's `..()` goes
-/// to the one before), as the reload has them so far
-fn own_definitions(staged: &StagedProcs, type_id: u32, name: u32) -> Result<Vec<u32>, String> {
+/// A type's own definitions of a proc (on its list at `field`, with `name`
+/// at entry word `word`), first to last, as the reload has them so far. Each
+/// one's `..()` goes to the one before: a proc's are linked that way, and a
+/// verb's are listed newest first (DreamMaker leaves a verb's `..()` for BYOND
+/// to look up that way).
+fn own_definitions(staged: &StagedProcs, type_id: u32, field: usize, word: usize, name: u32) -> Result<Vec<u32>, String> {
 	let own: Vec<u32> = staged
-		.own(type_id, type_fields::PROCS)?
+		.own(type_id, field)?
 		.into_iter()
-		.filter(|&p| staged.entry(p).is_some_and(|e| e.0[ProcEntryWords::NAME] == name))
+		.filter(|&p| staged.entry(p).is_some_and(|e| e.0[word] == name))
 		.collect();
+	if field == type_fields::VERBS {
+		return Ok(own.into_iter().rev().collect());
+	}
 	let next = |p: u32| staged.entry(p).map_or(NONE, |e| e.0[ProcEntryWords::NEXT_OVERRIDE]);
 	// The last is the one no other's `..()` goes to
 	let mut chain = vec![];
@@ -2001,7 +2146,7 @@ fn world_has_debug_info() -> bool {
 #[shutdown]
 fn forget_world() {
 	*WORLD_HAS_DEBUG_INFO.lock().unwrap() = None;
-	WAITING_WORLD_PROCS.lock().unwrap().clear();
+	WAITING_WORLD_EDITS.lock().unwrap().clear();
 	PINNED_WORLD_PROCS.lock().unwrap().clear();
 }
 

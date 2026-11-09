@@ -86,9 +86,18 @@ impl Source {
 	/// Replaces `from` (which has to be there exactly once) with `to`, and
 	/// returns what changed since the last parse.
 	fn edit(&mut self, file: &str, from: &str, to: &str) -> Changes {
-		let text = self.text(file);
-		assert_eq!(text.matches(from).count(), 1, "{:?} should be in {} once", from, file);
-		std::fs::write(self.dir.join(file), text.replace(from, to)).unwrap();
+		self.edit_many(file, &[(from, to)])
+	}
+
+	/// Makes each replacement, as for `edit`, and returns what they changed
+	/// together.
+	fn edit_many(&mut self, file: &str, edits: &[(&str, &str)]) -> Changes {
+		let mut text = self.text(file);
+		for (from, to) in edits {
+			assert_eq!(text.matches(from).count(), 1, "{:?} should be in {} once", from, file);
+			text = text.replace(from, to);
+		}
+		std::fs::write(self.dir.join(file), text).unwrap();
 
 		let old = self.snapshot.take().expect("parsed before editing");
 		self.parse();
@@ -906,6 +915,75 @@ fn main() {
 	assert_eq!(eval(&mut client, "the_chain.say()"), "\"14\"");
 	assert!(definition_at(&mut client, 1, source.line_of("main.dm", "\treturn ..() + \"4\"")));
 	println!("ok: definitions added and taken away among a type's others");
+
+	// A verb's definitions, a world proc's and a global proc's come and go
+	// among the others too
+	let definition_at = |client: &mut Client, path: &str, override_id: u32, line: u32| {
+		matches!(
+			client.request(Request::Offset {
+				proc: ProcRef {
+					path: path.to_owned(),
+					override_id
+				},
+				line
+			}),
+			Response::Offset { offset: Some(_) }
+		)
+	};
+	assert_eq!(eval(&mut client, "verb_chain.speak()"), "\"ac\"");
+	assert_eq!(eval(&mut client, "world.chant()"), "\"xz\"");
+	// (A mob made before keeps the verbs it had, and its verbs' `..()` goes
+	// through them)
+	let changes = source.edit_many("main.dm", &[
+		(
+			"/mob/chain_verbs/speak()\n\treturn ..() + \"c\"",
+			"/mob/chain_verbs/speak()\n\treturn ..() + \"b\"\n\n/mob/chain_verbs/speak()\n\treturn ..() + \"c\""
+		),
+		(
+			"/world/chant()\n\treturn ..() + \"z\"",
+			"/world/chant()\n\treturn ..() + \"y\"\n\n/world/chant()\n\treturn ..() + \"z\""
+		),
+		(
+			"/solo()\n\treturn \"another\"",
+			"/solo()\n\treturn \"between\"\n\n/solo()\n\treturn \"another\""
+		)
+	]);
+	assert_eq!(changes.new_procs.len(), 3);
+	let result = reload(&mut watcher, &changes);
+	assert_eq!(eval(&mut client, "(new /mob/chain_verbs).speak()"), "\"abc\"");
+	// Listed as DreamMaker lists them, newest first
+	assert_eq!(eval(&mut client, "verb_names(new /mob/chain_verbs)"), "\"speak,speak,other,speak\"");
+	assert_eq!(eval(&mut client, "world.chant()"), "\"xyz\"");
+	assert_eq!(eval(&mut client, "solo()"), "\"declared\"");
+	assert!(result.warnings.iter().all(|w| w.contains("things made before")), "{:?}", result.warnings);
+	for (path, needle) in [
+		("/mob/chain_verbs/speak", "\treturn ..() + \"c\""),
+		("/world/chant", "\treturn ..() + \"z\""),
+		("/solo", "\treturn \"another\"")
+	] {
+		let line = source.line_of("main.dm", needle);
+		assert!(definition_at(&mut client, path, 2, line), "{} isn't numbered 2", path);
+	}
+	// And taken out of the middle again
+	let changes = source.edit_many("main.dm", &[
+		("/mob/chain_verbs/speak()\n\treturn ..() + \"b\"\n\n", ""),
+		("/world/chant()\n\treturn ..() + \"y\"\n\n", ""),
+		("/solo()\n\treturn \"between\"\n\n", "")
+	]);
+	assert_eq!(changes.removed_procs.len(), 3);
+	reload(&mut watcher, &changes);
+	assert_eq!(eval(&mut client, "(new /mob/chain_verbs).speak()"), "\"ac\"");
+	assert_eq!(eval(&mut client, "world.chant()"), "\"xz\"");
+	assert_eq!(eval(&mut client, "solo()"), "\"declared\"");
+	for (path, needle) in [
+		("/mob/chain_verbs/speak", "\treturn ..() + \"c\""),
+		("/world/chant", "\treturn ..() + \"z\""),
+		("/solo", "\treturn \"another\"")
+	] {
+		let line = source.line_of("main.dm", needle);
+		assert!(definition_at(&mut client, path, 1, line), "{} isn't numbered 1", path);
+	}
+	println!("ok: definitions of a verb, a world proc and a global proc added and taken away among the others");
 
 	// A world/Del of the world's own: the source's numbers hold, with the
 	// debugger's own world/Del set apart, and it stays beneath that one
