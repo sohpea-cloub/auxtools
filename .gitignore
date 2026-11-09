@@ -5,5 +5,6 @@
 *.dmb
 *.int
 *.lk
+*.vsix
 # Made by tests/launcher_test_host while it runs
 /tests/launcher_test_host/rebooted
