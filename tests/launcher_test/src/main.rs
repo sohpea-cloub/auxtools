@@ -531,6 +531,19 @@ fn attach_and_reload(server: &str, library: &Path) {
 	println!("ok: the attached launchers left, and the world carries on");
 
 	command_line(pid, &code);
+
+	// A launcher that attaches to a world that's paused hears it is
+	let (code_given, printed) = launcher_command(&["--pid", &pid.to_string(), "pause"]);
+	assert_eq!(code_given, 0, "pause said {}", printed);
+	let mut late = Launcher::start();
+	late.initialize();
+	late.request("attach", json!({ "processId": pid.to_string() }));
+	late.event("initialized");
+	late.request("configurationDone", json!({}));
+	late.stopped("pause");
+	late.resume();
+	late.disconnect(json!({}));
+	println!("ok: a launcher that attaches to a paused world hears it's paused");
 	let seen = runner.output.matches("attach test: 2").count();
 	runner.wait_count("attach test: 2", seen + 1);
 	println!("ok: the world carries on after the command line let it");

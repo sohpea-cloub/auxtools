@@ -19,6 +19,28 @@ use auxtools_cli::{
 
 use crate::{adapter::Input, dap::Output};
 
+/// Tells the client the world stopped, and why
+fn announce_stop(out: &Output, last_error: &Mutex<String>, reason: BreakpointReason) {
+	let mut description = None;
+	let reason = match reason {
+		BreakpointReason::Step => StoppedEvent::REASON_STEP,
+		BreakpointReason::Pause => StoppedEvent::REASON_PAUSE,
+		BreakpointReason::Breakpoint => StoppedEvent::REASON_BREAKPOINT,
+		BreakpointReason::Runtime(error) => {
+			last_error.lock().unwrap().clone_from(&error);
+			description = Some(error);
+			StoppedEvent::REASON_EXCEPTION
+		}
+	};
+	out.event(StoppedEvent {
+		reason: reason.to_owned(),
+		description,
+		threadId: Some(0),
+		allThreadsStopped: Some(true),
+		..Default::default()
+	});
+}
+
 /// How long a request can go unanswered. The server answers between DM
 /// instructions, and the world runs at least one a tick.
 const RESPONSE_TIMEOUT: Duration = Duration::from_secs(60);
@@ -28,6 +50,8 @@ pub struct Debuggee {
 	responses: mpsc::Receiver<Response>,
 	/// Whether the world is paused
 	stopped: Arc<AtomicBool>,
+	out: Arc<Output>,
+	last_error: Arc<Mutex<String>>,
 	/// Tells this connection's events from an earlier one's
 	pub generation: u64
 }
@@ -46,6 +70,8 @@ impl Debuggee {
 	) -> Result<Self, String> {
 		let writer = Shared::new(stream);
 		let mut reader = writer.clone();
+		let debuggee_out = out.clone();
+		let debuggee_last_error = last_error.clone();
 		let (responses_sender, responses) = mpsc::channel();
 		let stopped = Arc::new(AtomicBool::new(false));
 		let reader_stopped = stopped.clone();
@@ -77,24 +103,7 @@ impl Debuggee {
 
 						Response::BreakpointHit { reason } => {
 							reader_stopped.store(true, Ordering::Relaxed);
-							let mut description = None;
-							let reason = match reason {
-								BreakpointReason::Step => StoppedEvent::REASON_STEP,
-								BreakpointReason::Pause => StoppedEvent::REASON_PAUSE,
-								BreakpointReason::Breakpoint => StoppedEvent::REASON_BREAKPOINT,
-								BreakpointReason::Runtime(error) => {
-									last_error.lock().unwrap().clone_from(&error);
-									description = Some(error);
-									StoppedEvent::REASON_EXCEPTION
-								}
-							};
-							out.event(StoppedEvent {
-								reason: reason.to_owned(),
-								description,
-								threadId: Some(0),
-								allThreadsStopped: Some(true),
-								..Default::default()
-							});
+							announce_stop(&out, &last_error, reason);
 						}
 
 						// Another client let it carry on
@@ -121,8 +130,22 @@ impl Debuggee {
 			writer,
 			responses,
 			stopped,
+			out: debuggee_out,
+			last_error: debuggee_last_error,
 			generation
 		})
+	}
+
+	/// Tells the client if the world was already paused when this connected,
+	/// which the server said only to the clients there then
+	pub fn catch_up_on_pause(&mut self) -> Result<(), String> {
+		let Response::Status { paused: Some(reason) } = self.request(&Request::Status)? else {
+			return Ok(());
+		};
+		if !self.stopped.swap(true, Ordering::Relaxed) {
+			announce_stop(&self.out, &self.last_error, reason);
+		}
+		Ok(())
 	}
 
 	/// Whether the world is paused

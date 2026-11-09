@@ -661,6 +661,16 @@ impl Adapter {
 			let _ = self.apply_function_breakpoints();
 		}
 		let _ = self.ack(&AuxRequest::Configured);
+		self.catch_up_on_pause();
+	}
+
+	/// Tells the client if the world was paused before this connected
+	fn catch_up_on_pause(&mut self) {
+		if self.debugging {
+			if let Some(debuggee) = &mut self.debuggee {
+				let _ = debuggee.catch_up_on_pause();
+			}
+		}
 	}
 
 	/// Sets every breakpoint again, telling the client where they are now
@@ -737,6 +747,7 @@ impl Adapter {
 		if self.debugging && self.debuggee.is_some() {
 			self.ack(&AuxRequest::Configured)?;
 		}
+		self.catch_up_on_pause();
 		Ok(Value::Null)
 	}
 
