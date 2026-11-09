@@ -813,6 +813,13 @@ fn main() {
 	assert_eq!(eval(&mut client, "kept_limits.max_doubled()"), "14");
 	println!("ok: a type's const");
 
+	// A var declared with another type: only the code that uses it cares
+	let changes = source.edit("main.dm", "/datum/limits/var/list/things = null\n", "/datum/limits/var/things = null\n");
+	assert_eq!(changes.retyped, ["things"]);
+	reload(&mut watcher, &changes);
+	assert_eq!(eval(&mut client, "kept_limits.thing_count()"), "0");
+	println!("ok: a var declared with another type");
+
 	// A new mob type, with a mob var of its own and its parent's verbs, and a
 	// new default for a mob var of a mob type the world has
 	let changes = source.edit(

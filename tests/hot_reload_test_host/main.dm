@@ -34,3 +34,9 @@ var/reboot_requested = FALSE
 	return MAX * 2
 
 var/datum/limits/kept_limits = new
+
+// A var declared with another type later
+/datum/limits/var/list/things = null
+
+/datum/limits/proc/thing_count()
+	return length(things)
