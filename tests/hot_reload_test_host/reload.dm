@@ -191,3 +191,8 @@ var/mob/helper/small/old_helper = new
 
 /proc/helper_greets(mob/helper/m)
 	return m.greet()
+
+// Another definition of a global proc
+
+/proc/first_def()
+	return "first"

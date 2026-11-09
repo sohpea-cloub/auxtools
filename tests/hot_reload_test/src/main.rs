@@ -772,6 +772,18 @@ fn main() {
 	assert_eq!(eval(&mut client, "helper_greets(new /mob/helper/small)"), "\"hi\"");
 	println!("ok: verbs");
 
+	// Another definition of a global proc is a proc of its own, which calls
+	// don't reach, as in a build
+	let changes = source.edit(
+		"reload.dm",
+		"/proc/first_def()\n\treturn \"first\"\n",
+		"/proc/first_def()\n\treturn \"first\"\n\n/first_def()\n\treturn \"second\"\n"
+	);
+	assert_eq!(changes.new_procs.len(), 1);
+	reload(&mut watcher, &changes);
+	assert_eq!(eval(&mut client, "first_def()"), "\"first\"");
+	println!("ok: another definition of a global proc");
+
 	// Something that can't be done leaves everything as it was
 	let mut request = reload_request(&source.edit("reload.dm", "\treturn 4", "\treturn 5"));
 	if let Request::HotReload(HotReloadRequest { procs, .. }) = &mut request {

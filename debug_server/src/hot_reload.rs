@@ -883,7 +883,7 @@ fn prepare_new_proc(
 	// As DreamMaker writes them: `proc/` or `verb/` where the proc is
 	// declared
 	let path = match (new.type_path.as_str(), new.declared, new.verb) {
-		("", ..) => format!("/proc/{}", new.name),
+		("", true, _) => format!("/proc/{}", new.name),
 		(ty, true, false) => format!("{}/proc/{}", ty, new.name),
 		(ty, true, true) => format!("{}/verb/{}", ty, new.name),
 		(ty, false, _) => format!("{}/{}", ty, new.name)
