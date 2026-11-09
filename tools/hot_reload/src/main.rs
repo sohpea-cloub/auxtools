@@ -35,12 +35,13 @@ AUXTOOLS_RELOAD_PORT (2449 unless set). A debugger can be attached at the same
 time.
 
 The world should be running the code as it is when this starts. Proc code,
-new procs (more definitions of one too), new types (not mobs), new vars and
-static locals, var defaults (those that aren't constants reach new
-instances), parameters, `set waitfor` and `set background` can change. New
-mob types, most built-in vars on new types, verbs, prefabs with var
-overrides, new `in` list expressions and other `set` statements need the
-world rebuilt, and are refused, along with the rest of the change.
+new procs (more definitions of one too), definitions taken away, new types
+(not mobs), new vars and static locals, var defaults (those that aren't
+constants reach new instances), parameters, `set waitfor` and `set
+background` can change. New mob types, most built-in vars on new types,
+verbs, prefabs with var overrides, new `in` list expressions and other `set`
+statements need the world rebuilt, and are refused, along with the rest of
+the change.
 
   --port N          the debug server's reload port (default 2449)
   -DNAME[=VALUE]    a define DreamMaker was given on its command line
@@ -207,6 +208,7 @@ fn reload_request(changes: &Changes) -> Request {
 				code: proc_code(&p.code)
 			})
 			.collect(),
+		removed_procs: changes.removed_procs.clone(),
 		new_vars: changes.new_vars.clone(),
 		init_procs: changes
 			.init_procs
@@ -342,6 +344,7 @@ impl Watcher {
 				list(changes.new_types.iter().map(|t| t.path.clone()).collect(), "types").map(|s| format!("added {}", s)),
 				list(changes.reloads.iter().map(|r| r.proc.to_string()).collect(), "procs").map(|s| format!("reloaded {}", s)),
 				list(changes.new_procs.iter().map(|p| p.code.proc.to_string()).collect(), "procs").map(|s| format!("added {}", s)),
+				list(changes.removed_procs.iter().map(|p| p.proc.to_string()).collect(), "procs").map(|s| format!("unlinked {}", s)),
 				list(
 					changes.new_vars.iter().map(|v| format!("{}/var/{}", v.type_path, v.var)).collect(),
 					"vars"

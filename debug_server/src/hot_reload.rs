@@ -15,6 +15,10 @@
 //! proc it overrides, and the `..()` of subtypes' procs that skipped past it
 //! is pointed at it.
 //!
+//! A definition taken away from the source is unlinked: it stays in the proc
+//! table, but its type's list, the proc name maps and the `..()` of other
+//! procs go past it, to what it overrode. Put back, it gets its id again.
+//!
 //! A new var default goes into the var table of each type that inherits it,
 //! which is where instances read a var they never set.
 //!
@@ -25,7 +29,7 @@
 //! What a reload can't do yet, and refuses:
 //! - use prefabs with var overrides (`/obj{a = 1}`)
 
-use std::collections::{btree_map::Entry, BTreeMap, BTreeSet, HashMap};
+use std::collections::{btree_map::Entry, BTreeMap, BTreeSet, HashMap, HashSet};
 
 use auxtools::{
 	raw_types,
@@ -34,7 +38,7 @@ use auxtools::{
 };
 use dmasm::{
 	assembler::AssembleEnv as _,
-	reload::{ConstValue, InList, NewType, NewVar},
+	reload::{ConstValue, InList, NewType, NewVar, RemovedProc},
 	Instruction, Node, Opcode
 };
 
@@ -48,6 +52,7 @@ use crate::{
 #[derive(Default)]
 pub struct Prepared {
 	new_vars: Vec<PreparedNewVar>,
+	removed_procs: Vec<PreparedRemoval>,
 	new_procs: Vec<PreparedNewProc>,
 	init_procs: Vec<PreparedInitProc>,
 	code: Vec<PreparedCode>,
@@ -110,8 +115,10 @@ struct StagedProcs {
 	next_override: HashMap<u32, u32>,
 	/// The entries of new procs
 	entries: HashMap<u32, ProcEntryWords>,
-	/// New procs, by the type they're on
-	own: HashMap<u32, Vec<u32>>
+	/// New procs and verbs, by the type they're on and its list's field
+	own: HashMap<(u32, usize), Vec<u32>>,
+	/// Procs taken out of their types' lists
+	removed: HashSet<u32>
 }
 
 impl StagedProcs {
@@ -133,10 +140,14 @@ impl StagedProcs {
 		Some(entry)
 	}
 
-	/// The procs a type defines itself
-	fn own_procs(&self, type_id: u32) -> Result<Vec<u32>, String> {
-		let mut procs = runtime_tables::misc_words(runtime_tables::type_field(type_id, type_fields::PROCS)?).unwrap_or_default();
-		procs.extend(self.own.get(&type_id).into_iter().flatten());
+	/// The procs (`type_fields::PROCS`) or verbs (`VERBS`) a type defines
+	/// itself, as its list will have them
+	fn own(&self, type_id: u32, field: usize) -> Result<Vec<u32>, String> {
+		let mut procs = runtime_tables::misc_words(runtime_tables::type_field(type_id, field)?).unwrap_or_default();
+		procs.retain(|proc| !self.removed.contains(proc));
+		for &proc in self.own.get(&(type_id, field)).into_iter().flatten() {
+			add_to_list(&mut procs, field, proc);
+		}
 		Ok(procs)
 	}
 }
@@ -260,13 +271,33 @@ struct PreparedNewProc {
 	entry: ProcEntryWords,
 	/// The id it will get: procs are only ever appended
 	id: u32,
+	/// Whether it's a definition a reload removed, coming back under its old
+	/// id: the proc table still has it, so the override ids stay right
+	revived: bool,
 	local_names: Vec<String>,
 	on_type: Option<NewProcOnType>
+}
+
+/// A definition of a proc on a type that's unlinked: it stays in the proc
+/// table, but its type's list, the proc name maps and other procs' `..()` go
+/// past it.
+struct PreparedRemoval {
+	id: u32,
+	type_id: u32,
+	/// The type's list it's on: `type_fields::PROCS` or `VERBS`
+	field: usize,
+	/// (type id, name key, procs) for each proc name map it was in
+	map_entries: Vec<(u32, u32, Vec<u32>)>,
+	/// Procs whose `..()` went to it, and go to what it overrode now
+	relinked: Vec<u32>,
+	next: u32
 }
 
 /// What adding a proc to a type changes besides the proc table.
 struct NewProcOnType {
 	type_id: u32,
+	/// The type's list it goes on: `type_fields::PROCS` or `VERBS`
+	field: usize,
 	/// (type id, name key, procs) for each proc name map that gets it
 	map_entries: Vec<(u32, u32, Vec<u32>)>,
 	/// Procs whose `..()` goes to the new proc now
@@ -303,6 +334,7 @@ pub fn prepare(request: &HotReloadRequest, warnings: &mut Vec<String>) -> Result
 		new_types: _,
 		procs,
 		new_procs,
+		removed_procs,
 		new_vars,
 		var_defaults,
 		init_procs,
@@ -331,17 +363,39 @@ pub fn prepare(request: &HotReloadRequest, warnings: &mut Vec<String>) -> Result
 		}
 	}
 
-	let first_id = runtime_tables::proc_count();
 	let mut staged = StagedProcs::default();
+	for removed in removed_procs {
+		match prepare_removal(removed, &mut staged) {
+			Ok(p) => prepared.removed_procs.push(p),
+			Err(e) => errors.push(e)
+		}
+	}
+
+	// New procs get the next ids, in order, except a definition an earlier
+	// reload removed, which comes back as itself
+	let mut next_id = runtime_tables::proc_count();
+	let ids: Vec<(u32, bool)> = new_procs
+		.iter()
+		.map(|new| match Proc::find_override(&new.code.proc.path, new.code.proc.override_id) {
+			Some(proc) => (proc.id.0, true),
+			None => {
+				next_id += 1;
+				(next_id - 1, false)
+			}
+		})
+		.collect();
 	pending.procs = new_procs
 		.iter()
-		.enumerate()
-		.map(|(i, new)| (strip_path(&new.code.proc.path), first_id + i as u32))
+		.zip(&ids)
+		.map(|(new, &(id, _))| (strip_path(&new.code.proc.path), id))
 		.collect();
 
-	for (i, new) in new_procs.iter().enumerate() {
-		match prepare_new_proc(new, first_id + i as u32, &pending, &mut world_globals, &mut added, &mut staged) {
-			Ok(p) => prepared.new_procs.push(p),
+	for (new, &(id, revived)) in new_procs.iter().zip(&ids) {
+		match prepare_new_proc(new, id, &pending, &mut world_globals, &mut added, &mut staged) {
+			Ok(mut p) => {
+				p.revived = revived;
+				prepared.new_procs.push(p);
+			}
 			Err(e) => errors.push(e)
 		}
 	}
@@ -665,6 +719,70 @@ fn prepare_init_proc(
 	})
 }
 
+fn prepare_removal(removed: &RemovedProc, staged: &mut StagedProcs) -> Result<PreparedRemoval, String> {
+	let proc_ref = ProcRef {
+		path: removed.proc.path.clone(),
+		override_id: removed.proc.override_id
+	};
+	let shown = describe(&proc_ref);
+	let fail = |e: String| format!("{}: {}", shown, e);
+	let id = find(&proc_ref)?.id.0;
+	let entry = staged.entry(id).ok_or_else(|| fail("couldn't read its table entry".to_owned()))?;
+	let next = entry.0[ProcEntryWords::NEXT_OVERRIDE];
+	let type_id = find_type(&removed.type_path).map_err(fail)?;
+	let field = if removed.verb { type_fields::VERBS } else { type_fields::PROCS };
+	// Verbs aren't in the proc name maps
+	let keys = if removed.verb {
+		vec![]
+	} else {
+		vec![entry.0[ProcEntryWords::NAME], entry.0[ProcEntryWords::PATH_BASENAME]]
+	};
+
+	let mut map_entries = vec![];
+	let mut relinked = vec![];
+	for sub in 0..runtime_tables::type_count().map_err(fail)? {
+		if !type_and_ancestors(sub).contains(&type_id) {
+			continue;
+		}
+		for (k, &key) in keys.iter().enumerate() {
+			if k == 1 && key == keys[0] {
+				continue;
+			}
+			let mut procs = staged.named_procs(sub, key).map_err(fail)?;
+			let before = procs.len();
+			procs.retain(|&p| p != id);
+			if procs.len() != before {
+				staged.maps.insert((sub, key), procs.clone());
+				map_entries.push((sub, key, procs));
+			}
+		}
+		for proc in staged.own(sub, field).map_err(fail)? {
+			if proc != id && staged.entry(proc).is_some_and(|e| e.0[ProcEntryWords::NEXT_OVERRIDE] == id) && !relinked.contains(&proc) {
+				relinked.push(proc);
+			}
+		}
+	}
+
+	// New procs in this reload see it gone
+	for &proc in &relinked {
+		if let Some(e) = staged.entries.get_mut(&proc) {
+			e.0[ProcEntryWords::NEXT_OVERRIDE] = next;
+		} else {
+			staged.next_override.insert(proc, next);
+		}
+	}
+	staged.removed.insert(id);
+
+	Ok(PreparedRemoval {
+		id,
+		type_id,
+		field,
+		map_entries,
+		relinked,
+		next
+	})
+}
+
 fn prepare_new_proc(
 	new: &HotReloadNewProc,
 	id: u32,
@@ -749,7 +867,7 @@ fn prepare_new_proc(
 
 			// The `..()` of the last proc below it in the chain went past it
 			if depth > 0 {
-				for proc in staged.own_procs(sub).map_err(fail)? {
+				for proc in staged.own(sub, type_fields::PROCS).map_err(fail)? {
 					if let Some(e) = staged.entry(proc) {
 						if e.0[ProcEntryWords::NAME] == keys[0] && e.0[ProcEntryWords::NEXT_OVERRIDE] == overridden && !relinked.contains(&proc) {
 							relinked.push(proc);
@@ -771,10 +889,11 @@ fn prepare_new_proc(
 			}
 		}
 		staged.entries.insert(id, entry);
-		staged.own.entry(type_id).or_default().push(id);
+		staged.own.entry((type_id, type_fields::PROCS)).or_default().push(id);
 
 		Some(NewProcOnType {
 			type_id,
+			field: type_fields::PROCS,
 			map_entries,
 			relinked
 		})
@@ -783,9 +902,24 @@ fn prepare_new_proc(
 	Ok(PreparedNewProc {
 		entry,
 		id,
+		revived: false,
 		local_names: new.code.locals.clone(),
 		on_type
 	})
+}
+
+/// Puts a proc on a type's list of procs (`type_fields::PROCS`), last, or of
+/// verbs (`VERBS`), first: DreamMaker lists verbs newest first, and a call
+/// finds the first.
+fn add_to_list(list: &mut Vec<u32>, field: usize, proc: u32) {
+	if list.contains(&proc) {
+		return;
+	}
+	if field == type_fields::VERBS {
+		list.insert(0, proc);
+	} else {
+		list.push(proc);
+	}
 }
 
 /// Which of a proc's same-named static locals a scope (`proc:PATH#N`) means
@@ -1013,8 +1147,34 @@ pub fn apply(
 
 	let procs_before = runtime_tables::proc_count();
 
+	for removal in &prepared.removed_procs {
+		let procs = runtime_tables::type_field(removal.type_id, removal.field).unwrap_or(NONE);
+		let mut list = runtime_tables::misc_words(procs).unwrap_or_default();
+		list.retain(|&proc| proc != removal.id);
+		// (BYOND makes empty misc entries poorly, and has none for no procs)
+		let list = if list.is_empty() { Ok(NONE) } else { runtime_tables::intern_misc(&list) };
+		match list {
+			Ok(list) => {
+				let _ = runtime_tables::set_type_field(removal.type_id, removal.field, list);
+			}
+			Err(e) => warnings.push(format!("couldn't take a proc out of its type's list: {}", e))
+		}
+		for (sub, key, procs) in &removal.map_entries {
+			if let Err(e) = runtime_tables::set_named_procs(*sub, *key, procs) {
+				warnings.push(format!("couldn't take a proc out of a type's proc names: {}", e));
+			}
+		}
+		for &proc in &removal.relinked {
+			runtime_tables::set_proc_entry_word(raw_types::procs::ProcId(proc), ProcEntryWords::NEXT_OVERRIDE, removal.next);
+		}
+	}
+
 	// All of them first: one can relink another's `..()`
 	for new in &prepared.new_procs {
+		if new.revived {
+			runtime_tables::set_proc_entry(raw_types::procs::ProcId(new.id), &new.entry);
+			continue;
+		}
 		match runtime_tables::add_proc(&new.entry) {
 			Ok(id) if id.0 != new.id => {
 				// Code in this reload calls it by the id it expected
@@ -1028,12 +1188,12 @@ pub fn apply(
 	for new in &prepared.new_procs {
 		let id = new.id;
 		if let Some(on_type) = &new.on_type {
-			let procs = runtime_tables::type_field(on_type.type_id, type_fields::PROCS).unwrap_or(NONE);
+			let procs = runtime_tables::type_field(on_type.type_id, on_type.field).unwrap_or(NONE);
 			let mut list = runtime_tables::misc_words(procs).unwrap_or_default();
-			list.push(id);
+			add_to_list(&mut list, on_type.field, id);
 			match runtime_tables::intern_misc(&list) {
 				Ok(list) => {
-					let _ = runtime_tables::set_type_field(on_type.type_id, type_fields::PROCS, list);
+					let _ = runtime_tables::set_type_field(on_type.type_id, on_type.field, list);
 				}
 				Err(e) => warnings.push(format!("couldn't add a proc to its type's list: {}", e))
 			}

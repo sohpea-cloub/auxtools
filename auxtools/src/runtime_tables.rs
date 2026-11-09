@@ -528,6 +528,13 @@ pub fn set_proc_entry_word(id: ProcId, word: usize, value: u32) {
 	}
 }
 
+/// Replaces a proc's whole table entry.
+pub fn set_proc_entry(id: ProcId, words: &ProcEntryWords) {
+	for (word, &value) in words.0.iter().enumerate() {
+		set_proc_entry_word(id, word, value);
+	}
+}
+
 /// Appends a proc to the proc table and returns its id. BYOND takes
 /// references to its strings; the misc entries need theirs taken already.
 pub fn add_proc(entry: &ProcEntryWords) -> Result<ProcId, String> {

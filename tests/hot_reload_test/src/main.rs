@@ -153,6 +153,7 @@ fn reload_request(changes: &Changes) -> Request {
 				code: proc_code(&p.code)
 			})
 			.collect(),
+		removed_procs: changes.removed_procs.clone(),
 		new_vars: changes.new_vars.clone(),
 		init_procs: changes
 			.init_procs
@@ -596,6 +597,23 @@ fn main() {
 	assert_eq!(eval(&mut client, "old_puppy.speak()"), "\"woof!!!?\"");
 	assert_eq!(eval(&mut client, "cat_says()"), "\"MEOW~\"");
 	println!("ok: more definitions of a proc on a type");
+
+	// Taking a definition away: calls and the puppy's ..() go to the one before
+	let changes = source.edit("reload.dm", "/datum/animal/dog/speak()\n\treturn \"[..()]!!\"\n", "");
+	assert_eq!(changes.removed_procs.len(), 1, "{:?}", changes.removed_procs);
+	reload(&mut watcher, &changes);
+	assert_eq!(eval(&mut client, "old_dog.speak()"), "\"woof!\"");
+	assert_eq!(eval(&mut client, "old_puppy.speak()"), "\"woof!?\"");
+	// and putting it back
+	let changes = source.edit(
+		"reload.dm",
+		"/proc/cat_says()\n",
+		"/datum/animal/dog/speak()\n\treturn \"[..()]!!\"\n\n/proc/cat_says()\n"
+	);
+	reload(&mut watcher, &changes);
+	assert_eq!(eval(&mut client, "old_dog.speak()"), "\"woof!!!\"");
+	assert_eq!(eval(&mut client, "old_puppy.speak()"), "\"woof!!!?\"");
+	println!("ok: a definition taken away and put back");
 
 	// A new parameter next to `in` lists: one BYOND has built in, and an
 	// expression it keeps
