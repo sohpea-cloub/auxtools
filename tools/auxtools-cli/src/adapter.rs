@@ -2314,13 +2314,25 @@ fn completion_place(text: &str) -> Option<CompletionPlace<'_>> {
 	})
 }
 
-/// Whether an expression could do more than read: it calls something, or
-/// assigns. Texts in it don't count.
+/// Whether an expression could do more than read: it calls something,
+/// assigns, makes or deletes something, or sends output (`<<`, and `>>`,
+/// which a hover never needs either). Texts in it don't count.
 fn changes_things(expression: &str) -> bool {
 	let mut quoted = false;
 	let mut chars = expression.chars().peekable();
 	let mut last = ' ';
+	// The name being read, outside texts
+	let mut word = String::new();
 	while let Some(c) = chars.next() {
+		if !quoted && (c.is_ascii_alphanumeric() || c == '_') {
+			word.push(c);
+		} else {
+			// `new /datum/thing` with no parentheses, and `del x`
+			if matches!(word.as_str(), "new" | "del") {
+				return true;
+			}
+			word.clear();
+		}
 		if quoted {
 			match c {
 				'\\' => {
@@ -2338,6 +2350,7 @@ fn changes_things(expression: &str) -> bool {
 			'"' => quoted = true,
 			'(' => return true,
 			'+' | '-' if next == c => return true,
+			'<' | '>' if next == c => return true,
 			// `=` on its own, or after an operator that makes an assignment
 			// of it (`+=`, `||=`), but not `==`, `!=`, `<=` or `>=`
 			'=' if next != '=' && !matches!(last, '=' | '!' | '<' | '>') => return true,
@@ -2352,7 +2365,7 @@ fn changes_things(expression: &str) -> bool {
 		}
 		last = c;
 	}
-	false
+	matches!(word.as_str(), "new" | "del")
 }
 
 /// A value's text as the client asked for it: a whole number in hex, if it
@@ -2538,7 +2551,14 @@ mod tests {
 			"x - -y",
 			"x + +y",
 			"a < b",
-			"/datum/thing"
+			"/datum/thing",
+			"newest",
+			"src.renew",
+			"x.del_count",
+			"model",
+			"\"new del << >>\"",
+			"x < -y",
+			"a > b"
 		] {
 			assert!(!changes_things(reads), "{}", reads);
 		}
@@ -2553,7 +2573,16 @@ mod tests {
 			"--x",
 			"L[f()]",
 			"\"[f()]\"",
-			"new /datum/thing()"
+			"new /datum/thing()",
+			"new /datum/thing",
+			"new/datum/thing",
+			"x = new",
+			"del x",
+			"del(x)",
+			"world << \"x\"",
+			"src << x",
+			"x >> y",
+			"L[new /datum/thing]"
 		] {
 			assert!(changes_things(changes), "{}", changes);
 		}
