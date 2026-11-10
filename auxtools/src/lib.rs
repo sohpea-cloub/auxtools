@@ -9,6 +9,7 @@ pub mod byond_ffi;
 mod bytecode_manager;
 pub mod debug;
 pub mod hooks;
+pub mod instruction_hook;
 mod init;
 mod list;
 mod proc;
@@ -162,6 +163,7 @@ fn init_full() -> Result<(), String> {
 	symbols::resolve_full()?;
 	pin_dll().map_err(|()| "Could not pin the library in memory.".to_owned())?;
 	hooks::init().map_err(|_| "Couldn't initialize proc hooking".to_owned())?;
+	instruction_hook::init()?;
 
 	set_init_level(InitLevel::Partial);
 	Ok(())

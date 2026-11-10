@@ -409,7 +409,7 @@ extern "C" uint8_t get_length(uint32_t *out, Value value)
 #else
 		if (get_length_returns_count)
 		{
-			*out = reinterpret_cast<Fnget_length_count_byond>(get_length_byond)(value);
+			*out = reinterpret_cast<Fnget_length_count_byond>(reinterpret_cast<void *>(get_length_byond))(value);
 		}
 		else
 		{
