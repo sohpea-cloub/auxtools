@@ -6,6 +6,7 @@ use crate::{client::named, ok, world::World};
 
 pub fn run() {
 	let mut world = World::start();
+	let at = world.marks.clone();
 
 	assert_eq!(world.threads(), [(0, "Main".to_owned())]);
 	let trace = world.request("stackTrace", json!({ "threadId": 0 }));
@@ -59,9 +60,11 @@ pub fn run() {
 
 	let nap = threads.iter().find(|(_, name)| name == "/nap").unwrap().0;
 	let frames = world.frames(nap);
-	let names: Vec<&str> = frames.iter().map(|f| f["name"].as_str().unwrap()).collect();
-	assert_eq!(names, ["/nap", "/sc_nap"]);
-	ok("a sleeping proc's frames: itself, and who called it");
+	let places: Vec<(&str, u64)> = frames.iter().map(|f| (f["name"].as_str().unwrap(), f["line"].as_u64().unwrap())).collect();
+	assert_eq!(places[0], ("/nap", at.line("nap_2")));
+	assert_eq!(places[1].0, "/sc_nap");
+	assert_eq!(places.len(), 2);
+	ok("a sleeping proc's frames: on the line it sleeps on, and who called it");
 
 	let frame = frames[0]["id"].clone();
 	let locals = world.scope(&frame, "Locals");

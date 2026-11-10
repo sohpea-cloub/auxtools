@@ -304,14 +304,17 @@ impl Server {
 	}
 
 	/// The line a frame is on. A frame that started before a hot reload runs
-	/// the code it started with, not the proc's current code.
-	fn frame_line_number(&self, frame: &debug::StackFrame) -> Option<u32> {
+	/// the code it started with, not the proc's current code. A frame that's
+	/// `asleep` is where it will wake, after the instruction it sleeps in:
+	/// when that's the start of the next line, it's still on the one before.
+	fn frame_line_number(&self, frame: &debug::StackFrame, asleep: bool) -> Option<u32> {
 		let running = unsafe { *(*frame.context).bytecode() };
 		let (current, _) = unsafe { frame.proc.bytecode_mut_ptr() };
+		let offset = if asleep { (frame.offset as u32).saturating_sub(1) } else { frame.offset as u32 };
 
 		if running != current {
 			if let Some(bytecode) = auxtools::bytecode_at(running) {
-				return Self::line_number_in(&bytecode, frame.offset as u32);
+				return Self::line_number_in(&bytecode, offset);
 			}
 		}
 
@@ -320,7 +323,7 @@ impl Server {
 				path: frame.proc.path.clone(),
 				override_id: frame.proc.override_id()
 			},
-			frame.offset as u32
+			offset
 		)
 	}
 
@@ -850,7 +853,8 @@ impl Server {
 							proc: proc_ref.clone(),
 							offset: stack[i].offset as u32
 						},
-						line: self.frame_line_number(&stack[i]),
+						// A sleeping stack's innermost frame is the one asleep
+						line: self.frame_line_number(&stack[i], stack_id != 0 && i == 0),
 						file: Self::file_of(&stack[i].proc)
 					});
 				}
