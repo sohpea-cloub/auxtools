@@ -119,8 +119,8 @@ fn from_files(pid: &str, dir: &Path) {
 	let ran = run(pid, &["wait", "--break", "/proc/value", "--if", &format!("@{}", never), "--timeout", "2"], 2);
 	assert!(ran.err.contains("timed out"), "wait said {}{}", ran.out, ran.err);
 	let message = file("message.txt", "value() said \"{1 + 1}\"\n");
-	let ran = run(pid, &["wait", "--break", "/proc/value", "--log", &format!("@{}", message), "--timeout", "2"], 2);
-	assert!(ran.out.starts_with("value() said \"2\"\n"), "wait --log said {}", ran.out);
+	let ran = run(pid, &["trace", "/proc/value", "--log", &format!("@{}", message), "--count", "1"], 0);
+	assert!(ran.out.contains("value() said \"2\"\n"), "trace --log said {}", ran.out);
 	let watched = file("watched.txt", "rounds");
 	let ran = run(pid, &["wait", "--change", &format!("@{}", watched), "--timeout", "60"], 0);
 	assert!(ran.out.starts_with("watching rounds, now "), "wait --change said {}", ran.out);

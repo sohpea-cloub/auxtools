@@ -417,7 +417,10 @@ or when the world goes away, with 3.
   --by caller           The same, for each proc and line that called it
   --for SECONDS         Stop after this long
   --count N             Stop after N hits
-  --json                A JSON object a line: `bound`, `hit` and `summary` events",
+  --json                A JSON object a line: `bound`, `hit` and `summary` events
+
+A MESSAGE, CONDITION or EXPRESSION given as @FILE is read from FILE (@@ for one that
+starts with @).",
 			run: Run::World(trace::trace)
 		},
 	]),

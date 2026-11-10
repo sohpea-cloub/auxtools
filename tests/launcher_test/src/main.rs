@@ -495,7 +495,7 @@ fn command_line_trace(pid: u64, code: &Path) {
 	let lines: Vec<&str> = printed.lines().collect();
 	let hit = format!("/value  attach_host.dm:{}, called by /run_until_stopped  attach_host.dm:{}", value, called);
 	assert_eq!(lines, [format!("tracing /value  attach_host.dm:{}", value), hit.clone(), hit.clone(), hit], "trace said {}", printed);
-	assert_eq!(run(&["status"], 0).trim(), "running");
+	assert_eq!(run(&["status"], 0).lines().next().unwrap_or_default(), "running");
 	println!("ok: trace says where its breakpoint went, then where each hit was and what called it, and ends after --count hits");
 
 	let printed = run(&["trace", &format!("attach_host.dm:{}", value), "--log", "rounds then: {rounds > 0}", "--count", "2"], 0);
@@ -590,8 +590,8 @@ fn command_line_trace(pid: u64, code: &Path) {
 
 	for (args, said) in [
 		(&["trace"][..], "trace where?"),
-		(&["trace", "nowhere.dm:3"][..], "no proc in nowhere.dm"),
-		(&["trace", "/proc/value", "/proc/nothing_called_this"][..], "couldn't break at /proc/nothing_called_this: there's no such proc"),
+		(&["trace", "nowhere.dm:3"][..], "couldn't break at nowhere.dm:3: the world has no code from a file called nowhere.dm"),
+		(&["trace", "/proc/value", "/proc/nothing_called_this"][..], "couldn't break at /proc/nothing_called_this: "),
 		(&["trace", "/proc/value", "--if", "1 =="][..], "couldn't break at /proc/value: the condition doesn't compile: "),
 		(&["trace", "/proc/value", "--by", "n", "--log", "x"][..], "--by counts the hits instead of printing a line at each"),
 		(&["trace", "/proc/value", "--for", "-1"][..], "--for -1 isn't a time in seconds"),
@@ -601,7 +601,7 @@ fn command_line_trace(pid: u64, code: &Path) {
 		assert!(printed.contains(said), "`{}` said {}", args.join(" "), printed);
 	}
 	// The breakpoint set before the place that failed went with it
-	assert_eq!(run(&["status"], 0).trim(), "running");
+	assert_eq!(run(&["status"], 0).lines().next().unwrap_or_default(), "running");
 	let printed = run(&["trace", "/proc/value", "--count", "1"], 0);
 	assert_eq!(printed.lines().count(), 2, "trace said {}", printed);
 	println!("ok: trace fails at once on a place it can't break at, and says what it doesn't understand");
@@ -966,14 +966,14 @@ fn launch_from_the_command_line(server: &str) {
 		assert_eq!(got, code, "`{}` gave {}, not {}: {}", args.join(" "), got, code, printed);
 		printed
 	};
-	assert_eq!(run(&["status"], 0).trim(), "running");
+	assert_eq!(run(&["status"], 0).lines().next().unwrap_or_default(), "running");
 	assert_eq!(run(&["eval", "6", "*", "7"], 0).trim(), "42");
 	wait_for_text("the background launcher's log", "attach test: 1", read_log);
 	println!("ok: launch --detach returns when the world is up, with its process, and commands work with it");
 
 	let printed = run(&["reboot"], 0);
 	assert!(printed.starts_with("The world rebooted and is answering again, "), "reboot said {}", printed);
-	assert_eq!(run(&["status"], 0).trim(), "running");
+	assert_eq!(run(&["status"], 0).lines().next().unwrap_or_default(), "running");
 	wait_for_text("the background launcher's log", "The world restarted", read_log);
 	println!("ok: reboot reboots the world, and returns when it answers again; the launcher connects again");
 

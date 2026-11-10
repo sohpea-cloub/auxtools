@@ -54,10 +54,14 @@ pub fn trace(world: &mut World, args: &[String]) -> Result<()> {
 	if flags.rest.is_empty() {
 		return Err("trace where? Give FILE:LINE or /proc/path".into());
 	}
-	let by = flags.value("--by").map(|by| match by {
-		"caller" => By::Caller,
-		expression => By::Value(expression.to_owned())
-	});
+	// (an expression or a message can be given as @FILE, as elsewhere)
+	let by = match flags.value("--by") {
+		Some("caller") => Some(By::Caller),
+		Some(expression) => Some(By::Value(super::given_text(expression)?)),
+		None => None
+	};
+	let log = flags.value("--log").map(super::given_text).transpose()?;
+	let condition = flags.value("--if").map(super::given_text).transpose()?;
 	if by.is_some() && flags.has("--log") {
 		return Err("--by counts the hits instead of printing a line at each, so it doesn't take --log".into());
 	}
@@ -73,7 +77,7 @@ pub fn trace(world: &mut World, args: &[String]) -> Result<()> {
 
 	// The message is what's counted by, for a value; the world sends where
 	// the hit was and its caller with any message
-	let message = match (&by, flags.value("--log")) {
+	let message = match (&by, &log) {
 		(Some(By::Value(expression)), _) => vec![LogPart::Expr(expression.clone())],
 		(_, Some(message)) => LogPart::parse(message),
 		_ => vec![]
@@ -85,7 +89,7 @@ pub fn trace(world: &mut World, args: &[String]) -> Result<()> {
 	let mut out = Out::new();
 	let mut bound = vec![];
 	for place in &flags.rest {
-		bound.extend(world.set_breakpoint(place, flags.value("--if").map(str::to_owned), Some(message.clone()))?);
+		bound.extend(world.set_breakpoint(place, condition.clone(), Some(message.clone()))?);
 	}
 	for each in &bound {
 		let line = if json {
