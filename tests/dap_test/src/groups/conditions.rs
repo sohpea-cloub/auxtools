@@ -94,7 +94,10 @@ pub fn run() {
 	// A name the world doesn't have is only found out when it's hit, and
 	// it's skipped like any condition that fails
 	world.resume_through("middle");
-	assert_eq!(world.count(&format!("{}undefined var: nowhere_at_all", failed)), 1);
+	// The console's message can come after the world's own output
+	let undefined = format!("{}undefined var: nowhere_at_all", failed);
+	world.wait_count(&undefined, 1);
+	assert_eq!(world.count(&undefined), 1);
 	let set = world.request(
 		"setFunctionBreakpoints",
 		json!({ "breakpoints": [{ "name": "/proc/leaf", "condition": "x x" }, { "name": "/proc/middle" }] })
