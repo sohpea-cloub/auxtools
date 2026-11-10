@@ -558,3 +558,68 @@ fn hung_up() -> Failure {
 fn unexpected(response: &Response) -> Failure {
 	Failure(1, format!("the world answered with {:?}", response))
 }
+
+#[cfg(test)]
+mod tests {
+	use super::{is_command, parse, Flags};
+
+	fn args(args: &[&str]) -> Vec<String> {
+		args.iter().map(|arg| (*arg).to_owned()).collect()
+	}
+
+	#[test]
+	fn the_process_comes_first() {
+		let (pid, rest) = parse(&args(&["--pid", "1234", "eval", "1"])).ok().unwrap();
+		assert_eq!((pid, rest), (Some(1234), args(&["eval", "1"])));
+		let (pid, rest) = parse(&args(&["status"])).ok().unwrap();
+		assert_eq!((pid, rest), (None, args(&["status"])));
+		assert!(parse(&args(&["--pid", "soon", "status"])).is_err());
+	}
+
+	#[test]
+	fn commands_are_told_from_the_adapter_s_own_arguments() {
+		for command in ["--pid", "status", "stack", "vars", "eval", "pause", "continue", "next", "step", "out", "wait"] {
+			assert!(is_command(command), "{}", command);
+		}
+		for other in ["--list", "--version", "--build", "run", ""] {
+			assert!(!is_command(other), "{}", other);
+		}
+	}
+
+	#[test]
+	fn flags_take_values_or_stand_alone() {
+		let flags = Flags::parse(
+			&args(&["--break", "a.dm:3", "--runtimes", "--break", "/proc/x", "--timeout", "2.5"]),
+			&["--break", "--timeout"],
+			&["--runtimes", "--no-hold"]
+		)
+		.ok()
+		.unwrap();
+		assert_eq!(flags.values("--break").collect::<Vec<_>>(), ["a.dm:3", "/proc/x"]);
+		assert!(flags.has("--runtimes") && !flags.has("--no-hold"));
+		assert_eq!(flags.number::<f64>("--timeout").ok().unwrap(), Some(2.5));
+		assert_eq!(flags.number::<u32>("--frame").ok().unwrap(), None);
+		assert!(flags.rest.is_empty());
+	}
+
+	#[test]
+	fn what_isnt_a_flag_is_left_in_order() {
+		let flags = Flags::parse(&args(&["6", "*", "--frame", "2", "7"]), &["--frame"], &[]).ok().unwrap();
+		assert_eq!(flags.rest, args(&["6", "*", "7"]));
+		assert_eq!(flags.number::<u32>("--frame").ok().unwrap(), Some(2));
+	}
+
+	#[test]
+	fn the_last_of_a_flag_given_twice_counts() {
+		let flags = Flags::parse(&args(&["--frame", "1", "--frame", "3"]), &["--frame"], &[]).ok().unwrap();
+		assert_eq!(flags.value("--frame"), Some("3"));
+	}
+
+	#[test]
+	fn flags_that_are_wrong_are_errors() {
+		assert!(Flags::parse(&args(&["--sideways"]), &["--frame"], &["--all"]).is_err());
+		assert!(Flags::parse(&args(&["--frame"]), &["--frame"], &[]).is_err());
+		let flags = Flags::parse(&args(&["--frame", "top"]), &["--frame"], &[]).ok().unwrap();
+		assert!(flags.number::<u32>("--frame").is_err());
+	}
+}

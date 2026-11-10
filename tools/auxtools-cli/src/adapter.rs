@@ -769,11 +769,7 @@ impl Adapter {
 	/// What the world calls a file of its code: its path from the code's
 	/// directory. Otherwise the world matches the end of the path.
 	fn world_file_name(&self, path: &str) -> String {
-		let path = Path::new(path);
-		match self.root.as_ref().and_then(|root| path.strip_prefix(root).ok()) {
-			Some(relative) => relative.to_string_lossy().replace('\\', "/"),
-			None => path.to_string_lossy().into_owned()
-		}
+		file_name_in(self.root.as_deref(), path)
 	}
 
 	/// Sets a file's breakpoints in the world, in place of the ones it had
@@ -898,12 +894,8 @@ impl Adapter {
 				});
 				continue;
 			}
-			let (path, override_id) = match name.split_once('#') {
-				Some((path, id)) => (path.to_owned(), id.trim().parse().unwrap_or(0)),
-				None => (name.clone(), 0)
-			};
 			let instruction = InstructionRef {
-				proc: ProcRef { path, override_id },
+				proc: named_proc(&name),
 				offset: 0
 			};
 			breakpoints.push(match self.set_breakpoint(&instruction, condition) {
@@ -1116,6 +1108,27 @@ impl Adapter {
 	}
 }
 
+/// The proc a function breakpoint names: its path, and after a `#` which of
+/// its definitions, the first unless it says
+fn named_proc(name: &str) -> ProcRef {
+	let (path, override_id) = match name.split_once('#') {
+		Some((path, id)) => (path.trim().to_owned(), id.trim().parse().unwrap_or(0)),
+		None => (name.trim().to_owned(), 0)
+	};
+	ProcRef { path, override_id }
+}
+
+/// A file's name as the world has it: its path from `root`, the directory of
+/// the world's code, with forward slashes. A file that isn't under it keeps
+/// its path, which the world matches by its end.
+fn file_name_in(root: Option<&Path>, path: &str) -> String {
+	let path = Path::new(path);
+	match root.and_then(|root| path.strip_prefix(root).ok()) {
+		Some(relative) => relative.to_string_lossy().replace('\\', "/"),
+		None => path.to_string_lossy().into_owned()
+	}
+}
+
 fn unexpected(response: AuxResponse) -> String {
 	format!("the world answered something else: {:?}", response)
 }
@@ -1129,4 +1142,50 @@ fn default_library() -> Result<PathBuf, String> {
 		return Err(format!("there's no debug library at {} (debugLibrary)", library.display()));
 	}
 	Ok(library)
+}
+
+#[cfg(test)]
+mod tests {
+	use std::path::Path;
+
+	use super::{file_name_in, named_proc};
+
+	#[test]
+	fn a_function_breakpoint_names_a_proc() {
+		let proc = named_proc("/mob/proc/Login");
+		assert_eq!((proc.path.as_str(), proc.override_id), ("/mob/proc/Login", 0));
+		let proc = named_proc("  /proc/leaf ");
+		assert_eq!((proc.path.as_str(), proc.override_id), ("/proc/leaf", 0));
+	}
+
+	#[test]
+	fn a_function_breakpoint_names_a_definition() {
+		let proc = named_proc("/mob/Login#2");
+		assert_eq!((proc.path.as_str(), proc.override_id), ("/mob/Login", 2));
+		let proc = named_proc("/mob/Login # 1 ");
+		assert_eq!((proc.path.as_str(), proc.override_id), ("/mob/Login", 1));
+	}
+
+	#[test]
+	fn a_definition_that_isnt_a_number_is_the_first() {
+		let proc = named_proc("/mob/Login#last");
+		assert_eq!((proc.path.as_str(), proc.override_id), ("/mob/Login", 0));
+	}
+
+	#[test]
+	fn a_file_under_the_code_is_named_from_it() {
+		let root = Path::new("code").join("world");
+		let file = root.join("mobs").join("living.dm");
+		assert_eq!(file_name_in(Some(&root), &file.to_string_lossy()), "mobs/living.dm");
+		let file = root.join("world.dm");
+		assert_eq!(file_name_in(Some(&root), &file.to_string_lossy()), "world.dm");
+	}
+
+	#[test]
+	fn a_file_elsewhere_keeps_its_path() {
+		let root = Path::new("code").join("world");
+		let file = Path::new("other").join("living.dm");
+		assert_eq!(file_name_in(Some(&root), &file.to_string_lossy()), file.to_string_lossy());
+		assert_eq!(file_name_in(None, "living.dm"), "living.dm");
+	}
 }

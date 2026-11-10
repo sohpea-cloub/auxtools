@@ -117,3 +117,57 @@ pub struct BreakpointEvent {
 impl Event for BreakpointEvent {
 	const EVENT: &'static str = "breakpoint";
 }
+
+#[cfg(test)]
+mod tests {
+	use std::io::Cursor;
+
+	use super::read_message;
+
+	fn framed(body: &str) -> String {
+		format!("Content-Length: {}\r\n\r\n{}", body.len(), body)
+	}
+
+	#[test]
+	fn messages_are_read_one_after_another() {
+		let mut input = Cursor::new(framed("{\"seq\":1}") + &framed("{\"seq\":2}"));
+		assert_eq!(read_message(&mut input).unwrap().as_deref(), Some("{\"seq\":1}"));
+		assert_eq!(read_message(&mut input).unwrap().as_deref(), Some("{\"seq\":2}"));
+		assert_eq!(read_message(&mut input).unwrap(), None);
+	}
+
+	#[test]
+	fn the_length_counts_bytes() {
+		// Two bytes in UTF-8
+		let mut input = Cursor::new(framed("{\"text\":\"\u{e9}\"}"));
+		assert_eq!(read_message(&mut input).unwrap().as_deref(), Some("{\"text\":\"\u{e9}\"}"));
+	}
+
+	#[test]
+	fn other_headers_and_other_case_are_fine() {
+		let mut input = Cursor::new("Content-Type: application/json\r\ncontent-length: 2\r\n\r\n{}".to_owned());
+		assert_eq!(read_message(&mut input).unwrap().as_deref(), Some("{}"));
+		let mut input = Cursor::new("Content-Length:2\n\n{}".to_owned());
+		assert_eq!(read_message(&mut input).unwrap().as_deref(), Some("{}"));
+	}
+
+	#[test]
+	fn a_message_without_a_length_is_an_error() {
+		let mut input = Cursor::new("Content-Type: application/json\r\n\r\n{}".to_owned());
+		assert!(read_message(&mut input).is_err());
+		let mut input = Cursor::new("Content-Length: lots\r\n\r\n{}".to_owned());
+		assert!(read_message(&mut input).is_err());
+	}
+
+	#[test]
+	fn a_message_cut_short_is_an_error() {
+		let mut input = Cursor::new("Content-Length: 10\r\n\r\n{}".to_owned());
+		assert!(read_message(&mut input).is_err());
+	}
+
+	#[test]
+	fn a_message_that_isnt_text_is_an_error() {
+		let mut input = Cursor::new(b"Content-Length: 2\r\n\r\n\xff\xfe".to_vec());
+		assert!(read_message(&mut input).is_err());
+	}
+}
