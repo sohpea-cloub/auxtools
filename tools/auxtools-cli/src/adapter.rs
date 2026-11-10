@@ -88,6 +88,15 @@ pub enum Input {
 		id: u32,
 		reason: String
 	},
+	/// The world paused
+	Stopped {
+		generation: u64,
+		stop: aux::Stop
+	},
+	/// Another client let the world carry on
+	Resumed {
+		generation: u64
+	},
 	/// A breakpoint with a message was hit
 	Logged {
 		message: String,
@@ -460,6 +469,18 @@ impl Adapter {
 					..Default::default()
 				});
 			}
+			// After the response to the request that let it carry on, if
+			// one did
+			Input::Stopped { generation, stop } => {
+				if let Some(debuggee) = self.debuggee.as_mut().filter(|d| d.generation == generation) {
+					debuggee.stopped_at(stop);
+				}
+			}
+			Input::Resumed { generation } => {
+				if let Some(debuggee) = self.debuggee.as_mut().filter(|d| d.generation == generation) {
+					debuggee.resumed();
+				}
+			}
 			Input::CodeChanged { generation } => {
 				if self.debuggee.as_ref().is_some_and(|d| d.generation == generation) {
 					self.reapply_breakpoints();
@@ -501,7 +522,9 @@ impl Adapter {
 	/// The world is gone: so is the launcher, once the client is told
 	fn ended(&mut self, exit_code: i32) {
 		self.pid = None;
-		self.debuggee = None;
+		if let Some(mut debuggee) = self.debuggee.take() {
+			debuggee.gone();
+		}
 		self.code = None;
 		for id in std::mem::take(&mut self.progress) {
 			self.out.event(dap::ProgressEnd { progressId: id.to_owned() });
@@ -1085,7 +1108,9 @@ impl Adapter {
 		if self.debuggee.as_ref().is_none_or(|d| d.generation != generation) {
 			return;
 		}
-		self.debuggee = None;
+		if let Some(mut debuggee) = self.debuggee.take() {
+			debuggee.gone();
+		}
 		self.waiting_for_code = false;
 		self.set.lock().unwrap().clear();
 

@@ -189,5 +189,17 @@ pub fn run() {
 	world.catch_runtimes(false);
 	world.resume_through("fail_null");
 	ok("a runtime error in a call that's stepped over stops there, as an exception");
+
+	// VS Code takes the response to a step to mean the world is running: the
+	// stop the step makes has to come after it
+	world.run_to("deep", "/recurse", "recurse_1");
+	for _ in 0..100 {
+		let thread = world.thread;
+		world.request("stepIn", json!({ "threadId": thread }));
+		assert!(!world.events.iter().any(|e| e["event"] == "stopped"), "a step's stop came before its response");
+		world.stopped("step");
+	}
+	world.resume_through("deep");
+	ok("a step's stop comes after the step's response");
 	world.end();
 }

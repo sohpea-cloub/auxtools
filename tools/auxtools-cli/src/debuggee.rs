@@ -1,7 +1,10 @@
 //! The connection to the debug server in the world. Requests go out from the
 //! adapter's thread, which waits for their responses. A thread reads
 //! everything that comes back and passes on what the server says on its own:
-//! the world pausing, for this client or another, and carrying on.
+//! the world pausing, for this client or another, and carrying on. Those go
+//! through the adapter's thread, so the client hears of them after the
+//! response to the request being handled: VS Code takes the response to a
+//! step to mean the world is running, even if it's paused again already.
 
 use std::{
 	collections::HashMap,
@@ -146,8 +149,12 @@ pub struct Debuggee {
 	set: SetBreakpoints,
 	/// The stack the world last stopped in
 	thread: Arc<AtomicU32>,
+	/// The client was told of a pause that was there when this connected,
+	/// and the world hasn't carried on since: the server may have said so
+	/// too, which isn't news
+	caught_up: bool,
 	/// How many times the world has stopped
-	stops: Arc<AtomicU32>,
+	stops: u32,
 	/// Tells this connection's events from an earlier one's
 	pub generation: u64
 }
@@ -168,24 +175,7 @@ impl Debuggee {
 		let writer = Shared::new(stream);
 		let mut reader = writer.clone();
 		let debuggee_out = out.clone();
-		let debuggee_last_error = last_error.clone();
 		let (responses_sender, responses) = mpsc::channel();
-		let stopped = Arc::new(AtomicBool::new(false));
-		let reader_stopped = stopped.clone();
-		let debuggee_set = set.clone();
-		// The stack the world last stopped in
-		let thread = Arc::new(AtomicU32::new(0));
-		let reader_thread = thread.clone();
-
-		let continued = move |out: &Output| {
-			out.event(ContinuedEvent {
-				threadId: reader_thread.load(Ordering::Relaxed).into(),
-				allThreadsContinued: Some(true)
-			});
-		};
-		let stop_thread = thread.clone();
-		let stops = Arc::new(AtomicU32::new(0));
-		let reader_stops = stops.clone();
 
 		std::thread::Builder::new()
 			.name("debuggee reader".to_owned())
@@ -204,10 +194,9 @@ impl Debuggee {
 						Response::BreakpointHit { .. } | Response::Resumed if !debugging => {}
 
 						Response::BreakpointHit(stop) => {
-							reader_stopped.store(true, Ordering::Relaxed);
-							reader_stops.fetch_add(1, Ordering::Relaxed);
-							stop_thread.store(stop.thread, Ordering::Relaxed);
-							announce_stop(&out, &last_error, &set, stop);
+							if inputs.send(Input::Stopped { generation, stop }).is_err() {
+								break "nobody was listening".to_owned();
+							}
 						}
 
 						// A breakpoint with a message
@@ -233,8 +222,9 @@ impl Debuggee {
 
 						// Another client let it carry on
 						Response::Resumed => {
-							reader_stopped.store(false, Ordering::Relaxed);
-							continued(&out);
+							if inputs.send(Input::Resumed { generation }).is_err() {
+								break "nobody was listening".to_owned();
+							}
 						}
 
 						response => {
@@ -244,9 +234,6 @@ impl Debuggee {
 						}
 					}
 				};
-				if reader_stopped.swap(false, Ordering::Relaxed) {
-					continued(&out);
-				}
 				let _ = inputs.send(Input::ConnectionClosed { generation, reason });
 			})
 			.map_err(|e| e.to_string())?;
@@ -254,14 +241,48 @@ impl Debuggee {
 		Ok(Self {
 			writer,
 			responses,
-			stopped,
+			stopped: Arc::new(AtomicBool::new(false)),
 			out: debuggee_out,
-			last_error: debuggee_last_error,
-			set: debuggee_set,
-			thread,
-			stops,
+			last_error,
+			set,
+			thread: Arc::new(AtomicU32::new(0)),
+			caught_up: false,
+			stops: 0,
 			generation
 		})
+	}
+
+	/// The world stopped (`Input::Stopped`): the client is told
+	pub fn stopped_at(&mut self, stop: Stop) {
+		if self.caught_up {
+			return;
+		}
+		self.stopped.store(true, Ordering::Relaxed);
+		self.stops += 1;
+		self.thread.store(stop.thread, Ordering::Relaxed);
+		announce_stop(&self.out, &self.last_error, &self.set, stop);
+	}
+
+	/// Another client let the world carry on (`Input::Resumed`)
+	pub fn resumed(&mut self) {
+		self.caught_up = false;
+		self.stopped.store(false, Ordering::Relaxed);
+		self.continued();
+	}
+
+	/// The connection is gone: a world that was paused isn't, as far as the
+	/// client is to know
+	pub fn gone(&mut self) {
+		if self.stopped.swap(false, Ordering::Relaxed) {
+			self.continued();
+		}
+	}
+
+	fn continued(&self) {
+		self.out.event(ContinuedEvent {
+			threadId: self.thread.load(Ordering::Relaxed).into(),
+			allThreadsContinued: Some(true)
+		});
 	}
 
 	/// Tells the client if the world was already paused when this connected,
@@ -271,7 +292,8 @@ impl Debuggee {
 			return Ok(());
 		};
 		if !self.stopped.swap(true, Ordering::Relaxed) {
-			self.stops.fetch_add(1, Ordering::Relaxed);
+			self.caught_up = true;
+			self.stops += 1;
 			self.thread.store(stop.thread, Ordering::Relaxed);
 			announce_stop(&self.out, &self.last_error, &self.set, stop);
 		}
@@ -281,7 +303,7 @@ impl Debuggee {
 	/// Which of the world's stops this is, or the last one was: what a
 	/// client was shown at one (a frame, a variable) isn't there at the next
 	pub fn stop_number(&self) -> u32 {
-		self.stops.load(Ordering::Relaxed)
+		self.stops
 	}
 
 	/// Whether the world is paused
@@ -316,6 +338,7 @@ impl Debuggee {
 		while self.responses.try_recv().is_ok() {}
 
 		if let Request::Continue { .. } = request {
+			self.caught_up = false;
 			self.stopped.store(false, Ordering::Relaxed);
 		}
 		self.send(request)?;
