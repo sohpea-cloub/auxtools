@@ -732,11 +732,40 @@ impl Server {
 		}
 	}
 
-	fn handle_breakpoint_set(&mut self, instruction: InstructionRef, condition: Option<String>) {
-		let line = self.get_line_number(instruction.proc.clone(), instruction.offset);
+	/// Where a breakpoint on a proc itself goes: after the records of its
+	/// file and first line (a verb has a few), so the proc is stopped on that
+	/// line like any other, and the first step from there moves on. 0 for
+	/// code that doesn't start with them.
+	fn entry_offset(proc: &Proc) -> u32 {
+		let bytecode = original_bytecode(proc);
+		let mut env = disassemble_env::DisassembleEnv;
+		let (nodes, _error) = dmasm::disassembler::disassemble(&bytecode, &mut env);
 
+		let mut has_line = false;
+		for node in nodes {
+			match node {
+				dmasm::Node::Instruction(dmasm::Instruction::DbgFile(_), _) => {}
+				dmasm::Node::Instruction(dmasm::Instruction::DbgLine(_), _) => has_line = true,
+				dmasm::Node::Instruction(_, debug) if has_line => return debug.offset,
+				dmasm::Node::Instruction(..) => return 0,
+				_ => {}
+			}
+		}
+		0
+	}
+
+	/// The offset a client means: 0 is the proc itself (see `entry_offset`)
+	fn breakpoint_offset(proc: &Proc, offset: u32) -> u32 {
+		if offset == 0 {
+			Self::entry_offset(proc)
+		} else {
+			offset
+		}
+	}
+
+	fn handle_breakpoint_set(&mut self, mut instruction: InstructionRef, condition: Option<String>) {
 		let (Some(proc), Some(client)) = (
-			auxtools::Proc::find_override(instruction.proc.path, instruction.proc.override_id),
+			auxtools::Proc::find_override(instruction.proc.path.clone(), instruction.proc.override_id),
 			self.current
 		) else {
 			self.send_or_disconnect(Response::BreakpointSet {
@@ -744,6 +773,8 @@ impl Server {
 			});
 			return;
 		};
+		instruction.offset = Self::breakpoint_offset(&proc, instruction.offset);
+		let line = self.get_line_number(instruction.proc.clone(), instruction.offset);
 
 		match hook_instruction(&proc, instruction.offset) {
 			Ok(()) => {
@@ -780,11 +811,8 @@ impl Server {
 		};
 
 		// It might be one a reload moved, known to the client by where it was
-		let offset = self
-			.moved_breakpoints
-			.get(&(proc.id, instruction.offset))
-			.copied()
-			.unwrap_or(instruction.offset);
+		let asked = Self::breakpoint_offset(&proc, instruction.offset);
+		let offset = self.moved_breakpoints.get(&(proc.id, asked)).copied().unwrap_or(asked);
 
 		let key = (proc.id, offset as u16);
 		let claims = self.breakpoints.entry(key).or_default();
@@ -792,7 +820,7 @@ impl Server {
 		let success = if claims.is_empty() {
 			// Nobody else wants it
 			self.breakpoints.remove(&key);
-			self.moved_breakpoints.remove(&(proc.id, instruction.offset));
+			self.moved_breakpoints.remove(&(proc.id, asked));
 			unhook_instruction(&proc, offset).is_ok()
 		} else {
 			had

@@ -45,12 +45,21 @@ pub fn run() {
 	world.function_breakpoints(&["/proc/leaf"]);
 	world.run("middle");
 	for _ in 0..2 {
-		let stop = world.stop();
-		assert_eq!((stop.reason.as_str(), stop.proc.as_str()), ("breakpoint", "/leaf"));
+		world.stop_on("breakpoint", "/leaf", "leaf_1");
+		assert_eq!(world.local("y"), "null");
 		world.resume();
 	}
 	world.finish("middle");
-	ok("a function breakpoint stops at each call");
+	ok("a function breakpoint stops at each call, on the proc's first line, before it has run");
+
+	world.run("middle");
+	world.stop_on("breakpoint", "/leaf", "leaf_1");
+	world.step_on("next", "/leaf", "leaf_2");
+	world.resume();
+	world.stop_on("breakpoint", "/leaf", "leaf_1");
+	world.step_on("stepOut", "/middle", "middle_2");
+	world.resume_through("middle");
+	ok("the first step from a function breakpoint moves on");
 
 	world.function_breakpoints(&["/datum/thing/twice/bump#1", "/datum/thing/twice/bump"]);
 	world.run("twice");

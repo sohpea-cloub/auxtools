@@ -102,7 +102,26 @@ pub fn run() {
 	world.resume_through("fresh");
 	ok("a breakpoint in a proc that a reload added, and a step in it");
 
+	// The proc's code changes, and then its first line too
+	let set = world.function_breakpoints(&["/proc/leaf"]);
+	assert_eq!(set[0]["verified"], true);
 	edit(&mut world, "stepping.dm", "\tvar/extra = 5 // @leaf_extra\n", "\tvar/extra = 6 // @leaf_extra\n");
+	world.run("middle");
+	for _ in 0..2 {
+		world.stop_on("breakpoint", "/leaf", "leaf_1");
+		world.resume();
+	}
+	world.finish("middle");
+	edit(&mut world, "stepping.dm", "/proc/leaf(x)\n", "/proc/leaf(x)\n\tvar/first = 1 // @leaf_first\n\tfirst++\n");
+	world.run("middle");
+	for _ in 0..2 {
+		world.stop_on("breakpoint", "/leaf", "leaf_first");
+		world.resume();
+	}
+	world.finish("middle");
+	world.function_breakpoints(&[]);
+	world.run_through("middle");
+	ok("a function breakpoint stays on a proc whose code is reloaded, on whatever its first line is now");
 	edit(
 		&mut world,
 		"stepping.dm",
@@ -111,7 +130,7 @@ pub fn run() {
 	);
 	world.run_to("middle", "/leaf", "leaf_2");
 	let locals = world.scope_values("Locals");
-	assert_eq!(locals.iter().map(|(name, _)| name.as_str()).collect::<Vec<_>>(), [".", "renamed", "extra"]);
+	assert_eq!(locals.iter().map(|(name, _)| name.as_str()).collect::<Vec<_>>(), [".", "first", "renamed", "extra"]);
 	assert_eq!(world.eval("renamed + extra"), "16");
 	world.resume_through("middle");
 	ok("a local a reload renamed is shown, and evaluated, by its new name");
