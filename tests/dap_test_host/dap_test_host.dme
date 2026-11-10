@@ -1,0 +1,7 @@
+// The world tests/dap_test debugs: none of auxtools' procs, built with DEBUG
+// so its code says which file and line it's on
+#define DEBUG
+#include "main.dm"
+#include "stepping.dm"
+#include "values.dm"
+#include "errors.dm"

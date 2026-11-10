@@ -13,221 +13,28 @@
 //! `dreamdaemon` need a display). `LAUNCHER_TEST_ARGS` replaces the program's
 //! arguments (Windows' DreamDaemon asks before it runs a world `-trusted`).
 
+// The debug client, which dap_test uses more of
+#[allow(dead_code)]
+#[path = "../../dap_test/src/client.rs"]
+mod client;
 #[allow(dead_code)]
 #[path = "../../test_runner/src/paths.rs"]
 mod paths;
 
 use std::{
-	collections::VecDeque,
-	io::{BufRead, BufReader, Read, Write},
 	path::{Path, PathBuf},
-	process::{Child, ChildStdin, Command, Stdio},
-	sync::mpsc,
-	time::{Duration, Instant}
+	process::Command
 };
 
+use client::{launcher_command, launcher_path, library_path, test_args, Launcher};
 use paths::ByondCommand;
 use serde_json::{json, Value};
 
-const TIMEOUT: Duration = Duration::from_secs(90);
 /// The line `target` doubles its argument on
 const TARGET_LINE: u64 = 28;
 
-fn next_to_us(name: &str) -> PathBuf {
-	let mut path = std::env::current_exe().unwrap();
-	path.pop();
-	path.push(name);
-	assert!(path.is_file(), "couldn't find {}; build it first", path.display());
-	path
-}
-
 fn host_file(name: &str) -> PathBuf {
 	std::env::current_dir().unwrap().join("tests/launcher_test_host").join(name)
-}
-
-struct Launcher {
-	child: Child,
-	stdin: ChildStdin,
-	messages: mpsc::Receiver<Value>,
-	seq: i64,
-	/// Events that came while waiting for something else
-	events: VecDeque<Value>,
-	/// Everything the world printed
-	output: String
-}
-
-impl Launcher {
-	fn start() -> Self {
-		let exe = if cfg!(windows) { "auxtools.exe" } else { "auxtools" };
-		let mut child = Command::new(next_to_us(exe))
-			.stdin(Stdio::piped())
-			.stdout(Stdio::piped())
-			.spawn()
-			.unwrap();
-		let stdin = child.stdin.take().unwrap();
-		let mut stdout = BufReader::new(child.stdout.take().unwrap());
-
-		let (sender, messages) = mpsc::channel();
-		std::thread::spawn(move || loop {
-			let mut length = 0;
-			loop {
-				let mut line = String::new();
-				if stdout.read_line(&mut line).unwrap_or(0) == 0 {
-					return;
-				}
-				let line = line.trim();
-				if line.is_empty() {
-					break;
-				}
-				if let Some(value) = line.strip_prefix("Content-Length:") {
-					length = value.trim().parse().unwrap();
-				}
-			}
-			let mut body = vec![0; length];
-			if stdout.read_exact(&mut body).is_err() {
-				return;
-			}
-			if sender.send(serde_json::from_slice(&body).unwrap()).is_err() {
-				return;
-			}
-		});
-
-		Self {
-			child,
-			stdin,
-			messages,
-			seq: 1,
-			events: VecDeque::new(),
-			output: String::new()
-		}
-	}
-
-	fn next_message(&mut self, deadline: Instant) -> Value {
-		let message = self
-			.messages
-			.recv_timeout(deadline.saturating_duration_since(Instant::now()))
-			.unwrap_or_else(|_| panic!("the launcher went quiet; the world said:\n{}", self.output));
-		if message["type"] == "event" && message["event"] == "output" {
-			let output = message["body"]["output"].as_str().unwrap_or_default();
-			print!("  | {}", output);
-			self.output.push_str(output);
-		}
-		message
-	}
-
-	fn send(&mut self, command: &str, arguments: Value) -> i64 {
-		let seq = self.seq;
-		self.seq += 1;
-		let message = json!({ "seq": seq, "type": "request", "command": command, "arguments": arguments }).to_string();
-		write!(self.stdin, "Content-Length: {}\r\n\r\n{}", message.len(), message).unwrap();
-		self.stdin.flush().unwrap();
-		seq
-	}
-
-	/// Sends a request and returns its response's body, which has to be a
-	/// success
-	fn request(&mut self, command: &str, arguments: Value) -> Value {
-		let response = self.try_request(command, arguments);
-		assert_eq!(response["success"], true, "{} failed: {}", command, response);
-		response["body"].clone()
-	}
-
-	fn try_request(&mut self, command: &str, arguments: Value) -> Value {
-		let seq = self.send(command, arguments);
-		let deadline = Instant::now() + TIMEOUT;
-		loop {
-			let message = self.next_message(deadline);
-			if message["type"] == "response" && message["request_seq"] == seq {
-				return message;
-			}
-			if message["type"] == "event" {
-				self.events.push_back(message);
-			}
-		}
-	}
-
-	/// Waits for an event, skipping others
-	fn event(&mut self, name: &str) -> Value {
-		if let Some(at) = self.events.iter().position(|e| e["event"] == name) {
-			return self.events.remove(at).unwrap();
-		}
-		let deadline = Instant::now() + TIMEOUT;
-		loop {
-			let message = self.next_message(deadline);
-			if message["type"] == "event" {
-				if message["event"] == name {
-					return message;
-				}
-				self.events.push_back(message);
-			}
-		}
-	}
-
-	/// Waits for the world to stop, and checks why
-	fn stopped(&mut self, reason: &str) -> Value {
-		let event = self.event("stopped");
-		assert_eq!(event["body"]["reason"], reason, "stopped for the wrong reason: {}", event);
-		event
-	}
-
-	fn top_frame(&mut self) -> Value {
-		let threads = self.request("threads", json!({}));
-		let names: Vec<&str> = threads["threads"].as_array().unwrap().iter().filter_map(|t| t["name"].as_str()).collect();
-		assert!(
-			!names.iter().any(|name| name.contains("auxtools_keepalive")),
-			"the debugger's own loop is a thread: {:?}",
-			names
-		);
-		let trace = self.request("stackTrace", json!({ "threadId": 0 }));
-		trace["stackFrames"][0].clone()
-	}
-
-	fn evaluate(&mut self, frame: &Value, expression: &str) -> String {
-		let result = self.request("evaluate", json!({ "expression": expression, "frameId": frame["id"], "context": "repl" }));
-		result["result"].as_str().unwrap().to_owned()
-	}
-
-	fn resume(&mut self) {
-		self.request("continue", json!({ "threadId": 0 }));
-	}
-
-	fn initialize(&mut self) {
-		let capabilities = self.request(
-			"initialize",
-			json!({ "adapterID": "auxtools", "linesStartAt1": true, "columnsStartAt1": true, "pathFormat": "path" })
-		);
-		assert_eq!(capabilities["supportsConfigurationDoneRequest"], true);
-	}
-
-	/// Waits for `text` in what the launcher passes on
-	fn wait_output(&mut self, text: &str) {
-		self.wait_count(text, 1);
-	}
-
-	/// Waits for `text` to have been passed on `count` times
-	fn wait_count(&mut self, text: &str, count: usize) {
-		let deadline = Instant::now() + TIMEOUT;
-		while self.output.matches(text).count() < count {
-			let message = self.next_message(deadline);
-			if message["type"] == "event" && message["event"] != "output" {
-				self.events.push_back(message);
-			}
-		}
-	}
-
-	/// Says goodbye and waits for the launcher to exit
-	fn disconnect(mut self, arguments: Value) {
-		self.try_request("disconnect", arguments);
-		let deadline = Instant::now() + Duration::from_secs(20);
-		loop {
-			if let Some(status) = self.child.try_wait().unwrap() {
-				assert!(status.success(), "the launcher exited with {}", status);
-				return;
-			}
-			assert!(Instant::now() < deadline, "the launcher didn't exit");
-			std::thread::sleep(Duration::from_millis(100));
-		}
-	}
 }
 
 /// What the client checks at the breakpoint in `target`, in each world
@@ -292,8 +99,8 @@ fn main() {
 	let mut launcher = Launcher::start();
 	launcher.initialize();
 
-	let server = std::env::var("LAUNCHER_TEST_SERVER").unwrap_or_else(|_| if cfg!(windows) { "dd" } else { "dreamdaemon" }.to_owned());
-	let library = next_to_us(if cfg!(windows) { "debug_server.dll" } else { "libdebug_server.so" });
+	let server = client::server();
+	let library = library_path();
 	launcher.request(
 		"launch",
 		json!({
@@ -355,16 +162,6 @@ fn main() {
 
 	attach_and_reload(&server, &library);
 	println!("all ok");
-}
-
-/// Runs the launcher with `args`, for its exit code and what it printed
-fn launcher_command(args: &[&str]) -> (i32, String) {
-	let out = Command::new(next_to_us(if cfg!(windows) { "auxtools.exe" } else { "auxtools" }))
-		.args(args)
-		.output()
-		.unwrap();
-	let printed = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
-	(out.status.code().unwrap_or(-1), printed)
 }
 
 /// The command line, a command at a time: each connects, does it and leaves,
@@ -429,12 +226,6 @@ fn command_line(pid: u64, code: &Path) {
 	println!("ok: the command line paused the world, and its waits time out and say what's wrong");
 }
 
-fn test_args() -> Option<Vec<String>> {
-	std::env::var("LAUNCHER_TEST_ARGS")
-		.ok()
-		.map(|args| args.split_whitespace().map(str::to_owned).collect())
-}
-
 /// The line of `file` that `text` starts
 fn line_of(file: &Path, text: &str) -> u64 {
 	let source = std::fs::read_to_string(file).unwrap();
@@ -474,10 +265,7 @@ fn attach_and_reload(server: &str, library: &Path) {
 	runner.wait_output("Hot reload: watching");
 	println!("ok: a world launched without debugging runs, and its code is watched");
 
-	let list = Command::new(next_to_us(if cfg!(windows) { "auxtools.exe" } else { "auxtools" }))
-		.arg("--list")
-		.output()
-		.unwrap();
+	let list = Command::new(launcher_path()).arg("--list").output().unwrap();
 	let worlds: Value = serde_json::from_slice(&list.stdout).unwrap();
 	let world = worlds
 		.as_array()

@@ -8,3 +8,7 @@
 *.vsix
 # Made by tests/launcher_test_host while it runs
 /tests/launcher_test_host/rebooted
+# Made by tests/dap_test_host while it runs
+/tests/dap_test_host/*.rsc
+/tests/dap_test_host/*.sav
+/tests/dap_test_host/fail_early
