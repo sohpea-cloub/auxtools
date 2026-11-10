@@ -51,6 +51,10 @@ Windows; DreamSeeker and Windows' DreamDaemon show it in their own windows). The
 launcher closes when the world does, and after `world.Reboot()` the debugger picks the
 new world up again, breakpoints and all.
 
+**Stop** has the world shut itself down, so what it does in `world/Del()` (saving, say)
+still happens; a world that hasn't ended five seconds on is ended. Stop a second time,
+or **Disconnect**, ends it there and then.
+
 Windows' DreamDaemon asks before it runs a world in trusted mode; tick "Don't ask me
 this again" to stop it asking.
 

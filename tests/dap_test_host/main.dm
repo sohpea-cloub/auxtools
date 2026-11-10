@@ -6,6 +6,8 @@ var/scenario
 var/ticks = 0
 var/idle_ticks = 0
 var/global_number = 5
+// What the world's shutdown code does: "refuse" doesn't shut it down
+var/on_shutdown
 var/list/global_list = list(1, "two", 3)
 // Worked out while the world loads, before world/New
 var/early_global = early_value()
@@ -26,6 +28,12 @@ var/early_global = early_value()
 	world.log << "dap: world/New" // @world_new
 	spawn(1)
 		main_loop()
+
+/world/Del()
+	world.log << "dap: world/Del" // @world_del
+	if (on_shutdown == "refuse")
+		return
+	..()
 
 /proc/main_loop()
 	while (TRUE)

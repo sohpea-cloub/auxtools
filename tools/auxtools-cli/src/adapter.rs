@@ -45,6 +45,8 @@ const CAUGHT: &str = "caught";
 const STDDEF_REFERENCE: i64 = 1;
 /// How long to wait for the client to say goodbye once the world has exited
 const EXIT_GRACE: Duration = Duration::from_secs(5);
+/// How long a world that's asked to end has to do it in
+const TERMINATE_GRACE: Duration = Duration::from_secs(5);
 /// The proc the debug library leaves sleeping in a loop
 const KEEPALIVE: &str = "/auxtools_keepalive";
 /// The file the debug library's own procs are in
@@ -88,6 +90,10 @@ pub enum Input {
 	GameExited(Option<i32>),
 	/// The process attached to is gone
 	ProcessGone,
+	/// The world asked to end has had its time. `process` is the one asked.
+	TerminateOverdue {
+		process: u32
+	},
 	/// Time to go, whether the client said goodbye or not
 	Quit
 }
@@ -235,6 +241,8 @@ pub struct Adapter {
 
 	debuggee: Option<Debuggee>,
 	generation: u64,
+	/// The client asked for the world to end: its debugger isn't coming back
+	ending: bool,
 	/// The connected world waits for the code's thread before it's configured
 	waiting_for_code: bool,
 	/// Whether the client has been told it can set breakpoints
@@ -295,6 +303,7 @@ pub fn run() {
 		stddef: None,
 		debuggee: None,
 		generation: 0,
+		ending: false,
 		waiting_for_code: false,
 		initialized: false,
 		last_error: Arc::new(Mutex::new(LastError::default())),
@@ -381,6 +390,16 @@ impl Adapter {
 				self.game = None;
 				self.ended(code.unwrap_or(-1));
 			}
+			Input::TerminateOverdue { process } => {
+				if self.ending && self.world_process() == Some(process) {
+					self.out.console(format!(
+						"The world hasn't ended in {} seconds: ending its process ({})",
+						TERMINATE_GRACE.as_secs(),
+						process
+					));
+					self.kill_world();
+				}
+			}
 			Input::ProcessGone => {
 				if self.game.is_none() {
 					self.out.console("The world's process has ended");
@@ -450,6 +469,7 @@ impl Adapter {
 			"setExpression" => arguments(args).and_then(|args| self.set_expression(args)),
 			"exceptionInfo" => self.exception_info(),
 			"source" => arguments(args).and_then(|args| self.source(args)),
+			"terminate" => self.terminate(),
 			"disconnect" => {
 				let args: Option<DisconnectArguments> = arguments(args).ok();
 				self.disconnect(args.and_then(|args| args.terminateDebuggee));
@@ -476,6 +496,7 @@ impl Adapter {
 			supportsSetExpression: Some(true),
 			supportsExceptionInfoRequest: Some(true),
 			supportTerminateDebuggee: Some(true),
+			supportsTerminateRequest: Some(true),
 			..Default::default()
 		})?;
 		// What dap-types has no fields for
@@ -934,7 +955,8 @@ impl Adapter {
 		self.waiting_for_code = false;
 		self.set.clear();
 
-		if self.pid.is_some() {
+		// A world that's ending shuts its debugger down on the way
+		if self.pid.is_some() && !self.ending {
 			self.out
 				.console(format!("The world's debugger disconnected ({}); connecting again when it's back", reason));
 			self.progress_start(RESTARTING, "Waiting for the world to come back".to_owned());
@@ -957,17 +979,79 @@ impl Adapter {
 		}
 		// A world that was attached to carries on unless asked otherwise
 		if terminate.unwrap_or(false) || self.game.is_some() {
-			if let Some(game) = self.game.take() {
-				self.out.console(format!("Ending the world (process {})", game.pid()));
-				game.kill();
-			} else if let Some(pid) = self.pid {
-				self.out.console(format!("Ending the world (process {})", pid));
-				local::kill(pid);
+			if let Some(process) = self.world_process() {
+				self.out.console(format!("Ending the world (process {})", process));
+				self.kill_world();
 			}
 		}
 		// Stop trying to connect
 		self.pid = None;
 		self.generation += 1;
+	}
+
+	/// The process of the world: the one launched, or the one attached to
+	fn world_process(&self) -> Option<u32> {
+		self.game.as_ref().map(Game::pid).or(self.pid)
+	}
+
+	/// Ends the world's process, there and then
+	fn kill_world(&mut self) {
+		if let Some(game) = &self.game {
+			game.kill();
+		} else if let Some(pid) = self.pid {
+			local::kill(pid);
+		}
+	}
+
+	/// Has the world end itself, which runs the shutdown code it has in
+	/// `world/Del()`. One that hasn't ended a few seconds on is ended.
+	fn terminate(&mut self) -> Handled {
+		let Some(process) = self.world_process() else {
+			return Ok(Value::Null);
+		};
+		if self.ending {
+			// Asked already, and on its way
+			return Ok(Value::Null);
+		}
+		self.ending = true;
+		// Not waited for: the world doesn't answer if it ends, and has a
+		// while to if it doesn't
+		let asked = self.debuggee.as_mut().is_some_and(|debuggee| {
+			debuggee
+				.send(&AuxRequest::Eval {
+					frame_id: None,
+					command: "world.Del()".to_owned(),
+					context: None
+				})
+				.is_ok()
+		});
+		if asked {
+			self.out.console("Asked the world to end: its world/Del() runs first");
+			let inputs = self.inputs.clone();
+			let launched = self.game.is_some();
+			std::thread::spawn(move || {
+				let deadline = std::time::Instant::now() + TERMINATE_GRACE;
+				let mut overdue = false;
+				// The launched world's exit is heard about anyway
+				while launched || local::alive(process) {
+					if !overdue && std::time::Instant::now() >= deadline {
+						overdue = true;
+						if inputs.send(Input::TerminateOverdue { process }).is_err() || launched {
+							return;
+						}
+					}
+					std::thread::sleep(CONNECT_INTERVAL);
+				}
+				let _ = inputs.send(Input::ProcessGone);
+			});
+		} else {
+			self.out.console(format!(
+				"The world isn't connected, and can't be asked to end: ending its process ({})",
+				process
+			));
+			self.kill_world();
+		}
+		Ok(Value::Null)
 	}
 
 	fn debuggee(&mut self) -> Result<&mut Debuggee, String> {

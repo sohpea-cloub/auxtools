@@ -16,7 +16,71 @@ pub fn run() {
 	refusals();
 	without_debugging();
 	output_and_exit();
+	asked_to_end();
 	told_along_the_way();
+}
+
+/// Waits for the world to be over, and returns how long that took
+fn over(world: &mut World, since: std::time::Instant) -> std::time::Duration {
+	world.event("terminated");
+	let exited = world.event("exited");
+	assert!(exited["body"]["exitCode"].is_number(), "no exit code: {}", exited);
+	since.elapsed()
+}
+
+/// `terminate`: the world ends itself, with the shutdown code it has
+fn asked_to_end() {
+	let grace = std::time::Duration::from_secs(5);
+
+	let mut world = World::start();
+	let asked = std::time::Instant::now();
+	world.request("terminate", json!({}));
+	let took = over(&mut world, asked);
+	assert_eq!(world.count("dap: world/Del\n"), 1, "the world's Del() didn't run once:\n{}", world.output);
+	assert!(world.output.contains("Asked the world to end"), "the launcher didn't say what it did");
+	assert!(took < grace && !world.output.contains("hasn't ended"), "the world was ended, {:?} on", took);
+	ok("terminate has the world end itself: its world/Del() runs, and the client hears it's over");
+	world.end();
+
+	// Paused, it isn't going to run anything else
+	let mut world = World::start();
+	world.run_to("plain", "/sc_plain", "plain_1");
+	let asked = std::time::Instant::now();
+	world.request("terminate", json!({}));
+	let took = over(&mut world, asked);
+	assert_eq!(world.count("dap: world/Del\n"), 1, "the world's Del() didn't run once:\n{}", world.output);
+	assert!(took < grace && !world.output.contains("hasn't ended"), "the world was ended, {:?} on", took);
+	ok("terminate ends a paused world the same way");
+	world.end();
+
+	// A world that doesn't end when asked is ended
+	let mut world = World::start();
+	assert_eq!(world.eval_global("on_shutdown = \"refuse\""), "\"refuse\"");
+	let asked = std::time::Instant::now();
+	world.request("terminate", json!({}));
+	world.wait_output("dap: world/Del\n");
+	let took = over(&mut world, asked);
+	assert!(took >= grace && took < grace * 2, "the world was ended after {:?}", took);
+	assert!(!world.output.contains("connecting again"), "the launcher waited for the debugger of a world it was ending");
+	assert!(world.output.contains("The world hasn't ended in 5 seconds: ending its process"), "the launcher didn't say why:\n{}", world.output);
+	ok("a world whose shutdown code doesn't end it is given five seconds, and then ended, which the console says");
+	world.end();
+
+	// Run without debugging, and attached to
+	let mut world = World::launch(json!({ "noDebug": true }));
+	world.configure();
+	evaluate_when_connected(&mut world, "global_number");
+	let mut other = World::attach(client::listed_world("dap_test_host.dmb"));
+	other.request("configurationDone", json!({}));
+	let asked = std::time::Instant::now();
+	other.request("terminate", json!({}));
+	let took = over(&mut other, asked);
+	over(&mut world, asked);
+	assert_eq!(world.count("dap: world/Del\n"), 1, "the world's Del() didn't run once:\n{}", world.output);
+	assert!(took < grace, "the world was ended, {:?} on", took);
+	ok("terminate from a session that attached ends the world for the one that started it without debugging too");
+	other.end();
+	world.end();
 }
 
 /// The ids of the progress events that have come, as `(start or end, id)`
@@ -116,6 +180,7 @@ fn capabilities() {
 		"supportsLogPoints",
 		"supportsSetExpression",
 		"supportsSetVariable",
+		"supportsTerminateRequest",
 		"supportsValueFormattingOptions"
 	]);
 	let filters: Vec<&str> = capabilities["exceptionBreakpointFilters"]
