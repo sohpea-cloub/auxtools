@@ -26,9 +26,9 @@ use std::{
 	process::Command
 };
 
-use client::{launcher_command, launcher_path, library_path, test_args, Launcher};
+use client::{launcher_command, library_path, test_args, Launcher};
 use paths::ByondCommand;
-use serde_json::{json, Value};
+use serde_json::json;
 
 /// The line `target` doubles its argument on
 const TARGET_LINE: u64 = 28;
@@ -362,16 +362,7 @@ fn attach_and_reload(server: &str, library: &Path) {
 	runner.wait_output("Hot reload: watching");
 	println!("ok: a world launched without debugging runs, and its code is watched");
 
-	let list = Command::new(launcher_path()).arg("--list").output().unwrap();
-	let worlds: Value = serde_json::from_slice(&list.stdout).unwrap();
-	let world = worlds
-		.as_array()
-		.unwrap()
-		.iter()
-		.find(|world| world["dmb"].as_str().is_some_and(|dmb| dmb.ends_with("attach_host.dmb")))
-		.unwrap_or_else(|| panic!("--list didn't list the world: {}", worlds))
-		.clone();
-	let pid = world["pid"].as_u64().unwrap();
+	let pid = client::listed_world("attach_host.dmb");
 	println!("ok: --list found the world, process {}", pid);
 
 	// Two debuggers: one finds the code from the world's command line, the

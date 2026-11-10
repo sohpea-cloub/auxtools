@@ -54,17 +54,34 @@ pub fn launcher_command(args: &[&str]) -> (i32, String) {
 	(out.status.code().unwrap_or(-1), printed)
 }
 
-/// The process running `dmb`, as the launcher's `--list` finds it
-pub fn listed_world(dmb: &str) -> u64 {
+/// The worlds the launcher's `--list` finds, of this run's: those whose .dmb
+/// is under the directory the tests run in, or in one this process made
+/// (they have its id in their names). Another run on the machine has its own.
+pub fn listed_worlds() -> Vec<Value> {
 	let list = Command::new(launcher_path()).arg("--list").output().unwrap();
 	let worlds: Value = serde_json::from_slice(&list.stdout).unwrap();
-	let world = worlds
+	let plain = |path: &str| path.replace('\\', "/").to_lowercase();
+	let here = plain(&std::env::current_dir().unwrap().to_string_lossy());
+	let made = format!("-{}/", std::process::id());
+	worlds
 		.as_array()
 		.unwrap()
 		.iter()
+		.filter(|world| {
+			let dmb = plain(world["dmb"].as_str().unwrap_or_default());
+			dmb.starts_with(&here) || dmb.contains(&made)
+		})
+		.cloned()
+		.collect()
+}
+
+/// The process running `dmb`, as the launcher's `--list` finds it
+pub fn listed_world(dmb: &str) -> u64 {
+	let worlds = listed_worlds();
+	let world = worlds
+		.iter()
 		.find(|world| world["dmb"].as_str().is_some_and(|path| path.ends_with(dmb)))
-		.unwrap_or_else(|| panic!("--list didn't list the world: {}", worlds))
-		.clone();
+		.unwrap_or_else(|| panic!("--list didn't list the world: {:?}", worlds));
 	world["pid"].as_u64().unwrap()
 }
 
