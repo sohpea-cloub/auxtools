@@ -2,6 +2,9 @@
 //!
 //! Copied from `byond_catalog` in the byond-re repo, where `verify_recipes`
 //! checks each pattern against every local build. Keep the two in step.
+//! The recipes for the builds before 516.1659 are its `AUXTOOLS_OLDER_CATALOG`,
+//! which `verify_recipes` doesn't check yet: they're checked by resolving each
+//! one on every build of its range.
 
 use byond_scan::{Anchor, Extract, OperandSelect, Recipe, SignatureTreatment, VersionRange};
 
