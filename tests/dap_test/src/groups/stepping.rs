@@ -75,12 +75,15 @@ pub fn run() {
 	ok("stepIn goes into a proc called through call()()");
 
 	world.run_to("sleeper", "/sleeper", "sleeper_1");
+	let thread = world.thread;
 	world.step_on("next", "/sleeper", "sleeper_2");
 	world.step_on("next", "/sleeper", "sleeper_3");
 	assert_eq!(world.local("before"), "7");
 	world.step_on("next", "/sleeper", "sleeper_4");
+	// BYOND moves a proc's frames the first time it sleeps
+	assert_eq!(world.thread, thread, "the proc is another thread since it slept");
 	world.resume_through("sleeper");
-	ok("next over sleep() stops in the same proc when it wakes");
+	ok("next over sleep() stops in the same proc when it wakes, the same thread");
 
 	// The spawned block runs later, in a copy of the proc
 	world.run_to("spawner", "/spawner", "spawner_1");

@@ -1,6 +1,6 @@
 use std::{
-	cell::{Cell, OnceCell, RefCell},
-	collections::{BTreeMap, HashMap, HashSet},
+	cell::{OnceCell, RefCell},
+	collections::{BTreeMap, HashMap},
 	error::Error,
 	io::{Read, Write},
 	sync::{mpsc, Mutex},
@@ -215,11 +215,6 @@ pub struct Server {
 	breakpoints: Breakpoints,
 	/// Why and where the world is paused, while it is
 	paused: Option<Stop>,
-	/// The ids of the world's stacks (`Stack::id`), by the proc instance
-	/// each starts with: BYOND keeps that for as long as the proc goes on,
-	/// asleep or running, so a stack is known again at the next stop
-	threads: RefCell<HashMap<usize, u32>>,
-	next_thread: Cell<u32>,
 	/// The client that asked for the world to stay paused once every client
 	/// has gone (`Request::HoldPause`)
 	hold: Option<ClientId>,
@@ -291,8 +286,6 @@ impl Server {
 			breakpoints: HashMap::new(),
 			moved_breakpoints: HashMap::new(),
 			paused: None,
-			threads: RefCell::new(HashMap::new()),
-			next_thread: Cell::new(1),
 			hold: None,
 			procs_by_file: None,
 			app: Self::setup_app()
@@ -876,30 +869,16 @@ impl Server {
 		Ok(variables)
 	}
 
-	/// What names a stack from one stop to the next: the proc instance of
-	/// its outermost frame
-	fn thread_key(stack: &[debug::StackFrame]) -> usize {
-		stack.last().map_or(0, |frame| frame.instance as usize)
-	}
-
-	/// The id of a stack, which it gets the first time it's asked for
+	/// The id of a stack (`Stack::id`), the same from one stop to the next:
+	/// the id BYOND gives the proc instance of its outermost frame, which is
+	/// what its `args` list is known by. No two instances have the same at
+	/// once, and an instance keeps its own for as long as the proc goes on.
+	/// Its address won't do: a proc that's called starts out on the machine's
+	/// stack, and BYOND moves it the first time it sleeps. Nor is it a
+	/// `spawn`ed copy's, which gets an id of its own.
 	fn thread_of(&self, stack: &[debug::StackFrame]) -> u32 {
-		*self.threads.borrow_mut().entry(Self::thread_key(stack)).or_insert_with(|| {
-			let id = self.next_thread.get();
-			self.next_thread.set(id + 1);
-			id
-		})
-	}
-
-	/// Forgets the ids of stacks that are over. BYOND uses a proc
-	/// instance's memory again for another.
-	fn forget_ended_threads(&self) {
-		let Some(state) = &self.state else {
-			return;
-		};
-		let mut live: HashSet<usize> = debug::CallStacks::suspended_instances().into_iter().map(|instance| instance as usize).collect();
-		live.insert(Self::thread_key(state.active()));
-		self.threads.borrow_mut().retain(|key, _| live.contains(key));
+		// 0 is "the running proc's" in a request
+		stack.last().map_or(0, |frame| unsafe { (*frame.instance).argslist_idx.id }.wrapping_add(1))
 	}
 
 	/// Where the stack a client calls `thread` is: 0 for the running proc's
@@ -910,8 +889,7 @@ impl Server {
 		if thread == 0 {
 			return Some(0);
 		}
-		let threads = self.threads.borrow();
-		let is = |stack: &[debug::StackFrame]| threads.get(&Self::thread_key(stack)) == Some(&thread);
+		let is = |stack: &[debug::StackFrame]| self.thread_of(stack) == thread;
 		if is(state.active()) {
 			return Some(0);
 		}
@@ -1179,8 +1157,6 @@ impl Server {
 		if let Some(state) = &mut self.state {
 			state.read_sleeping(sleeping);
 		}
-		self.forget_ended_threads();
-
 		let mut asleep = 0;
 		let stacks = match &self.state {
 			Some(state) => {

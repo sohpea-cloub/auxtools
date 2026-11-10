@@ -409,8 +409,8 @@ pub enum ContinueKind {
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]
 pub struct Stack {
 	/// The same from one stop to the next, for as long as the proc the stack
-	/// starts with goes on. 0 is never one: in a request, it means the
-	/// running proc's stack.
+	/// starts with goes on (another stack can have it after that). 0 is
+	/// never one: in a request, it means the running proc's stack.
 	pub id: u32,
 	/// The proc it's in: its innermost frame's
 	pub name: String,
