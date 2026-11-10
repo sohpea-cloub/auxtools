@@ -103,14 +103,15 @@ pub fn run() {
 fn while_loading() {
 	let flag = host_file("fail_early");
 	std::fs::write(&flag, "yes").unwrap();
+	// The client says nothing about runtime errors: the filter is on unless
+	// it's turned off
 	let mut world = World::launch(json!({}));
-	world.catch_runtimes(true);
 	world.request("configurationDone", json!({}));
 	stopped_on(&mut world, "cannot read from list", "/early_value", "early_failure");
 	std::fs::remove_file(&flag).unwrap();
 	world.resume();
 	world.wait_output("dap: world/New");
 	world.run_through("plain");
-	ok("a runtime error while the world loads");
+	ok("a runtime error while the world loads, for a client that left the filter as it comes: on");
 	world.end();
 }

@@ -88,6 +88,7 @@ pub fn run() {
 
 	// A third arrives in the middle of it
 	let mut c = World::attach(pid);
+	c.catch_runtimes(false);
 	c.stop_on("step", "/leaf", "leaf_1");
 	assert_eq!(c.argument("x"), "3");
 	c.resume();

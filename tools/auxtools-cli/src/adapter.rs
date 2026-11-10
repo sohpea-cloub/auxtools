@@ -745,6 +745,9 @@ impl Adapter {
 
 	fn configuration_done(&mut self) -> Handled {
 		if self.debugging && self.debuggee.is_some() {
+			// A client that said nothing about runtime errors has the
+			// filter's default, here as in the worlds after a reboot
+			self.catch_runtimes()?;
 			self.ack(&AuxRequest::Configured)?;
 		}
 		self.catch_up_on_pause();
