@@ -226,6 +226,75 @@ fn command_line(pid: u64, code: &Path) {
 	println!("ok: the command line paused the world, and its waits time out and say what's wrong");
 }
 
+/// The rest of the command line: the other steps, the stacks, a frame's
+/// variables, runtime errors, and what it says to what it doesn't understand
+fn command_line_more(pid: u64, dir: &Path) {
+	let pid = pid.to_string();
+	let run = |args: &[&str], code: i32| {
+		let args: Vec<&str> = ["--pid", pid.as_str()].iter().chain(args).copied().collect();
+		let (got, printed) = launcher_command(&args);
+		assert_eq!(got, code, "`{}` gave {}, not {}: {}", args.join(" "), got, code, printed);
+		printed
+	};
+
+	let printed = run(&["wait", "--break", "/proc/value", "--timeout", "60"], 0);
+	assert!(printed.starts_with("paused at a breakpoint\n#0 /value"), "wait said {}", printed);
+	let printed = run(&["out"], 0);
+	assert!(printed.starts_with("paused after a step\n#0 /run_until_stopped"), "out said {}", printed);
+	let printed = run(&["step"], 0);
+	assert!(printed.starts_with("paused after a step\n#0 /run_until_stopped"), "step said {}", printed);
+	println!("ok: the command line steps out of a proc, and into a line");
+
+	let printed = run(&["stack"], 0);
+	assert!(printed.starts_with("#0 /run_until_stopped") && !printed.contains("stack 0"), "stack said {}", printed);
+	let printed = run(&["stack", "--all"], 0);
+	assert!(printed.starts_with("stack 0: /run_until_stopped\n#0 /run_until_stopped"), "stack --all said {}", printed);
+	println!("ok: the command line shows the paused stack, or every stack");
+
+	let printed = run(&["vars"], 0);
+	assert!(printed.contains("arguments:\n  src = null") && printed.contains("locals:") && !printed.contains("globals:"), "vars said {}", printed);
+	let printed = run(&["vars", "--frame", "0", "--globals"], 0);
+	assert!(printed.contains("globals:"), "vars --globals said {}", printed);
+	let printed = run(&["vars", "--frame", "7"], 1);
+	assert_eq!(printed.trim(), "there's no frame 7");
+	assert_eq!(run(&["eval", "--frame", "0", "6", "*", "7"], 0).trim(), "42");
+	let printed = run(&["eval", "--frame", "7", "1"], 1);
+	assert_eq!(printed.trim(), "there's no frame 7");
+	println!("ok: the command line shows a frame's variables, with the globals when asked, and evaluates in a frame");
+	run(&["continue"], 0);
+
+	// The world fails when it finds this file
+	std::fs::write(dir.join("fail"), "yes").unwrap();
+	let printed = run(&["wait", "--runtimes", "--timeout", "60"], 0);
+	assert!(
+		printed.starts_with("paused on a runtime error: cannot read from list\n#0 /fail"),
+		"wait --runtimes said {}",
+		printed
+	);
+	run(&["continue"], 0);
+	println!("ok: the command line waits for a runtime error");
+
+	for (args, said) in [
+		(&["frobnicate"][..], "there's no command frobnicate"),
+		(&["stack", "--sideways"][..], "there's no --sideways here"),
+		(&["vars", "--frame"][..], "--frame needs a value"),
+		(&["vars", "--frame", "top"][..], "--frame top isn't a number"),
+		(&["eval"][..], "eval what?"),
+		(&["wait", "--break", "somewhere"][..], "somewhere is neither FILE:LINE nor /proc/path"),
+		(&["wait", "now"][..], "wait doesn't take now")
+	] {
+		let printed = run(args, 1);
+		assert!(printed.starts_with(said), "`{}` said {}", args.join(" "), printed);
+	}
+	let (code, printed) = launcher_command(&["--pid", "soon", "status"]);
+	assert_eq!((code, printed.trim()), (1, "soon isn't a process id"));
+	let (code, printed) = launcher_command(&["--pid", "4000000000", "status"]);
+	assert_eq!(code, 1);
+	assert!(printed.starts_with("couldn't reach the world in process 4000000000"), "status said {}", printed);
+	assert_eq!(run(&["status"], 0).trim(), "running");
+	println!("ok: the command line says what it doesn't understand, and exits with 1");
+}
+
 /// The line of `file` that `text` starts
 fn line_of(file: &Path, text: &str) -> u64 {
 	let source = std::fs::read_to_string(file).unwrap();
@@ -323,6 +392,7 @@ fn attach_and_reload(server: &str, library: &Path) {
 	println!("ok: the attached launchers left, and the world carries on");
 
 	command_line(pid, &code);
+	command_line_more(pid, &dir);
 
 	// A launcher that attaches to a world that's paused hears it is
 	let (code_given, printed) = launcher_command(&["--pid", &pid.to_string(), "pause"]);
