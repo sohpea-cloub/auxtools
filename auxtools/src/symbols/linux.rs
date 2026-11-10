@@ -8,11 +8,11 @@ use byond_scan::{Anchor, Extract, OperandSelect, Recipe, SignatureTreatment, Ver
 // Checked on every build in this range. Older builds are refused by the
 // resolver, newer ones are tried and can still fail.
 //
-// The floor is 1664 and not Windows' 1659 because of proc hooks. On 1659 GCC
-// inlined `call_proc_by_id` into the interpreter, so a DM proc call never
-// enters the function the hook patches and no `#[hook]` ever fires. 1660 to
-// 1663 were never checked.
-const SUPPORTED: VersionRange = VersionRange { min: 1664, max: 1688 };
+// Before 1664 GCC inlined `call_proc_by_id` into the interpreter, so a DM
+// proc call never enters the function the hook patches: proc hooks there go
+// through the debug server's instruction hook instead (see
+// `hooks::calls_bypass_detour`).
+const SUPPORTED: VersionRange = VersionRange { min: 1648, max: 1688 };
 
 // The first build where `remove_from_list` takes its arguments on the stack.
 // Every build before it wants the list in `eax:edx`. Read off the prologue of

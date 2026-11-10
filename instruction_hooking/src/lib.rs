@@ -22,7 +22,7 @@ const DISPATCH_MASK: &str = "0F B7 46 ?? 8B 56 ?? 66 89 85 ?? ?? ?? ?? 89 85 ?? 
 #[cfg(windows)]
 const CHECKED: VersionRange = VersionRange { min: 1637, max: 1688 };
 #[cfg(unix)]
-const CHECKED: VersionRange = VersionRange { min: 1659, max: 1688 };
+const CHECKED: VersionRange = VersionRange { min: 1648, max: 1688 };
 
 const EXECUTE_INSTRUCTION: Recipe = Recipe {
 	name: "execute_instruction",
@@ -62,9 +62,15 @@ extern "C" {
 	fn execute_instruction_hook_514();
 }
 
+// Read on every instruction (see `auxtools::hooks::calls_bypass_detour`)
+static mut CALLS_BYPASS_DETOUR: bool = false;
+
 #[init(full)]
 fn instruction_hooking_init() -> Result<(), String> {
 	let execute_instruction = find_recipe(&EXECUTE_INSTRUCTION)?;
+	unsafe {
+		CALLS_BYPASS_DETOUR = auxtools::hooks::calls_bypass_detour();
+	}
 
 	#[cfg(windows)]
 	let versioned_hook = if auxtools::version::get().0 == 514 {
@@ -102,6 +108,11 @@ fn instruction_hooking_shutdown() {
 #[no_mangle]
 extern "C" fn handle_instruction(ctx: *mut raw_types::procs::ExecutionContext) -> *const raw_types::procs::ExecutionContext {
 	unsafe {
+		// Proc hooks, and the world loading, where the call_proc_by_id detour
+		// doesn't see every call
+		if CALLS_BYPASS_DETOUR && *(*ctx).bytecode_offset() == 0 {
+			auxtools::hooks::proc_starting(ctx);
+		}
 		for vec_box in &mut *INSTRUCTION_HOOKS.get() {
 			vec_box.handle_instruction(ctx);
 		}
