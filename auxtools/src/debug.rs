@@ -1,7 +1,38 @@
+use std::{cell::RefCell, collections::HashMap};
+
 use crate::{
 	raw_types::{funcs, procs},
 	Proc, StringRef, Value
 };
+
+thread_local! {
+	// Local names by bytecode buffer, for code whose locals the proc's own
+	// table doesn't name (code swapped in by a hot reload, and the code it
+	// replaced, which old frames still run)
+	static LOCAL_NAMES: RefCell<HashMap<usize, Vec<String>>> = RefCell::new(HashMap::new());
+}
+
+/// Names the locals of frames running the bytecode at `bytecode`, in place of
+/// what the proc's locals table says.
+pub fn set_local_names(bytecode: *const u32, names: Vec<String>) {
+	LOCAL_NAMES.with(|map| map.borrow_mut().insert(bytecode as usize, names));
+}
+
+/// Whether [`set_local_names`] named the bytecode at `bytecode`.
+pub fn has_local_names(bytecode: *const u32) -> bool {
+	LOCAL_NAMES.with(|map| map.borrow().contains_key(&(bytecode as usize)))
+}
+
+/// The local names of frames of `proc` running the bytecode at `bytecode`.
+pub fn local_names_for(proc: &Proc, bytecode: *const u32) -> Vec<String> {
+	LOCAL_NAMES
+		.with(|map| map.borrow().get(&(bytecode as usize)).cloned())
+		.unwrap_or_else(|| proc.local_names().into_iter().map(String::from).collect())
+}
+
+pub(crate) fn clear_local_names() {
+	LOCAL_NAMES.with(|map| map.borrow_mut().clear());
+}
 
 pub struct StackFrame {
 	pub context: *mut procs::ExecutionContext,
@@ -30,7 +61,13 @@ impl StackFrame {
 		let proc = Proc::from_id((*instance).proc).unwrap();
 		let offset = *(*context).bytecode_offset();
 		let param_names = proc.parameter_names();
-		let local_names = proc.local_names();
+		let bytecode = *(*context).bytecode();
+		let local_names = LOCAL_NAMES.with(|map| {
+			map.borrow()
+				.get(&(bytecode as usize))
+				.map(|names| names.iter().map(|name| StringRef::new(name).ok()).collect::<Vec<_>>())
+		});
+		let local_names = local_names.unwrap_or_else(|| proc.local_names().into_iter().map(Some).collect());
 
 		let usr = Value::from_raw((*instance).usr);
 		let src = Value::from_raw((*instance).src);
@@ -45,12 +82,15 @@ impl StackFrame {
 			})
 			.collect();
 
+		// A frame can have more locals than names when its proc's table was
+		// swapped for a bigger one
 		let locals = (0..*(*context).locals_count())
 			.map(|i| {
-				(
-					local_names.get(i as usize).unwrap().clone(),
-					Value::from_raw(*(*(*context).locals()).add(i as usize))
-				)
+				let name = match local_names.get(i as usize) {
+					Some(Some(name)) => name.clone(),
+					_ => StringRef::new(&format!("<local {}>", i)).unwrap()
+				};
+				(name, Value::from_raw(*(*(*context).locals()).add(i as usize)))
 			})
 			.collect();
 
@@ -94,24 +134,46 @@ impl Default for CallStacks {
 
 impl CallStacks {
 	pub fn new() -> CallStacks {
+		CallStacks {
+			active: Self::active(),
+			suspended: Self::suspended()
+		}
+	}
+
+	/// The stack of the proc that's running, innermost frame first
+	pub fn active() -> Vec<StackFrame> {
+		unsafe { CallStacks::from_context(*funcs::CURRENT_EXECUTION_CONTEXT, CallStackKind::Active) }
+	}
+
+	/// The stacks of the procs that are asleep, each innermost frame first.
+	/// A world can have thousands.
+	pub fn suspended() -> Vec<Vec<StackFrame>> {
+		Self::suspended_first(usize::MAX)
+	}
+
+	/// The stacks of the first `limit` procs that are asleep, in BYOND's
+	/// order
+	pub fn suspended_first(limit: usize) -> Vec<Vec<StackFrame>> {
 		let mut suspended = vec![];
 
 		unsafe {
 			let buffer = (*funcs::SUSPENDED_PROCS_BUFFER).buffer;
-			let procs = funcs::SUSPENDED_PROCS;
-			let front = (*procs).front;
-			let back = (*procs).back;
-
-			for x in front..back {
+			for x in funcs::suspended_range().take(limit) {
 				let instance = *buffer.add(x);
 				let context = (*instance).context;
 				suspended.push(CallStacks::from_context(context, CallStackKind::Suspended));
 			}
 		}
 
-		CallStacks {
-			active: unsafe { CallStacks::from_context(*funcs::CURRENT_EXECUTION_CONTEXT, CallStackKind::Active) },
-			suspended
+		suspended
+	}
+
+	/// The procs that are asleep: for each, the instance of the proc its
+	/// stack starts with (its outermost frame's). Cheap, however many.
+	pub fn suspended_instances() -> Vec<*mut procs::ProcInstance> {
+		unsafe {
+			let buffer = (*funcs::SUSPENDED_PROCS_BUFFER).buffer;
+			funcs::suspended_range().map(|x| *buffer.add(x)).collect()
 		}
 	}
 
