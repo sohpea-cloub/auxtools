@@ -30,8 +30,10 @@ fn capabilities() {
 		.collect();
 	offered.sort_unstable();
 	assert_eq!(offered, [
+		"completionTriggerCharacters",
 		"exceptionBreakpointFilters",
 		"supportTerminateDebuggee",
+		"supportsCompletionsRequest",
 		"supportsConditionalBreakpoints",
 		"supportsConfigurationDoneRequest",
 		"supportsEvaluateForHovers",

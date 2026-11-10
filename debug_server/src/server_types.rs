@@ -103,6 +103,14 @@ pub enum Request {
 		name: String,
 		value: String
 	},
+	/// The names that could go on from what's typed: with a `base`, the vars
+	/// and procs of what that expression is in the frame; without one, what
+	/// the frame can name. Those that start with `prefix`.
+	Complete {
+		frame_id: Option<u32>,
+		base: Option<String>,
+		prefix: String
+	},
 	/// From a client that isn't debugging: it's connected for something else,
 	/// like the launcher of a world run without debugging, there to hot
 	/// reload it. A pause doesn't wait for it, as it wouldn't let the world
@@ -172,6 +180,7 @@ pub enum Response {
 	/// Another client hot reloaded the world: its code has changed, and
 	/// lines may be elsewhere
 	CodeChanged,
+	Complete(Vec<Completion>),
 	/// The variable as it is now, or why it couldn't be set
 	SetVariable(Result<Variable, String>),
 	/// A breakpoint this client set with a message was hit: the message,
@@ -203,6 +212,14 @@ pub enum BreakpointReason {
 	/// A runtime error, or a `throw`: its message, and whether it's inside
 	/// a `try` that will catch it
 	Runtime { message: String, caught: bool }
+}
+
+/// A name that could be typed next
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct Completion {
+	pub name: String,
+	/// It's a proc to call, not a var to read
+	pub proc: bool
 }
 
 /// A piece of a breakpoint's log message

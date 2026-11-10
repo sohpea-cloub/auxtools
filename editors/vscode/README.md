@@ -107,6 +107,10 @@ While the world is paused, resting the mouse on a name in the code shows its val
 selected frame: `health`, or `target.loc.name` with the mouse on `name`. A hover only
 reads: it doesn't call procs.
 
+The debug console completes names as you type: the frame's locals and arguments, `src`'s
+vars and procs, globals and global procs, and after a `.` the vars and procs of whatever
+is before it.
+
 `#dis` in the debug console shows the bytecode of the frame's proc, `#dis /proc/name` any
 proc's.
 

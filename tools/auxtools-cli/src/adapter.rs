@@ -133,6 +133,15 @@ struct AttachArguments {
 	hot_reload: bool
 }
 
+/// What `completions` takes
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CompletionsArguments {
+	frame_id: Option<i64>,
+	text: String,
+	column: i64
+}
+
 /// What `setVariable` takes (dap-types has none of it)
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -404,6 +413,7 @@ impl Adapter {
 			"stepOut" => arguments::<StepOutArguments>(args).and_then(|args| self.step(|stack_id| ContinueKind::StepOut { stack_id }, args.threadId)),
 			"pause" => self.pause(),
 			"evaluate" => arguments(args).and_then(|args| self.evaluate(args)),
+			"completions" => arguments(args).and_then(|args| self.completions(args)),
 			"setVariable" => arguments(args).and_then(|args| self.set_variable(args)),
 			"setExpression" => arguments(args).and_then(|args| self.set_expression(args)),
 			"exceptionInfo" => self.exception_info(),
@@ -439,6 +449,8 @@ impl Adapter {
 		// What dap-types has no fields for
 		let condition = "Text the error's message has to have, like \"bounds, null\" for either, or mustn't, like \"!libdreamluau\"";
 		capabilities["supportsExceptionFilterOptions"] = true.into();
+		capabilities["supportsCompletionsRequest"] = true.into();
+		capabilities["completionTriggerCharacters"] = serde_json::json!([".", ":"]);
 		capabilities["exceptionBreakpointFilters"] = serde_json::json!([
 			{
 				"filter": RUNTIMES,
@@ -1345,6 +1357,62 @@ impl Adapter {
 		}
 	}
 
+	/// What could be typed next in the debug console
+	fn completions(&mut self, args: CompletionsArguments) -> Handled {
+		// The column counts UTF-16 units, from 1
+		let before = args.column.max(1) as usize - 1;
+		let cursor = args
+			.text
+			.char_indices()
+			.scan(0, |units, (at, c)| {
+				let here = *units;
+				*units += c.len_utf16();
+				Some((at, here))
+			})
+			.find(|(_, units)| *units >= before)
+			.map_or(args.text.len(), |(at, _)| at);
+		let Some(place) = completion_place(&args.text[..cursor]) else {
+			return Ok(serde_json::json!({ "targets": [] }));
+		};
+		let prefix = &args.text[place.start..cursor];
+		let (start, length) = (args.text[..place.start].encode_utf16().count() + 1, prefix.encode_utf16().count());
+		let target = |label: &str, kind: &str| serde_json::json!({ "label": label, "type": kind, "start": start, "length": length });
+
+		// The debug server's own commands
+		if place.command {
+			let targets: Vec<Value> = ["dis", "disassemble", "guest_override", "help", "mem_profiler"]
+				.into_iter()
+				.filter(|command| command.starts_with(prefix))
+				.map(|command| target(command, "keyword"))
+				.collect();
+			return Ok(serde_json::json!({ "targets": targets }));
+		}
+
+		match self.request(&AuxRequest::Complete {
+			frame_id: args.frame_id.map(|id| id as u32),
+			base: place.base.map(str::to_owned),
+			prefix: prefix.to_owned()
+		})? {
+			AuxResponse::Complete(names) => {
+				let member = place.base.is_some();
+				let targets: Vec<Value> = names
+					.iter()
+					.map(|name| {
+						let kind = match (name.proc, member) {
+							(true, true) => "method",
+							(true, false) => "function",
+							(false, true) => "property",
+							(false, false) => "variable"
+						};
+						target(&name.name, kind)
+					})
+					.collect();
+				Ok(serde_json::json!({ "targets": targets }))
+			}
+			other => Err(unexpected(other))
+		}
+	}
+
 	/// Gives a variable the value of an expression
 	fn set_variable(&mut self, args: SetVariableArguments) -> Handled {
 		let hex = args.format.is_some_and(|format| format.hex == Some(true));
@@ -1394,6 +1462,85 @@ impl Adapter {
 			_ => Err("there's no such source".to_owned())
 		}
 	}
+}
+
+/// Where a name is being typed, at the end of some text
+#[derive(Debug, PartialEq, Eq)]
+struct CompletionPlace<'a> {
+	/// Where the name starts
+	start: usize,
+	/// What it's a member of, if it comes after a `.` or the like: `a.b[2]`
+	/// for `a.b[2].na`
+	base: Option<&'a str>,
+	/// It's one of the debug server's commands, after a `#`
+	command: bool
+}
+
+/// Where the name being typed at the end of `text` starts, and what it's a
+/// member of. `None` where names aren't to be suggested: in a text, or after
+/// something that would have to be called to know what it is.
+fn completion_place(text: &str) -> Option<CompletionPlace<'_>> {
+	let name_char = |c: char| c.is_ascii_alphanumeric() || c == '_';
+	if text.chars().filter(|&c| c == '"').count() % 2 == 1 {
+		return None;
+	}
+	let start = text.trim_end_matches(name_char).len();
+	// A number isn't a name
+	if text[start..].starts_with(|c: char| c.is_ascii_digit()) {
+		return None;
+	}
+	if text[..start].trim_start() == "#" {
+		return Some(CompletionPlace {
+			start,
+			base: None,
+			command: true
+		});
+	}
+
+	// What's before it, back through `.`, `?.`, `:` and `?:`, names and
+	// indexes
+	let mut at = start;
+	let mut base_end = None;
+	loop {
+		let before = &text[..at];
+		let Some(joined) = ["?.", "?:", ".", ":"].into_iter().find(|by| before.ends_with(by)) else {
+			break;
+		};
+		let member_end = at - joined.len();
+		base_end.get_or_insert(member_end);
+		let mut member = member_end;
+		// Indexes: `[...]`, with nothing called inside
+		while text[..member].ends_with(']') {
+			let mut depth = 0;
+			let mut open = None;
+			for (i, c) in text[..member].char_indices().rev() {
+				match c {
+					']' => depth += 1,
+					'[' => {
+						depth -= 1;
+						if depth == 0 {
+							open = Some(i);
+							break;
+						}
+					}
+					'(' | ')' => return None,
+					_ => {}
+				}
+			}
+			member = open?;
+		}
+		let name = text[..member].trim_end_matches(name_char).len();
+		// Something else: a call's result, a parenthesis
+		if name == member {
+			return None;
+		}
+		at = name;
+	}
+	Some(CompletionPlace {
+		start,
+		base: base_end.map(|end| &text[at..end]),
+		command: false
+	})
 }
 
 /// Whether an expression could do more than read: it calls something, or
@@ -1500,7 +1647,34 @@ mod tests {
 
 	use auxtools_cli::server_types::{HitCondition, LogPart, RuntimeFilter};
 
-	use super::{changes_things, file_name_in, named_proc, shown};
+	use super::{changes_things, completion_place, file_name_in, named_proc, shown};
+
+	#[test]
+	fn a_name_is_completed_where_it_starts() {
+		fn place(text: &str) -> Option<(&str, Option<&str>, bool)> {
+			completion_place(text).map(|place| (&text[place.start..], place.base, place.command))
+		}
+		assert_eq!(place("hea"), Some(("hea", None, false)));
+		assert_eq!(place(""), Some(("", None, false)));
+		assert_eq!(place("x + hea"), Some(("hea", None, false)));
+		assert_eq!(place("leaf(by, n"), Some(("n", None, false)));
+		assert_eq!(place("src."), Some(("", Some("src"), false)));
+		assert_eq!(place("src.na"), Some(("na", Some("src"), false)));
+		assert_eq!(place("x + src.loc.na"), Some(("na", Some("src.loc"), false)));
+		assert_eq!(place("a?.b:c?:d"), Some(("d", Some("a?.b:c"), false)));
+		assert_eq!(place("items[2].na"), Some(("na", Some("items[2]"), false)));
+		assert_eq!(place("f(x) + items[\"k\"][i + 1].na"), Some(("na", Some("items[\"k\"][i + 1]"), false)));
+		assert_eq!(place("#"), Some(("", None, true)));
+		assert_eq!(place("#di"), Some(("di", None, true)));
+		assert_eq!(place(" #mem"), Some(("mem", None, true)));
+	}
+
+	#[test]
+	fn nothing_is_completed_where_it_cant_be_known() {
+		for text in ["get_mob().na", "(a).b", "items[f()].na", "\"text", "\"a\" + \"b.", "12", "x + 3", ".na", "a..b", "]."] {
+			assert_eq!(completion_place(text), None, "{}", text);
+		}
+	}
 
 	#[test]
 	fn a_hover_reads_and_does_nothing_else() {

@@ -2090,6 +2090,11 @@ pub fn added_global(name: &str) -> Option<u32> {
 	ADDED_GLOBALS.lock().unwrap().get(name).copied()
 }
 
+/// The names of the global vars hot reloads have added
+pub fn added_globals() -> Vec<String> {
+	ADDED_GLOBALS.lock().unwrap().keys().cloned().collect()
+}
+
 /// The debugger's own world procs (see `launched`), which stay the most
 /// derived: a world proc a reload adds goes beneath them
 static PINNED_WORLD_PROCS: Mutex<Vec<u32>> = Mutex::new(Vec::new());

@@ -1212,6 +1212,127 @@ impl Server {
 		self.send_or_disconnect(Response::Variables { vars });
 	}
 
+	/// The most names a completion gives: more than that is no help to choose
+	/// from
+	const MOST_COMPLETIONS: usize = 200;
+
+	/// The types an object is of, its own first: `/mob/player`, `/mob`,
+	/// `/atom/movable`, `/atom`, `/datum`
+	fn types_of(value: &Value) -> Vec<String> {
+		let mut types = vec![];
+		let mut path = value.get(byond_string!("type")).ok();
+		// (a type's parent isn't always the path without its last part)
+		while let Some(this) = path.filter(|path| path.raw.tag != ValueTag::Null) {
+			let name = Self::stringify(&this);
+			if !name.starts_with('/') || types.contains(&name) || types.len() > 64 {
+				break;
+			}
+			types.push(name);
+			path = this.get(byond_string!("parent_type")).ok();
+		}
+		types
+	}
+
+	/// The vars and procs of a value, into `found` (a name, and whether
+	/// it's a proc)
+	fn members_of(value: &Value, found: &mut BTreeMap<String, bool>) {
+		if let Some(fields) = Self::primitive_fields(value) {
+			found.extend(fields.iter().map(|&name| (name.to_owned(), false)));
+		} else if let Ok(vars) = value.get(byond_string!("vars")).and_then(|vars| List::from_value(&vars)) {
+			for i in 1..=vars.len() {
+				if let Ok(name) = vars.get(i).and_then(|name| name.as_string()) {
+					found.insert(name, false);
+				}
+			}
+		}
+
+		let types = Self::types_of(value);
+		if types.is_empty() {
+			return;
+		}
+		Self::each_proc(|owner, name| {
+			if types.iter().any(|path| path == owner) {
+				found.entry(name.to_owned()).or_insert(true);
+			}
+		});
+	}
+
+	/// Calls `each` with every proc's type (`""` for a global proc) and name
+	fn each_proc(mut each: impl FnMut(&str, &str)) {
+		for id in 0..auxtools::runtime_tables::proc_count() {
+			let Some(proc) = Proc::from_id(raw_types::procs::ProcId(id)) else {
+				continue;
+			};
+			// The debugger's own, and a type's init code, aren't for calling
+			let Some((owner, name)) = proc.path.rsplit_once('/') else {
+				continue;
+			};
+			if name.starts_with("auxtools_") || name.ends_with(')') || name.is_empty() {
+				continue;
+			}
+			each(owner, name);
+		}
+	}
+
+	/// The names that could follow what's typed (see `Request::Complete`)
+	fn complete(&mut self, frame_id: Option<u32>, base: Option<&str>, prefix: &str) -> Vec<Completion> {
+		let mut found: BTreeMap<String, bool> = BTreeMap::new();
+		match base {
+			Some(base) => {
+				let Ok(value) = self.eval_expr(frame_id, base) else {
+					return vec![];
+				};
+				if let Some(state) = self.state.as_mut() {
+					state.invalidate_stacks();
+				}
+				Self::members_of(&value, &mut found);
+			}
+
+			None => {
+				// What the frame has, then its src's, then the world's
+				let mut src = None;
+				if let Some(frame) = frame_id.and_then(|frame_id| self.get_stack_frame(frame_id)) {
+					for name in [".", "src", "usr", "args"] {
+						found.insert(name.to_owned(), false);
+					}
+					found.extend(frame.args.iter().filter_map(|(name, _)| name.as_ref()).map(|name| (String::from(name), false)));
+					found.extend(frame.locals.iter().map(|(name, _)| (String::from(name), false)));
+					src = Some(frame.src.clone()).filter(|src| *src != Value::NULL);
+				}
+				if let Some(src) = &src {
+					Self::members_of(src, &mut found);
+				}
+
+				for name in ["world", "global"] {
+					found.entry(name.to_owned()).or_insert(false);
+				}
+				if let Ok(names) = List::from_value(&unsafe { Value::new(ValueTag::GlobalVars, ValueData { id: 0 }) }) {
+					for i in 1..=names.len() {
+						if let Ok(name) = names.get(i).and_then(|name| name.as_string()) {
+							found.entry(name).or_insert(false);
+						}
+					}
+				}
+				for name in hot_reload::added_globals() {
+					found.entry(name).or_insert(false);
+				}
+				Self::each_proc(|owner, name| {
+					if owner.is_empty() {
+						found.entry(name.to_owned()).or_insert(true);
+					}
+				});
+			}
+		}
+
+		let prefix = prefix.to_lowercase();
+		found
+			.into_iter()
+			.filter(|(name, _)| name.to_lowercase().starts_with(&prefix))
+			.take(Self::MOST_COMPLETIONS)
+			.map(|(name, proc)| Completion { name, proc })
+			.collect()
+	}
+
 	/// The entry of a list that a client knows as `[n]`: its place, from 1
 	fn entry_number(name: &str) -> Option<u32> {
 		name.strip_prefix('[')?.strip_suffix(']')?.parse().ok().filter(|&n| n > 0)
@@ -1722,6 +1843,10 @@ impl Server {
 			Request::Stacks => self.handle_stacks(),
 			Request::Scopes { frame_id } => self.handle_scopes(frame_id),
 			Request::Variables { vars, start, count } => self.handle_variables(vars, start, count),
+			Request::Complete { frame_id, base, prefix } => {
+				let names = self.complete(frame_id, base.as_deref(), &prefix);
+				self.send_or_disconnect(Response::Complete(names));
+			}
 			Request::SetVariable { vars, name, value } => {
 				let result = self.set_variable(vars, &name, &value);
 				self.send_or_disconnect(Response::SetVariable(result));

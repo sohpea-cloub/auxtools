@@ -4,6 +4,97 @@ use serde_json::json;
 
 use crate::{ok, world::World};
 
+/// What the launcher offers to go on with, typed as far as `text` in the
+/// paused frame (or in no frame): each name with its kind
+fn offered(world: &mut World, text: &str, frame: Option<&serde_json::Value>) -> Vec<(String, String)> {
+	let targets = world.request("completions", json!({ "frameId": frame, "text": text, "column": text.encode_utf16().count() + 1 }));
+	targets["targets"]
+		.as_array()
+		.unwrap()
+		.iter()
+		.map(|t| (t["label"].as_str().unwrap().to_owned(), t["type"].as_str().unwrap().to_owned()))
+		.collect()
+}
+
+/// Completions in the debug console, in the frame of a /datum/thing/sub's
+/// inside(by), with a local local_list
+fn completions(world: &mut World) {
+	let frame = world.frame_id();
+	let names = |world: &mut World, text: &str| -> Vec<String> { offered(world, text, Some(&frame)).into_iter().map(|(name, _)| name).collect() };
+	let pair = |name: &str, kind: &str| (name.to_owned(), kind.to_owned());
+
+	assert_eq!(offered(world, "by", Some(&frame)), [pair("by", "variable")]);
+	assert_eq!(names(world, "loc"), ["local_list"]);
+	// The frame's own, src's vars and procs, globals and global procs
+	let all = offered(world, "", Some(&frame));
+	for expected in [
+		pair("by", "variable"),
+		pair("local_list", "variable"),
+		pair("src", "variable"),
+		pair("usr", "variable"),
+		pair("args", "variable"),
+		pair("n", "variable"),
+		pair("items", "variable"),
+		pair("bump", "function"),
+		pair("inside", "function"),
+		pair("global_number", "variable"),
+		pair("leaf", "function"),
+		pair("middle", "function"),
+		pair("world", "variable")
+	] {
+		assert!(all.contains(&expected), "{:?} isn't offered", expected);
+	}
+	assert!(!all.iter().any(|(name, _)| name.contains("auxtools") || name.contains('(')), "{:?}", all);
+	ok("a name being typed is completed with what the frame can name: its own, src's vars and procs, globals and global procs");
+
+	// After a dot: what that is, in the frame
+	let members = offered(world, "src.", Some(&frame));
+	for expected in [
+		pair("n", "property"),
+		pair("name", "property"),
+		pair("other", "property"),
+		pair("shared", "property"),
+		pair("type", "property"),
+		pair("bump", "method"),
+		pair("inside", "method")
+	] {
+		assert!(members.contains(&expected), "{:?} isn't offered", expected);
+	}
+	assert!(!members.iter().any(|(name, _)| name == "by" || name == "leaf" || name == "hp"), "{:?}", members);
+	assert_eq!(names(world, "src.o"), ["other"]);
+	assert_eq!(names(world, "x + src.BU"), ["bump"]);
+	assert_eq!(names(world, "world.max"), ["maxx", "maxy", "maxz"]);
+	ok("after a dot, the vars and procs of what's before it, whatever the case");
+
+	let mob = names(world, "new /mob/player(null).");
+	assert_eq!(mob, Vec::<String>::new(), "a call isn't made to find out what it gives");
+	assert_eq!(names(world, "src.other."), Vec::<String>::new());
+	assert_eq!(names(world, "nowhere_at_all."), Vec::<String>::new());
+	assert_eq!(names(world, "\"some te"), Vec::<String>::new());
+	assert_eq!(names(world, "local_list[1]."), Vec::<String>::new());
+	ok("nothing is offered for what would have to be called, isn't there, or has no vars");
+
+	// In the middle of a line, and with letters that take two units
+	let targets = world.request("completions", json!({ "frameId": frame, "text": "leaf(by) + n", "column": 8 }));
+	assert_eq!(targets["targets"][0]["label"], "by");
+	assert_eq!((&targets["targets"][0]["start"], &targets["targets"][0]["length"]), (&json!(6), &json!(2)));
+	let targets = world.request("completions", json!({ "frameId": frame, "text": "\"\u{1F600}\" + src.na", "column": 14 }));
+	assert_eq!(targets["targets"][0]["label"], "name");
+	// The face is two units: quote, face, quote, " + ", "src." are 11
+	assert_eq!((&targets["targets"][0]["start"], &targets["targets"][0]["length"]), (&json!(12), &json!(2)));
+	ok("a completion says which text it takes the place of, wherever the cursor is");
+
+	assert_eq!(offered(world, "#d", Some(&frame)), [pair("dis", "keyword"), pair("disassemble", "keyword")]);
+	assert_eq!(offered(world, "#", Some(&frame)).len(), 5);
+	ok("the debug server's commands are completed after a #");
+
+	// No frame: the world's, and nothing of a frame's
+	let global = offered(world, "glo", None);
+	assert_eq!(global, [pair("global", "variable"), pair("global_list", "variable"), pair("global_number", "variable")]);
+	assert_eq!(offered(world, "by", None), Vec::<(String, String)>::new());
+	ok("with no frame, globals and global procs are completed");
+}
+
 pub fn run() {
 	let mut world = World::start();
 	world.run_to("inside", "/datum/thing/inside", "inside_stop");
@@ -160,6 +251,8 @@ pub fn run() {
 	}
 	assert_eq!(world.eval("n"), "1");
 	ok("a hover evaluates what reads, and refuses what would call a proc or assign");
+
+	completions(&mut world);
 
 	// sc_inside called inside(), and has a local of its own
 	let caller = world.frames(0)[1]["id"].clone();
