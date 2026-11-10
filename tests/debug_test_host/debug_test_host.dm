@@ -12,6 +12,8 @@ var/reboot_requested = FALSE
 /proc/tick_marker()
 	return 1
 
+// 516's own kinds of value. 515 has none of them.
+#if DM_VERSION >= 516
 /proc/alist_sample()
 	return alist("a" = 1, 7 = "seven", "n" = null)
 
@@ -23,6 +25,7 @@ var/reboot_requested = FALSE
 
 /proc/pixloc_sample()
 	return pixloc(1, 1, 1)
+#endif
 
 // Two seconds of runtime errors, then quiet again. The debugger is told not
 // to pause on them.
@@ -37,8 +40,10 @@ var/reboot_requested = FALSE
 	reboot_requested = TRUE
 
 /proc/main_loop()
+#if DM_VERSION >= 516
 	// a callee only reads while its proc is running, so the test looks at this one
 	var/callee/this_proc = callee
+#endif
 	while (!reboot_requested)
 		breakpoint_target()
 		tick_marker()

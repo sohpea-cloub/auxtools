@@ -111,6 +111,55 @@ fn pause(client: &mut Client) {
 	assert_eq!(client.expect_pause(), BreakpointReason::Pause);
 }
 
+/// How the values 516 brought show
+fn values_516(client: &mut Client) {
+	// numbers are keys in an alist, so walking it by position shows nonsense
+	let response = client.request(Request::Eval {
+		frame_id: Some(0),
+		command: "alist_sample()".to_owned(),
+		context: None
+	});
+	let Response::Eval(alist) = response else {
+		panic!("expected the result of alist_sample(), got {:?}", response);
+	};
+	assert_eq!(alist.value, "/alist {len = 3}");
+	let vars = match client.request(Request::Variables {
+		vars: alist.variables.expect("an alist should be expandable")
+	}) {
+		Response::Variables { vars } => vars,
+		other => panic!("expected Variables, got {:?}", other)
+	};
+	let mut shown: Vec<_> = vars.into_iter().map(|var| var.value).collect();
+	shown.sort();
+	assert_eq!(shown, ["\"a\" = 1", "\"n\" = null", "7 = \"seven\""]);
+	println!("ok: an alist shows its key/value pairs");
+
+	// size is a float, so only its start is checked
+	let (text, fields) = eval_fields(client, 0, "vector_sample()");
+	assert_eq!(text, "vector(1,2,3)");
+	assert_eq!(fields[..4], ["x = 1", "y = 2", "z = 3", "len = 3"]);
+	assert!(fields[4].starts_with("size = 3.74"), "unexpected size: {}", fields[4]);
+	let (text, fields) = eval_fields(client, 0, "vector2_sample()");
+	assert_eq!(text, "vector(4,5)");
+	assert_eq!(fields[..4], ["x = 4", "y = 5", "z = 0", "len = 2"]);
+	println!("ok: a vector shows its components");
+
+	let (text, fields) = eval_fields(client, 0, "pixloc_sample()");
+	assert_eq!(text, "pixloc(1,1,1)");
+	assert_eq!(fields[..5], ["x = 1", "y = 1", "z = 1", "step_x = 0", "step_y = 0"]);
+	assert!(fields[5].starts_with("loc = "), "unexpected loc: {}", fields[5]);
+	println!("ok: a pixloc shows its position");
+
+	// frame 1 is main_loop, which holds a callee of itself
+	let (text, fields) = eval_fields(client, 1, "this_proc");
+	assert!(text.contains("/proc/main_loop"), "unexpected callee text: {}", text);
+	assert_eq!(fields[..2], ["proc = /proc/main_loop", "file = \"debug_test_host.dm\""]);
+	assert!(fields[2].starts_with("line = "), "unexpected line: {}", fields[2]);
+	assert_eq!(fields[3..6], ["src = null", "usr = null", "args = /list {len = 0}"]);
+	assert!(fields[6].starts_with("caller = "), "unexpected caller: {}", fields[6]);
+	println!("ok: a callee shows its proc");
+}
+
 fn main() {
 	let res = Command::new(paths::find_dm())
 		.with_byond_paths()
@@ -136,51 +185,15 @@ fn main() {
 	assert_eq!(eval(&mut client, Some(0), "breakpoint_target()"), "2");
 	println!("ok: evaluating a proc that has a breakpoint in it");
 
-	// numbers are keys in an alist, so walking it by position shows nonsense
-	let response = client.request(Request::Eval {
-		frame_id: Some(0),
-		command: "alist_sample()".to_owned(),
-		context: None
-	});
-	let Response::Eval(alist) = response else {
-		panic!("expected the result of alist_sample(), got {:?}", response);
+	let byond = match client.request(Request::ByondVersion) {
+		Response::ByondVersion { version, build } => (version, build),
+		other => panic!("expected ByondVersion, got {:?}", other)
 	};
-	assert_eq!(alist.value, "/alist {len = 3}");
-	let vars = match client.request(Request::Variables {
-		vars: alist.variables.expect("an alist should be expandable")
-	}) {
-		Response::Variables { vars } => vars,
-		other => panic!("expected Variables, got {:?}", other)
-	};
-	let mut shown: Vec<_> = vars.into_iter().map(|var| var.value).collect();
-	shown.sort();
-	assert_eq!(shown, ["\"a\" = 1", "\"n\" = null", "7 = \"seven\""]);
-	println!("ok: an alist shows its key/value pairs");
-
-	// size is a float, so only its start is checked
-	let (text, fields) = eval_fields(&mut client, 0, "vector_sample()");
-	assert_eq!(text, "vector(1,2,3)");
-	assert_eq!(fields[..4], ["x = 1", "y = 2", "z = 3", "len = 3"]);
-	assert!(fields[4].starts_with("size = 3.74"), "unexpected size: {}", fields[4]);
-	let (text, fields) = eval_fields(&mut client, 0, "vector2_sample()");
-	assert_eq!(text, "vector(4,5)");
-	assert_eq!(fields[..4], ["x = 4", "y = 5", "z = 0", "len = 2"]);
-	println!("ok: a vector shows its components");
-
-	let (text, fields) = eval_fields(&mut client, 0, "pixloc_sample()");
-	assert_eq!(text, "pixloc(1,1,1)");
-	assert_eq!(fields[..5], ["x = 1", "y = 1", "z = 1", "step_x = 0", "step_y = 0"]);
-	assert!(fields[5].starts_with("loc = "), "unexpected loc: {}", fields[5]);
-	println!("ok: a pixloc shows its position");
-
-	// frame 1 is main_loop, which holds a callee of itself
-	let (text, fields) = eval_fields(&mut client, 1, "this_proc");
-	assert!(text.contains("/proc/main_loop"), "unexpected callee text: {}", text);
-	assert_eq!(fields[..2], ["proc = /proc/main_loop", "file = \"debug_test_host.dm\""]);
-	assert!(fields[2].starts_with("line = "), "unexpected line: {}", fields[2]);
-	assert_eq!(fields[3..6], ["src = null", "usr = null", "args = /list {len = 0}"]);
-	assert!(fields[6].starts_with("caller = "), "unexpected caller: {}", fields[6]);
-	println!("ok: a callee shows its proc");
+	if byond.0 >= 516 {
+		values_516(&mut client);
+	} else {
+		println!("(BYOND {}.{} has no alists, vectors, pixlocs or callees to show)", byond.0, byond.1);
+	}
 
 	assert_eq!(eval(&mut client, None, &dis_command), clean_disassembly);
 	println!("ok: disassembly doesn't show the breakpoint");

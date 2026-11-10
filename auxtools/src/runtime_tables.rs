@@ -117,14 +117,27 @@ pub mod type_fields {
 	/// subtree's
 	pub const PREORDER: usize = 0x84;
 	pub const PREORDER_END: usize = 0x88;
-	/// The type's typepath value (tag, data)
+	/// The type's typepath value (tag, data), from 515.1641 (see
+	/// `TYPEPATH_BUILD`)
 	pub const TYPEPATH: usize = 0x8C;
 }
 
-#[cfg(windows)]
-const TYPE_STRIDE: usize = 0x98;
-#[cfg(unix)]
-const TYPE_STRIDE: usize = 0x94;
+/// The first build that keeps each type's typepath value in its entry (and
+/// lets `text2path` find it through a map that's filled per type). Before it
+/// the entry ends after `PREORDER_END`, and `text2path` works the value out
+/// from the path when asked.
+const TYPEPATH_BUILD: u32 = 1641;
+
+/// The size of a type table entry on `build`
+fn type_stride(build: u32) -> usize {
+	if build < TYPEPATH_BUILD {
+		0x90
+	} else if cfg!(windows) {
+		0x98
+	} else {
+		0x94
+	}
+}
 
 struct Functions {
 	procdef_add: extern "C" fn(*const ProcEntryWords) -> u32,
@@ -132,8 +145,11 @@ struct Functions {
 	alloc_shared: extern "C" fn(usize) -> *mut c_void,
 	free_shared: extern "C" fn(*mut c_void) -> bool,
 	copy_shared: extern "C" fn(*mut c_void) -> *mut c_void,
-	/// Works out a type's typepath value and lets `text2path` find it
-	register_typepath: extern "C" fn(u32),
+	/// Works out a type's typepath value and lets `text2path` find it (none
+	/// before `TYPEPATH_BUILD`)
+	register_typepath: Option<extern "C" fn(u32)>,
+	/// The size of a type table entry
+	type_stride: usize,
 	crt_realloc: extern "C" fn(*mut c_void, usize) -> *mut c_void,
 	type_count: *const u32,
 	type_table: *const *mut u8,
@@ -179,7 +195,7 @@ pub(crate) fn reset() {
 mod recipes {
 	use byond_scan::{Anchor, Extract, OperandSelect, Recipe, SignatureTreatment, VersionRange};
 
-	const CHECKED: VersionRange = VersionRange { min: 1659, max: 1688 };
+	const CHECKED: VersionRange = VersionRange { min: 1637, max: 1688 };
 
 	// Appends an entry to the proc table, or finds an identical one
 	pub const PROCDEF_ADD: Recipe = Recipe {
@@ -272,21 +288,48 @@ mod recipes {
 	                           34 C5 00 00 00 00 56 FF D3 83 C4 04 85 F6 74 08 85 C0 0F 84 ?? ?? ?? ?? A3 ?? ?? ?? ?? A1 ?? ?? ?? ?? 8D 34 85 00 00 \
 	                           00 00 56 FF D3 83 C4 04 85 F6 74 08 85 C0 0F 84 ?? ?? ?? ?? 33 F6 A3 ?? ?? ?? ??";
 
-	pub const PREORDER: Recipe = Recipe {
-		name: "type_preorder",
-		versions: CHECKED,
-		anchor: Anchor::Signature(SignatureTreatment::NoOffset, TYPE_LOADER),
-		hops: &[],
-		extract: Extract::AbsMem(OperandSelect::NthAbsMem(4))
-	};
+	// Before 515.1641 a type entry is 0x90 bytes, multiplied with a `lea` and
+	// a shift. The operands are numbered the same.
+	const TYPE_LOADER_515: &str = "A3 ?? ?? ?? ?? 8D 34 C0 C1 E6 04 56 FF D3 83 C4 04 85 F6 74 08 85 C0 0F 84 ?? ?? ?? ?? A3 ?? ?? ?? ?? A1 ?? ?? \
+	                               ?? ?? 8D 34 85 00 00 00 00 56 FF D3 83 C4 04 85 F6 74 08 85 C0 0F 84 ?? ?? ?? ?? A3 ?? ?? ?? ?? A1 ?? ?? ?? ?? \
+	                               8D 34 C5 00 00 00 00 56 FF D3 83 C4 04 85 F6 74 08 85 C0 0F 84 ?? ?? ?? ?? A3 ?? ?? ?? ?? A1 ?? ?? ?? ?? 8D 34 \
+	                               85 00 00 00 00 56 FF D3 83 C4 04 85 F6 74 08 85 C0 0F 84 ?? ?? ?? ?? 33 F6 A3 ?? ?? ?? ??";
+	const BEFORE_TYPEPATHS: VersionRange = VersionRange { min: 1637, max: 1640 };
+	const WITH_TYPEPATHS: VersionRange = VersionRange { min: 1641, max: 1688 };
 
-	pub const APPEARANCE_CACHE: Recipe = Recipe {
-		name: "type_appearance_cache",
-		versions: CHECKED,
-		anchor: Anchor::Signature(SignatureTreatment::NoOffset, TYPE_LOADER),
-		hops: &[],
-		extract: Extract::AbsMem(OperandSelect::NthAbsMem(10))
-	};
+	pub const PREORDER: [Recipe; 2] = [
+		Recipe {
+			name: "type_preorder",
+			versions: WITH_TYPEPATHS,
+			anchor: Anchor::Signature(SignatureTreatment::NoOffset, TYPE_LOADER),
+			hops: &[],
+			extract: Extract::AbsMem(OperandSelect::NthAbsMem(4))
+		},
+		Recipe {
+			name: "type_preorder",
+			versions: BEFORE_TYPEPATHS,
+			anchor: Anchor::Signature(SignatureTreatment::NoOffset, TYPE_LOADER_515),
+			hops: &[],
+			extract: Extract::AbsMem(OperandSelect::NthAbsMem(4))
+		}
+	];
+
+	pub const APPEARANCE_CACHE: [Recipe; 2] = [
+		Recipe {
+			name: "type_appearance_cache",
+			versions: WITH_TYPEPATHS,
+			anchor: Anchor::Signature(SignatureTreatment::NoOffset, TYPE_LOADER),
+			hops: &[],
+			extract: Extract::AbsMem(OperandSelect::NthAbsMem(10))
+		},
+		Recipe {
+			name: "type_appearance_cache",
+			versions: BEFORE_TYPEPATHS,
+			anchor: Anchor::Signature(SignatureTreatment::NoOffset, TYPE_LOADER_515),
+			hops: &[],
+			extract: Extract::AbsMem(OperandSelect::NthAbsMem(10))
+		}
+	];
 
 	// The loader of the procs that return parameters' `in` lists: the count
 	// is operand 1, the table 2 (after the `lea` of its size)
@@ -378,7 +421,7 @@ mod recipes {
 
 	pub const REGISTER_TYPEPATH_OLD: Recipe = Recipe {
 		name: "register_typepath",
-		versions: VersionRange { min: 1659, max: 1686 },
+		versions: VersionRange { min: 1641, max: 1686 },
 		anchor: Anchor::Signature(
 			SignatureTreatment::NoOffset,
 			"55 8B EC 57 8B 7D 08 3B 3D ?? ?? ?? ?? 0F 83 ?? ?? ?? ?? 56 69 F7 98 00 00 00 03 35 ?? ?? ?? ?? 0F 84 ?? ?? ?? ?? 80 BE 8C 00 00 00 00 \
@@ -393,6 +436,7 @@ mod recipes {
 fn resolve() -> Result<Functions, String> {
 	use recipes::*;
 	let find = |recipe| crate::find_recipe(recipe);
+	let build = crate::byond_build()?;
 
 	// BYOND's tables are allocated by the CRT DLL it links (ucrtbase), and
 	// growing one has to go through the same heap. Ours is linked statically.
@@ -417,13 +461,18 @@ fn resolve() -> Result<Functions, String> {
 			alloc_shared: std::mem::transmute(find(&ALLOC_SHARED)?),
 			free_shared: std::mem::transmute(find(&FREE_SHARED)?),
 			copy_shared: std::mem::transmute(find(&COPY_SHARED)?),
-			register_typepath: std::mem::transmute(find(&REGISTER_TYPEPATH).or_else(|_| find(&REGISTER_TYPEPATH_OLD))?),
+			register_typepath: if build < TYPEPATH_BUILD {
+				None
+			} else {
+				Some(std::mem::transmute(find(&REGISTER_TYPEPATH).or_else(|_| find(&REGISTER_TYPEPATH_OLD))?))
+			},
+			type_stride: type_stride(build),
 			crt_realloc: std::mem::transmute(crt_realloc),
 			type_count: type_count as *const u32,
 			type_table: (type_count - 4) as *const *mut u8,
 			name_maps: find(&NAME_MAPS)? as *const *mut ProcNameMap,
-			preorder: find(&PREORDER)? as *const *mut u32,
-			appearance_cache: find(&APPEARANCE_CACHE)? as *const *mut u32,
+			preorder: crate::find_recipe_of(&PREORDER)? as *const *mut u32,
+			appearance_cache: crate::find_recipe_of(&APPEARANCE_CACHE)? as *const *mut u32,
 			in_list_count: find(&IN_LIST_COUNT)? as *const u32,
 			in_list_procs: find(&IN_LIST_PROCS)? as *const *mut u32,
 			instance_count: find(&INSTANCE_COUNT)? as *const u32,
@@ -535,21 +584,21 @@ mod recipes {
 	                           10 85 FF 74 08 85 C0 0F 84 ?? ?? ?? ?? 83 EC 0C FF B5 ?? ?? ?? ?? A3 ?? ?? ?? ?? E8 ?? ?? ?? ?? 83 C4 10 85 C0 75 ?? \
 	                           80 BD ?? ?? ?? ?? 00 0F 85 ?? ?? ?? ?? A3 ?? ?? ?? ??";
 
-	pub const PREORDER: Recipe = Recipe {
+	pub const PREORDER: [Recipe; 1] = [Recipe {
 		name: "type_preorder",
 		versions: CHECKED,
 		anchor: Anchor::Signature(SignatureTreatment::NoOffset, TYPE_LOADER),
 		hops: &[],
 		extract: Extract::AbsMem(OperandSelect::NthAbsMem(4))
-	};
+	}];
 
-	pub const APPEARANCE_CACHE: Recipe = Recipe {
+	pub const APPEARANCE_CACHE: [Recipe; 1] = [Recipe {
 		name: "type_appearance_cache",
 		versions: CHECKED,
 		anchor: Anchor::Signature(SignatureTreatment::NoOffset, TYPE_LOADER),
 		hops: &[],
 		extract: Extract::AbsMem(OperandSelect::NthAbsMem(6))
-	};
+	}];
 
 	// The loader of the procs that return parameters' `in` lists: the count
 	// is operand 1, the table 2 (after the `lea` of its size)
@@ -659,6 +708,7 @@ fn resolve() -> Result<Functions, String> {
 		fn realloc(ptr: *mut c_void, size: usize) -> *mut c_void;
 	}
 	let find = |recipe| crate::find_recipe(recipe);
+	let build = crate::byond_build()?;
 
 	let type_count = find(&TYPE_COUNT)?;
 	unsafe {
@@ -668,13 +718,18 @@ fn resolve() -> Result<Functions, String> {
 			alloc_shared: std::mem::transmute(find(&ALLOC_SHARED)?),
 			free_shared: std::mem::transmute(find(&FREE_SHARED)?),
 			copy_shared: std::mem::transmute(find(&COPY_SHARED)?),
-			register_typepath: std::mem::transmute(find(&REGISTER_TYPEPATH).or_else(|_| find(&REGISTER_TYPEPATH_OLD))?),
+			register_typepath: if build < TYPEPATH_BUILD {
+				None
+			} else {
+				Some(std::mem::transmute(find(&REGISTER_TYPEPATH).or_else(|_| find(&REGISTER_TYPEPATH_OLD))?))
+			},
+			type_stride: type_stride(build),
 			crt_realloc: std::mem::transmute::<unsafe extern "C" fn(*mut c_void, usize) -> *mut c_void, _>(realloc),
 			type_count: type_count as *const u32,
 			type_table: (type_count + 4) as *const *mut u8,
 			name_maps: find(&NAME_MAPS)? as *const *mut ProcNameMap,
-			preorder: find(&PREORDER)? as *const *mut u32,
-			appearance_cache: find(&APPEARANCE_CACHE)? as *const *mut u32,
+			preorder: crate::find_recipe_of(&PREORDER)? as *const *mut u32,
+			appearance_cache: crate::find_recipe_of(&APPEARANCE_CACHE)? as *const *mut u32,
 			in_list_count: find(&IN_LIST_COUNT)? as *const u32,
 			in_list_procs: find(&IN_LIST_PROCS)? as *const *mut u32,
 			instance_count: find(&INSTANCE_COUNT)? as *const u32,
@@ -791,7 +846,7 @@ fn type_entry(type_id: u32) -> Result<*mut u8, String> {
 		if type_id >= *functions.type_count {
 			return Err(format!("there's no type {}", type_id));
 		}
-		Ok((*functions.type_table).add(type_id as usize * TYPE_STRIDE))
+		Ok((*functions.type_table).add(type_id as usize * functions.type_stride))
 	}
 }
 
@@ -1148,15 +1203,16 @@ pub fn add_type(parent: u32, path: u32) -> Result<u32, String> {
 			*(table as *mut *mut u8) = grown;
 			Ok(grown)
 		};
-		let table = grow(functions.type_table, (count + 1) * TYPE_STRIDE)?;
+		let stride = functions.type_stride;
+		let table = grow(functions.type_table, (count + 1) * stride)?;
 		let preorder = grow(functions.preorder as *const *mut u8, (count + 1) * 4)? as *mut u32;
 		let maps = grow(functions.name_maps as *const *mut u8, (count + 1) * 8)? as *mut ProcNameMap;
 		let cache = grow(functions.appearance_cache as *const *mut u8, (count + 1) * 4)? as *mut u32;
 
-		let entry = |id: usize| table.add(id * TYPE_STRIDE);
+		let entry = |id: usize| table.add(id * stride);
 		let word = |id: usize, offset: usize| entry(id).add(offset) as *mut u32;
 
-		std::ptr::copy_nonoverlapping(entry(parent as usize), entry(count), TYPE_STRIDE);
+		std::ptr::copy_nonoverlapping(entry(parent as usize), entry(count), stride);
 		*word(count, PATH) = path;
 		*word(count, PARENT) = parent;
 		for offset in [VERBS, PROCS, OWN_OVERRIDES] {
@@ -1181,8 +1237,10 @@ pub fn add_type(parent: u32, path: u32) -> Result<u32, String> {
 			}
 		}
 		*word(count, INIT_SEGMENTS) = 0;
-		*word(count, TYPEPATH) = 0;
-		*word(count, TYPEPATH + 4) = 0;
+		if functions.register_typepath.is_some() {
+			*word(count, TYPEPATH) = 0;
+			*word(count, TYPEPATH + 4) = 0;
+		}
 
 		// The parent's proc name map, sharing its id buffers as BYOND does
 		let from = &*maps.add(parent as usize);
@@ -1230,12 +1288,19 @@ pub fn add_type(parent: u32, path: u32) -> Result<u32, String> {
 		*(functions.type_count as *mut u32) += 1;
 
 		// A mob type has a place in the mob table, which its typepath value
-		// names, starting as its parent's
-		if *(word(parent as usize, TYPEPATH) as *const u8) == 0 {
-			(functions.register_typepath)(parent);
-		}
-		if *(word(parent as usize, TYPEPATH) as *const u8) == MOB_TYPEPATH {
-			let mobs = std::slice::from_raw_parts(*functions.mobs, *functions.mob_count as usize);
+		// names, starting as its parent's. (Builds that keep no typepath
+		// values find it by type id, which a mob type is the only kind to have.)
+		let mobs = std::slice::from_raw_parts(*functions.mobs, *functions.mob_count as usize);
+		let mob = match functions.register_typepath {
+			Some(register) => {
+				if *(word(parent as usize, TYPEPATH) as *const u8) == 0 {
+					register(parent);
+				}
+				*(word(parent as usize, TYPEPATH) as *const u8) == MOB_TYPEPATH
+			}
+			None => mobs.iter().any(|m| m.type_id == parent)
+		};
+		if mob {
 			let from = mobs
 				.iter()
 				.find(|m| m.type_id == parent)
@@ -1246,7 +1311,9 @@ pub fn add_type(parent: u32, path: u32) -> Result<u32, String> {
 				..from
 			})?;
 		}
-		(functions.register_typepath)(count as u32);
+		if let Some(register) = functions.register_typepath {
+			register(count as u32);
+		}
 		Ok(count as u32)
 	}
 }

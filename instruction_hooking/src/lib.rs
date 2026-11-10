@@ -19,9 +19,14 @@ const DISPATCH_MASK: &str = "0F B7 47 ?? 8B 4F ?? 8B F0 8B 14 ?? 89 95 ?? ?? ?? 
 const DISPATCH_MASK: &str = "0F B7 46 ?? 8B 56 ?? 66 89 85 ?? ?? ?? ?? 89 85 ?? ?? ?? ?? C1 E0 02 89 85 ?? ?? ?? ?? 01 D0 8B 18 81 FB ?? 01 00 00 \
                              0F 87 ?? ?? ?? ?? FF 24 9D ?? ?? ?? ??";
 
+#[cfg(windows)]
+const CHECKED: VersionRange = VersionRange { min: 1637, max: 1688 };
+#[cfg(unix)]
+const CHECKED: VersionRange = VersionRange { min: 1659, max: 1688 };
+
 const EXECUTE_INSTRUCTION: Recipe = Recipe {
 	name: "execute_instruction",
-	versions: VersionRange { min: 1659, max: 1688 },
+	versions: CHECKED,
 	anchor: Anchor::Signature(SignatureTreatment::NoOffset, DISPATCH_MASK),
 	hops: &[],
 	extract: Extract::Entry

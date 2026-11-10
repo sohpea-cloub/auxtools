@@ -19,9 +19,13 @@ use windows::RECIPES;
 
 use crate::raw_types::{funcs, lists, procs, variables::VariableNameIdTable};
 
-/// The BYOND major version the patterns were checked against. The same build
-/// number under another major is a different binary.
-const SUPPORTED_VERSION: u32 = 516;
+/// The BYOND major versions the patterns were checked against, with the first
+/// build of each. The same build number under another major is a different
+/// binary.
+const SUPPORTED_VERSIONS: &[(u32, u32)] = &[(515, 1637), (516, 1648)];
+
+/// The first build with alists. Before it there's no alist table to find.
+pub(crate) const ALIST_BUILD: u32 = 1648;
 
 fn module_and_build() -> Result<(Module, (u32, u32)), String> {
 	let module = Module::current().map_err(|err| format!("Couldn't locate BYOND core ({err})"))?;
@@ -29,15 +33,29 @@ fn module_and_build() -> Result<(Module, (u32, u32)), String> {
 	Ok((module, build))
 }
 
-fn recipe(name: &str) -> Result<&'static Recipe, String> {
-	RECIPES
+/// The pattern for `name` on `build`: the one checked on it, or else the one
+/// checked on the newest build before it. A name can have one pattern for
+/// some builds and another for others.
+fn recipe(name: &str, build: u32) -> Result<&'static Recipe, String> {
+	pick(RECIPES.iter().filter(|recipe| recipe.name == name), build).ok_or_else(|| format!("Couldn't find {name} (no such pattern)"))
+}
+
+/// Of one name's patterns, the one for `build` (see `recipe`)
+fn pick<'a>(patterns: impl Iterator<Item = &'a Recipe>, build: u32) -> Option<&'a Recipe> {
+	let patterns: Vec<&Recipe> = patterns.collect();
+	if let Some(recipe) = patterns.iter().find(|recipe| recipe.versions.contains(build)) {
+		return Some(recipe);
+	}
+	patterns
 		.iter()
-		.find(|recipe| recipe.name == name)
-		.ok_or_else(|| format!("Couldn't find {name} (no such pattern)"))
+		.filter(|recipe| recipe.versions.max < build)
+		.max_by_key(|recipe| recipe.versions.max)
+		.or(patterns.first())
+		.copied()
 }
 
 fn resolve(module: &Module, build: (u32, u32), name: &str) -> Result<usize, String> {
-	resolve_checked(module, build, recipe(name)?)
+	resolve_checked(module, build, recipe(name, build.1)?)
 }
 
 fn resolve_checked(module: &Module, (version, build): (u32, u32), recipe: &Recipe) -> Result<usize, String> {
@@ -45,7 +63,10 @@ fn resolve_checked(module: &Module, (version, build): (u32, u32), recipe: &Recip
 
 	// Older than anything checked is a hard stop. A newer build is still tried,
 	// and a pattern that has stopped matching fails with its own error.
-	if recipe.versions.applicability(version, build, SUPPORTED_VERSION).is_none() {
+	let supported = SUPPORTED_VERSIONS
+		.iter()
+		.any(|&(major, first)| major == version && build >= first);
+	if !supported || recipe.versions.applicability(version, build, version).is_none() {
 		return Err(format!(
 			"Couldn't find {name} (BYOND {version}.{build} is outside the checked range {}..={})",
 			recipe.versions.min, recipe.versions.max
@@ -62,6 +83,19 @@ pub fn find_recipe(recipe: &Recipe) -> Result<usize, String> {
 	resolve_checked(&module, build, recipe)
 }
 
+/// Resolves whichever of `recipes`, one name's patterns for different builds,
+/// was checked on the running build (or else on the newest build before it).
+pub fn find_recipe_of(recipes: &[Recipe]) -> Result<usize, String> {
+	let (module, build) = module_and_build()?;
+	let recipe = pick(recipes.iter(), build.1).ok_or("Couldn't find a pattern (none given)")?;
+	resolve_checked(&module, build, recipe)
+}
+
+/// The running BYOND build's number
+pub fn byond_build() -> Result<u32, String> {
+	Ok(module_and_build()?.1 .1)
+}
+
 /// Looks up every function and global except `variable_names`, and hands them
 /// to the C++ shim and `raw_types::funcs`.
 pub(crate) fn resolve_full() -> Result<(), String> {
@@ -73,8 +107,15 @@ pub(crate) fn resolve_full() -> Result<(), String> {
 		funcs::CURRENT_EXECUTION_CONTEXT = address("current_execution_context")? as *mut *mut procs::ExecutionContext;
 		funcs::SUSPENDED_PROCS = address("suspended_procs")? as *mut procs::SuspendedProcs;
 		funcs::SUSPENDED_PROCS_BUFFER = address("suspended_procs_buffer")? as *mut procs::SuspendedProcsBuffer;
-		funcs::ALIST_TABLE = address("alist_table_ptr")? as *const *const *const lists::Alist;
-		funcs::ALIST_TABLE_COUNT = address("alist_table_count")? as *const u32;
+		if build.1 >= ALIST_BUILD {
+			funcs::ALIST_TABLE = address("alist_table_ptr")? as *const *const *const lists::Alist;
+			funcs::ALIST_TABLE_COUNT = address("alist_table_count")? as *const u32;
+		} else {
+			// No alists: an empty table
+			static NO_ALISTS: u32 = 0;
+			funcs::ALIST_TABLE = std::ptr::null();
+			funcs::ALIST_TABLE_COUNT = &NO_ALISTS;
+		}
 		funcs::call_proc_by_id_byond = function("call_proc_by_id")?;
 		funcs::call_datum_proc_by_name_byond = function("call_datum_proc_by_name")?;
 		funcs::get_proc_array_entry_byond = function("get_proc_array_entry")?;
@@ -120,9 +161,12 @@ pub(crate) fn resolve_partial() -> Result<(), String> {
 /// `auxtools_check_signatures`.
 pub(crate) fn unresolved() -> Result<Vec<&'static str>, String> {
 	let (module, build) = module_and_build()?;
-	Ok(RECIPES
+	let mut names: Vec<&'static str> = RECIPES
 		.iter()
 		.map(|recipe| recipe.name)
+		.filter(|name| build.1 >= ALIST_BUILD || !name.starts_with("alist_"))
 		.filter(|name| resolve(&module, build, name).is_err())
-		.collect())
+		.collect();
+	names.dedup();
+	Ok(names)
 }
