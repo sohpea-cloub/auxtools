@@ -169,6 +169,15 @@ struct CompletionsArguments {
 	column: i64
 }
 
+/// What `breakpointLocations` takes (dap-types has none of it)
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BreakpointLocationsArguments {
+	source: Source,
+	line: i64,
+	end_line: Option<i64>
+}
+
 /// What `setVariable` takes (dap-types has none of it)
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -479,6 +488,7 @@ impl Adapter {
 			"setExpression" => arguments(args).and_then(|args| self.set_expression(args)),
 			"exceptionInfo" => self.exception_info(),
 			"source" => arguments(args).and_then(|args| self.source(args)),
+			"breakpointLocations" => arguments(args).and_then(|args| self.breakpoint_locations(args)),
 			"terminate" => self.terminate(),
 			"disconnect" => {
 				let args: Option<DisconnectArguments> = arguments(args).ok();
@@ -507,6 +517,7 @@ impl Adapter {
 			supportsExceptionInfoRequest: Some(true),
 			supportTerminateDebuggee: Some(true),
 			supportsTerminateRequest: Some(true),
+			supportsBreakpointLocationsRequest: Some(true),
 			..Default::default()
 		})?;
 		// What dap-types has no fields for
@@ -1702,6 +1713,30 @@ impl Adapter {
 				mimeType: None
 			}),
 			_ => Err("there's no such source".to_owned())
+		}
+	}
+
+	/// The lines between two that a breakpoint can go on: those with code in
+	/// the world as it runs now. None while there's no world, or it runs
+	/// without debugging, as breakpoints can't be set then either; none in
+	/// stddef.dm, which has no lines in the world's code.
+	fn breakpoint_locations(&mut self, args: BreakpointLocationsArguments) -> Handled {
+		let path = match args.source.path {
+			Some(path) if self.debugging && self.debuggee.is_some() => path,
+			_ => return Ok(serde_json::json!({ "breakpoints": [] }))
+		};
+		let start = args.line.clamp(1, u32::MAX.into()) as u32;
+		let end = args.end_line.unwrap_or(args.line).clamp(start.into(), u32::MAX.into()) as u32;
+		match self.request(&AuxRequest::LinesWithCode {
+			file: self.world_file_name(&path),
+			start,
+			end
+		})? {
+			AuxResponse::LinesWithCode { lines } => {
+				let breakpoints: Vec<Value> = lines.into_iter().map(|line| serde_json::json!({ "line": line })).collect();
+				Ok(serde_json::json!({ "breakpoints": breakpoints }))
+			}
+			other => Err(unexpected(other))
 		}
 	}
 }

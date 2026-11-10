@@ -169,6 +169,7 @@ fn capabilities() {
 		"completionTriggerCharacters",
 		"exceptionBreakpointFilters",
 		"supportTerminateDebuggee",
+		"supportsBreakpointLocationsRequest",
 		"supportsCompletionsRequest",
 		"supportsConditionalBreakpoints",
 		"supportsConfigurationDoneRequest",
@@ -271,6 +272,12 @@ fn without_debugging() {
 	assert_eq!(evaluate_when_connected(&mut world, "global_number + 1"), "6");
 	world.run_through("middle");
 	ok("a world run without debugging runs, and still evaluates expressions");
+
+	let leaf_1 = world.marks.line("leaf_1");
+	let stepping = world.marks.file("stepping.dm");
+	let places = world.request("breakpointLocations", json!({ "source": { "path": stepping }, "line": leaf_1 }));
+	assert_eq!(places["breakpoints"], json!([]));
+	ok("a world run without debugging has no places for breakpoints, as it takes none");
 
 	let why = world.refused("pause", json!({ "threadId": 0 }));
 	assert_eq!(why, "the world runs without debugging");

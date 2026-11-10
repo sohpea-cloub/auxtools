@@ -215,6 +215,12 @@ pub fn run() {
 		"/proc/sc_middle()\n",
 		"/proc/sc_fresh()\n\tvar/a = 1 // @fresh_1\n\tvar/b = a + 1 // @fresh_2\n\treturn b // @fresh_3\n\n/proc/sc_middle()\n"
 	);
+	let stepping = world.marks.file("stepping.dm");
+	let (fresh_1, fresh_3) = (world.marks.line("fresh_1"), world.marks.line("fresh_3"));
+	let places = world.request("breakpointLocations", json!({ "source": { "path": stepping }, "line": fresh_1 - 1, "endLine": fresh_3 + 3 }));
+	let lines: Vec<u64> = places["breakpoints"].as_array().unwrap().iter().map(|place| place["line"].as_u64().unwrap()).collect();
+	assert_eq!(lines, [fresh_1, world.marks.line("fresh_2"), fresh_3, world.marks.line("sc_middle_1")]);
+	ok("the places for breakpoints are those of the code the world runs after a reload: a new proc's lines, and the next one's moved down");
 	world.run_to("fresh", "/sc_fresh", "fresh_2");
 	assert_eq!(world.local("a"), "1");
 	world.step_on("next", "/sc_fresh", "fresh_3");

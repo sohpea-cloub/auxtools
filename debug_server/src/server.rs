@@ -223,8 +223,8 @@ pub struct Server {
 	/// The client that asked for the world to stay paused once every client
 	/// has gone (`Request::HoldPause`)
 	hold: Option<ClientId>,
-	/// The procs in each file (as `Request::Locate` spells them), and how many
-	/// procs the world had when they were counted
+	/// The procs in each file (as the world's DbgFile spells them), and how
+	/// many procs the world had when they were counted
 	procs_by_file: Option<(u32, HashMap<String, Vec<u32>>)>,
 	moved_breakpoints: hot_reload::MovedBreakpoints,
 	app: Command<'static>
@@ -448,35 +448,36 @@ impl Server {
 		Some(String::from_utf8_lossy(name.data()).into_owned())
 	}
 
-	/// Where each proc with code on `line` of `file` has it
-	fn locate(&mut self, file: &str, line: u32) -> Vec<InstructionRef> {
-		let normalize = |path: &str| path.replace('\\', "/").to_ascii_lowercase();
-		let wanted = normalize(file);
-		let same = |file: &str| file == wanted || file.ends_with(&format!("/{}", wanted)) || wanted.ends_with(&format!("/{}", file));
-
+	/// The procs in each file, by the name the world was built with
+	fn file_index(&mut self) -> &HashMap<String, Vec<u32>> {
 		// Counted again when procs were added
 		let count = auxtools::runtime_tables::proc_count();
 		if self.procs_by_file.as_ref().is_none_or(|(counted, _)| *counted != count) {
 			let mut by_file: HashMap<String, Vec<u32>> = HashMap::new();
 			for id in 0..count {
 				if let Some(file) = Proc::from_id(raw_types::procs::ProcId(id)).and_then(|proc| Self::file_of(&proc)) {
-					by_file.entry(normalize(&file)).or_default().push(id);
+					by_file.entry(file).or_default().push(id);
 				}
 			}
 			self.procs_by_file = Some((count, by_file));
 		}
-		let ids: Vec<u32> = self.procs_by_file.as_ref().map_or(vec![], |(_, by_file)| {
-			by_file
-				.iter()
-				.filter(|(file, _)| same(file))
-				.flat_map(|(_, ids)| ids.iter().copied())
-				.collect()
-		});
+		&self.procs_by_file.as_ref().unwrap().1
+	}
 
-		// A line with no code of its own (a proc's declaration, a comment, the
-		// middle of a statement) has its breakpoint on the next one that has
-		let procs: Vec<(ProcRef, Vec<u32>)> = ids
-			.into_iter()
+	/// The procs with code in `file` (spelled as `Request::Locate` has it),
+	/// and the lines each has code on, as the world runs it now
+	fn procs_in(&mut self, file: &str) -> Vec<(ProcRef, Vec<u32>)> {
+		let normalize = |path: &str| path.replace('\\', "/").to_ascii_lowercase();
+		let wanted = normalize(file);
+		let same = |file: &str| file == wanted || file.ends_with(&format!("/{}", wanted)) || wanted.ends_with(&format!("/{}", file));
+
+		let ids: Vec<u32> = self
+			.file_index()
+			.iter()
+			.filter(|(file, _)| same(&normalize(file)))
+			.flat_map(|(_, ids)| ids.iter().copied())
+			.collect();
+		ids.into_iter()
 			.filter_map(|id| Proc::from_id(raw_types::procs::ProcId(id)))
 			.map(|proc| {
 				let lines = Self::lines_of(&proc);
@@ -486,7 +487,27 @@ impl Server {
 				};
 				(proc, lines)
 			})
+			.collect()
+	}
+
+	/// The lines from `start` to `end` of `file` that some proc has code on
+	fn lines_with_code(&mut self, file: &str, start: u32, end: u32) -> Vec<u32> {
+		let mut lines: Vec<u32> = self
+			.procs_in(file)
+			.into_iter()
+			.flat_map(|(_, lines)| lines)
+			.filter(|line| (start..=end).contains(line))
 			.collect();
+		lines.sort_unstable();
+		lines.dedup();
+		lines
+	}
+
+	/// Where each proc with code on `line` of `file` has it
+	fn locate(&mut self, file: &str, line: u32) -> Vec<InstructionRef> {
+		// A line with no code of its own (a proc's declaration, a comment, the
+		// middle of a statement) has its breakpoint on the next one that has
+		let procs = self.procs_in(file);
 		let Some(line) = procs.iter().flat_map(|(_, lines)| lines.iter().copied()).filter(|&l| l >= line).min() else {
 			return vec![];
 		};
@@ -1974,6 +1995,11 @@ impl Server {
 			Request::Locate { file, line } => {
 				let instructions = self.locate(&file, line);
 				self.send_or_disconnect(Response::Locate { instructions });
+			}
+
+			Request::LinesWithCode { file, start, end } => {
+				let lines = self.lines_with_code(&file, start, end);
+				self.send_or_disconnect(Response::LinesWithCode { lines });
 			}
 
 			Request::WorldInfo => {

@@ -7,6 +7,7 @@ use crate::{ok, world::World};
 pub fn run() {
 	before_the_world_runs();
 	placing();
+	locations();
 	hitting();
 }
 
@@ -77,6 +78,52 @@ fn placing() {
 	let why = world.refused("setBreakpoints", json!({ "source": { "name": "stepping.dm" }, "breakpoints": [{ "line": leaf_1 }] }));
 	assert_eq!(why, "the breakpoints' source has no path");
 	ok("breakpoints for a file with unsaved changes, or with no path, are refused");
+	world.end();
+}
+
+/// The lines `breakpointLocations` gives for a range of a file
+fn locations_in(world: &mut World, file: &std::path::Path, line: u64, end_line: Option<u64>) -> Vec<u64> {
+	let mut arguments = json!({ "source": { "path": file }, "line": line });
+	if let Some(end_line) = end_line {
+		arguments["endLine"] = json!(end_line);
+	}
+	let answer = world.request("breakpointLocations", arguments);
+	answer["breakpoints"]
+		.as_array()
+		.unwrap()
+		.iter()
+		.map(|location| {
+			assert!(location.get("column").is_none(), "a location with a column: {}", location);
+			location["line"].as_u64().unwrap()
+		})
+		.collect()
+}
+
+fn locations() {
+	let mut world = World::start();
+	let at = world.marks.clone();
+	let stepping = at.file("stepping.dm");
+
+	// The comment that starts the file, blank lines and declarations have none
+	let lines = locations_in(&mut world, &stepping, 1, Some(at.line("sc_middle_2")));
+	let marked: Vec<u64> = ["leaf_1", "leaf_2", "middle_1", "middle_2", "middle_3", "sc_middle_1", "sc_middle_2"]
+		.iter()
+		.map(|name| at.line(name))
+		.collect();
+	assert_eq!(lines, marked);
+	ok("the places for breakpoints in a range are its lines with code, in order, and not its comments, blank lines or declarations");
+
+	let leaf_2 = at.line("leaf_2");
+	assert_eq!(locations_in(&mut world, &stepping, leaf_2, None), [leaf_2]);
+	assert_eq!(locations_in(&mut world, &stepping, leaf_2, Some(leaf_2)), [leaf_2]);
+	let declaration = at.line_starting("stepping.dm", "/proc/leaf(x)");
+	assert_eq!(locations_in(&mut world, &stepping, declaration, None), Vec::<u64>::new());
+	ok("a single line has a place for a breakpoint if it has code, and none if it hasn't");
+
+	let elsewhere = at.dir.join("not_in_the_world.dm");
+	assert_eq!(locations_in(&mut world, &elsewhere, 1, Some(100)), Vec::<u64>::new());
+	assert_eq!(locations_in(&mut world, &stepping, 99_999, Some(100_000)), Vec::<u64>::new());
+	ok("a file the world doesn't have, or lines past a file's end, have no places for breakpoints");
 	world.end();
 }
 

@@ -120,7 +120,14 @@ pub enum Request {
 	/// like the launcher of a world run without debugging, there to hot
 	/// reload it. A pause doesn't wait for it, as it wouldn't let the world
 	/// carry on: with only such clients left, the world does.
-	Watcher
+	Watcher,
+	/// The lines from `start` to `end` (both included) of a file that have
+	/// code, in the code the world runs now. `file` is matched as in `Locate`.
+	LinesWithCode {
+		file: String,
+		start: u32,
+		end: u32
+	}
 }
 
 // Message from server -> client
@@ -194,6 +201,10 @@ pub enum Response {
 		message: String,
 		file: Option<String>,
 		line: Option<u32>
+	},
+	/// Sorted, each once
+	LinesWithCode {
+		lines: Vec<u32>
 	}
 }
 
