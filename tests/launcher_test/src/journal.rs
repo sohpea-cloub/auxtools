@@ -229,3 +229,44 @@ pub fn reloads(pid: u64, code: &Path) {
 	assert!(printed.contains(" output\n  attach test: "), "log --output said {}", printed);
 	println!("ok: log --output has what the world printed");
 }
+
+/// A reboot goes in the record, whose numbers go on in the new world:
+/// `wait --reboot` waits for it, and for the new world to answer
+pub fn reboot(pid: u64, dir: &Path) {
+	let before = newest(pid);
+	let waiting = Background::start(pid, &["wait", "--reboot", "--timeout", "60"]);
+	std::thread::sleep(Duration::from_secs(1));
+	std::fs::write(dir.join("reboot"), "yes").unwrap();
+	let (exit, printed) = waiting.finish();
+	assert!(exit == 0 && printed.contains(" the world rebooted (world 2 in this process)"), "wait --reboot gave {}: {}", exit, printed);
+	let number: u64 = printed.trim_start_matches('#').split(' ').next().unwrap().parse().unwrap();
+	assert!(number > before, "the reboot is entry {}, before {}", number, before);
+	assert_eq!(run(pid, &["status"], 0).lines().next(), Some("running"));
+	println!("ok: wait --reboot waits for the world to reboot, and the new world answers");
+
+	let printed = run(pid, &["log", "--world", "--json"], 0);
+	let loads: Vec<serde_json::Value> = printed.lines().map(|line| serde_json::from_str(line).unwrap()).filter(|entry: &serde_json::Value| entry["event"] == "loaded").collect();
+	assert!(
+		loads.len() == 2 && loads[0]["load"] == 1 && loads[1]["load"] == 2 && loads[1]["number"] == number && loads[0]["number"].as_u64() < Some(number),
+		"log --world said {}",
+		printed
+	);
+	// The launcher gives the new world the changes made since it was built
+	let printed = run(pid, &["wait", "--reload", "--since", &number.to_string(), "--timeout", "60"], 0);
+	assert!(printed.contains("hot reload applied: "), "wait --reload said {}", printed);
+	println!("ok: the record's numbers go on after the reboot, and the launcher's reload of the new world is in it");
+}
+
+/// A `wait --reboot` for a world that's about to end, not reboot
+pub fn wait_for_reboot(pid: u64) -> Background {
+	let waiting = Background::start(pid, &["wait", "--reboot", "--timeout", "60"]);
+	std::thread::sleep(Duration::from_secs(1));
+	waiting
+}
+
+/// The world ended: the wait says it went away
+pub fn world_went_away(waiting: Background) {
+	let (exit, printed) = waiting.finish();
+	assert!(exit == 3 && printed.contains("the world hung up"), "wait --reboot gave {}: {}", exit, printed);
+	println!("ok: wait --reboot on a world that ends says it went away (exit code 3)");
+}

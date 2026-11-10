@@ -543,6 +543,7 @@ fn attach_and_reload(server: &str, library: &Path) {
 	command_line_more(pid, &dir);
 	journal::runtimes(pid, &dir);
 	journal::reloads(pid, &code);
+	journal::reboot(pid, &dir);
 
 	// A launcher that attaches to a world that's paused hears it is
 	let (code_given, printed) = launcher_command(&["--pid", &pid.to_string(), "pause"]);
@@ -560,8 +561,10 @@ fn attach_and_reload(server: &str, library: &Path) {
 	runner.wait_count("attach test: 2", seen + 1);
 	println!("ok: the world carries on after the command line let it");
 
+	let waiting = journal::wait_for_reboot(pid);
 	std::fs::write(dir.join("stop"), "yes").unwrap();
 	runner.event("terminated");
+	journal::world_went_away(waiting);
 	assert!(runner.output.contains("attach test: done"), "the world didn't finish");
 	runner.disconnect(json!({}));
 	println!("ok: the world ended, and the launcher with it");

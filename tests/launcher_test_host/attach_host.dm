@@ -25,6 +25,10 @@ var/rounds = 0
 			fdel("fail")
 			spawn(0)
 				fail()
+		// A reboot when the test asks for one
+		if (fexists("reboot"))
+			fdel("reboot")
+			world.Reboot()
 		sleep(5)
 	world.log << "attach test: done"
 	del(world)
