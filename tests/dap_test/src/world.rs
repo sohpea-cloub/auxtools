@@ -104,8 +104,13 @@ impl World {
 	/// Launches the world in `dir` (the host's own directory unless it's a
 	/// copy). It waits for `configure`, as a client's breakpoints go in first.
 	pub fn launch_in(dir: PathBuf, more: Value) -> Self {
+		Self::launch_as(json!({}), dir, more)
+	}
+
+	/// The same, for a client with `abilities` of its own
+	pub fn launch_as(abilities: Value, dir: PathBuf, more: Value) -> Self {
 		let mut launcher = Launcher::start();
-		launcher.initialize();
+		launcher.initialize_as(abilities);
 		launcher.launch(&paths::find_byond(), &dir.join("dap_test_host.dme"), more);
 		Self {
 			launcher,

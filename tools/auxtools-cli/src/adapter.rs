@@ -51,6 +51,11 @@ const KEEPALIVE: &str = "/auxtools_keepalive";
 const HELPER_FILE: &str = "auxtools_launcher.dm";
 /// Where the key for function breakpoints' records is
 const FUNCTION_BREAKPOINTS: &str = "<functions>";
+/// The things that take a while, by the ids the client is shown them under
+const BUILDING: &str = "building";
+const STARTING: &str = "starting";
+const READING: &str = "reading";
+const RESTARTING: &str = "restarting";
 /// How often to try the world's socket while it isn't listening
 const CONNECT_INTERVAL: Duration = Duration::from_millis(100);
 
@@ -131,6 +136,18 @@ struct AttachArguments {
 	/// Off by default: whoever launched the world might be reloading it too
 	#[serde(default)]
 	hot_reload: bool
+}
+
+/// What the client says of itself in `initialize`, of what matters here
+#[derive(Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct ClientAbilities {
+	/// It shows `progressStart` and `progressEnd`
+	#[serde(default)]
+	supports_progress_reporting: bool,
+	/// It asks again for what an `invalidated` event names
+	#[serde(default)]
+	supports_invalidated_event: bool
 }
 
 /// What `completions` takes
@@ -228,6 +245,12 @@ pub struct Adapter {
 
 	/// The client's breakpoints by file, with the ids they were given
 	breakpoints: BTreeMap<String, Vec<(i64, SourceBreakpoint)>>,
+	/// What the client said it can do with what it's told
+	client: ClientAbilities,
+	/// The things that are taking a while, which the client is showing
+	progress: Vec<&'static str>,
+	/// `root`, for the thread that passes the world's output on
+	output_root: Arc<Mutex<Option<PathBuf>>>,
 	/// The text each file's breakpoints were given for: their lines are
 	/// lines of it. `None` for a file the client hasn't saved yet, or that
 	/// can't be read.
@@ -276,6 +299,9 @@ pub fn run() {
 		initialized: false,
 		last_error: Arc::new(Mutex::new(LastError::default())),
 		reload_started: None,
+		client: ClientAbilities::default(),
+		progress: vec![],
+		output_root: Arc::new(Mutex::new(None)),
 		breakpoints: BTreeMap::new(),
 		breakpoint_texts: HashMap::new(),
 		next_breakpoint_id: 1,
@@ -370,6 +396,9 @@ impl Adapter {
 		self.pid = None;
 		self.debuggee = None;
 		self.code = None;
+		for id in std::mem::take(&mut self.progress) {
+			self.out.event(dap::ProgressEnd { progressId: id.to_owned() });
+		}
 		self.out.event(TerminatedEvent::default());
 		self.out.event(ExitedEvent { exitCode: exit_code.into() });
 
@@ -392,7 +421,10 @@ impl Adapter {
 		let command = request.command.as_str();
 		let args = request.arguments;
 		let result = match command {
-			"initialize" => self.initialize(),
+			"initialize" => {
+				self.client = arguments(args).unwrap_or_default();
+				self.initialize()
+			}
 			"launch" => arguments(args).and_then(|args| self.launch(args)),
 			"attach" => arguments(args).and_then(|args| self.attach(args)),
 			"configurationDone" => self.configuration_done(),
@@ -493,7 +525,10 @@ impl Adapter {
 		if args.build {
 			let dme = dme.as_ref().ok_or("there's no .dme to build")?;
 			let out = self.out.clone();
-			byond::build_with(&bin, dme, &args.defines, move |line| out.console(line))?;
+			self.progress_start(BUILDING, format!("Building {}", dme.file_name().unwrap_or_default().to_string_lossy()));
+			let built = byond::build_with(&bin, dme, &args.defines, move |line| out.console(line));
+			self.progress_end(BUILDING);
+			built?;
 		}
 		if !dmb.is_file() {
 			return Err(format!("there's no {}", dmb.display()));
@@ -524,16 +559,44 @@ impl Adapter {
 			env: &args.env,
 			debug: Some((library, self.debugging))
 		};
-		let (out, inputs) = (self.out.clone(), self.inputs.clone());
+		let (out, inputs, root) = (self.out.clone(), self.inputs.clone(), self.output_root.clone());
 		let game = Game::start(
 			launch,
-			move |category, line| out.output(category, line),
+			// Where BYOND says a runtime error was is passed on as a place,
+			// which a client makes a link of
+			move |category, line| match runtime_place(&line) {
+				Some((file, number)) => {
+					let path = match &*root.lock().unwrap() {
+						Some(root) => root.join(file),
+						None => PathBuf::from(file)
+					};
+					out.event(OutputEvent {
+						category: Some(category.to_owned()),
+						source: Some(Source {
+							name: path.file_name().map(|name| name.to_string_lossy().into_owned()),
+							path: Some(path.to_string_lossy().into_owned()),
+							..Default::default()
+						}),
+						line: Some(number),
+						output: line,
+						..Default::default()
+					});
+				}
+				None => out.output(category, line)
+			},
 			move |code| {
 				let _ = inputs.send(Input::GameExited(code));
 			}
 		)?;
 		self.pid = Some(game.pid());
 		self.game = Some(game);
+		self.out.event(dap::ProcessEvent {
+			name: dmb.to_string_lossy().into_owned(),
+			systemProcessId: self.pid.unwrap_or_default(),
+			isLocalProcess: true,
+			startMethod: "launch".to_owned()
+		});
+		self.progress_start(STARTING, "Starting the world".to_owned());
 		self.started(None);
 		Ok(Value::Null)
 	}
@@ -569,6 +632,12 @@ impl Adapter {
 		});
 		self.pid = Some(pid);
 		self.out.console(format!("Attaching to process {}", pid));
+		self.out.event(dap::ProcessEvent {
+			name: format!("process {}", pid),
+			systemProcessId: pid,
+			isLocalProcess: true,
+			startMethod: "attach".to_owned()
+		});
 		self.started(Some(stream));
 		Ok(Value::Null)
 	}
@@ -620,7 +689,28 @@ impl Adapter {
 			.expect("couldn't start a thread");
 	}
 
+	/// Has the client show that something is taking a while, if it shows
+	/// such things
+	fn progress_start(&mut self, id: &'static str, title: String) {
+		if self.client.supports_progress_reporting && !self.progress.contains(&id) {
+			self.progress.push(id);
+			self.out.event(dap::ProgressStart {
+				progressId: id.to_owned(),
+				title
+			});
+		}
+	}
+
+	fn progress_end(&mut self, id: &'static str) {
+		if let Some(at) = self.progress.iter().position(|shown| *shown == id) {
+			self.progress.remove(at);
+			self.out.event(dap::ProgressEnd { progressId: id.to_owned() });
+		}
+	}
+
 	fn connected(&mut self, stream: Stream) {
+		self.progress_end(STARTING);
+		self.progress_end(RESTARTING);
 		let debuggee = Debuggee::new(
 			stream,
 			self.generation,
@@ -679,6 +769,7 @@ impl Adapter {
 			Some(local::world_dmb(&args, &cwd)?.with_extension("dme"))
 		});
 		self.root = dme.as_ref().and_then(|dme| std::path::absolute(dme).ok()?.parent().map(Path::to_owned));
+		self.output_root.lock().unwrap().clone_from(&self.root);
 		self.hot_reload = settings.hot_reload;
 		if !settings.hot_reload {
 			self.code_read = true;
@@ -695,10 +786,15 @@ impl Adapter {
 			defines: settings.defines.iter().map(|define| code::parse_define(define)).collect(),
 			hot_reload: settings.hot_reload
 		};
+		self.progress_start(READING, "Reading the world's code".to_owned());
 		self.code = Some(code::start(options, self.out.clone(), self.inputs.clone()));
 	}
 
 	fn code_event(&mut self, event: code::Event) {
+		// Whatever it says, it has read the code, or can't
+		if !matches!(event, code::Event::Reload { .. }) {
+			self.progress_end(READING);
+		}
 		match event {
 			code::Event::Changed => {
 				// Reloaded code moves lines: the breakpoints go where the
@@ -821,6 +917,13 @@ impl Adapter {
 				});
 			}
 		}
+
+		// A paused world's frames may be on other lines now
+		if self.client.supports_invalidated_event && self.debuggee.as_ref().is_some_and(Debuggee::stopped) {
+			self.out.event(dap::InvalidatedEvent {
+				areas: vec!["stacks".to_owned()]
+			});
+		}
 	}
 
 	fn connection_closed(&mut self, generation: u64, reason: &str) {
@@ -834,6 +937,7 @@ impl Adapter {
 		if self.pid.is_some() {
 			self.out
 				.console(format!("The world's debugger disconnected ({}); connecting again when it's back", reason));
+			self.progress_start(RESTARTING, "Waiting for the world to come back".to_owned());
 			self.connect();
 		}
 	}
@@ -1464,6 +1568,13 @@ impl Adapter {
 	}
 }
 
+/// The file and line in BYOND's report of a runtime error:
+/// `  source file: code/game/mob.dm,42`
+fn runtime_place(line: &str) -> Option<(&str, i64)> {
+	let (file, number) = line.trim().strip_prefix("source file: ")?.rsplit_once(',')?;
+	Some((file, number.trim().parse().ok()?))
+}
+
 /// Where a name is being typed, at the end of some text
 #[derive(Debug, PartialEq, Eq)]
 struct CompletionPlace<'a> {
@@ -1647,7 +1758,16 @@ mod tests {
 
 	use auxtools_cli::server_types::{HitCondition, LogPart, RuntimeFilter};
 
-	use super::{changes_things, completion_place, file_name_in, named_proc, shown};
+	use super::{changes_things, completion_place, file_name_in, named_proc, runtime_place, shown};
+
+	#[test]
+	fn byond_says_where_a_runtime_error_was() {
+		assert_eq!(runtime_place("  source file: code/game/mob.dm,42"), Some(("code/game/mob.dm", 42)));
+		assert_eq!(runtime_place("  source file: a, b.dm,7\r\n"), Some(("a, b.dm", 7)));
+		for other in ["runtime error: bad", "proc name: fail (/proc/fail)", "  source file: mob.dm", "source file: mob.dm,x", "  usr: null"] {
+			assert_eq!(runtime_place(other), None, "{}", other);
+		}
+	}
 
 	#[test]
 	fn a_name_is_completed_where_it_starts() {

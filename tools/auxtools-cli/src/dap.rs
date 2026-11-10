@@ -106,6 +106,56 @@ impl Output {
 	}
 }
 
+/// Something that takes a while has started: the client shows `title` until
+/// the `ProgressEnd` with the same id. Like the events below, not one of
+/// dap_types'.
+#[derive(serde::Serialize)]
+#[allow(non_snake_case)]
+pub struct ProgressStart {
+	pub progressId: String,
+	pub title: String
+}
+
+impl Event for ProgressStart {
+	const EVENT: &'static str = "progressStart";
+}
+
+#[derive(serde::Serialize)]
+#[allow(non_snake_case)]
+pub struct ProgressEnd {
+	pub progressId: String
+}
+
+impl Event for ProgressEnd {
+	const EVENT: &'static str = "progressEnd";
+}
+
+/// Which program is being debugged
+#[derive(serde::Serialize)]
+#[allow(non_snake_case)]
+pub struct ProcessEvent {
+	pub name: String,
+	pub systemProcessId: u32,
+	pub isLocalProcess: bool,
+	/// `launch` or `attach`
+	pub startMethod: String
+}
+
+impl Event for ProcessEvent {
+	const EVENT: &'static str = "process";
+}
+
+/// What the client has of these `areas` (`stacks`, `variables`) is out of
+/// date, and is to be asked for again
+#[derive(serde::Serialize)]
+pub struct InvalidatedEvent {
+	pub areas: Vec<String>
+}
+
+impl Event for InvalidatedEvent {
+	const EVENT: &'static str = "invalidated";
+}
+
 /// A breakpoint changed: `reason` is `changed`, `new` or `removed`. Not one
 /// of dap_types' events.
 #[derive(serde::Serialize)]

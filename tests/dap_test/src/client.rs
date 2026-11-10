@@ -389,10 +389,16 @@ impl Launcher {
 	}
 
 	pub fn initialize(&mut self) -> Value {
-		let capabilities = self.request(
-			"initialize",
-			json!({ "adapterID": "auxtools", "linesStartAt1": true, "columnsStartAt1": true, "pathFormat": "path" })
-		);
+		self.initialize_as(json!({}))
+	}
+
+	/// The same, as a client that says more of what it can do
+	pub fn initialize_as(&mut self, abilities: Value) -> Value {
+		let mut arguments = json!({ "adapterID": "auxtools", "linesStartAt1": true, "columnsStartAt1": true, "pathFormat": "path" });
+		for (name, value) in abilities.as_object().unwrap() {
+			arguments[name] = value.clone();
+		}
+		let capabilities = self.request("initialize", arguments);
 		assert_eq!(capabilities["supportsConfigurationDoneRequest"], true);
 		capabilities
 	}

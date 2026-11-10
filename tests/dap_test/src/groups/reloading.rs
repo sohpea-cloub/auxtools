@@ -147,7 +147,7 @@ pub fn run() {
 	behind_the_clients_back();
 
 	let dir = copy_of_the_world();
-	let mut world = World::launch_in(dir.clone(), json!({ "hotReload": true }));
+	let mut world = World::launch_as(json!({ "supportsInvalidatedEvent": true }), dir.clone(), json!({ "hotReload": true }));
 	world.catch_runtimes(false);
 	world.configure();
 	world.wait_output("Hot reload: watching");
@@ -159,6 +159,7 @@ pub fn run() {
 	edit(&mut world, "stepping.dm", "/proc/leaf(x)\n", "/proc/above()\n\treturn 1\n\n/proc/leaf(x)\n");
 	assert_eq!(world.marks.line("leaf_2"), before + 3);
 	world.break_on(&["leaf_2"]);
+	assert!(!world.has_event("invalidated"), "a reload of a running world left something to ask for again");
 	world.run("middle");
 	world.stop_on("breakpoint", "/leaf", "leaf_2");
 	assert_eq!(world.local("y"), "4");
@@ -177,11 +178,13 @@ pub fn run() {
 		"\tvar/y = x + 1 // @leaf_1\n",
 		"\tvar/y = x + 1 // @leaf_1\n\tvar/extra = 5 // @leaf_extra\n\ty += extra\n"
 	);
+	// The client is shown frames it asked for before the reload
+	assert_eq!(world.event("invalidated")["body"]["areas"], json!(["stacks"]));
 	let frames = world.frames(0);
 	assert_eq!(frames[0]["name"], "/leaf (old code)");
 	let locals = world.scope_values("Locals");
 	assert_eq!(locals.iter().map(|(name, _)| name.as_str()).collect::<Vec<_>>(), [".", "y"]);
-	ok("a reload while the world is paused is taken, and the paused frame keeps the code and the locals it started with, and says so");
+	ok("a reload while the world is paused is taken, the client is told to ask for the frames again, and the paused frame keeps the code and the locals it started with, and says so");
 
 	// Its caller's code is as it was, two lines further down
 	assert_eq!(

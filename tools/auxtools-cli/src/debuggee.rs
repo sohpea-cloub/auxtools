@@ -187,6 +187,11 @@ impl Debuggee {
 		Ok(())
 	}
 
+	/// Whether the world is paused
+	pub fn stopped(&self) -> bool {
+		self.stopped.load(Ordering::Relaxed)
+	}
+
 	/// Says goodbye, and waits a little for the server to have let this
 	/// client go, its breakpoints with it: what the client does next (in
 	/// another session, say) then comes after

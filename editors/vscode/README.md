@@ -79,6 +79,9 @@ Each can have a condition (the pencil next to it): text the error's message has 
 or after a `!` mustn't have, with commas between several. `!libdreamluau, !rust_g` pauses
 on every error but those; `bounds, null` only on errors with either word.
 
+A runtime error you don't pause on is still in the debug console, as BYOND reports it,
+and its `source file:` line is a link to the line it happened on.
+
 ## Variables
 
 The Variables view shows the selected frame's locals and arguments (with `src` and

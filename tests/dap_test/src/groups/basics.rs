@@ -16,6 +16,78 @@ pub fn run() {
 	refusals();
 	without_debugging();
 	output_and_exit();
+	told_along_the_way();
+}
+
+/// The ids of the progress events that have come, as `(start or end, id)`
+fn progress(world: &mut World) -> Vec<(String, String)> {
+	world.has_event("progressStart");
+	let events: Vec<(String, String)> = world
+		.events
+		.iter()
+		.filter(|e| e["event"] == "progressStart" || e["event"] == "progressEnd")
+		.map(|e| (e["event"].as_str().unwrap().to_owned(), e["body"]["progressId"].as_str().unwrap().to_owned()))
+		.collect();
+	world.events.retain(|e| e["event"] != "progressStart" && e["event"] != "progressEnd");
+	events
+}
+
+/// What a client is told without asking: which program it debugs, what's
+/// taking a while, and where runtime errors were
+fn told_along_the_way() {
+	let pair = |event: &str, id: &str| (event.to_owned(), id.to_owned());
+
+	// A client that shows progress, building the world first
+	let mut world = World::launch_as(json!({ "supportsProgressReporting": true }), host_file(""), json!({ "build": true, "hotReload": true }));
+	world.catch_runtimes(false);
+	world.configure();
+	world.wait_output("Hot reload: watching");
+	let events = progress(&mut world);
+	for id in ["building", "starting", "reading"] {
+		let (start, end) = (events.iter().position(|e| *e == pair("progressStart", id)), events.iter().position(|e| *e == pair("progressEnd", id)));
+		assert!(start.is_some() && start < end, "{} wasn't shown from start to end: {:?}", id, events);
+	}
+	assert_eq!(events.len(), 6, "{:?}", events);
+	ok("a client that shows progress is told while the world is built, while it starts and while its code is read");
+
+	let process = world.event("process");
+	let pid = client::listed_world("dap_test_host.dmb");
+	assert_eq!(process["body"]["systemProcessId"], pid);
+	assert_eq!(process["body"]["startMethod"], "launch");
+	assert!(process["body"]["name"].as_str().unwrap().ends_with("dap_test_host.dmb"), "{}", process);
+	let mut other = Launcher::start();
+	other.initialize();
+	other.attach(pid, json!({}));
+	let process = other.event("process");
+	assert_eq!((&process["body"]["systemProcessId"], &process["body"]["startMethod"]), (&json!(pid), &json!("attach")));
+	other.disconnect(json!({}));
+	ok("a client is told which process it debugs, launched or attached to");
+
+	world.run("reboot");
+	world.wait_count("dap: world/New", 2);
+	world.wait_output("The world restarted");
+	let events = progress(&mut world);
+	assert_eq!(events[..2], [pair("progressStart", "restarting"), pair("progressEnd", "restarting")], "{:?}", events);
+	ok("a client that shows progress is told while the world reboots");
+
+	// BYOND's report of a runtime error says where it was, which is passed
+	// on as a place
+	let at = world.marks.clone();
+	world.run_through("fail_null");
+	let place = world
+		.outputs
+		.iter()
+		.find(|output| output["output"].as_str().unwrap().contains("source file: errors.dm,"))
+		.unwrap_or_else(|| panic!("the world didn't say where its runtime error was:\n{}", world.output));
+	assert_eq!(place["line"], at.line("fail_null"));
+	assert_eq!(std::path::Path::new(place["source"]["path"].as_str().unwrap()), at.file("errors.dm"));
+	ok("a runtime error the world logs comes with its file and line, for the client to make a link of");
+	world.end();
+
+	// A client that says nothing of progress isn't told of any
+	let mut world = World::start();
+	assert_eq!(progress(&mut world), Vec::<(String, String)>::new());
+	world.end();
 }
 
 fn capabilities() {
