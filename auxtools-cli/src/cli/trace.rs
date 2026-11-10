@@ -49,31 +49,16 @@ impl Ended {
 	}
 }
 
-pub fn trace(world: &mut World, args: &[String]) -> Result<()> {
-	let flags = Flags::parse(args, &["--log", "--if", "--by", "--for", "--count"], &["--json"])?;
-	if flags.rest.is_empty() {
-		return Err("trace where? Give FILE:LINE or /proc/path".into());
-	}
+pub fn trace(world: &mut World, args: &args::Trace) -> Result<()> {
 	// (an expression or a message can be given as @FILE, as elsewhere)
-	let by = match flags.value("--by") {
+	let by = match args.by.as_deref() {
 		Some("caller") => Some(By::Caller),
 		Some(expression) => Some(By::Value(super::given_text(expression)?)),
 		None => None
 	};
-	let log = flags.value("--log").map(super::given_text).transpose()?;
-	let condition = flags.value("--if").map(super::given_text).transpose()?;
-	if by.is_some() && flags.has("--log") {
-		return Err("--by counts the hits instead of printing a line at each, so it doesn't take --log".into());
-	}
-	let seconds = flags.number::<f64>("--for")?;
-	if seconds.is_some_and(|s| !s.is_finite() || s < 0.0) {
-		return Err(format!("--for {} isn't a time in seconds", flags.value("--for").unwrap_or_default()).into());
-	}
-	let count = flags.number::<u64>("--count")?;
-	if count == Some(0) {
-		return Err("--count 0 would end before it started".into());
-	}
-	let json = flags.has("--json");
+	let log = args.log.as_deref().map(super::given_text).transpose()?;
+	let condition = args.condition.as_deref().map(super::given_text).transpose()?;
+	let (count, json) = (args.count, args.json);
 
 	// The message is what's counted by, for a value; the world sends where
 	// the hit was and its caller with any message
@@ -82,13 +67,13 @@ pub fn trace(world: &mut World, args: &[String]) -> Result<()> {
 		(_, Some(message)) => LogPart::parse(message),
 		_ => vec![]
 	};
-	let printed_message = flags.has("--log");
+	let printed_message = log.is_some();
 
 	// A place that doesn't exist fails here, and leaving takes away those
 	// set before it
 	let mut out = Out::new();
 	let mut bound = vec![];
-	for place in &flags.rest {
+	for place in &args.locations {
 		bound.extend(world.set_breakpoint(place, condition.clone(), Some(message.clone()))?);
 	}
 	for each in &bound {
@@ -111,7 +96,7 @@ pub fn trace(world: &mut World, args: &[String]) -> Result<()> {
 	}
 
 	interruptible();
-	let until = seconds.map(|s| Instant::now() + Duration::from_secs_f64(s));
+	let until = args.duration.map(|time| Instant::now() + time);
 	let mut hits: u64 = 0;
 	let mut counted: HashMap<String, (u64, Value)> = HashMap::new();
 	let ended = loop {
@@ -228,22 +213,22 @@ pub fn trace(world: &mut World, args: &[String]) -> Result<()> {
 				.collect();
 		}
 		out.line(&summary.to_string());
-	} else if by.is_some() {
+	} else {
 		let width = table.iter().map(|(_, n, _)| n.to_string().len()).max().unwrap_or(1);
 		for (value, n, _) in &table {
 			if !out.line(&format!("{:>width$}  {}", n, value)) {
 				return Ok(());
 			}
 		}
-		out.line(&format!("{} {} in all", hits, if hits == 1 { "hit" } else { "hits" }));
-	}
-	match skipped {
-		Some(0) | None => {}
-		Some(n) => eprintln!(
-			"{} {} skipped: the condition failed with an error there (said above)",
-			n,
-			if n == 1 { "hit was" } else { "hits were" }
-		)
+		// The same as the JSON's summary has
+		let skipped = skipped.map(|n| format!(", {} skipped", n)).unwrap_or_default();
+		out.line(&format!(
+			"summary: {} {}{}; ended: {}",
+			hits,
+			if hits == 1 { "hit" } else { "hits" },
+			skipped,
+			ended.name()
+		));
 	}
 	match ended {
 		Ended::HungUp => Err(hung_up()),
@@ -252,7 +237,7 @@ pub fn trace(world: &mut World, args: &[String]) -> Result<()> {
 }
 
 /// What's said of a hit in a proc nothing called
-const NO_CALLER: &str = "nothing (it was spawned, or the world called it)";
+const NO_CALLER: &str = "nothing (spawned, or called by the world)";
 
 /// Lines to stdout, until it's closed
 struct Out {

@@ -93,31 +93,44 @@ pub fn frame(frame: &StackFrame) -> Value {
 	})
 }
 
-/// Why the world paused, and where: `reason` is `breakpoint`, `step`,
-/// `pause`, `runtime` (with `message` and `caught`) or `change` (with
-/// `changes`). `instruction` is the innermost frame's after a step of one.
-pub fn pause(reason: &BreakpointReason, frames: &[StackFrame], instruction: Option<(u32, String)>) -> Map<String, Value> {
-	let (word, message, caught, changes) = match reason {
-		BreakpointReason::Breakpoint => ("breakpoint", None, None, vec![]),
-		BreakpointReason::Step => ("step", None, None, vec![]),
-		BreakpointReason::Pause => ("pause", None, None, vec![]),
-		BreakpointReason::Runtime { message, caught } => ("runtime", Some(message.clone()), Some(*caught), vec![]),
-		BreakpointReason::Data { changes } => (
-			"change",
-			None,
-			None,
-			changes.iter().map(|change| json!({ "name": change.name, "old": change.old, "new": change.new })).collect()
-		)
-	};
-	let document = json!({
-		"paused": true,
-		"reason": word,
-		"message": message,
-		"caught": caught,
-		"changes": changes,
-		"stack": frames.iter().map(frame).collect::<Vec<_>>(),
-		"instruction": instruction.map(|(offset, text)| json!({ "offset": offset, "text": text }))
+/// What the world is doing, in the fields every command that reports it
+/// has: `pid`, `paused`, and for a paused world its `reason` (`breakpoint`,
+/// `step`, `pause`, `runtime` with `message` and `caught`, or `change` with
+/// `changes`), its `stack`, and after a step of one instruction, the
+/// innermost frame's `instruction`. What a field has nothing for is null, or
+/// an empty array.
+pub fn execution(pid: u32, paused: Option<(&BreakpointReason, &[StackFrame], Option<(u32, String)>)>) -> Map<String, Value> {
+	let mut document = json!({
+		"pid": pid,
+		"paused": false,
+		"reason": null,
+		"message": null,
+		"caught": null,
+		"changes": [],
+		"stack": [],
+		"instruction": null
 	});
+	if let Some((reason, frames, instruction)) = paused {
+		let (word, message, caught, changes) = match reason {
+			BreakpointReason::Breakpoint => ("breakpoint", None, None, vec![]),
+			BreakpointReason::Step => ("step", None, None, vec![]),
+			BreakpointReason::Pause => ("pause", None, None, vec![]),
+			BreakpointReason::Runtime { message, caught } => ("runtime", Some(message.clone()), Some(*caught), vec![]),
+			BreakpointReason::Data { changes } => (
+				"change",
+				None,
+				None,
+				changes.iter().map(|change| json!({ "name": change.name, "old": change.old, "new": change.new })).collect()
+			)
+		};
+		document["paused"] = json!(true);
+		document["reason"] = json!(word);
+		document["message"] = json!(message);
+		document["caught"] = json!(caught);
+		document["changes"] = json!(changes);
+		document["stack"] = frames.iter().map(frame).collect();
+		document["instruction"] = json!(instruction.map(|(offset, text)| json!({ "offset": offset, "text": text })));
+	}
 	match document {
 		Value::Object(map) => map,
 		_ => unreachable!()
@@ -130,6 +143,27 @@ mod tests {
 	use serde_json::json;
 
 	use super::value;
+
+	#[test]
+	fn a_running_world_has_every_field_and_nothing_in_them() {
+		let running = super::execution(12, None);
+		assert_eq!(
+			serde_json::Value::Object(running),
+			json!({ "pid": 12, "paused": false, "reason": null, "message": null, "caught": null, "changes": [], "stack": [], "instruction": null })
+		);
+		let reason = auxtools_cli::server_types::BreakpointReason::Runtime {
+			message: "bad index".to_owned(),
+			caught: true
+		};
+		let paused = super::execution(12, Some((&reason, &[], Some((4, "Ret".to_owned())))));
+		assert_eq!(
+			serde_json::Value::Object(paused),
+			json!({
+				"pid": 12, "paused": true, "reason": "runtime", "message": "bad index", "caught": true, "changes": [], "stack": [],
+				"instruction": { "offset": 4, "text": "Ret" }
+			})
+		);
+	}
 
 	fn text(text: &str) -> Rendered {
 		Rendered::Text(text.to_owned())

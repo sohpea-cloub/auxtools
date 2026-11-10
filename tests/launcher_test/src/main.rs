@@ -187,54 +187,59 @@ fn command_line(pid: u64, code: &Path) {
 		printed
 	};
 
-	assert_eq!(run(&["status"], 0).lines().next().unwrap_or_default(), "running");
-	let printed = run(&["wait", "--timeout", "1"], 2);
-	assert!(printed.contains("timed out"), "wait said {}", printed);
+	assert_eq!(run(&["status"], 0).lines().next().unwrap_or_default(), format!("pid {}: running", pid));
+	let printed = run(&["wait", "pause", "--timeout", "1"], 2);
+	assert_eq!(printed.trim(), "error: timed out after 1 second waiting for the world to pause.");
 
 	let line = line_of(code, "\treturn 2").to_string();
-	let printed = run(&["wait", "--break", &format!("attach_host.dm:{}", line), "--timeout", "60"], 0);
+	let printed = run(&["wait", "pause", "--break", &format!("attach_host.dm:{}", line), "--timeout", "60"], 0);
 	assert!(
-		printed.starts_with("paused at a breakpoint\n#0 /value  attach_host.dm:") && printed.contains("#1 /run_until_stopped"),
+		printed.starts_with(&format!("pid {}: paused at a breakpoint\n#0 /value  attach_host.dm:", pid)) && printed.contains("#1 /run_until_stopped"),
 		"wait said {}",
 		printed
 	);
 	let printed = run(&["status"], 0);
-	assert!(printed.starts_with("paused at a breakpoint"), "it didn't stay paused: {}", printed);
+	assert!(printed.starts_with(&format!("pid {}: paused at a breakpoint\n#0 /value", pid)), "it didn't stay paused: {}", printed);
+	// The pid goes after the command as well as before it
+	let (got, after) = launcher_command(&["status", "--pid", &pid]);
+	assert_eq!((got, after.lines().next()), (0, printed.lines().next()), "status --pid said {}", after);
 	run(&["continue"], 0);
 
 	// A line with no code of its own breaks on the next that has
 	let declared = line_of(code, "/proc/value()");
-	let printed = run(&["wait", "--break", &format!("attach_host.dm:{}", declared), "--timeout", "60"], 0);
+	let printed = run(&["wait", "pause", "--break", &format!("attach_host.dm:{}", declared), "--timeout", "60"], 0);
 	assert!(
-		printed.starts_with(&format!("paused at a breakpoint\n#0 /value  attach_host.dm:{}\n", declared + 1)),
+		printed.starts_with(&format!("pid {}: paused at a breakpoint\n#0 /value  attach_host.dm:{}\n", pid, declared + 1)),
 		"wait said {}",
 		printed
 	);
 	assert_eq!(run(&["eval", "6", "*", "7"], 0).trim(), "42");
-	let printed = run(&["next"], 0);
-	assert!(printed.starts_with("paused after a step\n#0 /run_until_stopped"), "next said {}", printed);
+	let printed = run(&["step-over"], 0);
+	assert!(printed.starts_with(&format!("pid {}: paused after a step\n#0 /run_until_stopped", pid)), "step-over said {}", printed);
 	let printed = run(&["vars"], 0);
 	assert!(printed.contains("locals:"), "vars said {}", printed);
-	assert_eq!(run(&["continue"], 0).trim(), "running");
+	assert_eq!(run(&["continue"], 0).trim(), format!("pid {}: resumed", pid));
+	assert_eq!(run(&["continue"], 1).trim(), "error: the world is not paused.");
 	assert_eq!(
-		run(&["continue"], 1).trim(),
-		"the world is running: `pause` it, or `wait` for it to pause"
+		run(&["stack"], 1).trim(),
+		"error: the world is running. Pause it first with 'auxtools pause' or 'auxtools wait pause'."
 	);
 	println!("ok: the command line waited for a breakpoint, looked around, stepped and let the world carry on");
 
 	let printed = run(&["pause"], 0);
 	assert!(
-		printed.starts_with("paused where it was asked to\n#0 /run_until_stopped"),
+		printed.starts_with(&format!("pid {}: paused by request\n#0 /run_until_stopped", pid)),
 		"pause said {}",
 		printed
 	);
-	let printed = run(&["wait", "--break", "/proc/value"], 0);
-	assert!(printed.starts_with("already paused"), "wait said {}", printed);
-	run(&["continue"], 0);
-	let printed = run(&["wait", "--break", "/proc/value", "--if", "1 == 2", "--timeout", "2"], 2);
-	assert!(printed.contains("timed out"), "wait said {}", printed);
-	let printed = run(&["wait", "--break", "nowhere.dm:3"], 1);
-	assert!(printed.contains("the world has no code from a file called nowhere.dm"), "wait said {}", printed);
+	let printed = run(&["wait", "pause", "--break", "/proc/value"], 0);
+	assert!(printed.starts_with(&format!("already paused\npid {}: paused by request\n", pid)), "wait said {}", printed);
+	let resumed: serde_json::Value = serde_json::from_str(&run(&["continue", "--json"], 0)).unwrap();
+	assert_eq!(resumed, json!({ "pid": pid.parse::<u64>().unwrap(), "resumed": true }));
+	let printed = run(&["wait", "pause", "--break", "/proc/value", "--if", "1 == 2", "--timeout", "2"], 2);
+	assert!(printed.contains("error: timed out after 2 seconds waiting for the world to pause."), "wait said {}", printed);
+	let printed = run(&["wait", "pause", "--break", "nowhere.dm:3"], 1);
+	assert!(printed.contains("the world has no code from a file named nowhere.dm"), "wait said {}", printed);
 	println!("ok: the command line paused the world, and its waits time out and say what's wrong");
 }
 
@@ -244,11 +249,11 @@ fn command_line_shape() {
 	// Alone, it says how it's used, and doesn't wait to be spoken to
 	let (code, alone) = launcher_command(&[]);
 	assert_eq!(code, 0, "{}", alone);
-	assert!(alone.starts_with("auxtools: debug BYOND worlds"), "auxtools said {}", alone);
-	assert!(alone.contains("Usage: auxtools [--pid PID] COMMAND [OPTIONS]"), "auxtools said {}", alone);
+	assert!(alone.starts_with("auxtools - Launch, inspect, and debug BYOND worlds\n"), "auxtools said {}", alone);
+	assert!(alone.contains("Usage:\n  auxtools [--pid PID] COMMAND [ARGS] [OPTIONS]\n"), "auxtools said {}", alone);
 	for command in [
-		"launch", "stop", "reboot", "list", "status", "stack", "vars", "eval", "pause", "continue", "next", "step", "out", "wait", "trace", "proc", "dis",
-		"dap", "help", "version"
+		"launch", "list", "status", "stop", "reboot", "log", "stack", "vars", "eval", "proc", "disassemble", "pause", "continue", "step-over", "step-in",
+		"step-out", "wait", "trace", "dap", "help", "version"
 	] {
 		assert!(alone.lines().any(|line| line.starts_with(&format!("  {} ", command))), "{} isn't in the help:\n{}", command, alone);
 	}
@@ -258,40 +263,102 @@ fn command_line_shape() {
 	}
 	println!("ok: auxtools alone, and help, list every command with what it does, and exit");
 
+	// A command's page, and one of a command of a command
 	let (code, of_wait) = launcher_command(&["help", "wait"]);
 	assert_eq!(code, 0);
 	assert!(
-		of_wait.starts_with("Usage: auxtools [--pid PID] wait [--break PLACE]...") && of_wait.contains("  --timeout SECONDS "),
+		of_wait.starts_with("Wait for a debugger or world lifecycle event.\n\nUsage:\n  auxtools [--pid PID] wait pause [OPTIONS]\n"),
 		"help wait said {}",
 		of_wait
 	);
-	assert!(!of_wait.contains("--log") && of_wait.contains("use `trace`"), "help wait said {}", of_wait);
-	assert_eq!(launcher_command(&["wait", "--help"]), (0, of_wait));
+	assert_eq!(launcher_command(&["wait", "--help"]), (0, of_wait.clone()));
+	// Alone, it's told what it can wait for, and that it waited for nothing
+	let (code, bare) = launcher_command(&["wait"]);
+	assert_eq!(code, 1, "{}", bare);
+	assert_eq!(bare, format!("{}error: wait requires a command: pause, reload, or reboot.\n", of_wait));
+	let (code, of_pause) = launcher_command(&["help", "wait", "pause"]);
+	assert_eq!(code, 0);
+	assert!(
+		of_pause.starts_with("Wait for execution to pause and report the location and reason.\n\nUsage:\n  auxtools [--pid PID] wait pause [OPTIONS]\n")
+			&& of_pause.contains("\n  --timeout SECONDS   Set the wait deadline. [default: unlimited]\n")
+			&& of_pause.contains("\n  --pid PID           Select the world process.\n")
+			&& of_pause.contains("\n  -h, --help          Show help for this command.\n")
+			&& of_pause.contains("\nExit codes:\n  0  World paused, or was already paused.\n")
+			&& !of_pause.contains("--log"),
+		"help wait pause said {}",
+		of_pause
+	);
+	assert_eq!(launcher_command(&["wait", "pause", "--help"]), (0, of_pause.clone()));
+	assert_eq!(launcher_command(&["wait", "pause", "-h"]), (0, of_pause));
 	let (code, of_trace) = launcher_command(&["help", "trace"]);
 	assert_eq!(code, 0);
 	assert!(
-		of_trace.starts_with("Usage: auxtools [--pid PID] trace PLACE...") && of_trace.contains("  --by caller "),
+		of_trace.starts_with("Log or count breakpoint hits without pausing execution.\n\nUsage:\n  auxtools [--pid PID] trace LOCATION... [OPTIONS]\n")
+			&& of_trace.contains("  --by caller "),
 		"help trace said {}",
 		of_trace
 	);
-	let (code, printed) = launcher_command(&["help", "frobnicate"]);
-	assert_eq!((code, printed.trim()), (1, "there's no command frobnicate: `auxtools help` lists them"));
-	println!("ok: help COMMAND, and COMMAND --help, show a command's options");
+	for (args, said) in [
+		(&["help", "frobnicate"][..], "error: unknown command 'frobnicate'. Run 'auxtools --help' for available commands."),
+		(&["help", "wait", "soon"], "error: unknown wait command 'soon'. Run 'auxtools wait --help' for available commands."),
+		(&["frobnicate"], "error: unknown command 'frobnicate'. Run 'auxtools --help' for available commands."),
+		(&["wait", "--break", "/proc/x"], "error: unexpected argument '--break' before a wait command: specify pause, reload, or reboot. Run 'auxtools wait --help' for usage."),
+		(&["next"], "error: unknown command 'next'. Run 'auxtools --help' for available commands.")
+	] {
+		let (code, printed) = launcher_command(args);
+		assert_eq!((code, printed.trim()), (1, said), "`auxtools {}`", args.join(" "));
+	}
+	println!("ok: help COMMAND, and COMMAND --help, show a command's page; a command there isn't is an error that says where to look");
 
 	let (code, version) = launcher_command(&["version"]);
 	assert_eq!(code, 0);
 	assert!(version.starts_with("auxtools ") && protocol(&version) > 0, "version said {}", version);
-	assert_eq!(launcher_command(&["--version"]), (0, version));
-	println!("ok: version and --version say the launcher's version and its protocol's");
+	assert_eq!(launcher_command(&["--version"]), (0, version.clone()));
+	assert_eq!(launcher_command(&["-V"]), (0, version.clone()));
+	let (code, as_json) = launcher_command(&["version", "--json"]);
+	let as_json: serde_json::Value = serde_json::from_str(&as_json).unwrap_or_else(|_| panic!("version --json said {}", as_json));
+	assert_eq!(code, 0);
+	assert_eq!(as_json["protocol"], protocol(&version));
+	assert_eq!(version.trim(), format!("auxtools {} (protocol {})", as_json["version"].as_str().unwrap(), as_json["protocol"]));
+	println!("ok: version, --version and -V say the launcher's version and its protocol's, as JSON too");
 
+	// What's wrong with a command's options is said before any world is looked
+	// for: there's none here
+	for (args, said) in [
+		(&["vars", "--depth", "3"][..], "error: --depth requires --json."),
+		(&["eval", "1", "--wait"], "error: --wait requires --spawn."),
+		(&["eval", "1", "--frame", "0", "--src", "0x1"], "error: --frame and --src cannot be used together."),
+		(&["eval", "1", "--frame", "0", "--spawn"], "error: --frame and --spawn cannot be used together."),
+		(&["eval"], "error: eval requires an expression: EXPRESSION, --file FILE, or - for stdin."),
+		(&["stop", "--kill-timeout", "1"], "error: --kill-timeout requires --kill."),
+		(&["trace", "/proc/x", "--by", "n", "--log", "x"], "error: --by and --log cannot be used together."),
+		(&["wait", "pause", "--no-hold", "--hold-max", "3"], "error: --no-hold and --hold-max cannot be used together."),
+		(&["launch", "nothing.dmb", "--json"], "error: --json requires --detach."),
+		(&["--pid", "1", "list"], "error: --pid cannot be used with 'list': it does not select an existing world."),
+		(&["version", "--pid", "1"], "error: --pid cannot be used with 'version': it does not select an existing world."),
+		(&["trace"], "error: missing required argument: LOCATION. Run 'auxtools trace --help' for usage."),
+		(&["trace", "/proc/x", "--count", "0"], "error: invalid value '0' for --count: expected a positive integer. Run 'auxtools trace --help' for usage."),
+		(&["reboot", "--timeout", "soon"], "error: invalid value 'soon' for --timeout: expected a non-negative number of seconds. Run 'auxtools reboot --help' for usage."),
+		(&["stack", "--sideways"], "error: unexpected argument '--sideways'. Run 'auxtools stack --help' for usage."),
+		(&["vars", "--frame"], "error: --frame requires a value: N. Run 'auxtools vars --help' for usage."),
+		(&["--pid", "soon", "status"], "error: invalid value 'soon' for --pid: expected a process ID. Run 'auxtools status --help' for usage.")
+	] {
+		let (code, printed) = launcher_command(args);
+		assert_eq!((code, printed.trim()), (1, said), "`auxtools {}`", args.join(" "));
+	}
+	println!("ok: options that need another, or can't go with one, are errors with exit code 1, said without a world");
+
+	let (code, list) = launcher_command(&["list", "--json"]);
+	assert_eq!(code, 0, "{}", list);
+	assert!(serde_json::from_str::<serde_json::Value>(&list).is_ok_and(|worlds| worlds.is_array()), "list --json said {}", list);
 	let (code, list) = launcher_command(&["list"]);
 	assert_eq!(code, 0, "{}", list);
-	assert!(serde_json::from_str::<serde_json::Value>(&list).is_ok_and(|worlds| worlds.is_array()), "list said {}", list);
+	assert!(list.starts_with("PID ") || list == "No worlds found with the debug library loaded.\n", "list said {}", list);
 	for gone in ["--list", "--build"] {
 		let (code, printed) = launcher_command(&[gone]);
 		assert_eq!(code, 1, "`auxtools {}` said {}", gone, printed);
 	}
-	println!("ok: list is a command, and the old flags are gone");
+	println!("ok: list is a table, or JSON with --json, and the old flags are gone");
 }
 
 /// The protocol version in what `auxtools version` prints
@@ -331,7 +398,7 @@ fn another_version() {
 		}
 	});
 
-	let (code, list) = launcher_command(&["list"]);
+	let (code, list) = launcher_command(&["list", "--json"]);
 	assert_eq!(code, 0, "{}", list);
 	let worlds: serde_json::Value = serde_json::from_str(&list).unwrap();
 	let listed = worlds
@@ -341,6 +408,18 @@ fn another_version() {
 		.find(|world| world["pid"] == pid)
 		.unwrap_or_else(|| panic!("the other version's world isn't listed: {}", list));
 	assert_eq!((&listed["protocol"], &listed["compatible"]), (&json!(theirs), &json!(false)), "{}", listed);
+	// The table says the same
+	let (code, table) = launcher_command(&["list"]);
+	assert_eq!(code, 0, "{}", table);
+	let header: Vec<&str> = table.lines().next().unwrap_or_default().split_whitespace().collect();
+	assert_eq!(header, ["PID", "PROGRAM", "PROTOCOL", "COMPATIBLE", "DMB", "CWD", "ARGS"], "list said {}", table);
+	let row: Vec<&str> = table
+		.lines()
+		.find(|line| line.split_whitespace().next() == Some(pid.to_string().as_str()))
+		.unwrap_or_else(|| panic!("the other version's world isn't in the table: {}", table))
+		.split_whitespace()
+		.collect();
+	assert_eq!((row[2], row[3]), (theirs.to_string().as_str(), "no"), "list said {}", table);
 
 	let pid_text = pid.to_string();
 	let (code, printed) = launcher_command(&["--pid", &pid_text, "status"]);
@@ -366,12 +445,12 @@ fn command_line_more(pid: u64, dir: &Path) {
 		printed
 	};
 
-	let printed = run(&["wait", "--break", "/proc/value", "--timeout", "60"], 0);
-	assert!(printed.starts_with("paused at a breakpoint\n#0 /value"), "wait said {}", printed);
-	let printed = run(&["out"], 0);
-	assert!(printed.starts_with("paused after a step\n#0 /run_until_stopped"), "out said {}", printed);
-	let printed = run(&["step"], 0);
-	assert!(printed.starts_with("paused after a step\n#0 /run_until_stopped"), "step said {}", printed);
+	let printed = run(&["wait", "pause", "--break", "/proc/value", "--timeout", "60"], 0);
+	assert!(printed.starts_with(&format!("pid {}: paused at a breakpoint\n#0 /value", pid)), "wait said {}", printed);
+	let printed = run(&["step-out", "--timeout", "30"], 0);
+	assert!(printed.starts_with(&format!("pid {}: paused after a step\n#0 /run_until_stopped", pid)), "step-out said {}", printed);
+	let printed = run(&["step-in"], 0);
+	assert!(printed.starts_with(&format!("pid {}: paused after a step\n#0 /run_until_stopped", pid)), "step-in said {}", printed);
 	println!("ok: the command line steps out of a proc, and into a line");
 
 	let printed = run(&["stack"], 0);
@@ -391,26 +470,30 @@ fn command_line_more(pid: u64, dir: &Path) {
 	let printed = run(&["vars", "--frame", "0", "--globals"], 0);
 	assert!(printed.contains("globals:"), "vars --globals said {}", printed);
 	let printed = run(&["vars", "--frame", "7"], 1);
-	assert_eq!(printed.trim(), "there's no frame 7");
+	assert!(printed.starts_with("error: frame 7 does not exist: the paused stack has "), "vars --frame 7 said {}", printed);
 	assert_eq!(run(&["eval", "--frame", "0", "6", "*", "7"], 0).trim(), "42");
+	// Its options go after its words as well
+	assert_eq!(run(&["eval", "6", "*", "7", "--frame", "0"], 0).trim(), "42");
+	assert_eq!(run(&["eval", "-1"], 0).trim(), "-1");
+	assert_eq!(run(&["eval", "--", "-rounds", "<", "0"], 0).trim(), "1");
 	let printed = run(&["eval", "--frame", "7", "1"], 1);
-	assert_eq!(printed.trim(), "there's no frame 7");
+	assert!(printed.starts_with("error: frame 7 does not exist: the paused stack has "), "eval --frame 7 said {}", printed);
 	let printed = run(&["eval", "1", "+"], 1);
-	assert!(printed.starts_with("parser error: "), "eval said {}", printed);
-	assert_eq!(run(&["eval", "nothing_called_this"], 1).trim(), "undefined var: nothing_called_this");
-	assert_eq!(run(&["eval", "1", "/", "0"], 1).trim(), "runtime error: Division by zero");
+	assert!(printed.starts_with("error: parser error: "), "eval said {}", printed);
+	assert_eq!(run(&["eval", "nothing_called_this"], 1).trim(), "error: undefined var: nothing_called_this");
+	assert_eq!(run(&["eval", "1", "/", "0"], 1).trim(), "error: runtime error: Division by zero");
 	println!("ok: the command line shows a frame's variables, with the globals when asked, and evaluates in a frame");
 	// A proc's body, as one argument with newlines in it
 	assert_eq!(run(&["eval", "var/n = 0\nfor(var/i in 1 to 3)\n\tn += i\nn"], 0).trim(), "6");
-	assert_eq!(run(&["eval", "var/x = 1\nx = nothing_called_this"], 1).trim(), "line 2: undefined var: nothing_called_this");
+	assert_eq!(run(&["eval", "var/x = 1\nx = nothing_called_this"], 1).trim(), "error: line 2: undefined var: nothing_called_this");
 	println!("ok: the command line evaluates a proc's body given as one argument");
 	run(&["continue"], 0);
 
 	// The world fails when it finds this file
 	std::fs::write(dir.join("fail"), "yes").unwrap();
-	let printed = run(&["wait", "--runtimes", "--timeout", "60"], 0);
+	let printed = run(&["wait", "pause", "--runtimes", "--timeout", "60"], 0);
 	assert!(
-		printed.starts_with("paused on a runtime error: cannot read from list\n#0 /fail"),
+		printed.starts_with(&format!("pid {}: paused on a runtime error: cannot read from list\n#0 /fail", pid)),
 		"wait --runtimes said {}",
 		printed
 	);
@@ -418,14 +501,14 @@ fn command_line_more(pid: u64, dir: &Path) {
 	println!("ok: the command line waits for a runtime error");
 
 	// A wait that doesn't hold its pause: the world carries on when it's gone
-	let printed = run(&["wait", "--break", "/proc/value", "--no-hold", "--timeout", "60"], 0);
-	assert!(printed.starts_with("paused at a breakpoint\n#0 /value"), "wait --no-hold said {}", printed);
-	assert_eq!(run(&["status"], 0).lines().next().unwrap_or_default(), "running");
+	let printed = run(&["wait", "pause", "--break", "/proc/value", "--no-hold", "--timeout", "60"], 0);
+	assert!(printed.starts_with(&format!("pid {}: paused at a breakpoint\n#0 /value", pid)), "wait --no-hold said {}", printed);
+	assert_eq!(run(&["status"], 0).lines().next().unwrap_or_default(), format!("pid {}: running", pid));
 	println!("ok: a wait that doesn't hold its pause leaves the world running");
 
 	// A condition that fails with an error at each hit doesn't pause, and is
 	// said once
-	let printed = run(&["wait", "--break", "/proc/value", "--if", "rounds.len > 0", "--timeout", "2"], 2);
+	let printed = run(&["wait", "pause", "--break", "/proc/value", "--if", "rounds.len > 0", "--timeout", "2"], 2);
 	assert_eq!(printed.matches("said only this once").count(), 1, "wait --if said {}", printed);
 	assert!(
 		printed.contains("failed, so the hits where it fails are skipped (said only this once): runtime error: Cannot read ") && printed.contains("timed out"),
@@ -436,46 +519,45 @@ fn command_line_more(pid: u64, dir: &Path) {
 
 	// A global, watched from a running world; then a var of the proc it
 	// paused in, until that changes
-	let printed = run(&["wait", "--change", "rounds", "--timeout", "60"], 0);
+	let printed = run(&["wait", "pause", "--change", "rounds", "--timeout", "60"], 0);
 	assert!(
-		printed.starts_with("watching rounds, now ") && printed.contains("\npaused after a change: rounds changed from ") && printed.contains("\n#0 /run_until_stopped"),
+		printed.starts_with("watching rounds, now ")
+			&& printed.contains(&format!("\npid {}: paused after a change: rounds changed from ", pid))
+			&& printed.contains("\n#0 /run_until_stopped"),
 		"wait --change said {}",
 		printed
 	);
-	let printed = run(&["wait", "--change", "said", "--if", "value > old", "--timeout", "60"], 0);
+	let printed = run(&["wait", "pause", "--change", "said", "--if", "value > old", "--timeout", "60"], 0);
 	assert!(
-		printed.starts_with("watching said, now ") && printed.contains("\npaused after a change: said changed from ") && printed.contains("\n#0 /run_until_stopped"),
+		printed.starts_with("watching said, now ")
+			&& printed.contains(&format!("\npid {}: paused after a change: said changed from ", pid))
+			&& printed.contains("\n#0 /run_until_stopped"),
 		"wait --change from a pause said {}",
 		printed
 	);
-	let printed = run(&["wait", "--change", "1 + 1"], 1);
-	assert!(printed.starts_with("couldn't watch 1 + 1: "), "wait --change said {}", printed);
+	let printed = run(&["wait", "pause", "--change", "1 + 1"], 1);
+	assert!(printed.starts_with("error: cannot watch 1 + 1: "), "wait --change said {}", printed);
 	run(&["continue"], 0);
 	println!("ok: the command line waits for a var to change: a global from a running world, a proc's own from a pause");
 
 	for (args, said) in [
-		(&["frobnicate"][..], "there's no command frobnicate"),
-		(&["stack", "--sideways"][..], "there's no --sideways here"),
-		(&["vars", "--frame"][..], "--frame needs a value"),
-		(&["vars", "--frame", "top"][..], "--frame top isn't a number"),
-		(&["eval"][..], "eval what?"),
-		(&["wait", "--break", "somewhere"][..], "somewhere is neither FILE:LINE nor /proc/path"),
-		(&["wait", "now"][..], "wait doesn't take now"),
-		(&["wait", "--break", "/proc/value", "--log", "hit"][..], "there's no --log here"),
+		(&["frobnicate"][..], "error: unknown command 'frobnicate'."),
+		(&["vars", "--frame", "top"][..], "error: invalid value 'top' for --frame: expected a non-negative integer."),
+		(&["wait", "pause", "--break", "somewhere"][..], "error: invalid location 'somewhere': expected FILE:LINE or /proc/path[#N]."),
+		(&["wait", "now"][..], "error: unknown wait command 'now'."),
+		(&["wait", "pause", "--break", "/proc/value", "--log", "hit"][..], "error: unexpected argument '--log'."),
 		(
-			&["wait", "--break", "/proc/value", "--if", "1 =="][..],
-			"couldn't break at /proc/value: the condition doesn't compile: parser error: "
+			&["wait", "pause", "--break", "/proc/value", "--if", "1 =="][..],
+			"error: cannot set a breakpoint at /proc/value: the condition doesn't compile: parser error: "
 		)
 	] {
 		let printed = run(args, 1);
 		assert!(printed.starts_with(said), "`{}` said {}", args.join(" "), printed);
 	}
-	let (code, printed) = launcher_command(&["--pid", "soon", "status"]);
-	assert_eq!((code, printed.trim()), (1, "soon isn't a process id"));
 	let (code, printed) = launcher_command(&["--pid", "4000000000", "status"]);
 	assert_eq!(code, 1);
-	assert!(printed.starts_with("couldn't reach the world in process 4000000000"), "status said {}", printed);
-	assert_eq!(run(&["status"], 0).lines().next().unwrap_or_default(), "running");
+	assert!(printed.starts_with("error: cannot connect to the world with pid 4000000000: "), "status said {}", printed);
+	assert_eq!(run(&["status"], 0).lines().next().unwrap_or_default(), format!("pid {}: running", pid));
 	println!("ok: the command line says what it doesn't understand, and exits with 1");
 }
 
@@ -498,12 +580,18 @@ fn command_line_trace(pid: u64, code: &Path) {
 	let printed = run(&["trace", "/proc/value", "--count", "3"], 0);
 	let lines: Vec<&str> = printed.lines().collect();
 	let hit = format!("/value  attach_host.dm:{}, called by /run_until_stopped  attach_host.dm:{}", value, called);
-	assert_eq!(lines, [format!("tracing /value  attach_host.dm:{}", value), hit.clone(), hit.clone(), hit], "trace said {}", printed);
-	assert_eq!(run(&["status"], 0).lines().next().unwrap_or_default(), "running");
+	let summary = "summary: 3 hits, 0 skipped; ended: count".to_owned();
+	assert_eq!(lines, [format!("tracing /value  attach_host.dm:{}", value), hit.clone(), hit.clone(), hit, summary], "trace said {}", printed);
+	assert_eq!(run(&["status"], 0).lines().next().unwrap_or_default(), format!("pid {}: running", pid));
 	println!("ok: trace says where its breakpoint went, then where each hit was and what called it, and ends after --count hits");
 
 	let printed = run(&["trace", &format!("attach_host.dm:{}", value), "--log", "rounds then: {rounds > 0}", "--count", "2"], 0);
-	assert_eq!(printed.lines().skip(1).collect::<Vec<_>>(), ["rounds then: 1", "rounds then: 1"], "trace --log said {}", printed);
+	assert_eq!(
+		printed.lines().skip(1).collect::<Vec<_>>(),
+		["rounds then: 1", "rounds then: 1", "summary: 2 hits, 0 skipped; ended: count"],
+		"trace --log said {}",
+		printed
+	);
 	println!("ok: trace --log prints its message at each hit, with the values of its expressions");
 
 	// tick(1) is called every round, tick(2) every other
@@ -518,14 +606,14 @@ fn command_line_trace(pid: u64, code: &Path) {
 			&& lines[2].ends_with(&format!("  /tally  attach_host.dm:{}", other))
 			&& count(lines[1]) >= count(lines[2])
 			&& count(lines[2]) >= 2
-			&& lines[3] == format!("{} hits in all", count(lines[1]) + count(lines[2])),
+			&& lines[3] == format!("summary: {} hits, 0 skipped; ended: time", count(lines[1]) + count(lines[2])),
 		"trace --by caller said {}",
 		printed
 	);
 	let printed = run(&["trace", "/proc/tick", "--by", "n", "--count", "6"], 0);
 	let lines: Vec<&str> = printed.lines().collect();
 	assert!(
-		lines.len() == 4 && lines[1].ends_with("  1") && lines[2].ends_with("  2") && count(lines[1]) == 6 - count(lines[2]) && lines[3] == "6 hits in all",
+		lines.len() == 4 && lines[1].ends_with("  1") && lines[2].ends_with("  2") && count(lines[1]) == 6 - count(lines[2]) && lines[3] == "summary: 6 hits, 0 skipped; ended: count",
 		"trace --by n said {}",
 		printed
 	);
@@ -536,7 +624,7 @@ fn command_line_trace(pid: u64, code: &Path) {
 	assert_eq!(printed.matches("said only this once").count(), 1, "trace --if said {}", printed);
 	assert!(
 		printed.contains("failed, so the hits where it fails are skipped (said only this once): runtime error: Cannot read ")
-			&& printed.contains(" hits were skipped: the condition failed with an error there")
+			&& printed.lines().any(|line| line.starts_with("summary: 0 hits, ") && !line.contains(", 0 skipped") && line.ends_with(" skipped; ended: time"))
 			&& !printed.contains("called by"),
 		"trace --if said {}",
 		printed
@@ -588,26 +676,23 @@ fn command_line_trace(pid: u64, code: &Path) {
 		Command::new("kill").args(["-INT", &tracing.id().to_string()]).status().unwrap();
 		let traced = tracing.wait_with_output().unwrap();
 		let out = String::from_utf8_lossy(&traced.stdout);
-		assert!(traced.status.success() && out.contains(" hits in all\n") && out.contains("  1\n"), "an interrupted trace said {}", out);
+		assert!(traced.status.success() && out.contains(" skipped; ended: interrupted\n") && out.contains("  1\n"), "an interrupted trace said {}", out);
 		println!("ok: an interrupted trace says what it counted, and exits with 0");
 	}
 
 	for (args, said) in [
-		(&["trace"][..], "trace where?"),
-		(&["trace", "nowhere.dm:3"][..], "couldn't break at nowhere.dm:3: the world has no code from a file called nowhere.dm"),
-		(&["trace", "/proc/value", "/proc/nothing_called_this"][..], "couldn't break at /proc/nothing_called_this: "),
-		(&["trace", "/proc/value", "--if", "1 =="][..], "couldn't break at /proc/value: the condition doesn't compile: "),
-		(&["trace", "/proc/value", "--by", "n", "--log", "x"][..], "--by counts the hits instead of printing a line at each"),
-		(&["trace", "/proc/value", "--for", "-1"][..], "--for -1 isn't a time in seconds"),
-		(&["trace", "/proc/value", "--count", "0"][..], "--count 0 would end before it started")
+		(&["trace", "nowhere.dm:3"][..], "error: cannot set a breakpoint at nowhere.dm:3: the world has no code from a file named nowhere.dm."),
+		(&["trace", "/proc/value", "/proc/nothing_called_this"][..], "error: cannot set a breakpoint at /proc/nothing_called_this: "),
+		(&["trace", "/proc/value", "--if", "1 =="][..], "error: cannot set a breakpoint at /proc/value: the condition doesn't compile: "),
+		(&["trace", "/proc/value", "--for=-1"][..], "error: invalid value '-1' for --for: expected a non-negative number of seconds.")
 	] {
 		let printed = run(args, 1);
 		assert!(printed.contains(said), "`{}` said {}", args.join(" "), printed);
 	}
 	// The breakpoint set before the place that failed went with it
-	assert_eq!(run(&["status"], 0).lines().next().unwrap_or_default(), "running");
+	assert_eq!(run(&["status"], 0).lines().next().unwrap_or_default(), format!("pid {}: running", pid));
 	let printed = run(&["trace", "/proc/value", "--count", "1"], 0);
-	assert_eq!(printed.lines().count(), 2, "trace said {}", printed);
+	assert_eq!(printed.lines().count(), 3, "trace said {}", printed);
 	println!("ok: trace fails at once on a place it can't break at, and says what it doesn't understand");
 }
 
@@ -730,7 +815,12 @@ fn attach_and_reload(server: &str, library: &Path) {
 	let traced = tracing.wait_with_output().unwrap();
 	let (out, err) = (String::from_utf8_lossy(&traced.stdout), String::from_utf8_lossy(&traced.stderr));
 	assert_eq!(traced.status.code(), Some(3), "the trace said {}{}", out, err);
-	assert!(out.contains(" hits in all\n") && err.starts_with("the world hung up"), "the trace said {}{}", out, err);
+	assert!(
+		out.contains("; ended: world\n") && err.starts_with("error: world connection ended before the operation completed"),
+		"the trace said {}{}",
+		out,
+		err
+	);
 	println!("ok: a trace ends with the world, exit code 3, and says what it counted");
 	runner.event("terminated");
 	journal::world_went_away(waiting);
@@ -773,7 +863,7 @@ impl Drop for Started {
 		// processes there were: the worlds of this run's copies are found, and
 		// their launchers go with them
 		if std::thread::panicking() {
-			let list = Command::new(launcher_path()).arg("list").output().ok();
+			let list = Command::new(launcher_path()).args(["list", "--json"]).output().ok();
 			let worlds: serde_json::Value = list.and_then(|list| serde_json::from_slice(&list.stdout).ok()).unwrap_or_default();
 			let ours = format!("launcher_test_launch-{}", std::process::id());
 			for world in worlds.as_array().into_iter().flatten() {
@@ -899,7 +989,7 @@ fn launch_from_the_command_line(server: &str) {
 		let args = launch_args(&missing, server, more);
 		let (got, printed) = launcher_command(&args.iter().map(String::as_str).collect::<Vec<_>>());
 		assert_eq!(got, 1, "launch of a world that isn't there gave {}: {}", got, printed);
-		assert!(printed.contains("nothing.dmb: build the world first"), "launch said {}", printed);
+		assert!(printed.contains("nothing.dmb does not exist. Compile the world first"), "launch said {}", printed);
 	}
 	println!("ok: launch says a world that isn't built isn't there, and exits with 1");
 
@@ -937,7 +1027,7 @@ fn launch_from_the_command_line(server: &str) {
 		let printed = read();
 		assert_eq!(exit, 0, "launch exited with {}:\n{}", exit, printed);
 		assert!(
-			printed.contains("Interrupted: asking the world to end") && printed.contains("attach test: world/Del"),
+			printed.contains("Interrupted: requesting graceful shutdown") && printed.contains("attach test: world/Del"),
 			"launch said:\n{}",
 			printed
 		);
@@ -970,19 +1060,21 @@ fn launch_from_the_command_line(server: &str) {
 		assert_eq!(got, code, "`{}` gave {}, not {}: {}", args.join(" "), got, code, printed);
 		printed
 	};
-	assert_eq!(run(&["status"], 0).lines().next().unwrap_or_default(), "running");
+	assert_eq!(run(&["status"], 0).lines().next().unwrap_or_default(), format!("pid {}: running", pid));
 	assert_eq!(run(&["eval", "6", "*", "7"], 0).trim(), "42");
 	wait_for_text("the background launcher's log", "attach test: 1", read_log);
 	println!("ok: launch --detach returns when the world is up, with its process, and commands work with it");
 
 	let printed = run(&["reboot"], 0);
-	assert!(printed.starts_with("The world rebooted and is answering again, "), "reboot said {}", printed);
-	assert_eq!(run(&["status"], 0).lines().next().unwrap_or_default(), "running");
+	assert_eq!(printed.trim(), format!("pid {}: rebooted", pid));
+	assert_eq!(run(&["status"], 0).lines().next().unwrap_or_default(), format!("pid {}: running", pid));
+	let again: serde_json::Value = serde_json::from_str(&run(&["reboot", "--json", "--timeout", "60"], 0)).unwrap();
+	assert_eq!(again, json!({ "pid": pid, "rebooted": true }));
 	wait_for_text("the background launcher's log", "The world restarted", read_log);
 	println!("ok: reboot reboots the world, and returns when it answers again; the launcher connects again");
 
 	let printed = run(&["stop"], 0);
-	assert_eq!(printed.trim(), format!("The world has ended (process {})", pid));
+	assert_eq!(printed.trim(), format!("pid {}: stopped", pid));
 	assert!(!alive(pid), "the world is still there");
 	assert!(gone_within(launcher, 10), "the background launcher didn't go with the world");
 	let said = read_log();
@@ -995,14 +1087,16 @@ fn launch_from_the_command_line(server: &str) {
 	let args = launch_args(&dmb, server, &["--detach", "--no-hot-reload"]);
 	let (got, printed) = launcher_command(&args.iter().map(String::as_str).collect::<Vec<_>>());
 	assert_eq!(got, 0, "launch --detach said {}", printed);
-	let pid: u64 = printed
-		.strip_prefix("The world is up: process ")
-		.and_then(|rest| rest.lines().next()?.parse().ok())
+	let lines: Vec<&str> = printed.lines().collect();
+	let pid: u64 = lines
+		.first()
+		.and_then(|line| line.strip_prefix("pid ")?.strip_suffix(": started")?.parse().ok())
 		.unwrap_or_else(|| panic!("launch --detach said {}", printed));
-	let launcher: u64 = printed
-		.split_once("Its launcher is process ")
-		.and_then(|(_, rest)| rest.split_once(',')?.0.parse().ok())
+	let launcher: u64 = lines
+		.get(1)
+		.and_then(|line| line.strip_prefix("launcher: pid ")?.parse().ok())
 		.unwrap_or_else(|| panic!("launch --detach said {}", printed));
+	assert_eq!(lines.get(2).copied(), Some(format!("log: {}", dir.join("attach_host.auxtools.log").display()).as_str()), "launch --detach said {}", printed);
 	started.pids.extend([pid, launcher]);
 	std::fs::write(dir.join("refuse_del"), "yes").unwrap();
 	let pid_text = pid.to_string();
@@ -1015,20 +1109,22 @@ fn launch_from_the_command_line(server: &str) {
 	// Its code isn't read, so it has no macros, and says so
 	let printed = run(&["eval", "DOUBLE_IT(1)"], 1);
 	assert!(
-		printed.starts_with("there's no proc /proc/DOUBLE_IT (if that's a #define: this world hasn't been given its code's macros"),
+		printed.starts_with("error: there's no proc /proc/DOUBLE_IT (if that's a #define: this world hasn't been given its code's macros"),
 		"eval said {}",
 		printed
 	);
 	println!("ok: a world that hasn't been given its code's macros says so when an expression uses a name it doesn't know");
-	let printed = run(&["stop", "--timeout", "2"], 1);
+	let printed = run(&["stop", "--timeout", "2"], 2);
 	assert!(
-		printed.starts_with(&format!("the world (process {}) is still running 2 s on: its world/Del() didn't end it", pid)),
+		printed.starts_with(&format!("error: timed out after 2 seconds waiting for the world process (pid {}) to exit.", pid)),
 		"stop said {}",
 		printed
 	);
 	assert!(alive(pid), "the world ended");
-	let printed = run(&["stop", "--timeout", "0", "--kill"], 0);
-	assert_eq!(printed.trim(), format!("The world didn't end in 0 s, so its process ({}) was ended", pid));
+	let printed = run(&["stop", "--timeout", "0", "--kill", "--kill-timeout", "10", "--json"], 0);
+	let stopped: serde_json::Value = serde_json::from_str(printed.lines().next().unwrap_or_default()).unwrap_or_else(|_| panic!("stop --json said {}", printed));
+	assert_eq!(stopped, json!({ "pid": pid, "stopped": true, "killed": true }), "stop said {}", printed);
+	assert!(printed.contains("graceful shutdown timed out after 0 seconds; the process was terminated."), "stop said {}", printed);
 	assert!(!alive(pid), "the world is still there");
 	// (a process that's ended on Windows exits with the code it was ended with)
 	let ended = if cfg!(windows) { "The world exited with code 1" } else { "The world was ended" };

@@ -6,24 +6,13 @@
 
 use std::time::{Duration, Instant};
 
-use auxtools_cli::{
-	local,
-	server_types::Request
-};
+use auxtools_cli::{local, server_types::Request};
+use serde_json::json;
 
-use super::{Failure, Flags, Result, World, HUNG_UP, TIMED_OUT};
+use super::{args, seconds_text, Failure, Result, World, HUNG_UP, TIMED_OUT};
 
 /// How often to look again
 const INTERVAL: Duration = Duration::from_millis(50);
-
-/// `--timeout` in seconds, or `default`
-fn timeout(flags: &Flags, default: f64) -> Result<Duration> {
-	let seconds = flags.number::<f64>("--timeout")?.unwrap_or(default);
-	if !(seconds.is_finite() && seconds >= 0.0) {
-		return Err(format!("--timeout {} isn't a number of seconds", seconds).into());
-	}
-	Ok(Duration::from_secs_f64(seconds))
-}
 
 /// Has the world evaluate `expression`, without waiting for an answer
 fn ask(world: &mut World, expression: &str) -> Result<()> {
@@ -48,45 +37,55 @@ fn gone_by(pid: u32, until: Instant) -> bool {
 	}
 }
 
-pub fn stop(world: &mut World, args: &[String]) -> Result<()> {
-	let flags = Flags::parse(args, &["--timeout"], &["--kill"])?;
-	flags.nothing_else("stop")?;
-	let timeout = timeout(&flags, 10.0)?;
-	let pid = world.pid;
-	ask(world, "world.Del()")?;
-	if gone_by(pid, Instant::now() + timeout) {
-		println!("The world has ended (process {})", pid);
-		return Ok(());
-	}
-	if !flags.has("--kill") {
-		return Err(format!(
-			"the world (process {}) is still running {} s on: its world/Del() didn't end it. The debugger shuts down \
-			 in world/Del() all the same, so other commands may not reach it now (`stop --kill` ends the process)",
-			pid,
-			timeout.as_secs_f64()
-		)
-		.into());
-	}
-	local::kill(pid);
-	if gone_by(pid, Instant::now() + Duration::from_secs(5)) {
-		println!(
-			"The world didn't end in {} s, so its process ({}) was ended",
-			timeout.as_secs_f64(),
-			pid
-		);
-		Ok(())
+/// What a command that's done says: a line, or with `--json` the same as JSON
+fn done(as_json: bool, document: serde_json::Value, line: String) {
+	if as_json {
+		println!("{}", document);
 	} else {
-		Err(format!("couldn't end process {}", pid).into())
+		println!("{}", line);
 	}
 }
 
-pub fn reboot(world: &mut World, args: &[String]) -> Result<()> {
-	let flags = Flags::parse(args, &["--timeout"], &[])?;
-	flags.nothing_else("reboot")?;
-	let timeout = timeout(&flags, 60.0)?;
+pub fn stop(world: &mut World, args: &args::Stop) -> Result<()> {
+	let timeout = args.timeout.unwrap_or(Duration::from_secs(10));
+	let kill_timeout = args.kill_timeout.unwrap_or(Duration::from_secs(5));
 	let pid = world.pid;
-	let started = Instant::now();
-	let until = started + timeout;
+	// (a world that went away before it was asked has stopped all the same)
+	if ask(world, "world.Del()").is_err() && local::alive(pid) {
+		return Err(format!("cannot send the shutdown request: the connection to the world with pid {} ended.", pid).into());
+	}
+	if gone_by(pid, Instant::now() + timeout) {
+		done(args.json, json!({ "pid": pid, "stopped": true, "killed": false }), format!("pid {}: stopped", pid));
+		return Ok(());
+	}
+	if !args.kill {
+		return Err(Failure(
+			TIMED_OUT,
+			format!(
+				"timed out after {} waiting for the world process (pid {}) to exit. world.Del() shut down its debugger, so \
+				 auxtools can no longer reach it; include --kill in the stop request for a forced fallback.",
+				seconds_text(timeout),
+				pid
+			)
+		));
+	}
+	local::kill(pid);
+	if gone_by(pid, Instant::now() + kill_timeout) {
+		eprintln!("graceful shutdown timed out after {}; the process was terminated.", seconds_text(timeout));
+		done(args.json, json!({ "pid": pid, "stopped": true, "killed": true }), format!("pid {}: stopped (killed)", pid));
+		Ok(())
+	} else {
+		Err(Failure(
+			TIMED_OUT,
+			format!("timed out after {} waiting for the terminated process (pid {}) to exit.", seconds_text(kill_timeout), pid)
+		))
+	}
+}
+
+pub fn reboot(world: &mut World, args: &args::Reboot) -> Result<()> {
+	let timeout = args.timeout.unwrap_or(Duration::from_secs(60));
+	let pid = world.pid;
+	let until = Instant::now() + timeout;
 	ask(world, "world.Reboot()")?;
 
 	// The world lets its clients go as it reboots
@@ -96,7 +95,7 @@ pub fn reboot(world: &mut World, args: &[String]) -> Result<()> {
 			Ok(None) => {
 				return Err(Failure(
 					TIMED_OUT,
-					format!("the world didn't reboot in {} s", timeout.as_secs_f64())
+					format!("timed out after {} waiting for the world to reboot.", seconds_text(timeout))
 				))
 			}
 			Err(Failure(HUNG_UP, _)) => break,
@@ -107,12 +106,12 @@ pub fn reboot(world: &mut World, args: &[String]) -> Result<()> {
 	// One that connects while the world loads is answered once it has
 	loop {
 		if !local::alive(pid) {
-			return Err(format!("the world (process {}) ended rather than rebooting", pid).into());
+			return Err(Failure(HUNG_UP, format!("the world process (pid {}) exited instead of rebooting.", pid)));
 		}
 		if Instant::now() >= until {
 			return Err(Failure(
 				TIMED_OUT,
-				format!("the world rebooted, but wasn't answering {} s on", timeout.as_secs_f64())
+				format!("timed out after {} waiting for the rebooted world's debugger to respond.", seconds_text(timeout))
 			));
 		}
 		if let Ok(mut again) = World::connect(pid) {
@@ -121,11 +120,7 @@ pub fn reboot(world: &mut World, args: &[String]) -> Result<()> {
 			let answered = again.started().unwrap_or(false);
 			again.leave();
 			if answered {
-				println!(
-					"The world rebooted and is answering again, {:.1} s on (process {})",
-					started.elapsed().as_secs_f64(),
-					pid
-				);
+				done(args.json, json!({ "pid": pid, "rebooted": true }), format!("pid {}: rebooted", pid));
 				return Ok(());
 			}
 		}

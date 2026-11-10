@@ -49,11 +49,12 @@ fn run(pid: &str, args: &[&str], code: i32) -> Ran {
 }
 
 /// A failure: exit code 1, nothing on stdout, and what it said on stderr
+/// after `error: `
 fn fails(pid: &str, args: &[&str]) -> String {
 	let ran = run(pid, args, 1);
 	assert!(ran.out.is_empty(), "`{}` failed, and printed {} on stdout", args.join(" "), ran.out);
-	assert!(!ran.err.is_empty(), "`{}` failed without saying why", args.join(" "));
-	ran.err.trim_end().to_owned()
+	let said = ran.err.strip_prefix("error: ").unwrap_or_else(|| panic!("`{}` failed, and said {:?}", args.join(" "), ran.err));
+	said.trim_end().to_owned()
 }
 
 pub fn command_line_inspect(pid: u64, dir: &Path, code: &Path) {
@@ -68,6 +69,7 @@ pub fn command_line_inspect(pid: u64, dir: &Path, code: &Path) {
 	on_an_object(pid);
 	macros(pid, code);
 	spawned(pid, code);
+	steps_that_end_elsewhere(pid, dir);
 }
 
 /// `eval` fails on stderr with exit code 1, whatever went wrong, and a
@@ -92,8 +94,8 @@ fn eval_failures(pid: &str, code: &Path) {
 	for (args, said) in [
 		(&["eval", "1 +"][..], "parser error: "),
 		(&["eval", "nothing_called_this"][..], "undefined var: nothing_called_this"),
-		(&["eval", "--frame", "9", "1"][..], "there's no frame 9"),
-		(&["eval"][..], "eval what?")
+		(&["eval", "--frame", "9", "1"][..], "frame 9 does not exist: the paused stack has "),
+		(&["eval"][..], "eval requires an expression: EXPRESSION, --file FILE, or - for stdin.")
 	] {
 		let got = fails(pid, args);
 		assert!(got.starts_with(said), "`{}` said {}", args.join(" "), got);
@@ -112,27 +114,29 @@ fn from_files(pid: &str, dir: &Path) {
 	};
 	let expression = file("expression.txt", "\"[\"a b\"] /datum/x\" + \"!\"\n");
 	assert_eq!(run(pid, &["eval", "-f", &expression], 0).out.trim(), "\"a b /datum/x!\"");
+	assert_eq!(run(pid, &["eval", "--file", &expression], 0).out.trim(), "\"a b /datum/x!\"");
 	let ran = auxtools(pid, &["eval", "-"], Some("6 * 7\n"));
 	assert_eq!((ran.code, ran.out.trim()), (0, "42"), "eval - said {}{}", ran.out, ran.err);
 	let said = fails(pid, &["eval", "-f", "no such file.txt"]);
-	assert!(said.starts_with("couldn't read no such file.txt: "), "eval -f said {}", said);
+	assert!(said.starts_with("cannot read no such file.txt: "), "eval -f said {}", said);
+	assert_eq!(fails(pid, &["eval", "1", "-f", &expression]), "EXPRESSION and --file cannot be used together.");
 	println!("ok: eval reads its expression from a file, or stdin");
 
 	let never = file("never.txt", "1 == 2\n");
-	let ran = run(pid, &["wait", "--break", "/proc/value", "--if", &format!("@{}", never), "--timeout", "2"], 2);
+	let ran = run(pid, &["wait", "pause", "--break", "/proc/value", "--if", &format!("@{}", never), "--timeout", "2"], 2);
 	assert!(ran.err.contains("timed out"), "wait said {}{}", ran.out, ran.err);
 	let message = file("message.txt", "value() said \"{1 + 1}\"\n");
 	let ran = run(pid, &["trace", "/proc/value", "--log", &format!("@{}", message), "--count", "1"], 0);
 	assert!(ran.out.contains("value() said \"2\"\n"), "trace --log said {}", ran.out);
 	let watched = file("watched.txt", "rounds");
-	let ran = run(pid, &["wait", "--change", &format!("@{}", watched), "--timeout", "60"], 0);
+	let ran = run(pid, &["wait", "pause", "--change", &format!("@{}", watched), "--timeout", "60"], 0);
 	assert!(ran.out.starts_with("watching rounds, now "), "wait --change said {}", ran.out);
 	run(pid, &["continue"], 0);
 	// Two @s are one, and no file
-	let said = fails(pid, &["wait", "--break", "/proc/value", "--if", &format!("@@{}", never)]);
-	assert!(said.starts_with("couldn't break at /proc/value: the condition doesn't compile"), "wait said {}", said);
-	let said = fails(pid, &["wait", "--break", "/proc/value", "--if", "@no such file.txt"]);
-	assert!(said.starts_with("couldn't read no such file.txt: "), "wait said {}", said);
+	let said = fails(pid, &["wait", "pause", "--break", "/proc/value", "--if", &format!("@@{}", never)]);
+	assert!(said.starts_with("cannot set a breakpoint at /proc/value: the condition doesn't compile"), "wait said {}", said);
+	let said = fails(pid, &["wait", "pause", "--break", "/proc/value", "--if", "@no such file.txt"]);
+	assert!(said.starts_with("cannot read no such file.txt: "), "wait said {}", said);
 	println!("ok: wait's --if, --log and --change read their text from @FILE, and @@ is a plain @");
 }
 
@@ -142,15 +146,15 @@ fn procs(pid: &str, code: &Path) {
 	let printed = run(pid, &["proc", "/proc/value"], 0).out;
 	assert_eq!(
 		printed,
-		format!("/value  attach_host.dm:{}\ndefinitions: 1 (#0 to #0)\nhot reload: new code\n", line_of(code, "\treturn 2"))
+		format!("/value  attach_host.dm:{}\ndefinitions: 1\nreloaded: code (new code)\n", line_of(code, "\treturn 2"))
 	);
 	let printed = run(pid, &["proc", "/fail_in"], 0).out;
-	assert!(printed.ends_with("\nhot reload: not since the world started\n"), "proc said {}", printed);
+	assert!(printed.ends_with("\nreloaded: no\n"), "proc said {}", printed);
 	let printed = run(pid, &["proc", "/datum/twice/act#1"], 0).out;
 	assert_eq!(
 		printed,
 		format!(
-			"/datum/twice/act#1  attach_host.dm:{}\ndefinitions: 2 (#0 to #1)\nhot reload: not since the world started\n",
+			"/datum/twice/act#1  attach_host.dm:{}\ndefinitions: 2\nreloaded: no\n",
 			line_of(code, "\t. = ..()")
 		)
 	);
@@ -160,41 +164,42 @@ fn procs(pid: &str, code: &Path) {
 		(&["proc", "/proc/nothing_called_this"][..], "the world has no proc /proc/nothing_called_this"),
 		(&["proc", "/value#3"][..], "/value has one definition, #0: there's no #3"),
 		(&["proc", "/datum/twice/act#2"][..], "/datum/twice/act has 2 definitions, #0 to #1: there's no #2"),
-		(&["proc", "value"][..], "value isn't a proc's path: it starts with /"),
-		(&["proc", "/value#x"][..], "x isn't a definition's number"),
-		(&["proc"][..], "proc which proc?"),
-		(&["dis", "/proc/nothing_called_this"][..], "the world has no proc /proc/nothing_called_this")
+		(&["proc", "value"][..], "invalid proc path 'value': expected /PATH[#N]."),
+		(&["proc", "/value#x"][..], "invalid definition index 'x' in '/value#x': expected a non-negative integer."),
+		(&["proc"][..], "missing required argument: /PATH[#N]. Run 'auxtools proc --help' for usage."),
+		(&["disassemble", "/proc/nothing_called_this"][..], "the world has no proc /proc/nothing_called_this")
 	] {
 		assert_eq!(fails(pid, args), said, "`{}`", args.join(" "));
 	}
 	println!("ok: proc says where a proc is, how many definitions it has, and whether a hot reload changed it");
 
-	let printed = run(pid, &["dis", "/datum/twice/act#1"], 0).out;
+	let printed = run(pid, &["disassemble", "/datum/twice/act#1"], 0).out;
 	let (first, second) = (line_of(code, "\t. = ..()"), line_of(code, "\treturn \"second\""));
 	let expected = format!(
 		"/datum/twice/act#1  attach_host.dm\nline {first}:\n     0  DbgFile \"attach_host.dm\"\n     2  DbgLine {first}\n     4  CallParent\n     5  SetVar \
 		 dot\nline {second}:\n     7  DbgLine {second}\n     9  PushVal \"second\"\n    12  Ret\n    13  End\n"
 	);
 	assert_eq!(printed, expected);
-	println!("ok: dis prints a proc's instructions with their offsets, and where each line starts");
+	println!("ok: disassemble prints a proc's instructions with their offsets, and where each line starts");
 }
 
 /// wait says where each of its breakpoints went, and fails before waiting
 /// on a place the world doesn't have
 fn where_breakpoints_bound(pid: &str, code: &Path) {
 	let declared = line_of(code, "/proc/value()");
-	let ran = run(pid, &["wait", "--break", &format!("attach_host.dm:{}", declared), "--timeout", "60"], 0);
-	assert!(ran.out.starts_with("paused at a breakpoint\n#0 /value"), "wait said {}", ran.out);
+	let ran = run(pid, &["wait", "pause", "--break", &format!("attach_host.dm:{}", declared), "--timeout", "60"], 0);
+	assert!(ran.out.starts_with(&format!("pid {}: paused at a breakpoint\n#0 /value", pid)), "wait said {}", ran.out);
 	assert_eq!(
 		ran.err,
-		format!("breakpoint at /value  attach_host.dm:{} (line {} has no code: this is the next that has)\n", declared + 1, declared)
+		format!("breakpoint set at /value  attach_host.dm:{} (line {} has no code; this is the next line that has)\n", declared + 1, declared)
 	);
 	run(pid, &["continue"], 0);
-	let ran = run(pid, &["wait", "--break", "/proc/fail_in", "--break", "/datum/twice/act#1", "--timeout", "1"], 2);
+	let ran = run(pid, &["wait", "pause", "--break", "/proc/fail_in", "--break", "/datum/twice/act#1", "--timeout", "1"], 2);
+	assert!(ran.out.is_empty(), "a wait that timed out printed {}", ran.out);
 	assert_eq!(
 		ran.err,
 		format!(
-			"breakpoint at /fail_in  attach_host.dm:{}\nbreakpoint at /datum/twice/act#1  attach_host.dm:{}\ntimed out: the world didn't pause\n",
+			"breakpoint set at /fail_in  attach_host.dm:{}\nbreakpoint set at /datum/twice/act#1  attach_host.dm:{}\nerror: timed out after 1 second waiting for the world to pause.\n",
 			line_of(code, "\tvar/got = fail_deeper(n)"),
 			line_of(code, "\t. = ..()")
 		)
@@ -203,18 +208,21 @@ fn where_breakpoints_bound(pid: &str, code: &Path) {
 
 	let last = line_of(code, "\treturn \"second\"");
 	let nowhere = [
-		("nowhere.dm:3", "couldn't break at nowhere.dm:3: the world has no code from a file called nowhere.dm".to_owned()),
-		("attach_host.dm:9999", format!("couldn't break at attach_host.dm:9999: attach_host.dm has no code after line {}", last)),
-		("/proc/nothing_called_this", "couldn't break at /proc/nothing_called_this: the world has no proc /proc/nothing_called_this".to_owned()),
-		("/value#2", "couldn't break at /value#2: /value has one definition, #0: there's no #2".to_owned())
+		("nowhere.dm:3", "cannot set a breakpoint at nowhere.dm:3: the world has no code from a file named nowhere.dm.".to_owned()),
+		("attach_host.dm:9999", format!("cannot set a breakpoint at attach_host.dm:9999: attach_host.dm has no code after line {}.", last)),
+		(
+			"/proc/nothing_called_this",
+			"cannot set a breakpoint at /proc/nothing_called_this: the world has no proc /proc/nothing_called_this".to_owned()
+		),
+		("/value#2", "cannot set a breakpoint at /value#2: /value has one definition, #0: there's no #2".to_owned())
 	];
 	// With no time limit: it would wait for ever if it didn't fail first
 	for (place, said) in &nowhere {
-		assert_eq!(&fails(pid, &["wait", "--break", place]), said);
+		assert_eq!(&fails(pid, &["wait", "pause", "--break", place]), said);
 	}
 	run(pid, &["pause"], 0);
 	for (place, said) in &nowhere {
-		assert_eq!(&fails(pid, &["wait", "--break", place]), said);
+		assert_eq!(&fails(pid, &["wait", "pause", "--break", place]), said);
 	}
 	run(pid, &["continue"], 0);
 	println!("ok: wait fails at once on a file the world doesn't have, a line past its code, and a proc it doesn't have, paused or not");
@@ -224,7 +232,7 @@ fn where_breakpoints_bound(pid: &str, code: &Path) {
 /// as `dis` has them for the frame's proc
 fn instruction_at(printed: &str, proc: &str, pid: &str) -> u32 {
 	let mut lines = printed.lines();
-	assert_eq!(lines.next(), Some("paused after a step"), "the step said {}", printed);
+	assert_eq!(lines.next(), Some(format!("pid {}: paused after a step", pid).as_str()), "the step said {}", printed);
 	let top = lines.next().unwrap_or_default();
 	assert!(top.starts_with(&format!("#0 {}  ", proc)), "the step said {}", printed);
 	let (offset, text) = lines
@@ -233,7 +241,7 @@ fn instruction_at(printed: &str, proc: &str, pid: &str) -> u32 {
 		.and_then(|line| line.split_once(": "))
 		.unwrap_or_else(|| panic!("the step didn't say its instruction: {}", printed));
 	let offset: u32 = offset.parse().unwrap();
-	let listing = run(pid, &["dis", proc], 0).out;
+	let listing = run(pid, &["disassemble", proc], 0).out;
 	assert!(listing.contains(&format!("\n{:>6}  {}\n", offset, text)), "{} {} isn't in\n{}", offset, text, listing);
 	offset
 }
@@ -242,22 +250,22 @@ fn instruction_at(printed: &str, proc: &str, pid: &str) -> u32 {
 fn instruction_steps(pid: &str, dir: &Path) {
 	// The world calls it when it finds this file
 	std::fs::write(dir.join("call"), "yes").unwrap();
-	run(pid, &["wait", "--break", "/proc/fail_in", "--timeout", "60"], 0);
-	let printed = run(pid, &["next", "--instruction"], 0).out;
+	run(pid, &["wait", "pause", "--break", "/proc/fail_in", "--timeout", "60"], 0);
+	let printed = run(pid, &["step-over", "--instruction"], 0).out;
 	let mut last = instruction_at(&printed, "/fail_in", pid);
 	// A breakpoint on a proc is on the instruction after its first DbgLine,
 	// and this is the one after that
-	let offsets: Vec<u32> = run(pid, &["dis", "/fail_in"], 0)
+	let offsets: Vec<u32> = run(pid, &["disassemble", "/fail_in"], 0)
 		.out
 		.lines()
 		.filter_map(|line| line.trim_start().split_once("  ").and_then(|(offset, text)| Some((offset.parse().ok()?, text))))
 		.skip_while(|(_, text)| !text.starts_with("DbgLine"))
 		.map(|(offset, _)| offset)
 		.collect();
-	assert_eq!(last, offsets[2], "next --instruction went to {} of {:?}", last, offsets);
-	println!("ok: next --instruction goes one instruction on, and says which");
+	assert_eq!(last, offsets[2], "step-over --instruction went to {} of {:?}", last, offsets);
+	println!("ok: step-over --instruction goes one instruction on, and says which");
 	// One at a time, into fail_deeper() when its call comes
-	let mut printed = run(pid, &["step", "--instruction"], 0).out;
+	let mut printed = run(pid, &["step-in", "--instruction"], 0).out;
 	for _ in 0..10 {
 		if printed.lines().nth(1).is_some_and(|line| line.starts_with("#0 /fail_deeper  ")) {
 			break;
@@ -265,14 +273,18 @@ fn instruction_steps(pid: &str, dir: &Path) {
 		let offset = instruction_at(&printed, "/fail_in", pid);
 		assert!(offset > last, "a step went from {} to {}", last, offset);
 		last = offset;
-		printed = run(pid, &["step", "--instruction"], 0).out;
+		printed = run(pid, &["step-in", "--instruction"], 0).out;
 	}
 	instruction_at(&printed, "/fail_deeper", pid);
 	// A step of a line still says nothing of instructions
-	let printed = run(pid, &["next"], 0).out;
-	assert!(printed.starts_with("paused after a step\n#0 /fail_deeper  ") && !printed.contains("instruction"), "next said {}", printed);
+	let printed = run(pid, &["step-over"], 0).out;
+	assert!(
+		printed.starts_with(&format!("pid {}: paused after a step\n#0 /fail_deeper  ", pid)) && !printed.contains("instruction"),
+		"step-over said {}",
+		printed
+	);
 	run(pid, &["continue"], 0);
-	println!("ok: step --instruction goes into a proc that's called, an instruction at a time");
+	println!("ok: step-in --instruction goes into a proc that's called, an instruction at a time");
 }
 
 /// One JSON document on stdout, and nothing on stderr
@@ -288,7 +300,23 @@ fn as_json(pid: &str, dir: &Path) {
 		let args: Vec<&str> = ["eval", "--json", expression].iter().chain(more).copied().collect();
 		json_of(pid, &args)
 	};
-	assert_eq!(json_of(pid, &["status", "--json"]), json!({ "paused": false }));
+	let number: u64 = pid.parse().unwrap();
+	let status = json_of(pid, &["status", "--json"]);
+	for (key, value) in [
+		("pid", json!(number)),
+		("paused", json!(false)),
+		("reason", json!(null)),
+		("message", json!(null)),
+		("caught", json!(null)),
+		("changes", json!([])),
+		("stack", json!([])),
+		("instruction", json!(null))
+	] {
+		assert_eq!(status[key], value, "{} of {}", key, status);
+	}
+	assert!(status["uptime_ms"].as_u64().is_some_and(|up| up > 0) && status["world_time"].is_number() && status["loads"] == 1, "{}", status);
+	assert_eq!(status["last_reload"]["kind"], "reload", "{}", status);
+	assert_eq!(status.as_object().unwrap().len(), 12, "{}", status);
 	assert_eq!(eval("list(1, \"two\", null, list(3, list(4)))", &[]), json!([1, "two", null, [3, { "list": true, "len": 1 }]]));
 	assert_eq!(eval("list(\"a\" = 1, \"b\")", &[]), json!({ "a": 1, "b": null }));
 	assert_eq!(eval("list(1, 2)", &["--depth", "0"]), json!({ "list": true, "len": 2 }));
@@ -303,24 +331,31 @@ fn as_json(pid: &str, dir: &Path) {
 	let in_list = eval("list(new /datum/twice)", &[]);
 	assert!(in_list[0]["type"] == "/datum/twice" && in_list[0].get("vars").is_none(), "{}", in_list);
 	assert_eq!(fails(pid, &["eval", "--json", "1/0"]), "runtime error: Division by zero");
-	assert_eq!(fails(pid, &["eval", "--depth", "1", "1"]), "--depth goes with --json");
+	assert_eq!(fails(pid, &["eval", "--depth", "1", "1"]), "--depth requires --json.");
 	let printed = json_of(pid, &["proc", "--json", "/datum/twice/act#1"]);
 	assert!(printed["proc"] == "/datum/twice/act#1" && printed["definitions"] == 2 && printed["reloaded"].is_null(), "{}", printed);
 	assert_eq!(json_of(pid, &["proc", "--json", "/value"])["reloaded"], "code");
-	let printed = json_of(pid, &["dis", "--json", "/value"]);
+	let printed = json_of(pid, &["disassemble", "--json", "/value"]);
 	assert!(printed["instructions"][0]["text"].as_str().is_some_and(|t| t.starts_with("DbgFile")), "{}", printed);
 	println!("ok: eval --json writes values out as JSON on a running world: lists in full to --depth, objects by ref, type and name");
 
 	std::fs::write(dir.join("call"), "yes").unwrap();
-	let paused = json_of(pid, &["wait", "--json", "--break", "/proc/fail_in", "--timeout", "60"]);
-	assert!(paused["paused"] == true && paused["reason"] == "breakpoint" && paused["already"] == false, "{}", paused);
+	// (where the breakpoint went is on stderr as well as in the JSON)
+	let ran = run(pid, &["wait", "pause", "--json", "--break", "/proc/fail_in", "--timeout", "60"], 0);
+	assert!(ran.err.starts_with("breakpoint set at /fail_in  attach_host.dm:") && ran.err.lines().count() == 1, "wait said {}", ran.err);
+	let paused: Value = serde_json::from_str(&ran.out).unwrap_or_else(|e| panic!("wait pause --json printed {}: {}", ran.out, e));
+	assert!(paused["paused"] == true && paused["reason"] == "breakpoint" && paused["already"] == false && paused["pid"] == number, "{}", paused);
+	assert_eq!(paused.as_object().unwrap().len(), 11, "{}", paused);
 	assert_eq!(paused["breakpoints"][0]["proc"], "/fail_in");
 	assert_eq!(paused["breakpoints"][0]["place"], "/proc/fail_in");
 	assert_eq!(paused["stack"][0]["proc"], "/fail_in");
 	assert!(paused["instruction"].is_null() && paused["changes"] == json!([]), "{}", paused);
-	let again = json_of(pid, &["wait", "--json"]);
+	let again = json_of(pid, &["wait", "pause", "--json"]);
 	assert!(again["already"] == true && again["stack"] == paused["stack"], "{}", again);
-	assert_eq!(json_of(pid, &["status", "--json"])["reason"], "breakpoint");
+	let status = json_of(pid, &["status", "--json"]);
+	assert!(status["reason"] == "breakpoint" && status["stack"] == paused["stack"] && status["uptime_ms"].is_number(), "{}", status);
+	let held = json_of(pid, &["pause", "--json"]);
+	assert!(held["paused"] == true && held["reason"] == "breakpoint" && held.as_object().unwrap().len() == 8, "{}", held);
 	let stack = json_of(pid, &["stack", "--json"]);
 	assert!(stack[0]["proc"] == "/fail_in" && stack[0]["line"].is_number() && stack[0]["offset"].is_number(), "{}", stack);
 	let all = json_of(pid, &["stack", "--json", "--all"]);
@@ -328,10 +363,10 @@ fn as_json(pid: &str, dir: &Path) {
 	let vars = json_of(pid, &["vars", "--json", "--globals"]);
 	assert!(vars["arguments"]["n"] == 1 && vars["locals"]["got"].is_null() && vars["globals"]["rounds"].is_number(), "{}", vars);
 	assert_eq!(eval("n + 1", &[]), json!(2));
-	let stepped = json_of(pid, &["next", "--instruction", "--json"]);
-	assert!(stepped["reason"] == "step" && stepped["instruction"]["text"].is_string(), "{}", stepped);
+	let stepped = json_of(pid, &["step-over", "--instruction", "--json"]);
+	assert!(stepped["reason"] == "step" && stepped["instruction"]["text"].is_string() && stepped["pid"] == number, "{}", stepped);
 	run(pid, &["continue"], 0);
-	println!("ok: wait, status, stack, vars, eval and next print one JSON document with --json, paused");
+	println!("ok: wait pause, status, pause, stack, vars, eval and step-over print one JSON document with --json, paused");
 }
 
 /// eval --src: an object's vars and procs by their bare names, with no frame
@@ -356,7 +391,7 @@ fn on_an_object(pid: &str) {
 		fails(pid, &["eval", "--src", "held", "count"]),
 		"held isn't an object's reference: that's what ref() gives, like [0x2000001]"
 	);
-	assert_eq!(fails(pid, &["eval", "--src", &bare, "--frame", "0", "count"]), "--src and --frame don't go together: --src is in no frame");
+	assert_eq!(fails(pid, &["eval", "--src", &bare, "--frame", "0", "count"]), "--frame and --src cannot be used together.");
 	assert!(fails(pid, &["eval", "--src", &bare, "nothing_called_this"]).starts_with("undefined var: nothing_called_this"));
 	println!("ok: eval --src fails on an object that's gone, or a ref that isn't one");
 }
@@ -385,8 +420,8 @@ fn macros(pid: &str, code: &Path) {
 	println!("ok: eval expands the code's macros, and not one it #undefs");
 
 	// In a breakpoint's condition and its message, and in a paused frame
-	let ran = run(pid, &["wait", "--break", "/proc/tick", "--if", "n == DOUBLE_IT(1) && ANSWER == 42", "--timeout", "60"], 0);
-	assert!(ran.out.starts_with("paused at a breakpoint\n#0 /tick"), "wait said {}", ran.out);
+	let ran = run(pid, &["wait", "pause", "--break", "/proc/tick", "--if", "n == DOUBLE_IT(1) && ANSWER == 42", "--timeout", "60"], 0);
+	assert!(ran.out.starts_with(&format!("pid {}: paused at a breakpoint\n#0 /tick", pid)), "wait said {}", ran.out);
 	assert_eq!(run(pid, &["eval", "DOUBLE_IT(n)"], 0).out, "4\n");
 	run(pid, &["continue"], 0);
 	let ran = run(pid, &["trace", "/proc/tick", "--if", "n == 1", "--log", "doubled: {DOUBLE_IT(n)}", "--count", "1"], 0);
@@ -406,19 +441,28 @@ fn macros(pid: &str, code: &Path) {
 /// eval --spawn: the world's own code, on its next tick
 fn spawned(pid: &str, code: &Path) {
 	let number = run(pid, &["eval", "--spawn", "slow_double(4)"], 0).out;
-	let number: u64 = number.trim().parse().unwrap_or_else(|_| panic!("eval --spawn printed {}", number));
+	let number: u64 = number
+		.trim()
+		.strip_prefix("spawn ")
+		.and_then(|number| number.parse().ok())
+		.unwrap_or_else(|| panic!("eval --spawn printed {}", number));
+	assert_eq!(json_of(pid, &["eval", "--spawn", "--json", "1"]), json!({ "spawn": number + 1 }));
 	let mut entry = Value::Null;
 	for _ in 0..100 {
-		let printed = run(pid, &["log", "--spawned", "--last", "1", "--json"], 0).out;
-		entry = serde_json::from_str(&printed).unwrap_or_default();
+		let printed = run(pid, &["log", "--spawned", "--last", "2", "--json"], 0).out;
+		entry = printed
+			.lines()
+			.filter_map(|line| serde_json::from_str::<Value>(line).ok())
+			.find(|entry| entry["spawn"] == number)
+			.unwrap_or_default();
 		if entry["spawn"] == number {
 			break;
 		}
 		std::thread::sleep(std::time::Duration::from_millis(100));
 	}
 	assert!(entry["spawn"] == number && entry["value"] == 8 && entry["expression"] == "slow_double(4)", "{}", entry);
-	let printed = run(pid, &["log", "--spawned", "--last", "1"], 0).out;
-	assert!(printed.ends_with(&format!(" spawned {}: slow_double(4) gave 8\n", number)), "log said {}", printed);
+	let printed = run(pid, &["log", "--spawned", "--last", "2"], 0).out;
+	assert!(printed.contains(&format!(" spawn {}: slow_double(4) returned 8\n", number)), "log said {}", printed);
 	println!("ok: eval --spawn prints a number and returns; the world runs it, sleep and all, and its record has what it gave");
 
 	assert_eq!(run(pid, &["eval", "--spawn", "--wait", "slow_double(5)"], 0).out, "10\n");
@@ -447,12 +491,12 @@ fn spawned(pid: &str, code: &Path) {
 	println!("ok: a runtime error in spawned code is what it gave, with the procs it was in, after a sleep too");
 
 	// A breakpoint in what it calls stops the world
-	let waiting = crate::journal::Background::start(pid.parse().unwrap(), &["wait", "--break", "/proc/slow_double", "--timeout", "60"]);
+	let waiting = crate::journal::Background::start(pid.parse().unwrap(), &["wait", "pause", "--break", "/proc/slow_double", "--timeout", "60"]);
 	// (it says where the breakpoint went on stderr, which is read once it's done)
 	std::thread::sleep(std::time::Duration::from_secs(2));
 	run(pid, &["eval", "--spawn", "slow_double(6)"], 0);
 	let (exit, printed) = waiting.finish();
-	assert!(exit == 0 && printed.contains("paused at a breakpoint\n#0 /slow_double  "), "wait gave {}: {}", exit, printed);
+	assert!(exit == 0 && printed.contains(&format!("pid {}: paused at a breakpoint\n#0 /slow_double  ", pid)), "wait gave {}: {}", exit, printed);
 	let stack = run(pid, &["stack"], 0).out;
 	assert!(stack.lines().nth(1).is_some_and(|line| line.starts_with("#1 /auxtools_spawn_stub")), "stack said {}", stack);
 	assert_eq!(run(pid, &["eval", "n"], 0).out, "6\n");
@@ -460,10 +504,71 @@ fn spawned(pid: &str, code: &Path) {
 	println!("ok: a breakpoint in what spawned code calls stops the world there");
 
 	let ran = run(pid, &["eval", "--spawn", "--wait", "--timeout", "0.5", "slow_double(1, 50)"], 2);
-	assert!(ran.err.starts_with("timed out: spawned ") && ran.err.contains("hasn't finished"), "eval said {}", ran.err);
+	assert!(
+		ran.out.is_empty() && ran.err.starts_with("error: timed out after 0.5 seconds waiting for spawn ") && ran.err.trim_end().ends_with(" to finish. It keeps running."),
+		"eval said {}{}",
+		ran.out,
+		ran.err
+	);
 	assert!(fails(pid, &["eval", "--spawn", "1 +"]).starts_with("parser error: "));
 	assert!(fails(pid, &["eval", "--spawn", "--src", "[0x2100ffff]", "1"]).starts_with("there's no object [0x2100ffff]"));
-	assert_eq!(fails(pid, &["eval", "--wait", "1"]), "--wait and --timeout go with --spawn");
-	assert_eq!(fails(pid, &["eval", "--spawn", "--frame", "0", "1"]), "--spawn and --frame don't go together: it runs on the next tick, in no frame");
+	assert_eq!(fails(pid, &["eval", "--wait", "1"]), "--wait requires --spawn.");
+	assert_eq!(fails(pid, &["eval", "--spawn", "--timeout", "1", "1"]), "--timeout requires --wait.");
+	assert_eq!(fails(pid, &["eval", "--spawn", "--frame", "0", "1"]), "--frame and --spawn cannot be used together.");
 	println!("ok: eval --spawn --wait gives up after --timeout, and what can't be spawned fails at once");
+}
+
+/// A step that ends with nothing to pause in is done, with the world running;
+/// one that isn't done by its --timeout says so, and what the world is doing
+fn steps_that_end_elsewhere(pid: &str, dir: &Path) {
+	let number: u64 = pid.parse().unwrap();
+	// fail_in() is called from a spawn() with nothing after it: a step from
+	// there leaves the code that was running
+	let waiting = crate::journal::Background::start(number, &["wait", "pause", "--break", "/proc/fail_in", "--timeout", "60"]);
+	std::thread::sleep(std::time::Duration::from_secs(2));
+	std::fs::write(dir.join("call"), "yes").unwrap();
+	let (exit, printed) = waiting.finish();
+	assert_eq!(exit, 0, "wait said {}", printed);
+	let out = run(pid, &["step-out", "--timeout", "30"], 0).out;
+	assert!(out.starts_with(&format!("pid {}: paused after a step\n#0 /run_until_stopped  ", pid)), "step-out said {}", out);
+	let ran = run(pid, &["step-over", "--timeout", "30", "--json"], 0);
+	let state: Value = serde_json::from_str(&ran.out).unwrap_or_else(|e| panic!("step-over --json printed {}: {}", ran.out, e));
+	assert!(state["pid"] == number && state["paused"] == false && state["reason"].is_null() && state["stack"] == json!([]), "{}", state);
+	assert_eq!(ran.err, "step completed with the world running: no frame remained to pause in.\n");
+	assert_eq!(json_of(pid, &["status", "--json"])["paused"], false);
+	println!("ok: a step that leaves the code that was running is done, exit code 0, with the world running");
+
+	// A step over a sleep isn't over until the proc wakes
+	let waiting = crate::journal::Background::start(number, &["wait", "pause", "--break", "/proc/slow_double", "--timeout", "60"]);
+	std::thread::sleep(std::time::Duration::from_secs(2));
+	run(pid, &["eval", "--spawn", "slow_double(6, 40)"], 0);
+	let (exit, printed) = waiting.finish();
+	assert_eq!(exit, 0, "wait said {}", printed);
+	// (the breakpoint is before the line that sleeps: a step gets there)
+	let on_sleep = run(pid, &["step-over", "--timeout", "30", "--json"], 0).out;
+	assert!(on_sleep.contains("\"reason\":\"step\"") && on_sleep.contains("\"proc\":\"/slow_double\""), "step-over said {}", on_sleep);
+	let started = std::time::Instant::now();
+	let ran = run(pid, &["step-over", "--timeout", "1", "--json"], 2);
+	assert!(started.elapsed() < std::time::Duration::from_secs(4), "a step with --timeout 1 took {:?}", started.elapsed());
+	let state: Value = serde_json::from_str(&ran.out).unwrap_or_else(|e| panic!("step-over --json printed {}: {}", ran.out, e));
+	assert!(state["pid"] == number && state["paused"] == false, "{}", state);
+	assert!(
+		ran.err.starts_with("error: timed out after 1 second waiting for the step to complete."),
+		"step-over said {}",
+		ran.err
+	);
+	// In text, the same
+	let waiting = crate::journal::Background::start(number, &["wait", "pause", "--break", "/proc/slow_double", "--timeout", "60"]);
+	std::thread::sleep(std::time::Duration::from_secs(2));
+	run(pid, &["eval", "--spawn", "slow_double(7, 40)"], 0);
+	let (exit, printed) = waiting.finish();
+	assert_eq!(exit, 0, "wait said {}", printed);
+	run(pid, &["step-over", "--timeout", "30"], 0);
+	let ran = run(pid, &["step-over", "--timeout", "0.5"], 2);
+	assert_eq!(ran.out, format!("pid {}: running\n", pid));
+	assert!(ran.err.starts_with("error: timed out after 0.5 seconds waiting for the step to complete."), "step-over said {}", ran.err);
+	// The steps left behind don't pause the world when their procs wake
+	std::thread::sleep(std::time::Duration::from_secs(5));
+	assert_eq!(json_of(pid, &["status", "--json"])["paused"], false);
+	println!("ok: a step that isn't over by its --timeout exits with 2, says what the world is doing, and leaves it be");
 }

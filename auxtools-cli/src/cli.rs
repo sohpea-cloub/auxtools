@@ -1,12 +1,24 @@
 //! One command to a running world, from the command line: connect, do it, print
-//! what came of it and leave. For scripts and agents, which can run `wait` in
-//! the background to hear when the world pauses at a breakpoint or a runtime.
+//! what came of it and leave. For scripts and agents, which can run `wait
+//! pause` in the background to hear when the world pauses at a breakpoint or
+//! a runtime error.
 //!
-//! A command that leaves the world paused (`pause`, `next`, `wait` and the
-//! like) asks it to stay paused after the connection goes, until a `continue`.
+//! A command that leaves the world paused (`pause`, the steps, `wait pause`)
+//! asks it to stay paused after the connection goes, until a `continue`.
+//!
+//! What a command prints on stdout is its result, as text or (`--json`) as
+//! JSON with the same in it; what it has to say besides goes to stderr. Its
+//! exit code is 0 when it did what it's for, 1 when it failed, 2 when a time
+//! it was given ran out, 3 when the world went away first.
 
+mod args;
+mod help;
 mod hold;
+mod json;
+mod launch;
 mod log;
+mod stop;
+mod trace;
 
 use std::{
 	io,
@@ -18,11 +30,9 @@ use auxtools_cli::{
 	local::{self, Shared},
 	server_types::*
 };
+use serde_json::{json, Map, Value};
 
-mod launch;
-mod stop;
-mod trace;
-mod json;
+use self::args::{Command, WaitFor};
 
 /// What went wrong, and the exit code it gives
 pub struct Failure(pub i32, pub String);
@@ -47,523 +57,10 @@ impl From<&str> for Failure {
 
 pub type Result<T> = std::result::Result<T, Failure>;
 
-const HUNG_UP: i32 = 3;
+/// A time the command was given ran out
 const TIMED_OUT: i32 = 2;
-
-/// A command: `auxtools NAME ...`
-pub struct Command {
-	pub name: &'static str,
-	/// Its arguments, as the help shows them after its name
-	pub usage: &'static str,
-	/// What it does, in a line
-	pub about: &'static str,
-	/// The rest, for `auxtools help NAME`: its options, a line each
-	pub details: &'static str,
-	pub run: Run
-}
-
-pub enum Run {
-	/// Needs no world, or finds its own
-	Alone(fn(&[String]) -> Result<()>),
-	/// One command to a running world: connect, do it, leave
-	World(fn(&mut World, &[String]) -> Result<()>)
-}
-
-/// What `status --json` says, which commands that print a pause share
-/// What `status` says, and what `--json` makes of a pause for every command
-/// that prints one
-const STATUS: &str = "The first line is `running`, or `paused` and why; a paused world's stack follows. Then
-how long the world has been up (since it last loaded, and its world.time), and what came of
-its last hot reload.
-  --json   As JSON: {\"paused\": false}, or {\"paused\": true} with the `reason`
-           (`breakpoint`, `step`, `pause`, `runtime` or `change`), the runtime's
-           `message` and whether it's `caught`, the `changes` (each with its `name`,
-           `old` and `new`), the `stack` (as `auxtools help stack` says), and the
-           `instruction` (its `offset` and `text`) after a step of one";
-
-/// The commands, in the groups the help shows them in. A new one is a
-/// function, in a file of its own under `cli/` if it's more than a few lines,
-/// and a line here.
-pub const COMMANDS: &[(&str, &[Command])] = &[
-	("Worlds", &[
-		Command {
-			name: "launch",
-			usage: "DMB [--detach] [--port N] [OPTIONS] [-- ARGS...]",
-			about: "Starts a world with the debug library in it, and hot reloads its code",
-			details: "In the foreground it prints what the world prints and each hot reload, and stays
-until the world ends: exit code 0 if it exited with 0, 4 if it exited with another or
-was killed. Ctrl-C (or SIGTERM, or the terminal closing) has the world end itself, as
-`stop` does; a second ends it there and then. It doesn't build the world (DreamMaker
-does): after a rebuild, `reboot` loads the new .dmb. It doesn't debug it either: other
-commands, and editors, attach to it as to any world, and it never pauses for them.
-  --detach         Run in the background, and return once the world is up: prints its
-                   process id, and where the launcher's output goes
-  --json           With --detach: print {\"pid\", \"launcher\", \"log\"}
-  --log FILE       Write what would be printed to FILE. With --detach, NAME.auxtools.log
-                   next to NAME.dmb unless given
-  --dme DME        The world's code, if it isn't NAME.dme next to NAME.dmb
-  -D NAME[=VALUE]  A define the .dmb was built with, so its code is read as it was
-                   built (for hot reloading). Can be given more than once.
-  --no-hot-reload  Don't watch the code
-  --server PROGRAM dd, dreamdaemon or dreamseeker: on Windows, dreamseeker unless given;
-                   on Linux there's only DreamDaemon
-  --port N         The port the world listens on (DreamDaemon and dd)
-  --byond PATH     Where BYOND is, if not where it's installed (or BYOND_SYSTEM)
-  -- ARGS...       The program's arguments after the .dmb (and the port), in place of
-                   -trusted (and -close for Windows' DreamDaemon)",
-			run: Run::Alone(launch::launch)
-		},
-		Command {
-			name: "stop",
-			usage: "[--timeout SECONDS] [--kill]",
-			about: "Has the world end itself, through its world/Del(), and waits for it to be gone",
-			details: "A world started by `launch` takes its launcher with it. One whose world/Del() doesn't
-end it has had its debugger shut down all the same (the debug library ends with
-world/Del()), so other commands can't reach it: `--kill` is the way to end it.
-  --timeout SECONDS  How long to wait for the process to be gone (10 unless given): if
-                     it isn't, the exit code is 1
-  --kill             End the process if it's still there then",
-			run: Run::World(stop::stop)
-		},
-		Command {
-			name: "reboot",
-			usage: "[--timeout SECONDS]",
-			about: "Reboots the world, which loads its .dmb again, and waits for it to answer",
-			details: "world.Reboot(): how a world rebuilt by its own tools is picked up. Every client is
-let go (a `wait` exits with 3); a launcher connects again, and hot reloads what changed
-since the .dmb was built.
-  --timeout SECONDS  How long to wait for it (60 unless given): exit code 2 if it's longer",
-			run: Run::World(stop::reboot)
-		},
-		Command {
-			name: "list",
-			usage: "",
-			about: "The worlds running the debug library, as JSON",
-			details: "Each has its process id (`pid`), its program, the .dmb it runs, and the version of
-the protocol its debug library speaks (`protocol`). One whose `compatible` is false
-was started by another version of auxtools: this one can't attach to it.",
-			run: Run::Alone(list)
-		},
-		Command {
-			name: "status",
-			usage: "[--json]",
-			about: "Whether the world is running or paused, and if paused, why and where",
-			details: STATUS,
-			run: Run::World(|world, args| {
-				let flags = Flags::parse(args, &[], &["--json"])?;
-				flags.nothing_else("status")?;
-				world.output(&flags)?;
-				world.status()?;
-				// (the JSON document is the pause's alone)
-				if flags.has("--json") {
-					Ok(())
-				} else {
-					world.uptime()
-				}
-			})
-		},
-		Command {
-			name: "log",
-			usage: "[--follow] [--runtimes] [--reloads] [--output] [--world] [OPTIONS]",
-			about: "What happened in the world: runtime errors, hot reloads, reboots, its output",
-			details: "The world keeps a record of the last few thousand things that happened in it, numbered
-from 1 (the numbers go on through reboots). This prints it, oldest first: every kind, or
-those named. Runtime errors are there with their stacks whether or not anything paused for
-them, so `log --runtimes --follow` watches them without pausing the world.
-  --follow     Keep printing new entries as they come, until interrupted (or the world ends)
-  --runtimes   Runtime errors, and thrown exceptions: caught or not, each with its stack
-  --reloads    Hot reloads: applied or not, and why not (compile errors among them)
-  --output     What the world printed (world.log, runtime errors), passed on by the launcher
-               that started it and reads it: DreamDaemon's and dd's. DreamSeeker gives a
-               launcher nothing to read, so a world it hosts has none.
-  --world      The world loading and rebooting, and what the debugger did by itself
-  --spawned    What came of expressions `eval --spawn` ran: their values or their errors
-  --since N    Only the entries after number N
-  --last N     Only the last N entries (of those asked for)
-  --json       An entry a line, as a JSON object: number, time (milliseconds since 1970,
-               UTC), world_time (deciseconds), kind, and what that kind has",
-			run: Run::World(log::log)
-		},
-	]),
-	("Looking at a paused world", &[
-		Command {
-			name: "stack",
-			usage: "[--all] [--json]",
-			about: "The procs the world is paused in, innermost first",
-			details: "  --all    The sleeping procs' stacks too, each with the id it keeps
-  --json   As JSON: an array of frames, each with its `proc`, `file`, `line`, `offset`
-           (its instruction's) and `old_code`. With --all, an array of stacks, each
-           with its `id`, `name`, `sleeping` and `frames`.",
-			run: Run::World(|world, args| {
-				let flags = Flags::parse(args, &[], &["--all", "--json"])?;
-				flags.nothing_else("stack")?;
-				world.output(&flags)?;
-				world.stack(flags.has("--all"))
-			})
-		},
-		Command {
-			name: "vars",
-			usage: "[--frame N] [--globals] [--json [--depth N]]",
-			about: "A frame's arguments and local vars",
-			details: "  --frame N    The Nth frame of the stack, from 0, the innermost (the default)
-  --globals    The world's global vars too
-  --json       As JSON: an object with `arguments`, `locals` (and `globals`), each an
-               object of the vars' values, as `auxtools help eval` says. The vars are
-               a level down: by default a list in them is in full, an object isn't.
-  --depth N    How deep to write out lists and objects (2 unless given)",
-			run: Run::World(|world, args| {
-				let flags = Flags::parse(args, &["--frame", "--depth"], &["--globals", "--json"])?;
-				flags.nothing_else("vars")?;
-				world.output(&flags)?;
-				world.vars(flags.number("--frame")?.unwrap_or(0), flags.has("--globals"))
-			})
-		},
-		Command {
-			name: "eval",
-			usage: "EXPRESSION | -f FILE | - [--frame N|--src REF|--spawn] [OPTIONS]",
-			about: "The value of a DM expression, or of a proc's body",
-			details: "In a paused world, the expression is in a frame of the stack: it can name that
-proc's vars, and `src`. In a running world it can name globals and call procs.
-More than one statement is a proc's body (given as one argument with newlines or `;`
-in it, or with -f or -): `var/n = 0; for(var/i in 1 to 3) n += i; n` gives what it
-returns, or its last line's value when that's an expression. It can't sleep (with --spawn it can).
-The code's #defines work in it (`get_turf(src)`), when the world was started by a
-launcher that reads its code for hot reloading (not with --no-hot-reload).
-When it fails, it says why on stderr and exits with 1: for a runtime error in a proc
-it called, with that proc's file and line and the procs between it and the expression.
-  -f FILE      Read the expression from FILE, where no shell can change its quotes or paths
-  -            Read the expression from stdin
-  --frame N    The Nth frame of the stack, from 0, the innermost (the default)
-  --src REF    In no frame, with `src` the object whose ref() is REF ([0x2000001], or
-               0x2000001): a bare name is its var, a bare call its proc, as in its own
-               procs. Paused or not. It fails if the object isn't there (deleted).
-  --spawn      Run it as the world's own code, on its next tick, in no frame (--src can
-               give it one): breakpoints stop in what it calls, and it may sleep. Prints
-               its number and returns at once; what it gives goes in the world's record
-               (`log --spawned`). A world not started by auxtools' launcher may not have
-               what it needs: it says so.
-  --wait       With --spawn: wait for it to finish, and print what it gave as a plain
-               eval does (exit code 1 for a runtime error in it)
-  --timeout S  How long --wait waits (exit code 2 when it's longer: it still runs)
-  --json       The value as JSON: a number, text or null as itself; a list as an array of
-               its entries, or an object when they're text keys with values (else an
-               array of {\"key\", \"value\"}); an object (a datum, atom, client...) as
-               {\"ref\", \"type\", \"name\"}, with its \"vars\" when they're written out; a
-               typepath as {\"path\"}; anything else as {\"kind\", \"text\"}
-  --depth N    How deep to write out lists and objects (2 unless given): a list's entries
-               while N is 1 or more, an object's vars while it's 2 or more, each a level
-               lower. Past that, a list is {\"list\": true, \"len\"} and an object no vars.",
-			run: Run::World(|world, args| {
-				let flags = Flags::parse(args, &["--frame", "-f", "--depth", "--src", "--timeout"], &["--json", "--spawn", "--wait"])?;
-				world.output(&flags)?;
-				let expression = expression(&flags.rest, flags.value("-f"), read_stdin)?;
-				if !flags.has("--spawn") && (flags.has("--wait") || flags.has("--timeout")) {
-					return Err("--wait and --timeout go with --spawn".into());
-				}
-				match flags.value("--src") {
-					_ if flags.has("--spawn") && flags.has("--frame") => Err("--spawn and --frame don't go together: it runs on the next tick, in no frame".into()),
-					Some(_) if flags.has("--frame") => Err("--src and --frame don't go together: --src is in no frame".into()),
-					object if flags.has("--spawn") => {
-						let wait = flags.has("--wait").then(|| flags.number::<f64>("--timeout")).transpose()?;
-						world.spawn(&expression, object, wait.map(|timeout| timeout.map(Duration::from_secs_f64)))
-					}
-					Some(object) => world.eval_on(object, &expression),
-					None => world.eval(&expression, flags.number("--frame")?)
-				}
-			})
-		},
-	]),
-	("Looking at its code", &[
-		Command {
-			name: "proc",
-			usage: "/PATH[#N] [--json]",
-			about: "Where a proc is, how many definitions it has, and whether a hot reload changed it",
-			details: "/PATH is the proc's path, with or without its `proc/`: `/mob/proc/attack` or
-`/mob/attack`. #N is its Nth definition, from 0, the first (the default).
-  --json    As JSON: its `proc`, `file`, `line`, `definitions` and `reloaded` (null,
-            `lines`, `code` or `added`)",
-			run: Run::World(|world, args| {
-				let flags = Flags::parse(args, &[], &["--json"])?;
-				world.output(&flags)?;
-				world.proc_info(&one_proc("proc", &flags.rest)?)
-			})
-		},
-		Command {
-			name: "dis",
-			usage: "/PATH[#N] [--json]",
-			about: "A proc's bytecode: each instruction's offset and text, and the lines they're on",
-			details: "/PATH[#N] is as for `auxtools proc`. The bytecode is the proc's code as it runs
-now: after a hot reload, the new code.
-  --json    As JSON: its `proc`, `file`, and `instructions`, each with its `offset`,
-            `text` and `line`",
-			run: Run::World(|world, args| {
-				let flags = Flags::parse(args, &[], &["--json"])?;
-				world.output(&flags)?;
-				world.disassemble(&one_proc("dis", &flags.rest)?)
-			})
-		},
-	]),
-	("Running it", &[
-		Command {
-			name: "pause",
-			usage: "[--hold-max SECONDS] [--json]",
-			about: "Pauses the world where it is",
-			details: "The world stays paused after this command has gone, until `continue`.
-  --hold-max SECONDS  Let the world carry on by itself this long after the command has
-                      gone (once nobody debugging is connected to it). The default is
-                      no limit, or AUXTOOLS_HOLD_MAX if it's set. Its `log` says so.
-  --json              Where it paused as JSON, as `auxtools help status` says",
-			run: Run::World(|world, args| {
-				let flags = Flags::parse(args, &[], &["--json"])?;
-				flags.nothing_else("pause")?;
-				world.output(&flags)?;
-				world.pause()
-			})
-		},
-		Command {
-			name: "continue",
-			usage: "",
-			about: "Lets a paused world carry on",
-			details: "",
-			run: Run::World(|world, args| {
-				Flags::parse(args, &[], &[])?.nothing_else("continue")?;
-				world.resume(ContinueKind::Continue)
-			})
-		},
-		Command {
-			name: "next",
-			usage: "[--instruction] [--hold-max SECONDS] [--json]",
-			about: "Runs to the next line, over any procs this one calls",
-			details: "The world stays paused afterwards, until `continue`.
-  --instruction       One instruction on, in this proc: a call it makes runs to its end
-                      (the pause it ends in shows that instruction's offset and text too)
-  --hold-max SECONDS  As for `pause`
-  --json              Where it paused as JSON, as `auxtools help status` says",
-			run: Run::World(|world, args| {
-				let flags = Flags::parse(args, &[], &["--instruction", "--json"])?;
-				flags.nothing_else("next")?;
-				world.output(&flags)?;
-				world.show_instruction = flags.has("--instruction");
-				world.resume(if world.show_instruction {
-					ContinueKind::StepOverInstruction { stack_id: 0 }
-				} else {
-					ContinueKind::StepOver { stack_id: 0 }
-				})
-			})
-		},
-		Command {
-			name: "step",
-			usage: "[--instruction] [--hold-max SECONDS] [--json]",
-			about: "Runs to the next line, going into a proc this one calls",
-			details: "The world stays paused afterwards, until `continue`.
-  --instruction       One instruction on, into a proc this one calls
-                      (the pause it ends in shows that instruction's offset and text too)
-  --hold-max SECONDS  As for `pause`
-  --json              Where it paused as JSON, as `auxtools help status` says",
-			run: Run::World(|world, args| {
-				let flags = Flags::parse(args, &[], &["--instruction", "--json"])?;
-				flags.nothing_else("step")?;
-				world.output(&flags)?;
-				world.show_instruction = flags.has("--instruction");
-				world.resume(if world.show_instruction {
-					ContinueKind::StepIntoInstruction { stack_id: 0 }
-				} else {
-					ContinueKind::StepInto { stack_id: 0 }
-				})
-			})
-		},
-		Command {
-			name: "out",
-			usage: "[--hold-max SECONDS] [--json]",
-			about: "Runs until this proc returns to the one that called it",
-			details: "The world stays paused afterwards, until `continue`.
-  --hold-max SECONDS  As for `pause`
-  --json              Where it paused as JSON, as `auxtools help status` says",
-			run: Run::World(|world, args| {
-				let flags = Flags::parse(args, &[], &["--json"])?;
-				flags.nothing_else("out")?;
-				world.output(&flags)?;
-				world.resume(ContinueKind::StepOut { stack_id: 0 })
-			})
-		},
-		Command {
-			name: "wait",
-			usage: "[--break PLACE]... [--change EXPRESSION]... [--runtimes] [OPTIONS]",
-			about: "Waits for the world to pause, and says why and where",
-			details: "With nothing to pause it for, it waits for whatever pauses it: another client's
-breakpoint, a `pause`. The world stays paused afterwards, until `continue`. To print
-something at a breakpoint without pausing, or count its hits, use `trace`.
-  --break PLACE        Pause at FILE:LINE, or when /proc/path is called (/proc/path#N for
-                       its Nth override). Can be given more than once. Says where each
-                       went (on stderr), and fails at once on a place the world hasn't got.
-  --change EXPRESSION  Pause when what EXPRESSION names gets another value: a var of an
-                       object, an entry of a list, a global var, a proc's own var. Given
-                       while the world is paused, EXPRESSION is of a frame there, and the
-                       world carries on until it changes.
-  --frame N            The frame --change's EXPRESSION is of (0, the innermost)
-  --if CONDITION       Only pause when CONDITION, a DM expression, is true there. For
-                       --change, `value` is the new value and `old` the one before.
-  --runtimes           Pause on a runtime error that nothing catches
-  --caught             Pause on runtime errors inside a `try` as well
-  --timeout SECONDS    Give up after this long (exit code 2)
-  --no-hold            Let the world carry on once this command has gone
-  --json               Where it paused as JSON, as `auxtools help status` says, with
-                       `already` (it was paused before), `breakpoints` (each with the
-                       `place` given and the `proc`, `file` and `line` it went to) and
-                       `watching` (each with its `name` and `value`)
-  --hold-max SECONDS   As for `pause`: let it carry on by itself this long after this
-                       command has gone (once nobody debugging is connected to it)
-
-wait --reload [--since N] [--timeout SECONDS] [--json]
-  Waits for the next hot reload to be tried (or the first after entry N of `log`), by the
-  launcher that reloads the world, and prints what came of it as `log --reloads` does.
-  Exit code 0 if it was applied, 1 if not (compile errors, changes that need a rebuild).
-  Start it before saving the change, or give --since.
-wait --reboot [--since N] [--timeout SECONDS] [--json]
-  Waits for the world to reboot (or for the first load after entry N), and for the new
-  world to answer. Exit code 3 if the world ends instead.
-
-An EXPRESSION, CONDITION or MESSAGE given as @FILE is read from FILE (@@ for one that
-starts with @).",
-			run: Run::World(wait)
-		},
-		Command {
-			name: "trace",
-			usage: "PLACE... [--log MESSAGE] [--by EXPRESSION|caller] [OPTIONS]",
-			about: "Prints a line at each hit of breakpoints that never pause, or counts the hits",
-			details: "A PLACE is FILE:LINE, or /proc/path for when the proc is called (/proc/path#N for its
-Nth override). It says where each breakpoint went, then a line per hit: which proc and
-line it was, and what called it. The world doesn't pause for them, and they go when
-trace ends: after --for or --count, or when it's interrupted (Ctrl-C), with exit code 0;
-or when the world goes away, with 3.
-  --log MESSAGE         Print MESSAGE at each hit instead, with the values of the
-                        {expressions} in it, worked out there
-  --if CONDITION        Only the hits where CONDITION, a DM expression, is true. A hit
-                        where it fails with an error is skipped: said once, and counted.
-  --by EXPRESSION       Nothing per hit: at the end, how many hits there were for each
-                        value of EXPRESSION, most first, and in all. A hit where it fails
-                        counts under the error, in {braces}.
-  --by caller           The same, for each proc and line that called it
-  --for SECONDS         Stop after this long
-  --count N             Stop after N hits
-  --json                A JSON object a line: `bound`, `hit` and `summary` events
-
-A MESSAGE, CONDITION or EXPRESSION given as @FILE is read from FILE (@@ for one that
-starts with @).",
-			run: Run::World(trace::trace)
-		},
-	]),
-	("For editors", &[
-		Command {
-			name: "dap",
-			usage: "",
-			about: "The debug adapter: talks the Debug Adapter Protocol on stdin and stdout",
-			details: "What an editor's extension starts. It launches worlds, attaches to them, and hot
-reloads their code as files are saved.",
-			run: Run::Alone(|_| {
-				crate::adapter::run();
-				Ok(())
-			})
-		},
-	]),
-	("About auxtools", &[
-		Command {
-			name: "help",
-			usage: "[COMMAND]",
-			about: "This, or a command's options",
-			details: "",
-			run: Run::Alone(help)
-		},
-		Command {
-			name: "version",
-			usage: "",
-			about: "The version of auxtools, and of the protocol it speaks to worlds",
-			details: "",
-			run: Run::Alone(|_| {
-				println!("{}", version());
-				Ok(())
-			})
-		},
-	])
-];
-
-fn version() -> String {
-	format!("auxtools {} (protocol {})", env!("CARGO_PKG_VERSION"), PROTOCOL_VERSION)
-}
-
-fn command(name: &str) -> Option<&'static Command> {
-	COMMANDS.iter().flat_map(|(_, commands)| commands.iter()).find(|command| command.name == name)
-}
-
-/// Every command, a line each
-pub fn overview() -> String {
-	let mut text = String::from(
-		"auxtools: debug BYOND worlds, from the command line and from editors
-
-Usage: auxtools [--pid PID] COMMAND [OPTIONS]
-
-A command is for the one world that's running the debug library. With more than one,
---pid says which (`auxtools list` shows them).
-"
-	);
-	let width = COMMANDS.iter().flat_map(|(_, commands)| commands.iter()).map(|command| command.name.len()).max().unwrap_or(0);
-	for (group, commands) in COMMANDS {
-		text += &format!("\n{}:\n", group);
-		for command in *commands {
-			text += &format!("  {:width$}  {}\n", command.name, command.about);
-		}
-	}
-	text += "
-`auxtools help COMMAND` shows a command's options.
-
-A command that leaves the world paused (pause, wait, next, step, out) can be given
---hold-max SECONDS, or AUXTOOLS_HOLD_MAX in its environment: a pause nobody debugging comes
-back to in that long ends by itself, so a client that dies doesn't leave every player frozen.
-
-Exit codes: 0 done (for `wait`, the world paused), 1 failed, 2 timed out (`wait`,
-`reboot`), 3 the world went away (it ended or rebooted), 4 the world `launch` started
-ended with an exit code other than 0, or was killed.
-";
-	text
-}
-
-/// One command, with its options
-fn describe(command: &Command) -> String {
-	let mut text = format!("Usage: auxtools [--pid PID] {}", command.name);
-	if !command.usage.is_empty() {
-		text += &format!(" {}", command.usage);
-	}
-	text += &format!("\n\n{}.\n", command.about);
-	if !command.details.is_empty() {
-		text += &format!("\n{}\n", command.details);
-	}
-	text
-}
-
-fn help(args: &[String]) -> Result<()> {
-	match args {
-		[] => print!("{}", overview()),
-		[name] => match command(name) {
-			Some(command) => print!("{}", describe(command)),
-			None => return Err(unknown(name))
-		},
-		_ => return Err("help takes one command's name".into())
-	}
-	Ok(())
-}
-
-fn unknown(name: &str) -> Failure {
-	Failure(1, format!("there's no command {}: `auxtools help` lists them", name))
-}
-
-fn list(args: &[String]) -> Result<()> {
-	Flags::parse(args, &[], &[])?.nothing_else("list")?;
-	println!(
-		"{}",
-		serde_json::to_string_pretty(&local::worlds()).map_err(|e| e.to_string())?
-	);
-	Ok(())
-}
+/// The world went away before the command had done what it's for
+const HUNG_UP: i32 = 3;
 
 /// Runs `args` (everything after the program's name), and exits with its code
 pub fn run(args: &[String]) -> ! {
@@ -573,142 +70,117 @@ pub fn run(args: &[String]) -> ! {
 	unsafe {
 		libc::signal(libc::SIGPIPE, libc::SIG_DFL);
 	}
-	let code = match parse(args).and_then(|(pid, command)| execute(pid, &command)) {
+	let code = match execute(args) {
 		Ok(()) => 0,
 		Err(Failure(code, message)) => {
-			eprintln!("{}", message);
+			eprintln!("error: {}", message);
 			code
 		}
 	};
 	std::process::exit(code)
 }
 
-fn parse(args: &[String]) -> Result<(Option<u32>, Vec<String>)> {
-	match args {
-		[flag, pid, rest @ ..] if flag == "--pid" => {
-			let pid = pid.parse().map_err(|_| format!("{} isn't a process id", pid))?;
-			Ok((Some(pid), rest.to_vec()))
+fn execute(raw: &[String]) -> Result<()> {
+	let cli = match args::parse(raw) {
+		Ok(cli) => cli,
+		Err(args::Unparsed::Help(page)) => {
+			print!("{}", page);
+			return Ok(());
 		}
-		_ => Ok((None, args.to_vec()))
-	}
-}
-
-/// Its flags: `--name value` pairs and bare `--name`s, and what's left
-struct Flags {
-	given: Vec<(String, Option<String>)>,
-	rest: Vec<String>
-}
-
-impl Flags {
-	fn parse(args: &[String], with_values: &[&str], bare: &[&str]) -> Result<Self> {
-		let mut flags = Self { given: vec![], rest: vec![] };
-		let mut args = args.iter();
-		while let Some(arg) = args.next() {
-			if with_values.contains(&arg.as_str()) {
-				let value = args.next().ok_or_else(|| format!("{} needs a value", arg))?;
-				flags.given.push((arg.clone(), Some(value.clone())));
-			} else if bare.contains(&arg.as_str()) {
-				flags.given.push((arg.clone(), None));
-			} else if arg.starts_with("--") {
-				return Err(format!("there's no {} here: `--help` after the command shows its options", arg).into());
-			} else {
-				flags.rest.push(arg.clone());
-			}
-		}
-		Ok(flags)
-	}
-
-	/// Refuses words the command has no use for
-	fn nothing_else(&self, command: &str) -> Result<()> {
-		if self.rest.is_empty() {
-			Ok(())
-		} else {
-			Err(format!("{} doesn't take {}", command, self.rest.join(" ")).into())
-		}
-	}
-
-	fn has(&self, name: &str) -> bool {
-		self.given.iter().any(|(n, _)| n == name)
-	}
-
-	fn values<'a>(&'a self, name: &'a str) -> impl Iterator<Item = &'a str> {
-		self.given.iter().filter(move |(n, _)| n == name).filter_map(|(_, v)| v.as_deref())
-	}
-
-	fn value(&self, name: &str) -> Option<&str> {
-		self.given.iter().rev().find(|(n, _)| n == name).and_then(|(_, v)| v.as_deref())
-	}
-
-	fn number<T: std::str::FromStr>(&self, name: &str) -> Result<Option<T>> {
-		self.value(name)
-			.map(|v| v.parse().map_err(|_| Failure::from(format!("{} {} isn't a number", name, v))))
-			.transpose()
-	}
-
-	/// A time in seconds: not negative, and a number
-	fn seconds(&self, name: &str) -> Result<Option<Duration>> {
-		match self.number::<f64>(name)? {
-			Some(seconds) if seconds.is_finite() && seconds >= 0.0 => Ok(Some(Duration::from_secs_f64(seconds))),
-			Some(_) => Err(format!("{} {} isn't a time in seconds", name, self.value(name).unwrap_or_default()).into()),
-			None => Ok(None)
-		}
-	}
-}
-
-fn execute(pid: Option<u32>, words: &[String]) -> Result<()> {
-	let (name, args) = match words.split_first() {
-		// Asked how it's used, in any of the usual ways
-		None => return help(&[]),
-		Some((name, rest)) if matches!(name.as_str(), "--help" | "-h") => return help(rest),
-		Some((name, _)) if matches!(name.as_str(), "--version" | "-V") => ("version", &[][..]),
-		Some((name, args)) => (name.as_str(), args)
+		Err(args::Unparsed::Usage(why)) => return Err(why.into())
 	};
-	let command = command(name).ok_or_else(|| unknown(name))?;
-	if args.iter().any(|arg| arg == "--help" || arg == "-h") {
-		print!("{}", describe(command));
-		return Ok(());
+	let Some(command) = cli.command else {
+		// Asked which it is, or nothing at all
+		if cli.version {
+			return version(false);
+		}
+		return help::show(&[]);
+	};
+	if cli.pid.is_some() && !command.selects_world() {
+		return Err(format!("--pid cannot be used with '{}': it does not select an existing world.", command.name()).into());
 	}
-	match command.run {
-		Run::Alone(run) => run(args),
-		Run::World(run) => {
-			let (args, hold_max) = hold::take(command.name, args)?;
-			let pid = match pid {
+	// What's wrong with its options is said before a world hears of it
+	args::rules(&command)?;
+	match command {
+		Command::Dap => {
+			crate::adapter::run();
+			Ok(())
+		}
+		Command::Help(help) => help::show(&help.path),
+		Command::Version(version) => self::version(version.json),
+		Command::List(list) => self::list(list.json),
+		Command::Launch(launch) => launch::launch(&launch, raw.iter().any(|arg| arg == "--")),
+		Command::Wait(args::Wait { event: None }) => {
+			help::show(&["wait".to_owned()])?;
+			Err("wait requires a command: pause, reload, or reboot.".into())
+		}
+		command => {
+			let hold_max = hold::max(&command)?;
+			let pid = match cli.pid {
 				Some(pid) => pid,
 				None => only_world()?
 			};
 			let mut world = World::connect(pid)?;
-			if let Some(seconds) = hold_max {
-				world.hold_max(seconds)?;
+			if let Some(limit) = hold_max {
+				world.hold_max(limit)?;
 			}
-			let result = run(&mut world, &args);
+			let result = world.command(command);
 			world.leave();
 			result
 		}
 	}
 }
 
-fn wait(world: &mut World, args: &[String]) -> Result<()> {
-	// For a hot reload, or a reboot: not a pause
-	if let Some(waited) = log::wait_on_record(world, args) {
-		return waited;
+fn version(as_json: bool) -> Result<()> {
+	if as_json {
+		println!("{}", json!({ "version": env!("CARGO_PKG_VERSION"), "protocol": PROTOCOL_VERSION }));
+	} else {
+		println!("auxtools {} (protocol {})", env!("CARGO_PKG_VERSION"), PROTOCOL_VERSION);
 	}
-	let flags = Flags::parse(
-		args,
-		&["--break", "--if", "--timeout", "--change", "--frame"],
-		&["--runtimes", "--caught", "--no-hold", "--json"]
-	)?;
-	flags.nothing_else("wait")?;
-	world.output(&flags)?;
-	world.wait(Wait {
-		breaks: flags.values("--break").map(str::to_owned).collect(),
-		changes: flags.values("--change").map(given_text).collect::<Result<_>>()?,
-		frame: flags.number::<u32>("--frame")?.unwrap_or(0),
-		condition: flags.value("--if").map(given_text).transpose()?,
-		runtimes: flags.has("--runtimes") || flags.has("--caught"),
-		caught: flags.has("--caught"),
-		timeout: flags.seconds("--timeout")?,
-		hold: !flags.has("--no-hold")
-	})
+	Ok(())
+}
+
+/// `list`: the worlds running the debug library, as a table or as JSON
+fn list(as_json: bool) -> Result<()> {
+	let worlds = local::worlds();
+	if as_json {
+		println!("{}", serde_json::to_string(&worlds).map_err(|e| e.to_string())?);
+		return Ok(());
+	}
+	if worlds.is_empty() {
+		println!("No worlds found with the debug library loaded.");
+		return Ok(());
+	}
+	let mut rows = vec![["PID", "PROGRAM", "PROTOCOL", "COMPATIBLE", "DMB", "CWD", "ARGS"].map(str::to_owned)];
+	for world in &worlds {
+		// (of a world of another version, only its process is known)
+		let unknown = |text: String| if text.is_empty() { "-".to_owned() } else { text };
+		rows.push([
+			world.pid.to_string(),
+			world.program.clone(),
+			world.protocol.to_string(),
+			if world.compatible { "yes" } else { "no" }.to_owned(),
+			unknown(world.dmb.as_ref().map(|dmb| dmb.display().to_string()).unwrap_or_default()),
+			unknown(world.cwd.clone()),
+			unknown(world.args.join(" "))
+		]);
+	}
+	for row in &rows {
+		let mut line = String::new();
+		for (column, cell) in row.iter().enumerate() {
+			let width = rows.iter().map(|row| row[column].chars().count()).max().unwrap_or(0);
+			line += &format!("{:width$}  ", cell);
+		}
+		println!("{}", line.trim_end());
+	}
+	Ok(())
+}
+
+/// A time as an error says it: `30 seconds`, `1 second`, `0.5 seconds`
+fn seconds_text(time: Duration) -> String {
+	let seconds = time.as_secs_f64();
+	let number = if seconds.fract() == 0.0 { format!("{}", seconds as u64) } else { format!("{}", seconds) };
+	format!("{} {}", number, if seconds == 1.0 { "second" } else { "seconds" })
 }
 
 /// An expression or a message as an option was given it: `@FILE` is what's
@@ -723,7 +195,7 @@ fn given_text(value: &str) -> Result<String> {
 
 /// What's in a file, without the line end it finishes with
 fn read_text(file: &str) -> Result<String> {
-	let text = std::fs::read_to_string(file).map_err(|e| format!("couldn't read {}: {}", file, e))?;
+	let text = std::fs::read_to_string(file).map_err(|e| format!("cannot read {}: {}.", file, e))?;
 	Ok(text.trim_end_matches(['\r', '\n']).to_owned())
 }
 
@@ -731,28 +203,23 @@ fn read_stdin() -> Result<String> {
 	use std::io::{IsTerminal, Read};
 	// Nobody would type it in: an agent waiting on us would wait forever
 	if io::stdin().is_terminal() {
-		return Err("`-` reads the expression from stdin, and stdin is a terminal here".into());
+		return Err("'-' reads the expression from stdin, but stdin is a terminal.".into());
 	}
 	let mut text = String::new();
-	io::stdin().read_to_string(&mut text).map_err(|e| format!("couldn't read stdin: {}", e))?;
+	io::stdin().read_to_string(&mut text).map_err(|e| format!("cannot read stdin: {}.", e))?;
 	Ok(text.trim_end_matches(['\r', '\n']).to_owned())
 }
 
-/// `eval`'s expression: its words, what's in `-f FILE`, or stdin for `-`
-fn expression(words: &[String], file: Option<&str>, stdin: impl FnOnce() -> Result<String>) -> Result<String> {
-	let expression = match (words, file) {
-		([], None) => return Err("eval what?".into()),
-		([], Some(file)) => read_text(file)?,
-		([dash], None) if dash == "-" => stdin()?,
-		(_, None) => words.join(" "),
-		(_, Some(_)) => return Err("eval takes one expression: its words, -f FILE or -".into())
+/// `eval`'s expression: its words, what's in `--file FILE`, or stdin for `-`
+/// (`args::rules` has seen that it's one of them)
+fn expression(words: &[String], file: Option<&std::path::Path>, stdin: impl FnOnce() -> Result<String>) -> Result<String> {
+	let (expression, from) = match (words, file) {
+		(_, Some(file)) => (read_text(&file.to_string_lossy())?, file.display().to_string()),
+		([dash], None) if dash == "-" => (stdin()?, "stdin".to_owned()),
+		(_, None) => return Ok(words.join(" "))
 	};
 	if expression.trim().is_empty() {
-		return Err(match file {
-			Some(file) => format!("{} has no expression in it", file),
-			None => "stdin had no expression on it".to_owned()
-		}
-		.into());
+		return Err(format!("{} contains no expression.", from).into());
 	}
 	Ok(expression)
 }
@@ -761,25 +228,19 @@ fn expression(words: &[String], file: Option<&str>, stdin: impl FnOnce() -> Resu
 /// Nth definition
 fn proc_ref(text: &str) -> Result<ProcRef> {
 	if !text.starts_with('/') {
-		return Err(format!("{} isn't a proc's path: it starts with /", text).into());
+		return Err(format!("invalid proc path '{}': expected /PATH[#N].", text).into());
 	}
 	let (path, override_id) = match text.split_once('#') {
-		Some((path, id)) => (path, id.parse().map_err(|_| format!("{} isn't a definition's number", id))?),
+		Some((path, id)) => (
+			path,
+			id.parse().map_err(|_| format!("invalid definition index '{}' in '{}': expected a non-negative integer.", id, text))?
+		),
 		None => (text, 0)
 	};
 	Ok(ProcRef {
 		path: path.to_owned(),
 		override_id
 	})
-}
-
-/// The one proc a command is about
-fn one_proc(command: &str, words: &[String]) -> Result<ProcRef> {
-	match words {
-		[proc] => proc_ref(proc),
-		[] => Err(format!("{} which proc?", command).into()),
-		_ => Err(format!("{} takes one proc", command).into())
-	}
 }
 
 /// A proc's name as the stack shows it: its path, and `#N` for a definition
@@ -791,34 +252,24 @@ fn proc_name(proc: &ProcRef) -> String {
 	}
 }
 
+/// The world a command is for when it isn't told: the only one there is
 fn only_world() -> Result<u32> {
 	let worlds = local::worlds();
-	let shown = |worlds: &[&local::World]| {
-		worlds
-			.iter()
-			.map(|w| format!("  {} {}", w.pid, w.dmb.as_ref().map_or(w.program.clone(), |dmb| dmb.display().to_string())))
-			.collect::<Vec<_>>()
-			.join("\n")
-	};
-	let ours: Vec<&local::World> = worlds.iter().filter(|world| world.compatible).collect();
-	let others: Vec<&local::World> = worlds.iter().filter(|world| !world.compatible).collect();
-	match ours.as_slice() {
+	let compatible: Vec<&local::World> = worlds.iter().filter(|world| world.compatible).collect();
+	match compatible.as_slice() {
 		[world] => Ok(world.pid),
-		[] if others.is_empty() => Err("no world is running the debug library".into()),
+		[] if worlds.is_empty() => Err("no worlds found with the debug library loaded. Start one with 'auxtools launch'.".into()),
 		[] => Err(format!(
-			"no world is running this auxtools' debug library (protocol {}). Started by another version:\n{}",
-			PROTOCOL_VERSION,
-			others
-				.iter()
-				.map(|w| format!("  {} {} (protocol {})", w.pid, w.program, w.protocol))
-				.collect::<Vec<_>>()
-				.join("\n")
+			"no compatible worlds found: {} use another debug protocol version than this CLI ({}). Use 'auxtools list'.",
+			worlds.len(),
+			PROTOCOL_VERSION
 		)
 		.into()),
-		_ => Err(format!("more than one world is running the debug library, so say which with --pid:\n{}", shown(&ours)).into())
+		_ => Err("multiple compatible worlds found. Specify --pid; use 'auxtools list'.".into())
 	}
 }
 
+/// What `wait pause` waits for
 struct Wait {
 	breaks: Vec<String>,
 	/// Expressions for places to watch for a change
@@ -831,6 +282,14 @@ struct Wait {
 	caught: bool,
 	timeout: Option<Duration>,
 	hold: bool
+}
+
+/// How a step ended
+enum Stepped {
+	Paused(BreakpointReason),
+	/// With the world running: nothing was left to pause in
+	Ended,
+	TimedOut
 }
 
 pub struct World {
@@ -849,13 +308,13 @@ pub struct World {
 	/// What it prints is one JSON document (`--json`), with lists and objects
 	/// to this depth
 	json: Option<u32>,
-	/// What `wait` adds to the JSON of a pause
-	waited: serde_json::Map<String, serde_json::Value>
+	/// What `wait pause` adds to the JSON of a pause
+	waited: Map<String, Value>
 }
 
 impl World {
 	fn connect(pid: u32) -> Result<Self> {
-		let stream = Shared::new(local::connect(pid).map_err(|e| format!("couldn't reach the world in process {}: {}", pid, e))?);
+		let stream = Shared::new(local::connect(pid).map_err(|e| format!("cannot connect to the world with pid {}: {}.", pid, e))?);
 		let (sender, received) = mpsc::channel();
 		let mut reader = stream.clone();
 		std::thread::spawn(move || loop {
@@ -874,19 +333,103 @@ impl World {
 			failed_conditions: vec![],
 			show_instruction: false,
 			json: None,
-			waited: serde_json::Map::new()
+			waited: Map::new()
 		})
 	}
 
-	/// How it prints what it prints: as text, or with `--json`
-	fn output(&mut self, flags: &Flags) -> Result<()> {
-		let depth = flags.number::<u32>("--depth")?;
-		self.json = match (flags.has("--json"), depth) {
-			(true, depth) => Some(depth.unwrap_or(json::DEFAULT_DEPTH)),
-			(false, None) => None,
-			(false, Some(_)) => return Err("--depth goes with --json".into())
-		};
-		Ok(())
+	/// Does what a command to a world is for, and prints what came of it
+	fn command(&mut self, command: Command) -> Result<()> {
+		// How it prints: as text, or as JSON, with lists and objects in it
+		// written out to a depth
+		let output = |json: bool, depth: Option<u32>| json.then(|| depth.unwrap_or(json::DEFAULT_DEPTH));
+		match command {
+			Command::Status(args) => {
+				self.json = output(args.json, None);
+				self.status()
+			}
+			Command::Stop(args) => stop::stop(self, &args),
+			Command::Reboot(args) => stop::reboot(self, &args),
+			Command::Log(args) => log::log(self, &args),
+			Command::Stack(args) => {
+				self.json = output(args.json, None);
+				self.stack(args.all)
+			}
+			Command::Vars(args) => {
+				self.json = output(args.json, args.depth);
+				self.vars(args.frame.unwrap_or(0), args.globals)
+			}
+			Command::Eval(args) => {
+				self.json = output(args.json, args.depth);
+				let expression = expression(&args.expression, args.file.as_deref(), read_stdin)?;
+				match &args.src {
+					object if args.spawn => self.spawn(&expression, object.as_deref(), args.wait.then_some(args.timeout)),
+					Some(object) => self.eval_on(object, &expression),
+					None => self.eval(&expression, args.frame)
+				}
+			}
+			Command::Proc(args) => {
+				self.json = output(args.json, None);
+				self.proc_info(&proc_ref(&args.proc)?)
+			}
+			Command::Disassemble(args) => {
+				self.json = output(args.json, None);
+				self.disassemble(&proc_ref(&args.proc)?)
+			}
+			Command::Pause(args) => {
+				self.json = output(args.json, None);
+				self.pause()
+			}
+			Command::Continue(args) => {
+				self.json = output(args.json, None);
+				self.resume()
+			}
+			Command::StepOver(args) => {
+				self.json = output(args.json, None);
+				self.show_instruction = args.instruction;
+				let kind = match args.instruction {
+					true => ContinueKind::StepOverInstruction { stack_id: 0 },
+					false => ContinueKind::StepOver { stack_id: 0 }
+				};
+				self.step(kind, args.timeout)
+			}
+			Command::StepIn(args) => {
+				self.json = output(args.json, None);
+				self.show_instruction = args.instruction;
+				let kind = match args.instruction {
+					true => ContinueKind::StepIntoInstruction { stack_id: 0 },
+					false => ContinueKind::StepInto { stack_id: 0 }
+				};
+				self.step(kind, args.timeout)
+			}
+			Command::StepOut(args) => {
+				self.json = output(args.json, None);
+				self.step(ContinueKind::StepOut { stack_id: 0 }, args.timeout)
+			}
+			Command::Wait(args::Wait {
+				event: Some(WaitFor::Pause(args))
+			}) => {
+				self.json = output(args.json, None);
+				self.wait(Wait {
+					breaks: args.breaks,
+					changes: args.changes.iter().map(|text| given_text(text)).collect::<Result<_>>()?,
+					frame: args.frame.unwrap_or(0),
+					condition: args.condition.as_deref().map(given_text).transpose()?,
+					runtimes: args.runtimes || args.caught,
+					caught: args.caught,
+					timeout: args.timeout,
+					hold: !args.no_hold
+				})
+			}
+			Command::Wait(args::Wait {
+				event: Some(WaitFor::Reload(args))
+			}) => log::wait_reload(self, args.since, args.timeout, args.json),
+			Command::Wait(args::Wait {
+				event: Some(WaitFor::Reboot(args))
+			}) => log::wait_reboot(self, args.since, args.timeout, args.json),
+			Command::Trace(args) => trace::trace(self, &args),
+			// (these aren't a world's, and were done without one)
+			Command::Wait(args::Wait { event: None }) | Command::Launch(_) | Command::List(_) | Command::Dap | Command::Help(_) | Command::Version(_) => Ok(())
+		}
 	}
 
 	/// What's printed on stdout but isn't the answer: on stderr when stdout
@@ -925,7 +468,7 @@ impl World {
 					eprintln!("{}", message);
 					self.failed_conditions.push(message);
 				}
-				Response::WatchEnded { reason, .. } => self.aside(&format!("a watch is over: {}", reason)),
+				Response::WatchEnded { reason, .. } => self.aside(&format!("watch ended: {}", reason)),
 				response => return Ok(Some(response))
 			}
 		}
@@ -935,7 +478,7 @@ impl World {
 		local::send(&mut self.stream, &request).map_err(|_| hung_up())?;
 		loop {
 			match self.next(None)?.expect("no time limit") {
-				event @ (Response::BreakpointHit { .. } | Response::Resumed | Response::Log { .. }) => self.events.push(event),
+				event @ (Response::BreakpointHit { .. } | Response::Resumed | Response::StepEnded | Response::Log { .. }) => self.events.push(event),
 				response => return Ok(response)
 			}
 		}
@@ -949,13 +492,50 @@ impl World {
 		}
 	}
 
+	/// `status`: what the world is doing, how long it has been up, and what
+	/// came of its last hot reload
 	fn status(&mut self) -> Result<()> {
-		match self.paused()? {
-			None if self.json.is_some() => println!("{}", serde_json::json!({ "paused": false })),
-			None => println!("running"),
-			Some(reason) => self.print_pause(&reason)?
-		}
+		let reason = self.paused()?;
+		let (mut document, mut lines) = self.execution(reason.as_ref())?;
+		let (loaded, up, world_time, loads, last_reload) = match self.request(Request::Uptime)? {
+			Response::Uptime {
+				loaded,
+				up,
+				world_time,
+				loads,
+				last_reload,
+				..
+			} => (loaded, up, world_time, loads, last_reload),
+			other => return Err(unexpected(&other))
+		};
+		document.insert("uptime_ms".to_owned(), json!((up * 1000.0).round() as u64));
+		document.insert("world_time".to_owned(), json!(world_time));
+		document.insert("loads".to_owned(), json!(loads));
+		document.insert("last_reload".to_owned(), last_reload.as_ref().map_or(Value::Null, log::to_json));
+		lines.push(format!(
+			"uptime: {} (loaded at {}), world.time {}, world loads: {}",
+			log::duration(up),
+			log::clock(loaded),
+			log::number(world_time),
+			loads
+		));
+		lines.push(match &last_reload {
+			Some(entry) => format!("last reload: {}", log::block(entry)),
+			None => "last reload: none".to_owned()
+		});
+		self.print(document, &lines);
 		Ok(())
+	}
+
+	/// A command's result: the JSON document, or the lines that say the same
+	fn print(&self, document: Map<String, Value>, lines: &[String]) {
+		if self.json.is_some() {
+			println!("{}", Value::Object(document));
+		} else {
+			for line in lines {
+				println!("{}", line);
+			}
+		}
 	}
 
 	fn frames(&mut self, stack_id: u32, count: Option<u32>) -> Result<Vec<StackFrame>> {
@@ -969,11 +549,17 @@ impl World {
 		}
 	}
 
-	fn print_pause(&mut self, reason: &BreakpointReason) -> Result<()> {
+	/// What the world is doing, as every command that reports it does: the
+	/// shared execution fields, and the lines of text that say the same.
+	/// `reason` is why it's paused, `None` for a world that's running.
+	fn execution(&mut self, reason: Option<&BreakpointReason>) -> Result<(Map<String, Value>, Vec<String>)> {
+		let Some(reason) = reason else {
+			return Ok((json::execution(self.pid, None), vec![format!("pid {}: running", self.pid)]));
+		};
 		let why = match reason {
 			BreakpointReason::Breakpoint => "at a breakpoint".to_owned(),
 			BreakpointReason::Step => "after a step".to_owned(),
-			BreakpointReason::Pause => "where it was asked to".to_owned(),
+			BreakpointReason::Pause => "by request".to_owned(),
 			BreakpointReason::Runtime { message, caught: false } => format!("on a runtime error: {}", message),
 			BreakpointReason::Runtime { message, caught: true } => format!("on a caught runtime error: {}", message),
 			BreakpointReason::Data { changes } => {
@@ -985,24 +571,25 @@ impl World {
 			}
 		};
 		let frames = self.frames(0, Some(20))?;
-		if self.json.is_some() {
-			let instruction = match (self.show_instruction, frames.first()) {
-				(true, Some(top)) => Some(self.instruction_of(top)?),
-				_ => None
-			};
-			let mut document = json::pause(reason, &frames, instruction);
-			document.extend(std::mem::take(&mut self.waited));
-			println!("{}", serde_json::Value::Object(document));
-			return Ok(());
-		}
-		println!("paused {}", why);
+		let instruction = match (self.show_instruction, frames.first()) {
+			(true, Some(top)) => Some(self.instruction_of(top)?),
+			_ => None
+		};
+		let mut lines = vec![format!("pid {}: paused {}", self.pid, why)];
 		for (i, frame) in frames.iter().enumerate() {
-			println!("#{} {}", i, place(frame));
-			if i == 0 && self.show_instruction {
-				let (offset, text) = self.instruction_of(frame)?;
-				println!("   instruction {}: {}", offset, text);
+			lines.push(format!("#{} {}", i, place(frame)));
+			if let (0, Some((offset, text))) = (i, &instruction) {
+				lines.push(format!("   instruction {}: {}", offset, text));
 			}
 		}
+		Ok((json::execution(self.pid, Some((reason, &frames, instruction))), lines))
+	}
+
+	/// Prints what the world is doing, with what `wait pause` adds to it
+	fn report(&mut self, reason: Option<&BreakpointReason>) -> Result<()> {
+		let (mut document, lines) = self.execution(reason)?;
+		document.extend(std::mem::take(&mut self.waited));
+		self.print(document, &lines);
 		Ok(())
 	}
 
@@ -1030,7 +617,7 @@ impl World {
 	fn need_pause(&mut self) -> Result<()> {
 		match self.paused()? {
 			Some(_) => Ok(()),
-			None => Err("the world is running: `pause` it, or `wait` for it to pause".into())
+			None => Err("the world is running. Pause it first with 'auxtools pause' or 'auxtools wait pause'.".into())
 		}
 	}
 
@@ -1048,13 +635,13 @@ impl World {
 			for stack in stacks.iter().filter(|s| all || !s.sleeping) {
 				let frames: Vec<_> = self.frames(stack.id, None)?.iter().map(json::frame).collect();
 				listed.push(match all {
-					true => serde_json::json!({ "id": stack.id, "name": stack.name, "sleeping": stack.sleeping, "frames": frames }),
-					false => serde_json::Value::Array(frames)
+					true => json!({ "id": stack.id, "name": stack.name, "sleeping": stack.sleeping, "frames": frames }),
+					false => Value::Array(frames)
 				});
 			}
 			let document = match all {
-				true => serde_json::Value::Array(listed),
-				false => listed.pop().unwrap_or_default()
+				true => Value::Array(listed),
+				false => listed.pop().unwrap_or_else(|| json!([]))
 			};
 			println!("{}", document);
 			return Ok(());
@@ -1071,11 +658,11 @@ impl World {
 	/// The id of the `n`th frame of the paused stack
 	fn frame_id(&mut self, n: u32) -> Result<u32> {
 		self.need_pause()?;
-		let frames = self.frames(0, Some(n + 1))?;
-		frames
-			.get(n as usize)
-			.map(|f| f.id)
-			.ok_or_else(|| format!("there's no frame {}", n).into())
+		let frames = self.frames(0, Some(n.saturating_add(1)))?;
+		match frames.get(n as usize) {
+			Some(frame) => Ok(frame.id),
+			None => Err(format!("frame {} does not exist: the paused stack has {} frames (0 is innermost).", n, frames.len()).into())
+		}
 	}
 
 	fn vars(&mut self, frame: u32, globals: bool) -> Result<()> {
@@ -1086,7 +673,7 @@ impl World {
 			globals: global_vars
 		} = self.request(Request::Scopes { frame_id })?
 		else {
-			return Err("the world didn't say what the frame has".into());
+			return Err("the world did not report the frame's variables.".into());
 		};
 		let mut scopes = vec![("arguments", arguments), ("locals", locals)];
 		if globals {
@@ -1094,20 +681,25 @@ impl World {
 		}
 		// The vars are a level down from the frame
 		if let Some(depth) = self.json {
-			let mut document = serde_json::Map::new();
+			let mut document = Map::new();
 			for (name, vars) in scopes {
-				let Some(vars) = vars else { continue };
-				let depth = depth.saturating_sub(1);
-				let values = match self.request(Request::RenderVariables { vars, depth })? {
-					Response::RenderVariables(values) => values?,
-					other => return Err(unexpected(&other))
+				let values = match vars {
+					Some(vars) => {
+						let depth = depth.saturating_sub(1);
+						match self.request(Request::RenderVariables { vars, depth })? {
+							Response::RenderVariables(values) => values?,
+							other => return Err(unexpected(&other))
+						}
+					}
+					None => vec![]
 				};
 				document.insert(name.to_owned(), json::named(&values));
 			}
-			println!("{}", serde_json::Value::Object(document));
+			println!("{}", Value::Object(document));
 			return Ok(());
 		}
 		for (name, vars) in scopes {
+			println!("{}:", name);
 			let Some(vars) = vars else { continue };
 			let listed = self.request(Request::Variables {
 				vars,
@@ -1115,9 +707,8 @@ impl World {
 				count: None
 			})?;
 			let Response::Variables { vars } = listed else {
-				return Err(format!("the world didn't list the {}", name).into());
+				return Err(format!("the world did not list the {}.", name).into());
 			};
-			println!("{}:", name);
 			for var in vars {
 				println!("  {} = {}", var.name, var.value);
 			}
@@ -1212,20 +803,27 @@ impl World {
 		let number = number?;
 		let Some(timeout) = wait else {
 			match self.json {
-				Some(_) => println!("{}", serde_json::json!({ "spawn": number })),
-				None => println!("{}", number)
+				Some(_) => println!("{}", json!({ "spawn": number })),
+				None => println!("spawn {}", number)
 			}
 			return Ok(());
 		};
 		if self.paused()?.is_some() {
-			eprintln!("the world is paused: spawned {} runs once it carries on", number);
+			eprintln!("the world is paused: spawn {} runs after execution resumes.", number);
 		}
 
 		let until = timeout.map(|timeout| Instant::now() + timeout);
 		let mut follower = log::Follower::new(newest, vec![JournalKind::Spawned, JournalKind::World]);
 		loop {
 			let Some(entry) = follower.next(self, until)? else {
-				return Err(Failure(TIMED_OUT, format!("timed out: spawned {} hasn't finished (it still runs)", number)));
+				return Err(Failure(
+					TIMED_OUT,
+					format!(
+						"timed out after {} waiting for spawn {} to finish. It keeps running.",
+						seconds_text(timeout.unwrap_or_default()),
+						number
+					)
+				));
 			};
 			match entry.event {
 				JournalEvent::Spawned { spawn, result, .. } if spawn == number => {
@@ -1236,7 +834,7 @@ impl World {
 					}
 					return Ok(());
 				}
-				JournalEvent::Loaded { .. } => return Err(Failure(HUNG_UP, format!("the world rebooted before spawned {} finished", number))),
+				JournalEvent::Loaded { .. } => return Err(Failure(HUNG_UP, format!("the world rebooted before spawn {} finished.", number))),
 				_ => {}
 			}
 		}
@@ -1252,22 +850,18 @@ impl World {
 
 	fn proc_info(&mut self, proc: &ProcRef) -> Result<()> {
 		let info = self.find_proc(proc)?;
-		if self.json.is_some() {
-			let reloaded = info.reloaded.map(|how| match how {
-				Reloaded::Lines => "lines",
-				Reloaded::Code => "code",
-				Reloaded::Added => "added"
-			});
-			let document = serde_json::json!({
-				"proc": proc_name(&info.proc),
-				"file": info.file,
-				"line": info.line,
-				"definitions": info.definitions,
-				"reloaded": reloaded
-			});
-			println!("{}", document);
-			return Ok(());
-		}
+		let reloaded = info.reloaded.map(|how| match how {
+			Reloaded::Lines => "lines",
+			Reloaded::Code => "code",
+			Reloaded::Added => "added"
+		});
+		let document = json!({
+			"proc": proc_name(&info.proc),
+			"file": info.file,
+			"line": info.line,
+			"definitions": info.definitions,
+			"reloaded": reloaded
+		});
 		let mut place = proc_name(&info.proc);
 		match (&info.file, info.line) {
 			(Some(file), Some(line)) => place += &format!("  {}:{}", file, line),
@@ -1275,15 +869,20 @@ impl World {
 			(None, Some(line)) => place += &format!("  line {}", line),
 			(None, None) => {}
 		}
-		println!("{}", place);
-		println!("definitions: {} (#0 to #{})", info.definitions, info.definitions.saturating_sub(1));
-		let reloaded = match info.reloaded {
-			None => "not since the world started",
-			Some(Reloaded::Lines) => "its code is as it was, on other lines",
-			Some(Reloaded::Code) => "new code",
-			Some(Reloaded::Added) => "added it"
-		};
-		println!("hot reload: {}", reloaded);
+		let lines = [
+			place,
+			format!("definitions: {}", info.definitions),
+			format!(
+				"reloaded: {}",
+				match info.reloaded {
+					None => "no",
+					Some(Reloaded::Lines) => "lines (same code, moved to other lines)",
+					Some(Reloaded::Code) => "code (new code)",
+					Some(Reloaded::Added) => "added (new proc)"
+				}
+			)
+		];
+		self.print(document.as_object().cloned().unwrap_or_default(), &lines);
 		Ok(())
 	}
 
@@ -1298,13 +897,19 @@ impl World {
 	fn disassemble(&mut self, proc: &ProcRef) -> Result<()> {
 		let info = self.find_proc(proc)?;
 		let disassembly = self.instructions(info.code)?;
+		// One the world couldn't read says so where its text would be
+		let text = |instruction: &BytecodeInstruction| match (&instruction.text, &disassembly.error) {
+			(text, _) if !text.is_empty() => text.clone(),
+			(_, Some(error)) => format!("(not read: {})", error),
+			(_, None) => "(not read)".to_owned()
+		};
 		if self.json.is_some() {
 			let instructions: Vec<_> = disassembly
 				.instructions
 				.iter()
-				.map(|instruction| serde_json::json!({ "offset": instruction.offset, "text": instruction.text, "line": instruction.line }))
+				.map(|instruction| json!({ "offset": instruction.offset, "text": text(instruction), "line": instruction.line }))
 				.collect();
-			let document = serde_json::json!({
+			let document = json!({
 				"proc": proc_name(&disassembly.proc),
 				"file": disassembly.file,
 				"instructions": instructions
@@ -1322,35 +927,31 @@ impl World {
 				line = instruction.line;
 				println!("line {}:", line.unwrap());
 			}
-			let text = match (&instruction.text, &disassembly.error) {
-				(text, _) if !text.is_empty() => text.clone(),
-				(_, Some(error)) => format!("(not read: {})", error),
-				(_, None) => "(not read)".to_owned()
-			};
-			println!("{:>6}  {}", instruction.offset, text);
+			println!("{:>6}  {}", instruction.offset, text(instruction));
 		}
 		Ok(())
 	}
 
-	/// Where a breakpoint `wait` set went: on stderr, or in the JSON
+	/// Where a breakpoint `wait pause` set went: on stderr, and in the JSON
 	fn say_bound(&mut self, place: &str, bound: &Bound) {
-		if self.json.is_none() {
-			eprintln!("{}", bound.describe());
-			return;
+		eprintln!("{}", bound.describe());
+		if self.json.is_some() {
+			let said = json!([{ "place": place, "proc": proc_name(&bound.at.proc), "file": bound.file, "line": bound.line }]);
+			self.say_waited("breakpoints", said, None);
 		}
-		let said = serde_json::json!([{ "place": place, "proc": proc_name(&bound.at.proc), "file": bound.file, "line": bound.line }]);
-		self.say_waited("breakpoints", said, "");
 	}
 
-	/// Something `wait` says before the pause: a line of text, or a key of
-	/// the pause's JSON (an array's entries are added to it)
-	fn say_waited(&mut self, key: &str, value: serde_json::Value, text: &str) {
+	/// Something `wait pause` says before the pause: a line of text, or a
+	/// key of the pause's JSON (an array's entries are added to it)
+	fn say_waited(&mut self, key: &str, value: Value, text: Option<&str>) {
 		if self.json.is_none() {
-			println!("{}", text);
+			if let Some(text) = text {
+				println!("{}", text);
+			}
 			return;
 		}
 		match (self.waited.get_mut(key), value) {
-			(Some(serde_json::Value::Array(had)), serde_json::Value::Array(more)) => had.extend(more),
+			(Some(Value::Array(had)), Value::Array(more)) => had.extend(more),
 			(_, value) => {
 				self.waited.insert(key.to_owned(), value);
 			}
@@ -1381,29 +982,80 @@ impl World {
 	fn pause(&mut self) -> Result<()> {
 		if let Some(reason) = self.paused()? {
 			self.request(Request::HoldPause)?;
-			return self.print_pause(&reason);
+			return self.report(Some(&reason));
 		}
 		self.request(Request::Pause)?;
 		let reason = self.await_pause(None, true)?.expect("no time limit");
-		self.print_pause(&reason)
+		self.report(Some(&reason))
 	}
 
-	fn resume(&mut self, kind: ContinueKind) -> Result<()> {
+	/// `continue`: lets a paused world carry on, and doesn't wait for more
+	fn resume(&mut self) -> Result<()> {
+		if self.paused()?.is_none() {
+			return Err("the world is not paused.".into());
+		}
+		self.request(Request::Continue { kind: ContinueKind::Continue })?;
+		let document = json!({ "pid": self.pid, "resumed": true });
+		self.print(document.as_object().cloned().unwrap_or_default(), &[format!("pid {}: resumed", self.pid)]);
+		Ok(())
+	}
+
+	/// A step: lets the world carry on, and waits for the pause it ends in,
+	/// or for the world to say it ended with nothing to pause in
+	fn step(&mut self, kind: ContinueKind, timeout: Option<Duration>) -> Result<()> {
 		self.need_pause()?;
-		let stepping = kind != ContinueKind::Continue;
 		self.events.clear();
 		self.request(Request::Continue { kind })?;
-		if !stepping {
-			println!("running");
-			return Ok(());
+		let until = timeout.map(|timeout| Instant::now() + timeout);
+		let stepped = loop {
+			if let Some(i) = self.events.iter().position(|e| matches!(e, Response::BreakpointHit { .. } | Response::StepEnded)) {
+				match self.events.remove(i) {
+					Response::BreakpointHit(stop) => break Stepped::Paused(stop.reason),
+					_ => break Stepped::Ended
+				}
+			}
+			match self.next(until)? {
+				None => break Stepped::TimedOut,
+				Some(event @ (Response::BreakpointHit { .. } | Response::StepEnded)) => self.events.push(event),
+				Some(_) => {}
+			}
+		};
+		match stepped {
+			Stepped::Paused(reason) => {
+				self.request(Request::HoldPause)?;
+				self.report(Some(&reason))
+			}
+			Stepped::Ended => {
+				eprintln!("step completed with the world running: no frame remained to pause in.");
+				self.report(None)
+			}
+			Stepped::TimedOut => {
+				// What it's doing now, if it says so: asked, not guessed from
+				// no pause having come
+				if let Some(reason) = self.observe(Duration::from_secs(2)) {
+					self.report(reason.as_ref())?;
+				}
+				Err(Failure(
+					TIMED_OUT,
+					format!(
+						"timed out after {} waiting for the step to complete. The world was neither paused nor resumed by this.",
+						seconds_text(timeout.unwrap_or_default())
+					)
+				))
+			}
 		}
-		// A step that leaves the last proc ends with nothing to pause in
-		let until = Instant::now() + Duration::from_secs(5);
-		match self.await_pause(Some(until), true)? {
-			Some(reason) => self.print_pause(&reason),
-			None => {
-				println!("running (the step left the code that was running)");
-				Ok(())
+	}
+
+	/// What the world says it's doing, if it answers within `patience`:
+	/// why it's paused, or `Some(None)` for running
+	fn observe(&mut self, patience: Duration) -> Option<Option<BreakpointReason>> {
+		local::send(&mut self.stream, &Request::Status).ok()?;
+		let until = Instant::now() + patience;
+		loop {
+			match self.next(Some(until)) {
+				Ok(Some(Response::Status { paused })) => return Some(paused.map(|stop| stop.reason)),
+				Ok(Some(_)) => {}
+				Ok(None) | Err(_) => return None
 			}
 		}
 	}
@@ -1411,7 +1063,7 @@ impl World {
 	fn wait(&mut self, wait: Wait) -> Result<()> {
 		if self.json.is_some() {
 			// The same keys each time
-			self.waited = serde_json::json!({ "already": false, "breakpoints": [], "watching": [] }).as_object().cloned().unwrap_or_default();
+			self.waited = json!({ "already": false, "breakpoints": [], "watching": [] }).as_object().cloned().unwrap_or_default();
 		}
 		let paused = self.paused()?;
 		// Each place first, so one that isn't there fails before anything
@@ -1426,8 +1078,8 @@ impl World {
 			if wait.hold {
 				self.request(Request::HoldPause)?;
 			}
-			self.say_waited("already", serde_json::Value::Bool(true), "already paused");
-			return self.print_pause(reason);
+			self.say_waited("already", Value::Bool(true), Some("already paused"));
+			return self.report(Some(reason));
 		}
 		// What's watched from a pause is of a frame there, and the wait is
 		// for the world to carry on and change it
@@ -1446,10 +1098,10 @@ impl World {
 			};
 			match self.request(watch)? {
 				Response::WatchSet(Ok(watch)) => {
-					let said = serde_json::json!([{ "name": watch.name, "value": watch.value }]);
-					self.say_waited("watching", said, &format!("watching {}, now {}", watch.name, watch.value));
+					let said = json!([{ "name": watch.name, "value": watch.value }]);
+					self.say_waited("watching", said, Some(&format!("watching {}, now {}", watch.name, watch.value)));
 				}
-				Response::WatchSet(Err(why)) => return Err(format!("couldn't watch {}: {}", expression, why).into()),
+				Response::WatchSet(Err(why)) => return Err(format!("cannot watch {}: {}", expression, why).into()),
 				other => return Err(unexpected(&other))
 			}
 		}
@@ -1467,8 +1119,11 @@ impl World {
 		}
 		let until = wait.timeout.map(|t| Instant::now() + t);
 		match self.await_pause(until, wait.hold)? {
-			Some(reason) => self.print_pause(&reason),
-			None => Err(Failure(TIMED_OUT, "timed out: the world didn't pause".to_owned()))
+			Some(reason) => self.report(Some(&reason)),
+			None => Err(Failure(
+				TIMED_OUT,
+				format!("timed out after {} waiting for the world to pause.", seconds_text(wait.timeout.unwrap_or_default()))
+			))
 		}
 	}
 
@@ -1479,13 +1134,13 @@ impl World {
 	fn set_breakpoint(&mut self, place: &str, condition: Option<String>, log: Option<Vec<LogPart>>) -> Result<Vec<Bound>> {
 		let (instructions, asked_line) = if place.starts_with('/') {
 			// Asked first, for what's wrong with it if it isn't there
-			let proc = self.find_proc(&proc_ref(place)?).map_err(|Failure(code, why)| Failure(code, format!("couldn't break at {}: {}", place, why)))?;
+			let proc = self.find_proc(&proc_ref(place)?).map_err(|Failure(code, why)| Failure(code, format!("cannot set a breakpoint at {}: {}", place, why)))?;
 			(vec![InstructionRef { proc: proc.proc, offset: 0 }], None)
 		} else {
 			let (file, line) = place
 				.rsplit_once(':')
 				.and_then(|(file, line)| Some((file, line.parse::<u32>().ok()?)))
-				.ok_or_else(|| format!("{} is neither FILE:LINE nor /proc/path", place))?;
+				.ok_or_else(|| format!("invalid location '{}': expected FILE:LINE or /proc/path[#N].", place))?;
 			match self.request(Request::Locate { file: file.to_owned(), line })? {
 				Response::Locate { instructions } if instructions.is_empty() => return Err(self.nowhere(file, line)?),
 				Response::Locate { instructions } => (instructions, Some(line)),
@@ -1512,8 +1167,8 @@ impl World {
 				}),
 				Response::BreakpointSet {
 					result: BreakpointSetResult::Refused { reason }
-				} => return Err(format!("couldn't break at {}: {}", place, reason).into()),
-				Response::BreakpointSet { .. } => return Err(format!("couldn't break at {}: there's no such proc", place).into()),
+				} => return Err(format!("cannot set a breakpoint at {}: {}", place, reason).into()),
+				Response::BreakpointSet { .. } => return Err(format!("cannot set a breakpoint at {}: no such proc.", place).into()),
 				other => return Err(unexpected(&other))
 			}
 		}
@@ -1543,8 +1198,8 @@ impl World {
 			other => return Err(unexpected(&other))
 		};
 		Ok(match lines.last() {
-			None => format!("couldn't break at {}:{}: the world has no code from a file called {}", file, line, file),
-			Some(last) => format!("couldn't break at {}:{}: {} has no code after line {}", file, line, file, last)
+			None => format!("cannot set a breakpoint at {}:{}: the world has no code from a file named {}.", file, line, file),
+			Some(last) => format!("cannot set a breakpoint at {}:{}: {} has no code after line {}.", file, line, file, last)
 		}
 		.into())
 	}
@@ -1570,12 +1225,12 @@ impl Bound {
 		spot(&self.at.proc, false, self.file.as_deref(), self.line)
 	}
 
-	/// The same, for `wait` to say where it will pause
+	/// The same, for `wait pause` to say where it will pause
 	fn describe(&self) -> String {
-		let mut text = format!("breakpoint at {}", self.spot());
+		let mut text = format!("breakpoint set at {}", self.spot());
 		if let (Some(asked), Some(line)) = (self.asked_line, self.line) {
 			if asked != line {
-				text += &format!(" (line {} has no code: this is the next that has)", asked);
+				text += &format!(" (line {} has no code; this is the next line that has)", asked);
 			}
 		}
 		text
@@ -1603,90 +1258,21 @@ fn spot(proc: &ProcRef, old_code: bool, file: Option<&str>, line: Option<u32>) -
 }
 
 fn hung_up() -> Failure {
-	Failure(HUNG_UP, "the world hung up (it ended or rebooted)".to_owned())
+	Failure(HUNG_UP, "world connection ended before the operation completed: the world exited or rebooted.".to_owned())
 }
 
 fn unexpected(response: &Response) -> Failure {
-	Failure(1, format!("the world answered with {:?}", response))
+	Failure(1, format!("unexpected response from the world: {:?}", response))
 }
 
 #[cfg(test)]
 mod tests {
-	use super::{command, describe, expression, given_text, one_proc, overview, parse, proc_ref, Failure, Flags, COMMANDS};
+	use std::time::Duration;
+
+	use super::{expression, given_text, proc_ref, seconds_text, Failure};
 
 	fn args(args: &[&str]) -> Vec<String> {
 		args.iter().map(|arg| (*arg).to_owned()).collect()
-	}
-
-	#[test]
-	fn the_process_comes_first() {
-		let (pid, rest) = parse(&args(&["--pid", "1234", "eval", "1"])).ok().unwrap();
-		assert_eq!((pid, rest), (Some(1234), args(&["eval", "1"])));
-		let (pid, rest) = parse(&args(&["status"])).ok().unwrap();
-		assert_eq!((pid, rest), (None, args(&["status"])));
-		assert!(parse(&args(&["--pid", "soon", "status"])).is_err());
-	}
-
-	#[test]
-	fn every_command_is_a_word_in_the_help() {
-		let help = overview();
-		let mut names = vec![];
-		for (_, commands) in COMMANDS {
-			for listed in *commands {
-				assert!(!listed.name.starts_with('-') && !listed.name.contains(' '), "{}", listed.name);
-				assert!(help.contains(&format!("  {} ", listed.name)), "{} isn't in the help", listed.name);
-				assert!(!listed.about.is_empty() && !listed.about.ends_with('.'), "{}: {:?}", listed.name, listed.about);
-				assert!(describe(listed).starts_with(&format!("Usage: auxtools [--pid PID] {}", listed.name)));
-				names.push(listed.name);
-			}
-		}
-		for name in ["dap", "list", "version", "help", "status", "wait", "trace", "eval", "launch", "stop", "reboot", "proc", "dis"] {
-			assert!(command(name).is_some(), "{}", name);
-		}
-		for gone in ["--list", "--build", "--version", "run", ""] {
-			assert!(command(gone).is_none(), "{}", gone);
-		}
-		names.sort_unstable();
-		names.dedup();
-		assert_eq!(names.len(), COMMANDS.iter().map(|(_, commands)| commands.len()).sum::<usize>(), "a name is there twice");
-	}
-
-	#[test]
-	fn no_line_of_the_help_is_wider_than_a_terminal() {
-		for text in std::iter::once(overview()).chain(COMMANDS.iter().flat_map(|(_, commands)| commands.iter()).map(describe)) {
-			for line in text.lines() {
-				assert!(line.chars().count() <= 100, "{} characters: {}", line.chars().count(), line);
-			}
-		}
-	}
-
-	#[test]
-	fn flags_take_values_or_stand_alone() {
-		let flags = Flags::parse(
-			&args(&["--break", "a.dm:3", "--runtimes", "--break", "/proc/x", "--timeout", "2.5"]),
-			&["--break", "--timeout"],
-			&["--runtimes", "--no-hold"]
-		)
-		.ok()
-		.unwrap();
-		assert_eq!(flags.values("--break").collect::<Vec<_>>(), ["a.dm:3", "/proc/x"]);
-		assert!(flags.has("--runtimes") && !flags.has("--no-hold"));
-		assert_eq!(flags.number::<f64>("--timeout").ok().unwrap(), Some(2.5));
-		assert_eq!(flags.number::<u32>("--frame").ok().unwrap(), None);
-		assert!(flags.rest.is_empty());
-	}
-
-	#[test]
-	fn what_isnt_a_flag_is_left_in_order() {
-		let flags = Flags::parse(&args(&["6", "*", "--frame", "2", "7"]), &["--frame"], &[]).ok().unwrap();
-		assert_eq!(flags.rest, args(&["6", "*", "7"]));
-		assert_eq!(flags.number::<u32>("--frame").ok().unwrap(), Some(2));
-	}
-
-	#[test]
-	fn the_last_of_a_flag_given_twice_counts() {
-		let flags = Flags::parse(&args(&["--frame", "1", "--frame", "3"]), &["--frame"], &[]).ok().unwrap();
-		assert_eq!(flags.value("--frame"), Some("3"));
 	}
 
 	/// A file of its own for a test, which goes when it's dropped
@@ -1719,7 +1305,7 @@ mod tests {
 		let Err(Failure(1, why)) = given_text("@/no/such/file") else {
 			panic!("a file that isn't there was read");
 		};
-		assert!(why.starts_with("couldn't read /no/such/file: "), "{}", why);
+		assert!(why.starts_with("cannot read /no/such/file: "), "{}", why);
 	}
 
 	#[test]
@@ -1727,23 +1313,14 @@ mod tests {
 		let none = || -> super::Result<String> { panic!("stdin was read") };
 		assert_eq!(expression(&args(&["6", "*", "7"]), None, none).ok().unwrap(), "6 * 7");
 		let file = Scratch::new("expression", "list(1, \"two\")\n\n");
-		assert_eq!(expression(&[], Some(file.path()), none).ok().unwrap(), "list(1, \"two\")");
+		assert_eq!(expression(&[], Some(file.0.as_path()), none).ok().unwrap(), "list(1, \"two\")");
 		assert_eq!(expression(&args(&["-"]), None, || Ok("1 + 1".to_owned())).ok().unwrap(), "1 + 1");
 		// A negative number is an expression, not stdin
 		assert_eq!(expression(&args(&["-", "1"]), None, none).ok().unwrap(), "- 1");
-		for (words, file, said) in [
-			(&[][..], None, "eval what?"),
-			(&["1"][..], Some(file.path()), "eval takes one expression: its words, -f FILE or -")
-		] {
-			let Err(Failure(1, why)) = expression(&args(words), file, none) else {
-				panic!("{:?} {:?} was an expression", words, file);
-			};
-			assert_eq!(why, said);
-		}
 		let Err(Failure(1, why)) = expression(&args(&["-"]), None, || Ok("\n".to_owned())) else {
 			panic!("nothing was an expression");
 		};
-		assert_eq!(why, "stdin had no expression on it");
+		assert_eq!(why, "stdin contains no expression.");
 	}
 
 	#[test]
@@ -1755,25 +1332,13 @@ mod tests {
 		for wrong in ["value", "/value#", "/value#two", "#1"] {
 			assert!(proc_ref(wrong).is_err(), "{}", wrong);
 		}
-		assert!(one_proc("dis", &args(&["/a", "/b"])).is_err() && one_proc("dis", &[]).is_err());
 	}
 
 	#[test]
-	fn a_time_is_a_number_of_seconds_that_isnt_negative() {
-		let flags = |value: &str| Flags::parse(&args(&["--timeout", value]), &["--timeout"], &[]).ok().unwrap();
-		assert_eq!(flags("1.5").seconds("--timeout").ok().unwrap(), Some(std::time::Duration::from_millis(1500)));
-		assert_eq!(flags("0").seconds("--timeout").ok().unwrap(), Some(std::time::Duration::ZERO));
-		for wrong in ["-1", "NaN", "inf", "soon"] {
-			assert!(flags(wrong).seconds("--timeout").is_err(), "{}", wrong);
-		}
-		assert_eq!(Flags::parse(&[], &["--timeout"], &[]).ok().unwrap().seconds("--timeout").ok().unwrap(), None);
-	}
-
-	#[test]
-	fn flags_that_are_wrong_are_errors() {
-		assert!(Flags::parse(&args(&["--sideways"]), &["--frame"], &["--all"]).is_err());
-		assert!(Flags::parse(&args(&["--frame"]), &["--frame"], &[]).is_err());
-		let flags = Flags::parse(&args(&["--frame", "top"]), &["--frame"], &[]).ok().unwrap();
-		assert!(flags.number::<u32>("--frame").is_err());
+	fn a_time_is_said_in_seconds() {
+		assert_eq!(seconds_text(Duration::from_secs(30)), "30 seconds");
+		assert_eq!(seconds_text(Duration::from_secs(1)), "1 second");
+		assert_eq!(seconds_text(Duration::from_millis(500)), "0.5 seconds");
+		assert_eq!(seconds_text(Duration::ZERO), "0 seconds");
 	}
 }

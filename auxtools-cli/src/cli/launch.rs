@@ -26,7 +26,7 @@ use std::{
 use auxtools_cli::byond::Server;
 use serde_json::{json, Value};
 
-use super::{Failure, Flags, Result};
+use super::{args, Failure, Result, TIMED_OUT};
 use crate::{
 	adapter::{self, Input},
 	dap::{Note, Output}
@@ -37,9 +37,9 @@ use crate::{
 pub const WORLD_FAILED: i32 = 4;
 /// How long `--detach` waits for the world to be up
 const COMING_UP: Duration = Duration::from_secs(120);
-/// Given to the launcher `--detach` starts: it says on stdout when the world
-/// is up (`ready PID`), or that it couldn't start it (`failed WHY`), and
-/// prints the rest to its log
+/// Given to the launcher `--detach` starts (`args::Launch::detached`): it
+/// says on stdout when the world is up (`ready PID`), or that it couldn't
+/// start it (`failed WHY`), and prints the rest to its log
 const DETACHED: &str = "--detached";
 
 /// What `launch` was asked for
@@ -57,71 +57,49 @@ struct Options {
 	log: Option<PathBuf>
 }
 
-pub fn launch(args: &[String]) -> Result<()> {
-	// What comes after `--` is the program's
-	let (ours, theirs) = match args.iter().position(|arg| arg == "--") {
-		Some(at) => (&args[..at], Some(args[at + 1..].to_vec())),
-		None => (args, None)
-	};
-	// `-DNAME` is `-D NAME`, as DreamMaker takes it
-	let ours: Vec<String> = ours
-		.iter()
-		.flat_map(|arg| match arg.strip_prefix("-D").filter(|name| !name.is_empty()) {
-			Some(name) => vec!["-D".to_owned(), name.to_owned()],
-			None => vec![arg.clone()]
-		})
-		.collect();
-	let flags = Flags::parse(
-		&ours,
-		&["--dme", "--server", "--port", "-D", "--byond", "--log"],
-		&["--no-hot-reload", "--detach", "--json", DETACHED]
-	)?;
-	let dmb = match flags.rest.as_slice() {
-		[dmb] => absolute(dmb)?,
-		[] => return Err("launch what? Give the world's .dmb".into()),
-		[_, more @ ..] => return Err(format!("launch doesn't take {}", more.join(" ")).into())
-	};
+/// `launch`. `replaces_args`: a `--` was given, so what follows it (if
+/// anything does) is all the program is given, in place of its defaults.
+pub fn launch(args: &args::Launch, replaces_args: bool) -> Result<()> {
+	let dmb = absolute(&args.dmb)?;
 	if !dmb.is_file() {
 		return Err(format!(
-			"there's no {}: build the world first (the launcher doesn't build worlds)",
+			"{} does not exist. Compile the world first: the launcher does not compile the DMB.",
 			dmb.display()
 		)
 		.into());
 	}
 
-	let server = flags.value("--server").map(str::to_owned);
-	let program = match &server {
+	let program = match &args.server {
 		Some(name) => serde_json::from_value::<Server>(json!(name))
-			.map_err(|_| format!("--server is dd, dreamdaemon or dreamseeker, not {}", name))?,
+			.map_err(|_| format!("invalid value '{}' for --server: expected dd, dreamdaemon, or dreamseeker.", name))?,
 		None => Server::default_for_platform()
 	};
-	let port = flags.number::<u16>("--port")?;
-	if port.is_some() && program == Server::DreamSeeker && cfg!(windows) {
-		return Err("DreamSeeker doesn't take a port: run the world with --server dd or dreamdaemon".into());
+	if args.port.is_some() && program == Server::DreamSeeker && cfg!(windows) {
+		return Err("--port cannot be used with DreamSeeker. Use --server dd or --server dreamdaemon.".into());
 	}
 	let options = Options {
 		dmb,
-		dme: flags.value("--dme").map(absolute).transpose()?,
-		server,
-		port,
-		hot_reload: !flags.has("--no-hot-reload"),
-		defines: flags.values("-D").map(str::to_owned).collect(),
-		byond: flags.value("--byond").map(absolute).transpose()?,
-		args: theirs,
-		log: flags.value("--log").map(absolute).transpose()?
+		dme: args.dme.as_deref().map(absolute).transpose()?,
+		server: args.server.clone(),
+		port: args.port,
+		hot_reload: !args.no_hot_reload,
+		defines: args.defines.clone(),
+		byond: args.byond.as_deref().map(absolute).transpose()?,
+		args: replaces_args.then(|| args.args.clone()),
+		log: args.log.as_deref().map(absolute).transpose()?
 	};
 
-	if flags.has(DETACHED) {
+	if args.detached {
 		run(&options, true)
-	} else if flags.has("--detach") {
-		detach(&options, flags.has("--json"))
+	} else if args.detach {
+		detach(&options, args.json)
 	} else {
 		run(&options, false)
 	}
 }
 
-fn absolute(path: &str) -> Result<PathBuf> {
-	std::path::absolute(path).map_err(|e| format!("{}: {}", path, e).into())
+fn absolute(path: &Path) -> Result<PathBuf> {
+	std::path::absolute(path).map_err(|e| format!("invalid path {}: {}.", path.display(), e).into())
 }
 
 /// Where what's printed goes
@@ -189,7 +167,7 @@ fn run(options: &Options, detached: bool) -> Result<()> {
 			} else {
 				File::create(log)
 			};
-			Printer::File(Mutex::new(file.map_err(|e| format!("couldn't write {}: {}", log.display(), e))?))
+			Printer::File(Mutex::new(file.map_err(|e| format!("cannot write {}: {}.", log.display(), e))?))
 		}
 		None => Printer::Terminal
 	});
@@ -259,9 +237,9 @@ fn run(options: &Options, detached: bool) -> Result<()> {
 	}
 	match outcome.exit_code {
 		Some(0) => Ok(()),
-		Some(code) if code >= 0 => Err(Failure(WORLD_FAILED, format!("the world exited with code {}", code))),
+		Some(code) if code >= 0 => Err(Failure(WORLD_FAILED, format!("the world exited with code {}.", code))),
 		// Killed, or ended by a second interrupt
-		_ => Err(Failure(WORLD_FAILED, "the world was killed".to_owned()))
+		_ => Err(Failure(WORLD_FAILED, "the world was terminated.".to_owned()))
 	}
 }
 
@@ -285,7 +263,7 @@ fn detach(options: &Options, as_json: bool) -> Result<()> {
 	let log = options.log.clone().unwrap_or_else(|| default_log(&options.dmb));
 	let stderr = File::create(&log)
 		.and_then(|_| OpenOptions::new().append(true).open(&log))
-		.map_err(|e| format!("couldn't write {}: {}", log.display(), e))?;
+		.map_err(|e| format!("cannot write {}: {}.", log.display(), e))?;
 
 	let mut args: Vec<std::ffi::OsString> = vec!["launch".into(), options.dmb.clone().into()];
 	let mut flag = |name: &str, value: Option<std::ffi::OsString>| {
@@ -311,10 +289,10 @@ fn detach(options: &Options, as_json: bool) -> Result<()> {
 		args.extend(theirs.iter().map(Into::into));
 	}
 
-	let program = std::env::current_exe().map_err(|e| format!("couldn't find the launcher itself: {}", e))?;
+	let program = std::env::current_exe().map_err(|e| format!("cannot find the auxtools program: {}.", e))?;
 	let mut command = Command::new(program);
 	command.args(&args).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(stderr);
-	let mut launcher = background::spawn(&mut command).map_err(|e| format!("couldn't start the launcher in the background: {}", e))?;
+	let mut launcher = background::spawn(&mut command).map_err(|e| format!("cannot start the launcher in the background: {}.", e))?;
 	let launcher_pid = launcher.id();
 
 	// Its first line says how it went; the end of it, that it went away
@@ -333,12 +311,14 @@ fn detach(options: &Options, as_json: bool) -> Result<()> {
 			// It ends the world as it goes
 			let _ = launcher.kill();
 			let _ = launcher.wait();
-			return Err(format!(
-				"the world wasn't up after {} s, so it was ended. What the launcher printed is in {}",
-				COMING_UP.as_secs(),
-				log.display()
-			)
-			.into());
+			return Err(Failure(
+				TIMED_OUT,
+				format!(
+					"timed out after {} seconds waiting for the world to start; it was terminated. See the launcher log: {}",
+					COMING_UP.as_secs(),
+					log.display()
+				)
+			));
 		}
 	};
 	if let Some(pid) = line.as_deref().and_then(|line| line.strip_prefix("ready ")) {
@@ -346,13 +326,9 @@ fn detach(options: &Options, as_json: bool) -> Result<()> {
 		if as_json {
 			println!("{}", json!({ "pid": pid, "launcher": launcher_pid, "log": log }));
 		} else {
-			println!("The world is up: process {}", pid);
-			println!(
-				"Its launcher is process {}, which prints to {} and goes when the world does (`auxtools --pid {} stop`)",
-				launcher_pid,
-				log.display(),
-				pid
-			);
+			println!("pid {}: started", pid);
+			println!("launcher: pid {}", launcher_pid);
+			println!("log: {}", log.display());
 		}
 		return Ok(());
 	}
@@ -361,7 +337,7 @@ fn detach(options: &Options, as_json: bool) -> Result<()> {
 	match line.as_deref().and_then(|line| line.strip_prefix("failed ")) {
 		Some(why) => Err(why.to_owned().into()),
 		None => Err(format!(
-			"the world didn't come up: its launcher exited{} first. The end of what it printed ({}):\n{}",
+			"the world did not start: its launcher exited{} first. The end of the launcher log ({}):\n{}",
 			status.map(|code| format!(" with code {}", code)).unwrap_or_default(),
 			log.display(),
 			last_lines(&log, 20)
@@ -453,10 +429,10 @@ mod interrupts {
 					continue;
 				}
 				let asked = if seen == 0 {
-					printer.line("Interrupted: asking the world to end (interrupt again to end it now)");
+					printer.line("Interrupted: requesting graceful shutdown (interrupt again to force exit)");
 					request(4, "terminate", json!({}))
 				} else {
-					printer.line("Interrupted again: ending the world");
+					printer.line("Interrupted again: terminating the world");
 					request(5, "disconnect", json!({ "terminateDebuggee": true }))
 				};
 				seen = now;

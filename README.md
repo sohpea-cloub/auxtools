@@ -19,22 +19,23 @@ Breakpoints (on lines and on procs by name, with conditions, hit counts and log 
 
 **The world's code needs nothing added.** The launcher, `auxtools` (`auxtools-cli`), starts the world in DreamSeeker, DreamDaemon or `dd.exe` with the debug library loaded into it (`LD_PRELOAD` on Linux; on Windows a call put in front of the program's entry point). The library initialises when the world makes its first proc call and adds the few procs it needs. The launcher never builds a world: it runs the `.dmb` your own tools built, and after `world.Reboot()` (which loads the `.dmb` again) it connects again and gives the new world its breakpoints and reloads back.
 
-**Any number of debuggers at once.** Every world the launcher starts, with debugging or without, listens on a local socket (a named pipe on Windows) named after its process and the protocol's version, `auxtools-debug-vN-PID`. Each client has its own breakpoints and its own say on pausing for runtime errors; a pause stops the world for all of them, and any can let it carry on. `auxtools list` shows the worlds, those started by another version of auxtools too (as `compatible: false`: `PROTOCOL_VERSION` in `server_types.rs` is bumped by hand when the messages change).
+**Any number of debuggers at once.** Every world the launcher starts, with debugging or without, listens on a local socket (a named pipe on Windows) named after its process and the protocol's version, `auxtools-debug-vN-PID`. Each client has its own breakpoints and its own say on pausing for runtime errors; a pause stops the world for all of them, and any can let it carry on. `auxtools list` shows the worlds, those started by another version of auxtools too (as not compatible; `"compatible": false` with `--json`: `PROTOCOL_VERSION` in `server_types.rs` is bumped by hand when the messages change).
 
 **From VS Code:** install the extension and press F5 in a workspace with a built world. Its [README](editors/vscode/README.md) has the rest.
 
-**From the command line**, for people, scripts and coding agents: `auxtools` alone lists the commands and `auxtools help COMMAND` a command's options. A command connects to the world, does one thing, prints what came of it and leaves; `--json` gives data instead of text. For example:
+**From the command line**, for people, scripts and coding agents: `auxtools` alone lists the commands, and `auxtools help COMMAND` (or `COMMAND --help`) shows a command's page: its options, what it does to the world, what it prints and its exit codes. A command connects to the world, does one thing, prints what came of it and leaves. `--pid PID` says which world when there's more than one. `--json` gives the same result as data: one JSON value, or a line of JSON per entry for `log` and `trace`. What isn't the result goes to stderr. Exit codes are the same everywhere: 0 done, 1 failed, 2 a time limit ran out, 3 the world exited or rebooted first. For example:
 
 ```sh
-auxtools launch tgstation.dmb --detach       # start it with the debugger and hot reloading
-auxtools wait --break code/game/foo.dm:120   # wait for it to pause there, and say where
-auxtools vars                                # the frame's arguments and locals
-auxtools eval 'src.health'                   # an expression there (or -f FILE, or a proc's body)
+auxtools launch tgstation.dmb --detach             # start it with the debugger and hot reloading
+auxtools wait pause --break code/game/foo.dm:120   # wait for it to pause there, and say where
+auxtools vars                                      # the frame's arguments and locals
+auxtools eval 'src.health'                         # an expression there (or --file FILE, or a proc's body)
+auxtools step-over                                 # on to the next line; it stays paused
 auxtools continue
-auxtools trace /mob/proc/Life --by caller --for 5   # count calls by caller, without pausing
-auxtools log --runtimes --follow             # runtime errors with their stacks, as they happen
-auxtools wait --reload                       # after saving a file: what the hot reload did
-auxtools reboot                              # after a rebuild: load the .dmb again
+auxtools trace /mob/proc/Life --by caller --for 5  # count calls by caller, without pausing
+auxtools log --runtimes --follow                   # runtime errors with their stacks, as they happen
+auxtools wait reload                               # after saving a file: what the hot reload did
+auxtools reboot                                    # after a rebuild: load the .dmb again
 auxtools stop
 ```
 
@@ -48,7 +49,7 @@ The patterns are run by [byond-scan](https://github.com/Absolucy/byond-scan) and
 
 What was run on Linux (516.1687): the `auxtest` suite, and `debug_test`, which sets breakpoints, evaluates expressions and follows a world reboot through a stand-in for the launcher. The code coverage tool's report was checked on Windows and Linux 1687 against a world with a known set of lines. Stepping and breakpoints with a real debugger attached were not tested on either platform.
 
-The launcher's test (`tests/launcher_test`: breakpoints, a runtime error, a reboot and the world's exit, in a world with no auxtools procs; then a world run without debugging, found with `--list`, attached to by two launchers at once and hot reloaded by the one that started it, then paused and looked at with the command line) was run on Linux 516.1688, and under Wine on Windows 516.1688 with `dd.exe` (its first part also with `dreamseeker.exe` and `dreamdaemon.exe`). Its checks of worlds started by `auxtools launch` (in the foreground and with `--detach`), rebooted and stopped from the command line have run on Linux 516.1688 only. The VS Code extension was not run in VS Code. `tests/dap_test` debugs a world of its own through the launcher, a group of checks at a time (`dap_test stepping`): breakpoints on lines and procs, conditions, stepping, pausing and sleeping procs, stack frames, variables of every kind, expressions, runtime errors, several sessions at once, reboots, and all of it while the code is hot reloaded.
+The launcher's test (`tests/launcher_test`: breakpoints, a runtime error, a reboot and the world's exit, in a world with no auxtools procs; then a world run without debugging, found with `list`, attached to by two launchers at once and hot reloaded by the one that started it, then paused and looked at with the command line) was run on Linux 516.1688, and under Wine on Windows 516.1688 with `dd.exe` (its first part also with `dreamseeker.exe` and `dreamdaemon.exe`). Its checks of worlds started by `auxtools launch` (in the foreground and with `--detach`), rebooted and stopped from the command line have run on Linux 516.1688 only. The VS Code extension was not run in VS Code. `tests/dap_test` debugs a world of its own through the launcher, a group of checks at a time (`dap_test stepping`): breakpoints on lines and procs, conditions, stepping, pausing and sleeping procs, stack frames, variables of every kind, expressions, runtime errors, several sessions at once, reboots, and all of it while the code is hot reloaded.
 
 ## Dependencies
 

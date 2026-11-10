@@ -79,12 +79,12 @@ async function pickWorldFile(folder) {
 	return picked && picked.uri;
 }
 
-// The running worlds that can be attached to, from `auxtools --list`
+// The running worlds that can be attached to, from `auxtools list --json`
 function listWorlds(context) {
 	const launcher = launcherPath(context);
 	ensureExecutable(launcher);
 	return new Promise((resolve, reject) => {
-		childProcess.execFile(launcher, ["list"], { timeout: 30000 }, (error, stdout) => {
+		childProcess.execFile(launcher, ["list", "--json"], { timeout: 30000 }, (error, stdout) => {
 			if (error) {
 				reject(error);
 				return;

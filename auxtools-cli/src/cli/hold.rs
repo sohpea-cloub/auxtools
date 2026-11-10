@@ -2,54 +2,58 @@
 //! with nobody debugging. A paused world stops every player, and an agent
 //! that dies in the middle of debugging would leave it stopped for good.
 
+use std::time::Duration;
+
 use auxtools_cli::server_types::{Request, Response};
 
-use super::{unexpected, Failure, Result, World};
-
-/// The commands that leave the world paused after they've gone
-const HOLDING: [&str; 5] = ["pause", "wait", "next", "step", "out"];
+use super::{
+	args::{Command, Wait, WaitFor},
+	unexpected, Failure, Result, World
+};
 
 /// What `--hold-max` is when it isn't given
 pub const HOLD_MAX_VAR: &str = "AUXTOOLS_HOLD_MAX";
 
-/// Takes `--hold-max SECONDS` out of a command's arguments, for a command
-/// that holds a pause; else `AUXTOOLS_HOLD_MAX`, if it's set
-pub fn take(command: &str, args: &[String]) -> Result<(Vec<String>, Option<f64>)> {
-	if !HOLDING.contains(&command) {
-		return Ok((args.to_vec(), None));
-	}
-	let mut rest = vec![];
-	let mut given = None;
-	let mut args = args.iter();
-	while let Some(arg) = args.next() {
-		if arg == "--hold-max" {
-			given = Some(args.next().ok_or("--hold-max needs a value")?.clone());
-		} else {
-			rest.push(arg.clone());
-		}
-	}
-	let seconds = match given {
-		Some(text) => Some(seconds(&text, "--hold-max")?),
-		None => match std::env::var(HOLD_MAX_VAR) {
-			Ok(text) if !text.trim().is_empty() => Some(seconds(&text, HOLD_MAX_VAR)?),
-			_ => None
-		}
+/// The limit for a command that leaves the world paused after it has gone:
+/// its `--hold-max`, else `AUXTOOLS_HOLD_MAX` if it's set. `None` for a
+/// command that holds no pause, and for no limit.
+pub fn max(command: &Command) -> Result<Option<Duration>> {
+	let given = match command {
+		Command::Pause(pause) => pause.hold_max,
+		Command::StepOver(step) => step.hold_max,
+		Command::StepIn(step) => step.hold_max,
+		Command::StepOut(step) => step.hold_max,
+		Command::Wait(Wait {
+			event: Some(WaitFor::Pause(wait))
+		}) if !wait.no_hold => wait.hold_max,
+		_ => return Ok(None)
 	};
-	Ok((rest, seconds))
+	match given {
+		Some(limit) => Ok(Some(limit)),
+		None => from_environment(std::env::var(HOLD_MAX_VAR).ok().as_deref())
+	}
 }
 
-fn seconds(text: &str, name: &str) -> Result<f64> {
-	match text.trim().parse::<f64>() {
-		Ok(seconds) if seconds.is_finite() && seconds >= 0.0 => Ok(seconds),
-		_ => Err(Failure(1, format!("{} {} isn't a number of seconds", name, text)))
+fn from_environment(value: Option<&str>) -> Result<Option<Duration>> {
+	let Some(text) = value.map(str::trim).filter(|text| !text.is_empty()) else {
+		return Ok(None);
+	};
+	match text.parse::<f64>() {
+		Ok(seconds) if seconds.is_finite() && seconds >= 0.0 => Ok(Some(Duration::from_secs_f64(seconds.min(super::args::MANY_SECONDS)))),
+		_ => Err(Failure(
+			1,
+			format!("invalid value '{}' for {}: expected a non-negative number of seconds.", text, HOLD_MAX_VAR)
+		))
 	}
 }
 
 impl World {
-	/// Has the pause this command holds last at most `seconds` with nobody
+	/// Has the pause this command holds last at most `limit` with nobody
 	/// debugging
-	pub fn hold_max(&mut self, seconds: f64) -> Result<()> {
-		match self.request(Request::HoldMax { seconds: Some(seconds) })? {
+	pub fn hold_max(&mut self, limit: Duration) -> Result<()> {
+		match self.request(Request::HoldMax {
+			seconds: Some(limit.as_secs_f64())
+		})? {
 			Response::Ack => Ok(()),
 			other => Err(unexpected(&other))
 		}
@@ -58,20 +62,17 @@ impl World {
 
 #[cfg(test)]
 mod tests {
-	use super::take;
+	use std::time::Duration;
 
-	fn args(args: &[&str]) -> Vec<String> {
-		args.iter().map(|arg| (*arg).to_owned()).collect()
-	}
+	use super::from_environment;
 
 	#[test]
-	fn hold_max_is_taken_out_for_commands_that_hold() {
-		let (rest, seconds) = take("wait", &args(&["--break", "/proc/x", "--hold-max", "2.5", "--timeout", "3"])).ok().unwrap();
-		assert_eq!((rest, seconds), (args(&["--break", "/proc/x", "--timeout", "3"]), Some(2.5)));
-		assert!(take("pause", &args(&["--hold-max", "soon"])).is_err());
-		assert!(take("pause", &args(&["--hold-max"])).is_err());
-		// Others don't take it
-		let (rest, seconds) = take("status", &args(&["--hold-max", "2"])).ok().unwrap();
-		assert_eq!((rest, seconds), (args(&["--hold-max", "2"]), None));
+	fn the_environment_gives_a_limit_when_its_a_time() {
+		assert_eq!(from_environment(Some("2.5")).ok().unwrap(), Some(Duration::from_millis(2500)));
+		assert_eq!(from_environment(Some(" ")).ok().unwrap(), None);
+		assert_eq!(from_environment(None).ok().unwrap(), None);
+		for wrong in ["soon", "-1", "inf"] {
+			assert!(from_environment(Some(wrong)).is_err(), "{}", wrong);
+		}
 	}
 }
