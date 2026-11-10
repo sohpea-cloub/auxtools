@@ -78,8 +78,8 @@ pub fn run() {
 	// An expression's own runtime error is the expression's
 	world.run_to("middle", "/leaf", "leaf_1");
 	let frame = world.frame_id();
-	let response = world.try_request("evaluate", json!({ "expression": "fail_null()", "frameId": frame, "context": "watch" }));
-	assert!(response["type"] == "response", "{}", response);
+	let why = world.refused("evaluate", json!({ "expression": "fail_null()", "frameId": frame, "context": "watch" }));
+	assert_eq!(why, "runtime error: cannot read from list");
 	assert!(!world.has_event("stopped"), "an expression's runtime error stopped the world again");
 	assert_eq!(world.eval("x"), "3");
 	world.resume_through("middle");

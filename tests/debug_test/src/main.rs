@@ -67,7 +67,7 @@ fn eval(client: &mut Client, frame_id: Option<u32>, command: &str) -> String {
 	});
 
 	match response {
-		Response::Eval(eval) => eval.value,
+		Response::Eval(Ok(eval)) => eval.value,
 		other => panic!("expected the result of {:?}, got {:?}", command, other)
 	}
 }
@@ -88,7 +88,7 @@ fn eval_fields(client: &mut Client, frame_id: u32, command: &str) -> (String, Ve
 		command: command.to_owned(),
 		context: None
 	});
-	let Response::Eval(eval) = response else {
+	let Response::Eval(Ok(eval)) = response else {
 		panic!("expected the result of {:?}, got {:?}", command, response);
 	};
 	let refs = eval.variables.unwrap_or_else(|| panic!("{} should be expandable", command));
@@ -119,7 +119,7 @@ fn values_516(client: &mut Client) {
 		command: "alist_sample()".to_owned(),
 		context: None
 	});
-	let Response::Eval(alist) = response else {
+	let Response::Eval(Ok(alist)) = response else {
 		panic!("expected the result of alist_sample(), got {:?}", response);
 	};
 	assert_eq!(alist.value, "/alist {len = 3}");
@@ -274,6 +274,28 @@ fn protocol(world: &World, mut client: Client) -> Client {
 		response
 	);
 	println!("ok: a running world has no scopes, variables or frames to give, and says so");
+
+	// What can't be evaluated, or set, says why
+	let response = client.request(Request::Eval {
+		frame_id: None,
+		command: "1 +".to_owned(),
+		context: None
+	});
+	assert!(
+		matches!(&response, Response::Eval(Err(why)) if why.starts_with("parser error: ")),
+		"an expression that doesn't parse got {:?}",
+		response
+	);
+	let response = client.request(Request::BreakpointSet {
+		instruction: start_of(BREAKPOINT_TARGET),
+		condition: Some("1 +".to_owned())
+	});
+	assert!(
+		matches!(&response, Response::BreakpointSet { result: BreakpointSetResult::Refused { reason } } if reason.starts_with("the condition doesn't compile: ")),
+		"a condition that doesn't parse got {:?}",
+		response
+	);
+	println!("ok: an expression and a condition that don't compile are refused, with why");
 
 	// Two clients want one breakpoint: it's there until both have let go
 	let mut second = world.connect();

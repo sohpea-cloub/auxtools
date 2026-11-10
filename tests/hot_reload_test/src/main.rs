@@ -199,7 +199,21 @@ fn eval(client: &mut Client, command: &str) -> String {
 		command: command.to_owned(),
 		context: None
 	}) {
-		Response::Eval(eval) => eval.value,
+		Response::Eval(Ok(eval)) => eval.value,
+		other => panic!("expected the result of {:?}, got {:?}", command, other)
+	}
+}
+
+/// Whether an expression goes to sleep, which is how one tells that a proc
+/// it calls waits for another's sleep
+fn sleeps(client: &mut Client, command: &str) -> bool {
+	match client.request(Request::Eval {
+		frame_id: None,
+		command: command.to_owned(),
+		context: None
+	}) {
+		Response::Eval(Ok(_)) => false,
+		Response::Eval(Err(why)) if why.starts_with("the expression didn't finish") => true,
 		other => panic!("expected the result of {:?}, got {:?}", command, other)
 	}
 }
@@ -425,7 +439,7 @@ fn main() {
 	});
 	assert!(expect_reload_result(client.recv()).applied);
 	match client.recv() {
-		Response::Eval(eval) => assert_eq!(eval.value, "4"),
+		Response::Eval(Ok(eval)) => assert_eq!(eval.value, "4"),
 		other => panic!("expected the result of answer(), got {:?}", other)
 	}
 	println!("ok: a reload and an eval sent back to back");
@@ -689,11 +703,12 @@ fn main() {
 	assert_eq!(eval(&mut client, "once_local()"), "2");
 	println!("ok: globals and statics that aren't constants");
 
-	// set waitfor = 0: the caller no longer waits for the sleep
-	let before = eval(&mut client, "caller_sees()");
+	// set waitfor = 0: the caller no longer waits for the sleep, which an
+	// expression can't sit through
+	assert!(sleeps(&mut client, "caller_sees()"));
 	let changes = source.edit("reload.dm", "/proc/slow()\n\tsleep(1)", "/proc/slow()\n\tset waitfor = 0\n\tsleep(1)");
 	reload(&mut watcher, &changes);
-	assert_eq!(eval(&mut client, "caller_sees()"), "1", "before the change it was {}", before);
+	assert_eq!(eval(&mut client, "caller_sees()"), "1");
 	println!("ok: set waitfor");
 
 	// An override's settings come from the declaration, so a change there
@@ -706,7 +721,7 @@ fn main() {
 	);
 	assert_eq!((changes.reloads.len(), changes.settings.len()), (1, 1));
 	reload(&mut watcher, &changes);
-	assert_ne!(eval(&mut client, "nap_skipped(/datum/napper/cat)"), "1");
+	assert!(sleeps(&mut client, "nap_skipped(/datum/napper/cat)"));
 	println!("ok: settings from the declaration");
 
 	// Verbs: a new one and an override with `..()`, which things made from

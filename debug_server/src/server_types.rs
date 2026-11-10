@@ -93,7 +93,8 @@ pub enum Request {
 pub enum Response {
 	Ack,
 	StdDef(Option<String>),
-	Eval(EvalResponse),
+	/// What an expression gave, or why it gave nothing
+	Eval(Result<EvalResponse, String>),
 	BreakpointSet {
 		result: BreakpointSetResult
 	},
@@ -195,7 +196,10 @@ pub struct StackFrame {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub enum BreakpointSetResult {
 	Success { line: Option<u32> },
-	Failed
+	/// There's no such proc, or no instruction there
+	Failed,
+	/// It can't be set as it was asked for: its condition doesn't compile
+	Refused { reason: String }
 }
 
 #[derive(Clone, Hash, Eq, PartialEq, Serialize, Deserialize, Debug)]

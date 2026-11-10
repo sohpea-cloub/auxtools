@@ -780,6 +780,15 @@ impl Server {
 		instruction.offset = Self::breakpoint_offset(&proc, instruction.offset);
 		let line = self.get_line_number(instruction.proc.clone(), instruction.offset);
 
+		// A condition that doesn't compile would pause at every hit, to say so
+		// each time: better said once, now
+		if let Some(reason) = condition.as_deref().and_then(|condition| Self::condition_error(&proc, condition)) {
+			self.send_or_disconnect(Response::BreakpointSet {
+				result: BreakpointSetResult::Refused { reason }
+			});
+			return;
+		}
+
 		match hook_instruction(&proc, instruction.offset) {
 			Ok(()) => {
 				// The client re-sends breakpoints it already set, and no
@@ -803,6 +812,18 @@ impl Server {
 				});
 			}
 		}
+	}
+
+	/// What's wrong with a breakpoint's condition, if it doesn't compile. The
+	/// names it can use are checked when it's hit, in the frame it's hit in.
+	fn condition_error(proc: &Proc, condition: &str) -> Option<String> {
+		let mut names = vec![".".to_owned(), "usr".to_owned(), "src".to_owned()];
+		names.extend(proc.parameter_names().iter().map(String::from));
+		names.extend(proc.local_names().iter().map(String::from));
+		let names: Vec<&str> = names.iter().map(String::as_str).collect();
+		dmasm::compiler::compile_expr_for(condition, &names, crate::world_byond())
+			.err()
+			.map(|e| format!("the condition doesn't compile: {}", e))
 	}
 
 	fn handle_breakpoint_unset(&mut self, instruction: InstructionRef) {
@@ -1047,7 +1068,9 @@ impl Server {
 		response
 	}
 
-	fn eval_expr(&mut self, frame_id: Option<u32>, command: &str) -> Option<Value> {
+	/// What an expression gives in a frame (or in none), or why it gives
+	/// nothing
+	fn eval_expr(&mut self, frame_id: Option<u32>, command: &str) -> Result<Value, String> {
 		// Assembling the expression runs DM code of its own to look up
 		// typepaths and resources, so it counts as eval code too. Otherwise the
 		// instruction hook would handle the client's next request in the middle
@@ -1059,14 +1082,28 @@ impl Server {
 
 		self.in_eval = false;
 
-		if let Some(err) = self.eval_error.take() {
-			self.notify(format!("runtime occured when executing expression: {}", err));
+		// Its code failed: whatever it returned isn't the expression's value
+		match self.eval_error.take() {
+			Some(error) => Err(format!("runtime error: {}", error)),
+			None => result
 		}
-
-		result
 	}
 
-	fn compile_and_run_expr(&mut self, frame_id: Option<u32>, command: &str) -> Option<Value> {
+	/// An assemble error in plain words
+	fn assemble_error(error: dmasm::assembler::AssembleError) -> String {
+		use dmasm::assembler::AssembleError;
+		let text = |bytes: &[u8]| String::from_utf8_lossy(bytes).into_owned();
+		match error {
+			AssembleError::ProcNotFound(path) => format!("there's no proc {}", path),
+			AssembleError::VariableNameNotFound(name) => format!("there's no var called {}", text(&name)),
+			AssembleError::StringNotFound(string) => format!("nothing in the world is called {}", text(&string)),
+			AssembleError::TypeNotFound(path) => format!("there's no type {}", path),
+			AssembleError::ResourceNotFound(path) => format!("there's no file '{}'", path),
+			other => format!("{:?}", other)
+		}
+	}
+
+	fn compile_and_run_expr(&mut self, frame_id: Option<u32>, command: &str) -> Result<Value, String> {
 		enum ArgType {
 			Dot,
 			Usr,
@@ -1080,12 +1117,8 @@ impl Server {
 			None => (std::ptr::null_mut(), std::ptr::null_mut(), vec![]),
 
 			Some(frame_id) => {
-				let frame = match self.get_stack_frame(frame_id) {
-					Some(x) => x,
-					None => {
-						self.notify(format!("tried to evaluate expression with invalid frame id: {}", frame_id));
-						return None;
-					}
+				let Some(frame) = self.get_stack_frame(frame_id) else {
+					return Err(format!("there's no frame {} (the world isn't paused, or has carried on since)", frame_id));
 				};
 
 				let mut args = vec![
@@ -1111,29 +1144,9 @@ impl Server {
 		let arg_names: Vec<&str> = args.iter().map(|(name, ..)| name.as_str()).collect();
 		let arg_values: Vec<&Value> = args.iter().map(|(_, value, _)| value).collect();
 
-		let expr = match dmasm::compiler::compile_expr_for(command, &arg_names, crate::world_byond()) {
-			Ok(expr) => expr,
-			Err(err) => {
-				self.notify(format!("{}", err));
-				return None;
-			}
-		};
-
-		let assembly = match dmasm::assembler::assemble(&expr, &mut crate::assemble_env::AssembleEnv) {
-			Ok(assembly) => assembly,
-			Err(err) => {
-				self.notify(format!("expression {} failed to assemble: {:#?}", command, err));
-				return None;
-			}
-		};
-
-		let proc = match Proc::find("/proc/auxtools_expr_stub") {
-			Some(proc) => proc,
-			None => {
-				self.notify("Couldn't find /proc/auxtools_expr_stub! DM evaluation not available.");
-				return None;
-			}
-		};
+		let expr = dmasm::compiler::compile_expr_for(command, &arg_names, crate::world_byond()).map_err(|e| e.to_string())?;
+		let assembly = dmasm::assembler::assemble(&expr, &mut crate::assemble_env::AssembleEnv).map_err(Self::assemble_error)?;
+		let proc = Proc::find("/proc/auxtools_expr_stub").ok_or("the world has no /proc/auxtools_expr_stub to evaluate expressions in")?;
 
 		proc.set_bytecode(assembly);
 
@@ -1191,49 +1204,40 @@ impl Server {
 						std::mem::forget(value);
 					}
 
-					Some(list.get(1).unwrap())
+					Ok(list.get(1).unwrap())
 				} else {
-					None
+					// The stub returns a list unless it's cut short, and a
+					// runtime error is told apart above
+					Err("the expression didn't finish: something it called went to sleep".to_owned())
 				}
 			}
 
-			Err(_) => {
-				self.notify(format!("Value::call failed when evaluating expression {}", command));
-				None
-			}
+			// A runtime error, which the world's runtime hook has the text of
+			Err(Runtime { message }) => Err(format!("runtime error: {}", message))
 		}
 	}
 
 	fn handle_eval(&mut self, frame_id: Option<u32>, command: &str, context: Option<String>) {
 		if let Some(command) = command.strip_prefix('#') {
 			let response = self.handle_command(frame_id, command);
-			self.send_or_disconnect(Response::Eval(EvalResponse {
+			self.send_or_disconnect(Response::Eval(Ok(EvalResponse {
 				value: response,
 				variables: None
-			}));
+			})));
 			return;
 		}
 
-		match self.eval_expr(frame_id, command) {
-			Some(result) => {
-				let variables = match context {
-					Some(str) if str == "repl" => None,
-					_ => self.value_to_variables_ref(&result)
-				};
-
-				self.send_or_disconnect(Response::Eval(EvalResponse {
-					value: Self::stringify(&result),
-					variables
-				}));
+		let response = self.eval_expr(frame_id, command).map(|result| {
+			let variables = match context {
+				Some(str) if str == "repl" => None,
+				_ => self.value_to_variables_ref(&result)
+			};
+			EvalResponse {
+				value: Self::stringify(&result),
+				variables
 			}
-
-			None => {
-				self.send_or_disconnect(Response::Eval(EvalResponse {
-					value: "<no value>".to_owned(),
-					variables: None
-				}));
-			}
-		}
+		});
+		self.send_or_disconnect(Response::Eval(response));
 	}
 
 	fn handle_hot_reload(&mut self, request: &HotReloadRequest) {
@@ -1504,7 +1508,15 @@ impl Server {
 			if let Some(conditions) = conditions {
 				let mut pause = false;
 				for condition in conditions {
-					let passed = self.eval_expr(Some(0), &condition).is_none_or(|result| result.is_truthy());
+					// One that can't be worked out pauses: better a stop too
+					// many than one missed
+					let passed = match self.eval_expr(Some(0), &condition) {
+						Ok(result) => result.is_truthy(),
+						Err(error) => {
+							self.notify(format!("A breakpoint's condition ({}) failed, so the world pauses there: {}", condition, error));
+							true
+						}
+					};
 
 					// We might have just executed some code so invalidate the
 					// stacks we already fetched

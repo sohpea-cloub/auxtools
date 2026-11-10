@@ -260,6 +260,10 @@ fn command_line_more(pid: u64, dir: &Path) {
 	assert_eq!(run(&["eval", "--frame", "0", "6", "*", "7"], 0).trim(), "42");
 	let printed = run(&["eval", "--frame", "7", "1"], 1);
 	assert_eq!(printed.trim(), "there's no frame 7");
+	let printed = run(&["eval", "1", "+"], 1);
+	assert!(printed.starts_with("parser error: "), "eval said {}", printed);
+	assert_eq!(run(&["eval", "nothing_called_this"], 1).trim(), "there's no var called nothing_called_this");
+	assert_eq!(run(&["eval", "1", "/", "0"], 1).trim(), "runtime error: Division by zero");
 	println!("ok: the command line shows a frame's variables, with the globals when asked, and evaluates in a frame");
 	run(&["continue"], 0);
 
@@ -287,7 +291,11 @@ fn command_line_more(pid: u64, dir: &Path) {
 		(&["vars", "--frame", "top"][..], "--frame top isn't a number"),
 		(&["eval"][..], "eval what?"),
 		(&["wait", "--break", "somewhere"][..], "somewhere is neither FILE:LINE nor /proc/path"),
-		(&["wait", "now"][..], "wait doesn't take now")
+		(&["wait", "now"][..], "wait doesn't take now"),
+		(
+			&["wait", "--break", "/proc/value", "--if", "1 =="][..],
+			"couldn't break at /proc/value: the condition doesn't compile: parser error: "
+		)
 	] {
 		let printed = run(args, 1);
 		assert!(printed.starts_with(said), "`{}` said {}", args.join(" "), printed);

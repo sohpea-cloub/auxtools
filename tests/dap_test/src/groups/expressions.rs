@@ -124,6 +124,56 @@ pub fn run() {
 	world.break_on(&[]);
 	ok("a proc with a breakpoint in it, called by an expression, doesn't stop");
 
+	// What can't be evaluated fails, and says why: a client shows that where
+	// the value would be
+	let mut fails = |world: &mut World, cases: &[(&str, &str)]| {
+		let frame = world.frame_id();
+		for (expression, expected) in cases {
+			for context in ["repl", "watch", "hover"] {
+				let why = world.refused("evaluate", json!({ "expression": expression, "frameId": frame, "context": context }));
+				assert!(why.starts_with(expected), "{} in a {} said {:?}", expression, context, why);
+			}
+		}
+	};
+	fails(&mut world, &[
+		("1 +", "parser error: "),
+		("", "parser error: "),
+		("by by", "expected end"),
+		("var/q = 3", "expected l-value"),
+		("5 = by", "expected l-value")
+	]);
+	ok("an expression that doesn't parse fails with the parser's words");
+
+	fails(&mut world, &[
+		("not_a_name_anywhere", "there's no var called not_a_name_anywhere"),
+		("not_a_proc_anywhere(1)", "there's no proc /proc/not_a_proc_anywhere"),
+		("src.not_a_name_anywhere", "runtime error: undefined variable /datum/thing/sub/var/not_a_name_anywhere"),
+		("/datum/not_a_type", "there's no type /datum/not_a_type"),
+		("sleep(1)", "there's no proc /proc/sleep"),
+		("CRASH(\"no\")", "unsupported built-in proc: CRASH"),
+		("..()", "relative calls are not supported")
+	]);
+	ok("a name, a proc or a type the world doesn't have, and what expressions can't do, fail by name");
+
+	fails(&mut world, &[
+		("src.other.name", "runtime error: Cannot read null.name"),
+		("1 / 0", "runtime error: Division by zero"),
+		("local_list[9]", "runtime error: list index out of bounds"),
+		("fail_null()", "runtime error: cannot read from list"),
+		("src.shared.len", "runtime error: Cannot read 9.len"),
+		// An expression is over when it's answered: it can't wait
+		("sleeper(1)", "the expression didn't finish: something it called went to sleep")
+	]);
+	assert_eq!(world.eval("by"), "4");
+	assert_eq!(world.frames(0).len(), 3);
+	ok("an expression whose code fails gives the runtime error, and the stop is as it was");
+
+	let stale = world.try_request("evaluate", json!({ "expression": "by", "frameId": 99, "context": "watch" }));
+	assert_eq!(stale["success"], false, "{}", stale);
+	assert!(stale["message"].as_str().unwrap().starts_with("there's no frame 99"), "{}", stale);
+	assert!(!world.output.contains("[auxtools]"), "the debug server had something to say in the console:\n{}", world.output);
+	ok("an expression in a frame that isn't there fails; none of it is said in the console");
+
 	let disassembly = world.eval("#dis");
 	assert!(
 		disassembly.starts_with("Dism for Proc(\"/datum/thing/proc/inside\")") && disassembly.contains("DbgLine"),

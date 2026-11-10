@@ -186,7 +186,7 @@ fn on_stop(conn: &mut Connection, options: &Options) -> Option<()> {
 			command: command.to_owned(),
 			context: Some(context.to_owned())
 		})?;
-		if let Response::Eval(EvalResponse { variables: Some(vars), .. }) = response {
+		if let Response::Eval(Ok(EvalResponse { variables: Some(vars), .. })) = response {
 			conn.request(Request::Variables { vars })?;
 		}
 	}

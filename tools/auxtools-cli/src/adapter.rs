@@ -870,6 +870,9 @@ impl Adapter {
 			AuxResponse::BreakpointSet {
 				result: aux::BreakpointSetResult::Failed
 			} => Ok(None),
+			AuxResponse::BreakpointSet {
+				result: aux::BreakpointSetResult::Refused { reason }
+			} => Err(reason),
 			other => Err(unexpected(other))
 		}
 	}
@@ -1106,11 +1109,13 @@ impl Adapter {
 			command: args.expression,
 			context: args.context
 		})? {
-			AuxResponse::Eval(result) => json(EvaluateResponse {
+			AuxResponse::Eval(Ok(result)) => json(EvaluateResponse {
 				result: result.value,
 				variablesReference: result.variables.map_or(0, |vars| vars.0.into()),
 				..Default::default()
 			}),
+			// The client shows it where the value would be
+			AuxResponse::Eval(Err(why)) => Err(why),
 			other => Err(unexpected(other))
 		}
 	}

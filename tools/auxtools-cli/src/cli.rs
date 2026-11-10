@@ -407,15 +407,11 @@ impl World {
 			Response::Eval(result) => result,
 			other => return Err(unexpected(&other))
 		};
-		// Why it failed, or what went wrong on the way
-		let notes = std::mem::take(&mut self.notes);
-		if result.value == "<no value>" && !notes.is_empty() {
-			return Err(notes.join("\n").into());
-		}
-		for note in notes {
+		// What the world said on the way
+		for note in std::mem::take(&mut self.notes) {
 			eprintln!("{}", note);
 		}
-		println!("{}", result.value);
+		println!("{}", result?.value);
 		Ok(())
 	}
 
@@ -528,6 +524,9 @@ impl World {
 				Response::BreakpointSet {
 					result: BreakpointSetResult::Success { .. }
 				} => {}
+				Response::BreakpointSet {
+					result: BreakpointSetResult::Refused { reason }
+				} => return Err(format!("couldn't break at {}: {}", place, reason).into()),
 				Response::BreakpointSet { .. } => return Err(format!("couldn't break at {}: there's no such proc", place).into()),
 				other => return Err(unexpected(&other))
 			}

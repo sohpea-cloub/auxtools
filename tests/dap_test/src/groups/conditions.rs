@@ -1,5 +1,7 @@
 //! Breakpoints with conditions
 
+use serde_json::json;
+
 use crate::{ok, world::World};
 
 pub fn run() {
@@ -59,7 +61,38 @@ pub fn run() {
 	world.resume();
 	world.stop_on("breakpoint", "/leaf", "leaf_1");
 	world.resume_through("middle");
-	ok("a condition that runtimes stops the world");
+	// x is 3, then 8
+	for x in [3, 8] {
+		let said = format!(
+			"[auxtools] A breakpoint's condition (x.len > 3) failed, so the world pauses there: runtime error: Cannot read {}.len",
+			x
+		);
+		assert_eq!(world.count(&said), 1, "the console didn't say {:?}", said);
+	}
+	ok("a condition that runtimes stops the world, and the console says why");
+
+	// One that doesn't compile isn't set, the others in the file are
+	let set = world.try_break_if(&[("leaf_1", "x =="), ("leaf_2", "y == 4"), ("middle_3", "nowhere_at_all == 1")]);
+	assert_eq!(set[0]["verified"], false, "{}", set[0]);
+	let why = set[0]["message"].as_str().unwrap();
+	assert!(why.starts_with("the condition doesn't compile: parser error: "), "{}", why);
+	assert_eq!((&set[1]["verified"], &set[2]["verified"]), (&json!(true), &json!(true)));
+	world.run("middle");
+	world.stop_on("breakpoint", "/leaf", "leaf_2");
+	world.resume();
+	// A name the world doesn't have is only found out when it's hit
+	world.stop_on("breakpoint", "/middle", "middle_3");
+	world.resume_through("middle");
+	assert_eq!(world.count("failed, so the world pauses there: there's no var called nowhere_at_all"), 1);
+	let set = world.request(
+		"setFunctionBreakpoints",
+		json!({ "breakpoints": [{ "name": "/proc/leaf", "condition": "x x" }, { "name": "/proc/middle" }] })
+	);
+	assert_eq!(set["breakpoints"][0]["verified"], false);
+	assert!(set["breakpoints"][0]["message"].as_str().unwrap().starts_with("the condition doesn't compile: "));
+	assert_eq!(set["breakpoints"][1]["verified"], true);
+	world.function_breakpoints(&[]);
+	ok("a condition that doesn't compile is refused when it's set, with the parser's words, on a line or on a proc");
 
 	world.break_on(&["leaf_1"]);
 	world.run("middle");
