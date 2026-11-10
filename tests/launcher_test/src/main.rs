@@ -834,7 +834,16 @@ fn attach_and_reload(server: &str, library: &Path) {
 /// its own named after `name`, so its code can be edited
 fn attach_host_copy(name: &str) -> (PathBuf, PathBuf) {
 	let dir = std::env::temp_dir().join(format!("launcher_test_{}-{}", name, std::process::id()));
+	// A run before this one may have had this process's id (they come round
+	// again quickly on Windows), and left its directory behind when a file in
+	// it was still open: what it told its world to do (`refuse_del`) isn't
+	// for this one
+	let _ = std::fs::remove_dir_all(&dir);
 	std::fs::create_dir_all(&dir).unwrap();
+	for left in ["stop", "fail", "reboot", "call", "refuse_del"] {
+		let _ = std::fs::remove_file(dir.join(left));
+		assert!(!dir.join(left).exists(), "{} is left from another run and can't be removed", dir.join(left).display());
+	}
 	for file in ["attach_host.dme", "attach_host.dm"] {
 		std::fs::copy(host_file(file), dir.join(file)).unwrap();
 	}
@@ -1133,5 +1142,7 @@ fn launch_from_the_command_line(server: &str) {
 	drop(started);
 	println!("ok: stop says when the world's Del() doesn't end it, and --kill ends its process");
 
+	// (the directory can outlast this on Windows, while its files are open)
+	let _ = std::fs::remove_file(dir.join("refuse_del"));
 	let _ = std::fs::remove_dir_all(&dir);
 }
