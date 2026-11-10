@@ -95,7 +95,10 @@ pub fn run() {
 	world.run_to("middle", "/leaf", "leaf_1");
 	let frame = world.frame_id();
 	let why = world.refused("evaluate", json!({ "expression": "fail_null()", "frameId": frame, "context": "watch" }));
-	assert_eq!(why, "runtime error: cannot read from list");
+	assert_eq!(
+		why,
+		format!("runtime error: cannot read from list\n  in /fail_null  errors.dm:{}\n  called by the expression", world.marks.line("fail_null"))
+	);
 	assert!(!world.has_event("stopped"), "an expression's runtime error stopped the world again");
 	assert_eq!(world.eval("x"), "3");
 	world.resume_through("middle");
