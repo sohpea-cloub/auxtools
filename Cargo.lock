@@ -764,7 +764,7 @@ dependencies = [
 [[package]]
 name = "dmasm"
 version = "0.1.0"
-source = "git+https://github.com/sohpea-cloub/dmasm?branch=byond-versions#130ece1ea775cdb3ff6b85d622878c243122e872"
+source = "git+https://github.com/sohpea-cloub/dmasm?branch=byond-versions#84fe08c6a80b443ca7ca933dab35ff2ad009e0d3"
 dependencies = [
  "bitflags 2.13.2",
  "dreammaker",
