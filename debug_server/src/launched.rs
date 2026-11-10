@@ -1,4 +1,4 @@
-//! Debugging a world that the launcher (`tools/auxtools-cli`) started.
+//! Debugging a world that the launcher (`auxtools-cli`) started.
 //!
 //! The launcher loads this library into BYOND before the world is loaded:
 //! `LD_PRELOAD` on Linux, and on Windows a call to [`auxtools_debug_attach`]

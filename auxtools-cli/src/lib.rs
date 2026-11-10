@@ -12,5 +12,5 @@ pub mod local;
 // The debug server's message types aren't exported from its cdylib, so they
 // are pulled in as source, like tests/debug_test does
 #[allow(dead_code)]
-#[path = "../../../debug_server/src/server_types.rs"]
+#[path = "../../debug_server/src/server_types.rs"]
 pub mod server_types;

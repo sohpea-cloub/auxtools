@@ -1,5 +1,5 @@
 // The auxtools debugger for VS Code. The debugging is all the launcher's
-// (`tools/auxtools-cli`): this tells VS Code where it is, fills in launch and
+// (`auxtools-cli`): this tells VS Code where it is, fills in launch and
 // attach configurations, and adds commands and a build task for DreamMaker
 // worlds.
 //
