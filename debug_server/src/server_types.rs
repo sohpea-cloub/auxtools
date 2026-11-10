@@ -202,6 +202,20 @@ pub enum Request {
 	/// written with `/proc/` or `/verb/` in it, or without.
 	ProcInfo {
 		proc: ProcRef
+	},
+	/// What an expression gives, written out to `depth` (see [`Rendered`]):
+	/// for a client that wants values as data, which it can have of a running
+	/// world too. Evaluated as `Eval` is.
+	Render {
+		frame_id: Option<u32>,
+		expression: String,
+		depth: u32
+	},
+	/// What `vars` opens to, each written out to `depth`: a frame's arguments
+	/// or locals, the globals, or an object's vars, as `Variables` lists them
+	RenderVariables {
+		vars: VariablesRef,
+		depth: u32
 	}
 }
 
@@ -332,7 +346,11 @@ pub enum Response {
 		message: String
 	},
 	/// What the world knows of a proc, or why it knows nothing
-	ProcInfo(Result<ProcInfo, String>)
+	ProcInfo(Result<ProcInfo, String>),
+	/// What an expression gave, or why it gave nothing
+	Render(Result<Rendered, String>),
+	/// Each var's name and value, or why there are none
+	RenderVariables(Result<Vec<(String, Rendered)>, String>)
 }
 
 /// An entry in the world's record of what happened in it. The record keeps
@@ -475,6 +493,35 @@ pub struct BytecodeInstruction {
 	/// The line it's on, by the DbgLine before it (a line of the file as it
 	/// was, for old code)
 	pub line: Option<u32>
+}
+
+/// A value written out (`Request::Render`). What's inside a list or an
+/// object is written out to a depth: a list's entries while it's at least 1,
+/// an object's vars while it's at least 2 (they're many), each a level
+/// lower. Past it, a list is its length and an object what it is.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub enum Rendered {
+	Null,
+	Number(f32),
+	Text(String),
+	List {
+		len: u32,
+		/// Each entry, and the value it has as a key if it has one
+		entries: Option<Vec<(Rendered, Option<Rendered>)>>
+	},
+	/// A datum, an atom, a client, the world...
+	Object {
+		/// As `ref()` gives it: `[0x2000001]`
+		reference: String,
+		/// Its type's path
+		kind: String,
+		/// Its `name`, if it has one that's text
+		name: Option<String>,
+		vars: Option<Vec<(String, Rendered)>>
+	},
+	/// Anything else: a typepath, a proc, a file, a pointer... What kind of
+	/// value it is (as `Variable::kind`), and its text
+	Other { kind: String, text: String }
 }
 
 /// A proc, as `Request::ProcInfo` finds it

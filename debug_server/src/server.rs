@@ -24,6 +24,7 @@ use crate::{
 	hot_reload, journal, mem_profiler, waker
 };
 
+mod render;
 mod watches;
 
 /// Something a client can open, for the variables inside it. Those that are
@@ -2365,6 +2366,9 @@ impl Server {
 				self.send_or_disconnect(Response::ProcInfo(info));
 			}
 
+			Request::Render { frame_id, expression, depth } => self.handle_render(frame_id, &expression, depth),
+			Request::RenderVariables { vars, depth } => self.handle_render_variables(vars, depth),
+
 			// The following requests are special cases and handled outside of
 			// this function
 			Request::Configured | Request::Continue { .. } => {
@@ -2692,6 +2696,11 @@ impl Server {
 			// Hijack eval too so that we can refresh our state after it
 			if let Request::Eval { frame_id, command, .. } = request {
 				self.handle_eval(frame_id, &command);
+				self.state.as_mut().unwrap().invalidate_stacks();
+				continue;
+			}
+			if let Request::Render { frame_id, expression, depth } = request {
+				self.handle_render(frame_id, &expression, depth);
 				self.state.as_mut().unwrap().invalidate_stacks();
 				continue;
 			}

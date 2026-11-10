@@ -22,6 +22,7 @@ use auxtools_cli::{
 mod launch;
 mod stop;
 mod trace;
+mod json;
 
 /// What went wrong, and the exit code it gives
 pub struct Failure(pub i32, pub String);
@@ -67,6 +68,18 @@ pub enum Run {
 	/// One command to a running world: connect, do it, leave
 	World(fn(&mut World, &[String]) -> Result<()>)
 }
+
+/// What `status --json` says, which commands that print a pause share
+/// What `status` says, and what `--json` makes of a pause for every command
+/// that prints one
+const STATUS: &str = "The first line is `running`, or `paused` and why; a paused world's stack follows. Then
+how long the world has been up (since it last loaded, and its world.time), and what came of
+its last hot reload.
+  --json   As JSON: {\"paused\": false}, or {\"paused\": true} with the `reason`
+           (`breakpoint`, `step`, `pause`, `runtime` or `change`), the runtime's
+           `message` and whether it's `caught`, the `changes` (each with its `name`,
+           `old` and `new`), the `stack` (as `auxtools help stack` says), and the
+           `instruction` (its `offset` and `text`) after a step of one";
 
 /// The commands, in the groups the help shows them in. A new one is a
 /// function, in a file of its own under `cli/` if it's more than a few lines,
@@ -133,15 +146,20 @@ was started by another version of auxtools: this one can't attach to it.",
 		},
 		Command {
 			name: "status",
-			usage: "",
+			usage: "[--json]",
 			about: "Whether the world is running or paused, and if paused, why and where",
-			details: "The first line is `running`, or `paused` and why; a paused world's stack follows. Then
-how long the world has been up (since it last loaded, and its world.time), and what came of
-its last hot reload.",
+			details: STATUS,
 			run: Run::World(|world, args| {
-				Flags::parse(args, &[], &[])?.nothing_else("status")?;
+				let flags = Flags::parse(args, &[], &["--json"])?;
+				flags.nothing_else("status")?;
+				world.output(&flags)?;
 				world.status()?;
-				world.uptime()
+				// (the JSON document is the pause's alone)
+				if flags.has("--json") {
+					Ok(())
+				} else {
+					world.uptime()
+				}
 			})
 		},
 		Command {
@@ -169,30 +187,39 @@ them, so `log --runtimes --follow` watches them without pausing the world.
 	("Looking at a paused world", &[
 		Command {
 			name: "stack",
-			usage: "[--all]",
+			usage: "[--all] [--json]",
 			about: "The procs the world is paused in, innermost first",
-			details: "  --all    The sleeping procs' stacks too, each with the id it keeps",
+			details: "  --all    The sleeping procs' stacks too, each with the id it keeps
+  --json   As JSON: an array of frames, each with its `proc`, `file`, `line`, `offset`
+           (its instruction's) and `old_code`. With --all, an array of stacks, each
+           with its `id`, `name`, `sleeping` and `frames`.",
 			run: Run::World(|world, args| {
-				let flags = Flags::parse(args, &[], &["--all"])?;
+				let flags = Flags::parse(args, &[], &["--all", "--json"])?;
 				flags.nothing_else("stack")?;
+				world.output(&flags)?;
 				world.stack(flags.has("--all"))
 			})
 		},
 		Command {
 			name: "vars",
-			usage: "[--frame N] [--globals]",
+			usage: "[--frame N] [--globals] [--json [--depth N]]",
 			about: "A frame's arguments and local vars",
 			details: "  --frame N    The Nth frame of the stack, from 0, the innermost (the default)
-  --globals    The world's global vars too",
+  --globals    The world's global vars too
+  --json       As JSON: an object with `arguments`, `locals` (and `globals`), each an
+               object of the vars' values, as `auxtools help eval` says. The vars are
+               a level down: by default a list in them is in full, an object isn't.
+  --depth N    How deep to write out lists and objects (2 unless given)",
 			run: Run::World(|world, args| {
-				let flags = Flags::parse(args, &["--frame"], &["--globals"])?;
+				let flags = Flags::parse(args, &["--frame", "--depth"], &["--globals", "--json"])?;
 				flags.nothing_else("vars")?;
+				world.output(&flags)?;
 				world.vars(flags.number("--frame")?.unwrap_or(0), flags.has("--globals"))
 			})
 		},
 		Command {
 			name: "eval",
-			usage: "EXPRESSION | -f FILE | - [--frame N]",
+			usage: "EXPRESSION | -f FILE | - [--frame N] [--json [--depth N]]",
 			about: "The value of a DM expression",
 			details: "In a paused world, the expression is in a frame of the stack: it can name that
 proc's vars, and `src`. In a running world it can name globals and call procs.
@@ -200,9 +227,18 @@ When it fails, it says why on stderr and exits with 1: for a runtime error in a 
 it called, with that proc's file and line and the procs between it and the expression.
   -f FILE      Read the expression from FILE, where no shell can change its quotes or paths
   -            Read the expression from stdin
-  --frame N    The Nth frame of the stack, from 0, the innermost (the default)",
+  --frame N    The Nth frame of the stack, from 0, the innermost (the default)
+  --json       The value as JSON: a number, text or null as itself; a list as an array of
+               its entries, or an object when they're text keys with values (else an
+               array of {\"key\", \"value\"}); an object (a datum, atom, client...) as
+               {\"ref\", \"type\", \"name\"}, with its \"vars\" when they're written out; a
+               typepath as {\"path\"}; anything else as {\"kind\", \"text\"}
+  --depth N    How deep to write out lists and objects (2 unless given): a list's entries
+               while N is 1 or more, an object's vars while it's 2 or more, each a level
+               lower. Past that, a list is {\"list\": true, \"len\"} and an object no vars.",
 			run: Run::World(|world, args| {
-				let flags = Flags::parse(args, &["--frame", "-f"], &[])?;
+				let flags = Flags::parse(args, &["--frame", "-f", "--depth"], &["--json"])?;
+				world.output(&flags)?;
 				let expression = expression(&flags.rest, flags.value("-f"), read_stdin)?;
 				world.eval(&expression, flags.number("--frame")?)
 			})
@@ -211,23 +247,29 @@ it called, with that proc's file and line and the procs between it and the expre
 	("Looking at its code", &[
 		Command {
 			name: "proc",
-			usage: "/PATH[#N]",
+			usage: "/PATH[#N] [--json]",
 			about: "Where a proc is, how many definitions it has, and whether a hot reload changed it",
 			details: "/PATH is the proc's path, with or without its `proc/`: `/mob/proc/attack` or
-`/mob/attack`. #N is its Nth definition, from 0, the first (the default).",
+`/mob/attack`. #N is its Nth definition, from 0, the first (the default).
+  --json    As JSON: its `proc`, `file`, `line`, `definitions` and `reloaded` (null,
+            `lines`, `code` or `added`)",
 			run: Run::World(|world, args| {
-				let flags = Flags::parse(args, &[], &[])?;
+				let flags = Flags::parse(args, &[], &["--json"])?;
+				world.output(&flags)?;
 				world.proc_info(&one_proc("proc", &flags.rest)?)
 			})
 		},
 		Command {
 			name: "dis",
-			usage: "/PATH[#N]",
+			usage: "/PATH[#N] [--json]",
 			about: "A proc's bytecode: each instruction's offset and text, and the lines they're on",
 			details: "/PATH[#N] is as for `auxtools proc`. The bytecode is the proc's code as it runs
-now: after a hot reload, the new code.",
+now: after a hot reload, the new code.
+  --json    As JSON: its `proc`, `file`, and `instructions`, each with its `offset`,
+            `text` and `line`",
 			run: Run::World(|world, args| {
-				let flags = Flags::parse(args, &[], &[])?;
+				let flags = Flags::parse(args, &[], &["--json"])?;
+				world.output(&flags)?;
 				world.disassemble(&one_proc("dis", &flags.rest)?)
 			})
 		},
@@ -235,14 +277,17 @@ now: after a hot reload, the new code.",
 	("Running it", &[
 		Command {
 			name: "pause",
-			usage: "[--hold-max SECONDS]",
+			usage: "[--hold-max SECONDS] [--json]",
 			about: "Pauses the world where it is",
 			details: "The world stays paused after this command has gone, until `continue`.
   --hold-max SECONDS  Let the world carry on by itself this long after the command has
                       gone (once nobody debugging is connected to it). The default is
-                      no limit, or AUXTOOLS_HOLD_MAX if it's set. Its `log` says so.",
+                      no limit, or AUXTOOLS_HOLD_MAX if it's set. Its `log` says so.
+  --json              Where it paused as JSON, as `auxtools help status` says",
 			run: Run::World(|world, args| {
-				Flags::parse(args, &[], &[])?.nothing_else("pause")?;
+				let flags = Flags::parse(args, &[], &["--json"])?;
+				flags.nothing_else("pause")?;
+				world.output(&flags)?;
 				world.pause()
 			})
 		},
@@ -258,15 +303,17 @@ now: after a hot reload, the new code.",
 		},
 		Command {
 			name: "next",
-			usage: "[--instruction] [--hold-max SECONDS]",
+			usage: "[--instruction] [--hold-max SECONDS] [--json]",
 			about: "Runs to the next line, over any procs this one calls",
 			details: "The world stays paused afterwards, until `continue`.
   --instruction       One instruction on, in this proc: a call it makes runs to its end
                       (the pause it ends in shows that instruction's offset and text too)
-  --hold-max SECONDS  As for `pause`",
+  --hold-max SECONDS  As for `pause`
+  --json              Where it paused as JSON, as `auxtools help status` says",
 			run: Run::World(|world, args| {
-				let flags = Flags::parse(args, &[], &["--instruction"])?;
+				let flags = Flags::parse(args, &[], &["--instruction", "--json"])?;
 				flags.nothing_else("next")?;
+				world.output(&flags)?;
 				world.show_instruction = flags.has("--instruction");
 				world.resume(if world.show_instruction {
 					ContinueKind::StepOverInstruction { stack_id: 0 }
@@ -277,15 +324,17 @@ now: after a hot reload, the new code.",
 		},
 		Command {
 			name: "step",
-			usage: "[--instruction] [--hold-max SECONDS]",
+			usage: "[--instruction] [--hold-max SECONDS] [--json]",
 			about: "Runs to the next line, going into a proc this one calls",
 			details: "The world stays paused afterwards, until `continue`.
   --instruction       One instruction on, into a proc this one calls
                       (the pause it ends in shows that instruction's offset and text too)
-  --hold-max SECONDS  As for `pause`",
+  --hold-max SECONDS  As for `pause`
+  --json              Where it paused as JSON, as `auxtools help status` says",
 			run: Run::World(|world, args| {
-				let flags = Flags::parse(args, &[], &["--instruction"])?;
+				let flags = Flags::parse(args, &[], &["--instruction", "--json"])?;
 				flags.nothing_else("step")?;
+				world.output(&flags)?;
 				world.show_instruction = flags.has("--instruction");
 				world.resume(if world.show_instruction {
 					ContinueKind::StepIntoInstruction { stack_id: 0 }
@@ -296,12 +345,15 @@ now: after a hot reload, the new code.",
 		},
 		Command {
 			name: "out",
-			usage: "[--hold-max SECONDS]",
+			usage: "[--hold-max SECONDS] [--json]",
 			about: "Runs until this proc returns to the one that called it",
 			details: "The world stays paused afterwards, until `continue`.
-  --hold-max SECONDS  As for `pause`",
+  --hold-max SECONDS  As for `pause`
+  --json              Where it paused as JSON, as `auxtools help status` says",
 			run: Run::World(|world, args| {
-				Flags::parse(args, &[], &[])?.nothing_else("out")?;
+				let flags = Flags::parse(args, &[], &["--json"])?;
+				flags.nothing_else("out")?;
+				world.output(&flags)?;
 				world.resume(ContinueKind::StepOut { stack_id: 0 })
 			})
 		},
@@ -326,6 +378,10 @@ something at a breakpoint without pausing, or count its hits, use `trace`.
   --caught             Pause on runtime errors inside a `try` as well
   --timeout SECONDS    Give up after this long (exit code 2)
   --no-hold            Let the world carry on once this command has gone
+  --json               Where it paused as JSON, as `auxtools help status` says, with
+                       `already` (it was paused before), `breakpoints` (each with the
+                       `place` given and the `proc`, `file` and `line` it went to) and
+                       `watching` (each with its `name` and `value`)
   --hold-max SECONDS   As for `pause`: let it carry on by itself this long after this
                        command has gone (once nobody debugging is connected to it)
 
@@ -598,9 +654,10 @@ fn wait(world: &mut World, args: &[String]) -> Result<()> {
 	let flags = Flags::parse(
 		args,
 		&["--break", "--if", "--timeout", "--change", "--frame"],
-		&["--runtimes", "--caught", "--no-hold"]
+		&["--runtimes", "--caught", "--no-hold", "--json"]
 	)?;
 	flags.nothing_else("wait")?;
+	world.output(&flags)?;
 	world.wait(Wait {
 		breaks: flags.values("--break").map(str::to_owned).collect(),
 		changes: flags.values("--change").map(given_text).collect::<Result<_>>()?,
@@ -747,7 +804,12 @@ pub struct World {
 	/// What it said of breakpoints' conditions that failed, once each
 	failed_conditions: Vec<String>,
 	/// A pause it prints shows the instruction it's on, after a step of one
-	show_instruction: bool
+	show_instruction: bool,
+	/// What it prints is one JSON document (`--json`), with lists and objects
+	/// to this depth
+	json: Option<u32>,
+	/// What `wait` adds to the JSON of a pause
+	waited: serde_json::Map<String, serde_json::Value>
 }
 
 impl World {
@@ -769,8 +831,31 @@ impl World {
 			events: vec![],
 			notes: vec![],
 			failed_conditions: vec![],
-			show_instruction: false
+			show_instruction: false,
+			json: None,
+			waited: serde_json::Map::new()
 		})
+	}
+
+	/// How it prints what it prints: as text, or with `--json`
+	fn output(&mut self, flags: &Flags) -> Result<()> {
+		let depth = flags.number::<u32>("--depth")?;
+		self.json = match (flags.has("--json"), depth) {
+			(true, depth) => Some(depth.unwrap_or(json::DEFAULT_DEPTH)),
+			(false, None) => None,
+			(false, Some(_)) => return Err("--depth goes with --json".into())
+		};
+		Ok(())
+	}
+
+	/// What's printed on stdout but isn't the answer: on stderr when stdout
+	/// has a JSON document to itself
+	fn aside(&self, text: &str) {
+		if self.json.is_some() {
+			eprintln!("{}", text);
+		} else {
+			println!("{}", text);
+		}
 	}
 
 	fn leave(&mut self) {
@@ -799,7 +884,7 @@ impl World {
 					eprintln!("{}", message);
 					self.failed_conditions.push(message);
 				}
-				Response::WatchEnded { reason, .. } => println!("a watch is over: {}", reason),
+				Response::WatchEnded { reason, .. } => self.aside(&format!("a watch is over: {}", reason)),
 				response => return Ok(Some(response))
 			}
 		}
@@ -825,6 +910,7 @@ impl World {
 
 	fn status(&mut self) -> Result<()> {
 		match self.paused()? {
+			None if self.json.is_some() => println!("{}", serde_json::json!({ "paused": false })),
 			None => println!("running"),
 			Some(reason) => self.print_pause(&reason)?
 		}
@@ -857,8 +943,18 @@ impl World {
 				format!("after a change: {}", changes.join("; "))
 			}
 		};
-		println!("paused {}", why);
 		let frames = self.frames(0, Some(20))?;
+		if self.json.is_some() {
+			let instruction = match (self.show_instruction, frames.first()) {
+				(true, Some(top)) => Some(self.instruction_of(top)?),
+				_ => None
+			};
+			let mut document = json::pause(reason, &frames, instruction);
+			document.extend(std::mem::take(&mut self.waited));
+			println!("{}", serde_json::Value::Object(document));
+			return Ok(());
+		}
+		println!("paused {}", why);
 		for (i, frame) in frames.iter().enumerate() {
 			println!("#{} {}", i, place(frame));
 			if i == 0 && self.show_instruction {
@@ -906,6 +1002,22 @@ impl World {
 			Response::Stacks { stacks, .. } => stacks,
 			other => return Err(unexpected(&other))
 		};
+		if self.json.is_some() {
+			let mut listed = vec![];
+			for stack in stacks.iter().filter(|s| all || !s.sleeping) {
+				let frames: Vec<_> = self.frames(stack.id, None)?.iter().map(json::frame).collect();
+				listed.push(match all {
+					true => serde_json::json!({ "id": stack.id, "name": stack.name, "sleeping": stack.sleeping, "frames": frames }),
+					false => serde_json::Value::Array(frames)
+				});
+			}
+			let document = match all {
+				true => serde_json::Value::Array(listed),
+				false => listed.pop().unwrap_or_default()
+			};
+			println!("{}", document);
+			return Ok(());
+		}
 		for stack in stacks.iter().filter(|s| all || !s.sleeping) {
 			if all {
 				println!("stack {}: {}{}", stack.id, stack.name, if stack.sleeping { " (sleeping)" } else { "" });
@@ -939,6 +1051,21 @@ impl World {
 		if globals {
 			scopes.push(("globals", global_vars));
 		}
+		// The vars are a level down from the frame
+		if let Some(depth) = self.json {
+			let mut document = serde_json::Map::new();
+			for (name, vars) in scopes {
+				let Some(vars) = vars else { continue };
+				let depth = depth.saturating_sub(1);
+				let values = match self.request(Request::RenderVariables { vars, depth })? {
+					Response::RenderVariables(values) => values?,
+					other => return Err(unexpected(&other))
+				};
+				document.insert(name.to_owned(), json::named(&values));
+			}
+			println!("{}", serde_json::Value::Object(document));
+			return Ok(());
+		}
 		for (name, vars) in scopes {
 			let Some(vars) = vars else { continue };
 			let listed = self.request(Request::Variables {
@@ -967,6 +1094,21 @@ impl World {
 			}
 		};
 		self.notes.clear();
+		if let Some(depth) = self.json {
+			let result = match self.request(Request::Render {
+				frame_id,
+				expression: expression.to_owned(),
+				depth
+			})? {
+				Response::Render(result) => result,
+				other => return Err(unexpected(&other))
+			};
+			for note in std::mem::take(&mut self.notes) {
+				eprintln!("{}", note);
+			}
+			println!("{}", json::value(&result?));
+			return Ok(());
+		}
 		let result = match self.request(Request::Eval {
 			frame_id,
 			command: expression.to_owned(),
@@ -993,6 +1135,22 @@ impl World {
 
 	fn proc_info(&mut self, proc: &ProcRef) -> Result<()> {
 		let info = self.find_proc(proc)?;
+		if self.json.is_some() {
+			let reloaded = info.reloaded.map(|how| match how {
+				Reloaded::Lines => "lines",
+				Reloaded::Code => "code",
+				Reloaded::Added => "added"
+			});
+			let document = serde_json::json!({
+				"proc": proc_name(&info.proc),
+				"file": info.file,
+				"line": info.line,
+				"definitions": info.definitions,
+				"reloaded": reloaded
+			});
+			println!("{}", document);
+			return Ok(());
+		}
 		let mut place = proc_name(&info.proc);
 		match (&info.file, info.line) {
 			(Some(file), Some(line)) => place += &format!("  {}:{}", file, line),
@@ -1023,6 +1181,20 @@ impl World {
 	fn disassemble(&mut self, proc: &ProcRef) -> Result<()> {
 		let info = self.find_proc(proc)?;
 		let disassembly = self.instructions(info.code)?;
+		if self.json.is_some() {
+			let instructions: Vec<_> = disassembly
+				.instructions
+				.iter()
+				.map(|instruction| serde_json::json!({ "offset": instruction.offset, "text": instruction.text, "line": instruction.line }))
+				.collect();
+			let document = serde_json::json!({
+				"proc": proc_name(&disassembly.proc),
+				"file": disassembly.file,
+				"instructions": instructions
+			});
+			println!("{}", document);
+			return Ok(());
+		}
 		match &disassembly.file {
 			Some(file) => println!("{}  {}", proc_name(&disassembly.proc), file),
 			None => println!("{}", proc_name(&disassembly.proc))
@@ -1041,6 +1213,31 @@ impl World {
 			println!("{:>6}  {}", instruction.offset, text);
 		}
 		Ok(())
+	}
+
+	/// Where a breakpoint `wait` set went: on stderr, or in the JSON
+	fn say_bound(&mut self, place: &str, bound: &Bound) {
+		if self.json.is_none() {
+			eprintln!("{}", bound.describe());
+			return;
+		}
+		let said = serde_json::json!([{ "place": place, "proc": proc_name(&bound.at.proc), "file": bound.file, "line": bound.line }]);
+		self.say_waited("breakpoints", said, "");
+	}
+
+	/// Something `wait` says before the pause: a line of text, or a key of
+	/// the pause's JSON (an array's entries are added to it)
+	fn say_waited(&mut self, key: &str, value: serde_json::Value, text: &str) {
+		if self.json.is_none() {
+			println!("{}", text);
+			return;
+		}
+		match (self.waited.get_mut(key), value) {
+			(Some(serde_json::Value::Array(had)), serde_json::Value::Array(more)) => had.extend(more),
+			(_, value) => {
+				self.waited.insert(key.to_owned(), value);
+			}
+		}
 	}
 
 	/// Waits for a pause, and keeps it held after we leave
@@ -1095,20 +1292,24 @@ impl World {
 	}
 
 	fn wait(&mut self, wait: Wait) -> Result<()> {
+		if self.json.is_some() {
+			// The same keys each time
+			self.waited = serde_json::json!({ "already": false, "breakpoints": [], "watching": [] }).as_object().cloned().unwrap_or_default();
+		}
 		let paused = self.paused()?;
 		// Each place first, so one that isn't there fails before anything
 		// else. The condition is the watches' when there are any.
 		let condition = if wait.changes.is_empty() { wait.condition.clone() } else { None };
 		for place in &wait.breaks {
 			for bound in self.set_breakpoint(place, condition.clone(), None)? {
-				eprintln!("{}", bound.describe());
+				self.say_bound(place, &bound);
 			}
 		}
 		if let (Some(reason), true) = (&paused, wait.changes.is_empty()) {
 			if wait.hold {
 				self.request(Request::HoldPause)?;
 			}
-			println!("already paused");
+			self.say_waited("already", serde_json::Value::Bool(true), "already paused");
 			return self.print_pause(reason);
 		}
 		// What's watched from a pause is of a frame there, and the wait is
@@ -1127,7 +1328,10 @@ impl World {
 				hit: None
 			};
 			match self.request(watch)? {
-				Response::WatchSet(Ok(watch)) => println!("watching {}, now {}", watch.name, watch.value),
+				Response::WatchSet(Ok(watch)) => {
+					let said = serde_json::json!([{ "name": watch.name, "value": watch.value }]);
+					self.say_waited("watching", said, &format!("watching {}, now {}", watch.name, watch.value));
+				}
 				Response::WatchSet(Err(why)) => return Err(format!("couldn't watch {}: {}", expression, why).into()),
 				other => return Err(unexpected(&other))
 			}

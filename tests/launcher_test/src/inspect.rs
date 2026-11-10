@@ -8,6 +8,8 @@ use std::{
 	process::{Command, Stdio}
 };
 
+use serde_json::{json, Value};
+
 use super::{client::launcher_path, line_of};
 
 /// What a command did: its exit code, and what it printed on stdout and on
@@ -62,6 +64,7 @@ pub fn command_line_inspect(pid: u64, dir: &Path, code: &Path) {
 	procs(pid, code);
 	where_breakpoints_bound(pid, code);
 	instruction_steps(pid, dir);
+	as_json(pid, dir);
 }
 
 /// `eval` fails on stderr with exit code 1, whatever went wrong, and a
@@ -267,4 +270,63 @@ fn instruction_steps(pid: &str, dir: &Path) {
 	assert!(printed.starts_with("paused after a step\n#0 /fail_deeper  ") && !printed.contains("instruction"), "next said {}", printed);
 	run(pid, &["continue"], 0);
 	println!("ok: step --instruction goes into a proc that's called, an instruction at a time");
+}
+
+/// One JSON document on stdout, and nothing on stderr
+fn json_of(pid: &str, args: &[&str]) -> Value {
+	let ran = run(pid, args, 0);
+	assert!(ran.err.is_empty(), "`{}` said {} on stderr", args.join(" "), ran.err);
+	serde_json::from_str(&ran.out).unwrap_or_else(|e| panic!("`{}` printed {}: {}", args.join(" "), ran.out, e))
+}
+
+/// --json, on a running world and a paused one
+fn as_json(pid: &str, dir: &Path) {
+	let eval = |expression: &str, more: &[&str]| {
+		let args: Vec<&str> = ["eval", "--json", expression].iter().chain(more).copied().collect();
+		json_of(pid, &args)
+	};
+	assert_eq!(json_of(pid, &["status", "--json"]), json!({ "paused": false }));
+	assert_eq!(eval("list(1, \"two\", null, list(3, list(4)))", &[]), json!([1, "two", null, [3, { "list": true, "len": 1 }]]));
+	assert_eq!(eval("list(\"a\" = 1, \"b\")", &[]), json!({ "a": 1, "b": null }));
+	assert_eq!(eval("list(1, 2)", &["--depth", "0"]), json!({ "list": true, "len": 2 }));
+	assert_eq!(eval("0.1", &[]).to_string(), "0.1");
+	assert_eq!(eval("\"text\"", &[]), json!("text"));
+	assert_eq!(eval("/datum/twice", &[]), json!({ "path": "/datum/twice" }));
+	let made = eval("new /datum/twice", &[]);
+	assert!(made["ref"].as_str().is_some_and(|r| r.starts_with("[0x")) && made["type"] == "/datum/twice" && made["name"].is_null(), "{}", made);
+	assert!(made["vars"]["type"] == json!({ "path": "/datum/twice" }) && made["vars"].get("vars").is_none(), "{}", made);
+	let shut = eval("new /datum/twice", &["--depth", "1"]);
+	assert!(shut.get("vars").is_none(), "{}", shut);
+	let in_list = eval("list(new /datum/twice)", &[]);
+	assert!(in_list[0]["type"] == "/datum/twice" && in_list[0].get("vars").is_none(), "{}", in_list);
+	assert_eq!(fails(pid, &["eval", "--json", "1/0"]), "runtime error: Division by zero");
+	assert_eq!(fails(pid, &["eval", "--depth", "1", "1"]), "--depth goes with --json");
+	let printed = json_of(pid, &["proc", "--json", "/datum/twice/act#1"]);
+	assert!(printed["proc"] == "/datum/twice/act#1" && printed["definitions"] == 2 && printed["reloaded"].is_null(), "{}", printed);
+	assert_eq!(json_of(pid, &["proc", "--json", "/value"])["reloaded"], "code");
+	let printed = json_of(pid, &["dis", "--json", "/value"]);
+	assert!(printed["instructions"][0]["text"].as_str().is_some_and(|t| t.starts_with("DbgFile")), "{}", printed);
+	println!("ok: eval --json writes values out as JSON on a running world: lists in full to --depth, objects by ref, type and name");
+
+	std::fs::write(dir.join("call"), "yes").unwrap();
+	let paused = json_of(pid, &["wait", "--json", "--break", "/proc/fail_in", "--timeout", "60"]);
+	assert!(paused["paused"] == true && paused["reason"] == "breakpoint" && paused["already"] == false, "{}", paused);
+	assert_eq!(paused["breakpoints"][0]["proc"], "/fail_in");
+	assert_eq!(paused["breakpoints"][0]["place"], "/proc/fail_in");
+	assert_eq!(paused["stack"][0]["proc"], "/fail_in");
+	assert!(paused["instruction"].is_null() && paused["changes"] == json!([]), "{}", paused);
+	let again = json_of(pid, &["wait", "--json"]);
+	assert!(again["already"] == true && again["stack"] == paused["stack"], "{}", again);
+	assert_eq!(json_of(pid, &["status", "--json"])["reason"], "breakpoint");
+	let stack = json_of(pid, &["stack", "--json"]);
+	assert!(stack[0]["proc"] == "/fail_in" && stack[0]["line"].is_number() && stack[0]["offset"].is_number(), "{}", stack);
+	let all = json_of(pid, &["stack", "--json", "--all"]);
+	assert!(all[0]["frames"] == stack && all[0]["sleeping"] == false, "{}", all);
+	let vars = json_of(pid, &["vars", "--json", "--globals"]);
+	assert!(vars["arguments"]["n"] == 1 && vars["locals"]["got"].is_null() && vars["globals"]["rounds"].is_number(), "{}", vars);
+	assert_eq!(eval("n + 1", &[]), json!(2));
+	let stepped = json_of(pid, &["next", "--instruction", "--json"]);
+	assert!(stepped["reason"] == "step" && stepped["instruction"]["text"].is_string(), "{}", stepped);
+	run(pid, &["continue"], 0);
+	println!("ok: wait, status, stack, vars, eval and next print one JSON document with --json, paused");
 }
