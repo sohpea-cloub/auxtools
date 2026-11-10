@@ -1,10 +1,7 @@
 use std::{cell::UnsafeCell, collections::HashMap, sync::Mutex};
 
 use auxtools::*;
-use instruction_hooking::{
-	disassemble_env::{self, DisassembleEnv},
-	InstructionHook
-};
+use instruction_hooking::{disassemble_env, InstructionHook};
 use lazy_static::lazy_static;
 
 use crate::{
@@ -15,6 +12,7 @@ use crate::{
 
 // Could move these to dmasm
 const OPCODE_DBGLINE: u32 = 0x85;
+const OPCODE_THROW: u32 = 0x12D;
 const OPCODE_DEBUG_BREAK: u32 = 0x1337;
 const OPCODE_DEBUG_OPERAND: u32 = 0x1338;
 
@@ -52,13 +50,41 @@ impl ProcInstanceRef {
 enum DebuggerAction {
 	None,
 	Pause,
-	StepOver { target: ProcInstanceRef },
-	StepInto { parent: ProcInstanceRef },
+	/// `caller` is the proc that called the one stepping, where the step ends
+	/// if that one returns
+	StepOver {
+		target: ProcInstanceRef,
+		caller: Option<ProcInstanceRef>
+	},
+	StepInto {
+		parent: ProcInstanceRef,
+		caller: Option<ProcInstanceRef>
+	},
 	BreakOnNext,
-	StepOut { target: ProcInstanceRef }
+	StepOut {
+		target: ProcInstanceRef
+	},
+	/// Stops at the next instruction `target` runs, or in its caller if it
+	/// returns first
+	StepOverInstruction {
+		target: ProcInstanceRef,
+		caller: Option<ProcInstanceRef>
+	},
+	/// Stops at the next instruction `parent` runs, or one a proc it calls
+	/// runs, or in its caller if it returns first
+	StepIntoInstruction {
+		parent: ProcInstanceRef,
+		caller: Option<ProcInstanceRef>
+	}
 }
 
 static mut CURRENT_ACTION: DebuggerAction = DebuggerAction::None;
+
+/// When the pause being waited for was asked for
+static mut PAUSE_ASKED: Option<std::time::Instant> = None;
+/// How long a pause passes over the debugger's own helper procs, waiting for
+/// the world's code to run. A world that's doing nothing else pauses in one.
+const PAUSE_PATIENCE: std::time::Duration = std::time::Duration::from_secs(1);
 
 static mut DEFERRED_INSTRUCTION_REPLACE: UnsafeCell<Option<(Vec<u32>, *mut u32)>> = UnsafeCell::new(None);
 
@@ -87,60 +113,109 @@ fn is_generated_proc(ctx: *mut raw_types::procs::ExecutionContext) -> bool {
 	true
 }
 
-fn get_proc_ctx(stack_id: u32) -> *mut raw_types::procs::ExecutionContext {
-	if stack_id == 0 {
-		return unsafe { *raw_types::funcs::CURRENT_EXECUTION_CONTEXT };
-	}
-
+/// The frame a step in a stack is about, the innermost, and the frame that
+/// called it. Stack 0 is the running one, the rest are the sleeping procs.
+fn get_proc_ctx(stack_id: u32) -> (*mut raw_types::procs::ExecutionContext, *mut raw_types::procs::ExecutionContext) {
 	unsafe {
+		let running = *raw_types::funcs::CURRENT_EXECUTION_CONTEXT;
+		let running = (running, *(*running).parent_context());
+		if stack_id == 0 {
+			return running;
+		}
+
 		let buffer = (*raw_types::funcs::SUSPENDED_PROCS_BUFFER).buffer;
 		let std::ops::Range { start: front, end: back } = raw_types::funcs::suspended_range();
 
 		// bad default
 		if back - front < stack_id as usize {
-			return *raw_types::funcs::CURRENT_EXECUTION_CONTEXT;
+			return running;
 		}
 
+		// BYOND keeps a sleeping stack the other way up: from the outermost
+		// frame, each one's "parent" is the frame it called
 		let instance = *buffer.add(front + (stack_id - 1) as usize);
-		(*instance).context
+		let mut caller = std::ptr::null_mut();
+		let mut ctx = (*instance).context;
+		loop {
+			let called = *(*ctx).parent_context();
+			if called.is_null() {
+				return (ctx, caller);
+			}
+			caller = ctx;
+			ctx = called;
+		}
 	}
 }
 
-fn handle_breakpoint(ctx: *mut raw_types::procs::ExecutionContext, reason: BreakpointReason) -> DebuggerAction {
+/// Marks the proc instance of a frame, if there is one
+unsafe fn mark(ctx: *mut raw_types::procs::ExecutionContext) -> Option<ProcInstanceRef> {
+	if ctx.is_null() {
+		None
+	} else {
+		Some(ProcInstanceRef::new(unsafe { *(*ctx).proc_instance() }))
+	}
+}
+
+/// Pauses the world, if a client wants it paused for this. `None` when it
+/// didn't pause, else what the client that let it carry on asked for.
+fn handle_breakpoint(ctx: *mut raw_types::procs::ExecutionContext, reason: BreakpointReason) -> Option<DebuggerAction> {
 	let action = unsafe {
 		match &mut *DEBUG_SERVER.get() {
-			Some(server) => server.handle_breakpoint(ctx, reason),
-			None => ContinueKind::Continue
+			Some(server) => server.handle_breakpoint(ctx, reason)?,
+			None => return None
 		}
 	};
 
-	match action {
+	Some(match action {
 		ContinueKind::Continue => DebuggerAction::None,
 		ContinueKind::StepOver { stack_id } => {
-			let ctx = get_proc_ctx(stack_id);
+			let (ctx, caller) = get_proc_ctx(stack_id);
 			DebuggerAction::StepOver {
-				target: ProcInstanceRef::new(unsafe { *(*ctx).proc_instance() })
+				target: ProcInstanceRef::new(unsafe { *(*ctx).proc_instance() }),
+				caller: unsafe { mark(caller) }
 			}
 		}
 		ContinueKind::StepInto { stack_id } => {
-			let ctx = get_proc_ctx(stack_id);
+			let (ctx, caller) = get_proc_ctx(stack_id);
 			DebuggerAction::StepInto {
-				parent: ProcInstanceRef::new(unsafe { *(*ctx).proc_instance() })
+				parent: ProcInstanceRef::new(unsafe { *(*ctx).proc_instance() }),
+				caller: unsafe { mark(caller) }
+			}
+		}
+		ContinueKind::StepOverInstruction { stack_id } => {
+			let (ctx, caller) = get_proc_ctx(stack_id);
+			DebuggerAction::StepOverInstruction {
+				target: ProcInstanceRef::new(unsafe { *(*ctx).proc_instance() }),
+				caller: unsafe { mark(caller) }
+			}
+		}
+		ContinueKind::StepIntoInstruction { stack_id } => {
+			let (ctx, caller) = get_proc_ctx(stack_id);
+			DebuggerAction::StepIntoInstruction {
+				parent: ProcInstanceRef::new(unsafe { *(*ctx).proc_instance() }),
+				caller: unsafe { mark(caller) }
 			}
 		}
 		ContinueKind::StepOut { stack_id } => {
-			unsafe {
-				// Just continue the code if we've got no parent
-				let ctx = get_proc_ctx(stack_id);
-				let parent = *(*ctx).parent_context();
-				if parent.is_null() {
+			// Just continue the code if nothing called it
+			let (_, caller) = get_proc_ctx(stack_id);
+			match unsafe { mark(caller) } {
+				Some(target) => DebuggerAction::StepOut { target },
+				None => {
+					step_ended();
 					DebuggerAction::None
-				} else {
-					DebuggerAction::StepOut {
-						target: ProcInstanceRef::new(*(*parent).proc_instance())
-					}
 				}
 			}
+		}
+	})
+}
+
+/// A step is over with nothing to pause in: the client that asked for it
+/// hears, as it would otherwise wait for a pause that isn't coming
+fn step_ended() {
+	unsafe {
+		if let Some(server) = &mut *DEBUG_SERVER.get() {
+			server.step_ended();
 		}
 	}
 }
@@ -190,19 +265,96 @@ fn handle_runtime(error: &str) {
 		// TODO: Could try to make this work
 		if let Some(server) = &mut *DEBUG_SERVER.get() {
 			if server.is_in_eval() {
-				server.set_eval_error(error.into());
+				// One that a proc the expression called catches is that
+				// proc's business
+				if !in_try_above_expression(ctx) {
+					server.set_eval_error(error, ctx);
+				}
 				return;
 			}
 		}
 
-		CURRENT_ACTION = handle_breakpoint(ctx, BreakpointReason::Runtime(error.to_string()));
+		// Spawned code's runtime is what it gives, as well as the world's
+		if let Some(server) = &mut *DEBUG_SERVER.get() {
+			server.spawn_runtime(error, ctx);
+		}
+
+		// One nobody pauses for leaves a step in progress as it was
+		let reason = BreakpointReason::Runtime {
+			message: error.to_string(),
+			caught: in_try(ctx)
+		};
+		if let Some(action) = handle_breakpoint(ctx, reason) {
+			CURRENT_ACTION = action;
+		}
 	});
 
-	if result.is_err() {
+	if let Err(payload) = result {
 		if let Some(server) = unsafe { &mut *DEBUG_SERVER.get() } {
-			server.recover_from_panic();
+			crate::recover(&*payload, server);
 		}
 	}
+}
+
+/// Whether a runtime error or a `throw` in this frame will be caught: the
+/// frame or one of its callers is inside a `try`
+unsafe fn in_try(mut ctx: *mut raw_types::procs::ExecutionContext) -> bool {
+	unsafe {
+		while !ctx.is_null() {
+			if *(*ctx).throw_handler() != 0 {
+				return true;
+			}
+			ctx = *(*ctx).parent_context();
+		}
+	}
+	false
+}
+
+/// Whether a runtime error in code an expression runs is caught by that code:
+/// a frame between it and the expression has a `try`. The frames below the
+/// expression are the paused world's, whose `try` isn't around it.
+unsafe fn in_try_above_expression(mut ctx: *mut raw_types::procs::ExecutionContext) -> bool {
+	unsafe {
+		while !ctx.is_null() {
+			if crate::server::is_expression_frame(ctx) {
+				return false;
+			}
+			if *(*ctx).throw_handler() != 0 {
+				return true;
+			}
+			ctx = *(*ctx).parent_context();
+		}
+	}
+	false
+}
+
+/// What a `throw` about to run throws, as a runtime error's message: an
+/// exception's name, or the value itself
+unsafe fn thrown(ctx: *mut raw_types::procs::ExecutionContext) -> String {
+	let size = unsafe { *(*ctx).stack_size() } as usize;
+	if size == 0 {
+		return "an exception".to_owned();
+	}
+	let value = unsafe { Value::from_raw(*(*(*ctx).stack()).add(size - 1)) };
+	if let Ok(name) = value.get_string(byond_string!("name")) {
+		return name;
+	}
+	match value.as_string() {
+		Ok(text) => text,
+		Err(_) => value.to_string().unwrap_or_else(|_| "an exception".to_owned())
+	}
+}
+
+/// Whether the instruction about to run in a frame has a breakpoint on it
+pub(crate) fn is_breakpoint(ctx: *mut raw_types::procs::ExecutionContext) -> bool {
+	unsafe { *(*(*ctx).bytecode()).add(*(*ctx).bytecode_offset() as usize) == OPCODE_DEBUG_BREAK }
+}
+
+/// Whether the code running is one of the debugger's own helper procs, like
+/// the loop that keeps a launched world awake
+unsafe fn in_helper(ctx: *mut raw_types::procs::ExecutionContext) -> bool {
+	let id = unsafe { (**(*ctx).proc_instance()).proc };
+	Proc::from_id(id).is_some_and(|proc| proc.path.trim_start_matches("/proc").starts_with("/auxtools_"))
 }
 
 impl InstructionHook for Server {
@@ -227,6 +379,7 @@ impl InstructionHook for Server {
 		if !in_eval && server.process() {
 			unsafe {
 				CURRENT_ACTION = DebuggerAction::Pause;
+				PAUSE_ASKED = Some(std::time::Instant::now());
 			}
 		}
 
@@ -238,52 +391,70 @@ impl InstructionHook for Server {
 		// paused for another reason
 		let mut did_breakpoint = false;
 
+		// A watched place that changed in the instruction before this one
+		if !in_eval && server.has_watches() {
+			if let Some(changes) = server.watched_changes(ctx) {
+				unsafe {
+					// A step in progress stays as it was if nobody pauses
+					if let Some(action) = handle_breakpoint(ctx, BreakpointReason::Data { changes }) {
+						CURRENT_ACTION = action;
+						did_breakpoint = true;
+					}
+				}
+			}
+		}
+
 		unsafe {
 			let action = if in_eval { DebuggerAction::None } else { CURRENT_ACTION };
 
 			match action {
 				DebuggerAction::None => {}
 
+				DebuggerAction::Pause if PAUSE_ASKED.is_some_and(|asked| asked.elapsed() < PAUSE_PATIENCE) && in_helper(ctx) => {}
+
 				DebuggerAction::Pause => {
 					CURRENT_ACTION = DebuggerAction::None;
-					CURRENT_ACTION = handle_breakpoint(ctx, BreakpointReason::Pause);
+					CURRENT_ACTION = handle_breakpoint(ctx, BreakpointReason::Pause).unwrap_or(DebuggerAction::None);
 					did_breakpoint = true;
 				}
 
 				DebuggerAction::BreakOnNext => {
 					CURRENT_ACTION = DebuggerAction::None;
-					CURRENT_ACTION = handle_breakpoint(ctx, BreakpointReason::Step);
+					CURRENT_ACTION = handle_breakpoint(ctx, BreakpointReason::Step).unwrap_or(DebuggerAction::None);
 					did_breakpoint = true;
 				}
 
 				// StepOver breaks on either of the following conditions:
-				// 1) The target context has disappeared - this means it has
-				//    returned or runtimed
+				// 1) The target context has disappeared (it has returned or
+				//    runtimed) and we're in its caller
 				// 2) We're inside the target context and on a DbgLine
 				//    instruction
-				DebuggerAction::StepOver { target } => {
+				DebuggerAction::StepOver { target, caller } => {
 					if is_dbgline && target.is(*(*ctx).proc_instance()) {
 						CURRENT_ACTION = DebuggerAction::BreakOnNext;
-					} else {
-						// If the context isn't in any stacks, it has just
-						// returned. Break! TODO: Don't
-						// break if the context's stack is gone (returned to C)
-						if !proc_instance_is_in_stack(ctx, target) && !proc_instance_is_suspended(target) {
-							CURRENT_ACTION = DebuggerAction::None;
-							CURRENT_ACTION = handle_breakpoint(ctx, BreakpointReason::Step);
+					} else if !proc_instance_is_in_stack(ctx, target) && !proc_instance_is_suspended(target) {
+						// It's over. Back in the proc that called it, the
+						// step ends there; if nothing of the world's called
+						// it, whatever runs now has nothing to do with the
+						// step, which just ends.
+						CURRENT_ACTION = DebuggerAction::None;
+						if caller.is_some_and(|caller| caller.is(*(*ctx).proc_instance())) {
+							CURRENT_ACTION = handle_breakpoint(ctx, BreakpointReason::Step).unwrap_or(DebuggerAction::None);
 							did_breakpoint = true;
+						} else {
+							step_ended();
 						}
 					}
 				}
 
 				// StepInto breaks on any of the following conditions:
-				// 1) The parent context has disappeared - this means it has
-				//    returned or runtimed
+				// 1) The parent context has disappeared (it has returned or
+				//    runtimed) and we're in its caller
 				// 2) We're inside a context that is inside the parent context
 				//    and on a DbgLine instruction
 				// 3) We're inside the parent context and on a DbgLine
 				//    instruction
-				DebuggerAction::StepInto { parent } => {
+				DebuggerAction::StepInto { parent, caller } => {
 					if !is_generated_proc(ctx) {
 						let is_in_parent = parent.is(*(*ctx).proc_instance());
 
@@ -294,16 +465,38 @@ impl InstructionHook for Server {
 							let is_suspended = proc_instance_is_suspended(parent);
 
 							// If the context isn't in any stacks, it has just
-							// returned. Break!
-							// TODO: Don't break if the context's stack is gone
-							// (returned to C)
+							// returned: the step ends in its caller, or with
+							// nothing if this isn't its caller (see StepOver)
 							if !in_stack && !is_suspended {
 								CURRENT_ACTION = DebuggerAction::None;
-								CURRENT_ACTION = handle_breakpoint(ctx, BreakpointReason::Step);
-								did_breakpoint = true;
+								if caller.is_some_and(|caller| caller.is(*(*ctx).proc_instance())) {
+									CURRENT_ACTION = handle_breakpoint(ctx, BreakpointReason::Step).unwrap_or(DebuggerAction::None);
+									did_breakpoint = true;
+								} else {
+									step_ended();
+								}
 							} else if in_stack && is_dbgline {
 								CURRENT_ACTION = DebuggerAction::BreakOnNext;
 							}
+						}
+					}
+				}
+
+				// A step of one instruction: the next one the frame runs, or
+				// for a step in, one that a proc it calls runs. If the frame
+				// returns, the step ends in its caller (see StepOver). While
+				// it's asleep, whatever else runs is passed over.
+				DebuggerAction::StepOverInstruction { target: frame, caller } | DebuggerAction::StepIntoInstruction { parent: frame, caller } => {
+					let into = matches!(action, DebuggerAction::StepIntoInstruction { .. });
+					let here = frame.is(*(*ctx).proc_instance()) || (into && proc_instance_is_in_stack(ctx, frame));
+					let over = !here && !proc_instance_is_in_stack(ctx, frame) && !proc_instance_is_suspended(frame);
+					if here || over {
+						CURRENT_ACTION = DebuggerAction::None;
+						if here || caller.is_some_and(|caller| caller.is(*(*ctx).proc_instance())) {
+							CURRENT_ACTION = handle_breakpoint(ctx, BreakpointReason::Step).unwrap_or(DebuggerAction::None);
+							did_breakpoint = true;
+						} else {
+							step_ended();
 						}
 					}
 				}
@@ -313,7 +506,7 @@ impl InstructionHook for Server {
 					if !is_generated_proc(ctx) {
 						if target.is(*(*ctx).proc_instance()) {
 							CURRENT_ACTION = DebuggerAction::None;
-							CURRENT_ACTION = handle_breakpoint(ctx, BreakpointReason::Step);
+							CURRENT_ACTION = handle_breakpoint(ctx, BreakpointReason::Step).unwrap_or(DebuggerAction::None);
 							did_breakpoint = true;
 						} else {
 							// If Our context disappeared, just stop the step
@@ -322,9 +515,25 @@ impl InstructionHook for Server {
 
 							if !in_stack && !is_suspended {
 								CURRENT_ACTION = DebuggerAction::None;
+								step_ended();
 							}
 						}
 					}
+				}
+			}
+		}
+
+		// A `throw` is about to run. One that nothing catches isn't reported
+		// as a runtime error to anything we could hear it from, so it's
+		// stopped at here, before it's thrown, like any other error.
+		if opcode == OPCODE_THROW && !did_breakpoint && !in_eval {
+			unsafe {
+				let reason = BreakpointReason::Runtime {
+					message: thrown(ctx),
+					caught: in_try(ctx)
+				};
+				if let Some(action) = handle_breakpoint(ctx, reason) {
+					CURRENT_ACTION = action;
 				}
 			}
 		}
@@ -333,8 +542,11 @@ impl InstructionHook for Server {
 			// We don't want to break twice when stepping on to a breakpoint
 			if !did_breakpoint && !in_eval {
 				unsafe {
+					// A breakpoint that doesn't pause (its condition is false)
+					// leaves a step in progress as it was
+					let stepping = CURRENT_ACTION;
 					CURRENT_ACTION = DebuggerAction::None;
-					CURRENT_ACTION = handle_breakpoint(ctx, BreakpointReason::Breakpoint);
+					CURRENT_ACTION = handle_breakpoint(ctx, BreakpointReason::Breakpoint).unwrap_or(stepping);
 				}
 			}
 
@@ -363,27 +575,22 @@ pub enum InstructionHookError {
 	InvalidOffset
 }
 
-fn find_instruction<'a>(env: &'a mut DisassembleEnv, proc: &'a Proc, offset: u32) -> Option<(dmasm::Instruction, dmasm::DebugData<'a>)> {
-	let bytecode = unsafe { proc.bytecode() };
+/// How many words the instruction at `offset` has, if one starts there. The
+/// code is read without our breakpoints in it: the words they put in the
+/// rest of an instruction would read as instructions of their own.
+fn instruction_length(proc: &Proc, offset: u32) -> Option<usize> {
+	let bytecode = original_bytecode(proc);
+	let mut env = disassemble_env::DisassembleEnv;
+	let (nodes, _error) = dmasm::disassembler::disassemble(&bytecode, &mut env);
 
-	let (nodes, _error) = dmasm::disassembler::disassemble(bytecode, env);
-
-	for node in nodes {
-		if let dmasm::Node::Instruction(ins, debug) = node {
-			if debug.offset == offset {
-				return Some((ins, debug));
-			}
-		}
-	}
-
-	None
+	nodes.into_iter().find_map(|node| match node {
+		dmasm::Node::Instruction(_, debug) if debug.offset == offset => Some(debug.bytecode.len()),
+		_ => None
+	})
 }
 
 pub fn hook_instruction(proc: &Proc, offset: u32) -> Result<(), InstructionHookError> {
-	let mut env = disassemble_env::DisassembleEnv;
-	let (_, debug) = find_instruction(&mut env, proc, offset).ok_or(InstructionHookError::InvalidOffset)?;
-
-	let instruction_length = debug.bytecode.len();
+	let instruction_length = instruction_length(proc, offset).ok_or(InstructionHookError::InvalidOffset)?;
 
 	let bytecode;
 	let opcode;
@@ -423,8 +630,7 @@ pub enum InstructionUnhookError {
 }
 
 pub fn unhook_instruction(proc: &Proc, offset: u32) -> Result<(), InstructionUnhookError> {
-	let mut env = disassemble_env::DisassembleEnv;
-	let (..) = find_instruction(&mut env, proc, offset).ok_or(InstructionUnhookError::InvalidOffset)?;
+	instruction_length(proc, offset).ok_or(InstructionUnhookError::InvalidOffset)?;
 
 	let opcode_ptr = unsafe {
 		let bytecode = {
@@ -470,11 +676,32 @@ pub fn unhook_all() {
 	}
 }
 
+/// Where the proc's breakpoints are.
+pub fn hooked_offsets(proc: &Proc) -> Vec<u32> {
+	let (start, count) = unsafe { proc.bytecode_mut_ptr() };
+	let start = start as usize;
+	let end = start + count as usize * std::mem::size_of::<u32>();
+
+	let mut offsets: Vec<u32> = ORIGINAL_BYTECODE
+		.lock()
+		.unwrap()
+		.keys()
+		.filter(|ptr| (start..end).contains(&ptr.0))
+		.map(|ptr| ((ptr.0 - start) / std::mem::size_of::<u32>()) as u32)
+		.collect();
+	offsets.sort_unstable();
+	offsets
+}
+
 /// The proc's bytecode without any of our breakpoints patched into it.
 pub fn original_bytecode(proc: &Proc) -> Vec<u32> {
 	let (start, count) = unsafe { proc.bytecode_mut_ptr() };
-	let mut bytecode = unsafe { std::slice::from_raw_parts(start, count as usize) }.to_vec();
+	let bytecode = unsafe { std::slice::from_raw_parts(start, count as usize) }.to_vec();
+	unpatched(start, bytecode)
+}
 
+/// Bytecode read from `start`, without any of our breakpoints patched into it
+pub fn unpatched(start: *const u32, mut bytecode: Vec<u32>) -> Vec<u32> {
 	for (opcode_ptr, original) in ORIGINAL_BYTECODE.lock().unwrap().iter() {
 		// The map holds every proc's breakpoints, and most aren't in this one
 		let Some(offset) = opcode_ptr.0.checked_sub(start as usize).map(|bytes| bytes / std::mem::size_of::<u32>()) else {

@@ -1,5 +1,5 @@
 [workspace]
-members = ["auxcov", "auxtools", "auxtools-impl", "debug_server", "instruction_hooking", "tests/auxtest", "tests/byond_get", "tests/debug_test", "tests/test_runner", "tools/debug_client"]
+members = ["auxcov", "auxtools", "auxtools-impl", "debug_server", "instruction_hooking", "tests/auxtest", "tests/byond_get", "tests/debug_test", "tests/test_runner", "tools/debug_client", "auxtools-cli"]
 resolver = "2"
 
 [workspace.package]
@@ -13,7 +13,9 @@ version = "0.1.0"
 [workspace.dependencies]
 lazy_static = "1"
 retour = { version = "=0.4.0-alpha.4", default-features = false }
-dmasm = { git = "https://github.com/willox/dmasm" }
+dmasm = { git = "https://github.com/sohpea-cloub/dmasm", branch = "revamp", features = ["serde"] }
+# SpacemanDMM with the parser fixes dmasm's proc compiler needs, until they are upstream
+dreammaker = { git = "https://github.com/sohpea-cloub/SpacemanDMM", branch = "revamp" }
 byond-scan = { git = "https://github.com/Absolucy/byond-scan" }
 
 [workspace.lints.rust]

@@ -7,19 +7,36 @@ impl AssembleEnv {
 	// what it evaluates to
 	fn eval_with_name(code: &str, arg: &str) -> Option<Value> {
 		let arg = Value::from_string(arg).ok()?;
-		let expr = dmasm::compiler::compile_expr(code, &["name"]).unwrap();
+		Self::eval_with(code, &[("name", &arg)])
+	}
+
+	// Runs `code` in the expression stub with the names given set, and returns
+	// what it evaluates to, unless that's null
+	fn eval_with(code: &str, params: &[(&str, &Value)]) -> Option<Value> {
+		let names: Vec<&str> = params.iter().map(|(name, _)| *name).collect();
+		let values: Vec<&Value> = params.iter().map(|(_, value)| *value).collect();
+		let expr = dmasm::compiler::compile_expr_for(code, &names, crate::world_byond()).unwrap();
 		let assembly = dmasm::assembler::assemble(&expr, &mut Self).unwrap();
 
 		let proc = Proc::find("/proc/auxtools_expr_stub")?;
 		proc.set_bytecode(assembly);
 
-		let res = proc.call(&[&arg]).ok()?.as_list().ok()?.get(1).ok()?;
+		let res = proc.call(&values).ok()?.as_list().ok()?.get(1).ok()?;
 
 		if res == Value::NULL {
 			return None;
 		}
 
 		Some(res)
+	}
+
+	/// Whether `object` has a proc or verb called `name`, its own or
+	/// inherited
+	pub fn has_proc(object: &Value, name: &str) -> bool {
+		let Ok(name) = Value::from_string(name) else {
+			return false;
+		};
+		Self::eval_with("hascall(object, name)", &[("object", object), ("name", &name)]).is_some_and(|has| has.is_truthy())
 	}
 }
 
