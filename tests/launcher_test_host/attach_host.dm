@@ -17,6 +17,15 @@ var/datum/held/held = new
 /datum/held/proc/double(n)
 	return n * 2
 
+// For the command line's eval --spawn: procs that sleep
+/proc/slow_double(n, wait = 2)
+	sleep(wait)
+	return n * 2
+
+/proc/slow_fail()
+	sleep(1)
+	return fail_deeper(5)
+
 /world/New()
 	..()
 	spawn(1)

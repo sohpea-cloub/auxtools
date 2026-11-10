@@ -1,9 +1,12 @@
 use std::{
 	cell::{OnceCell, RefCell},
-	collections::{BTreeMap, HashMap},
+	collections::{BTreeMap, HashMap, VecDeque},
 	error::Error,
 	io::{Read, Write},
-	sync::{mpsc, Mutex},
+	sync::{
+		atomic::{AtomicU64, Ordering},
+		mpsc, Mutex
+	},
 	thread,
 	time::{Duration, Instant}
 };
@@ -26,6 +29,21 @@ use crate::{
 
 mod render;
 mod watches;
+
+/// The number the next spawned expression gets: they go on through reboots,
+/// as the world's record does
+static NEXT_SPAWN: AtomicU64 = AtomicU64::new(1);
+
+/// What a client asked to spawn (`Request::Spawn`), compiled, waiting for the
+/// world's loop to run it
+struct Spawn {
+	number: u64,
+	bytecode: Vec<u32>,
+	/// The vars a proc's body declares
+	locals: Vec<String>,
+	/// Its code's arguments
+	args: Vec<Value>
+}
 
 /// Something a client can open, for the variables inside it. Those that are
 /// reached through an expression carry it, so what's inside can say how it's
@@ -310,6 +328,19 @@ pub struct Server {
 	/// The object that's `src` for the next expression evaluated in no frame
 	/// (`Request::EvalOn`)
 	eval_src: Option<Value>,
+	/// The number of the expression being compiled to be spawned, which is
+	/// queued rather than run
+	spawning: Option<u64>,
+	/// Spawned expressions waiting for the world's loop
+	spawns: VecDeque<Spawn>,
+	/// The list the world's loop looks at to know there are some
+	spawn_inbox: Option<Value>,
+	/// The spawn stub's own table of locals, to go back to after a body
+	/// that declared some
+	spawn_stub_locals: Option<u32>,
+	/// Those that have started, with their text, and the runtime error each
+	/// had if it had one
+	spawned: HashMap<u64, (String, Option<String>)>,
 	/// The client that asked for the world to stay paused once every client
 	/// has gone (`Request::HoldPause`)
 	hold: Option<ClientId>,
@@ -391,6 +422,11 @@ impl Server {
 			eval_given: vec![],
 			waiting_to_start: false,
 			eval_src: None,
+			spawning: None,
+			spawns: VecDeque::new(),
+			spawn_inbox: None,
+			spawn_stub_locals: None,
+			spawned: HashMap::new(),
 			hold: None,
 			hold_max: None,
 			procs_by_file: None,
@@ -474,6 +510,12 @@ impl Server {
 	/// it happened when that's in a proc the expression called, with the
 	/// procs between it and the expression
 	pub fn set_eval_error(&mut self, message: &str, ctx: *mut raw_types::procs::ExecutionContext) {
+		self.eval_error = Some(Self::error_with_stack(message, ctx));
+	}
+
+	/// A runtime error's message, with the procs between where it happened
+	/// and the expression whose code called them
+	fn error_with_stack(message: &str, ctx: *mut raw_types::procs::ExecutionContext) -> String {
 		let mut error = message.to_owned();
 		let mut frames = vec![];
 		let mut at = ctx;
@@ -492,7 +534,38 @@ impl Server {
 				error += "\n  called by the expression";
 			}
 		}
-		self.eval_error = Some(error);
+		error
+	}
+
+	/// A runtime error the world's own code had: one in spawned code, that
+	/// nothing it called catches, is what it gives (its first)
+	pub fn spawn_runtime(&mut self, message: &str, ctx: *mut raw_types::procs::ExecutionContext) {
+		if self.spawned.is_empty() {
+			return;
+		}
+		let (Some(stub), Some(spawned)) = (Proc::find("/proc/auxtools_spawn_stub"), Proc::find("/proc/auxtools_spawned")) else {
+			return;
+		};
+		let proc_of = |at: *mut raw_types::procs::ExecutionContext| unsafe { (**(*at).proc_instance()).proc };
+		let mut at = ctx;
+		let mut in_stub = false;
+		while !at.is_null() {
+			let id = proc_of(at);
+			if id == stub.id {
+				in_stub = true;
+			} else if in_stub && id == spawned.id {
+				// Its number is its first argument
+				let number = unsafe { Value::from_raw(*(**(*at).proc_instance()).args()) }.as_number().ok();
+				if let Some((_, error @ None)) = number.and_then(|number| self.spawned.get_mut(&(number as u64))) {
+					*error = Some(format!("runtime error: {}", Self::error_with_stack(message, ctx)));
+				}
+				return;
+			} else if !in_stub && unsafe { *(*at).throw_handler() } != 0 {
+				// Caught by the code it called
+				return;
+			}
+			at = unsafe { *(*at).parent_context() };
+		}
 	}
 
 	/// A running frame's proc, and its file and line: `/mob/proc/x  code.dm:12`
@@ -2061,6 +2134,19 @@ impl Server {
 		};
 		let (code, locals) = Self::compile_eval(command, &arg_names, &scope)?;
 		let assembly = dmasm::assembler::assemble(&code, &mut crate::assemble_env::AssembleEnv).map_err(Self::assemble_error)?;
+		// To be run by the world's loop, as its own code (see `launched`)
+		if let Some(number) = self.spawning.take() {
+			self.spawns.push_back(Spawn {
+				number,
+				bytecode: assembly,
+				locals,
+				args: arg_values.into_iter().cloned().collect()
+			});
+			if let Some(inbox) = self.spawn_inbox.as_ref().and_then(|inbox| List::from_value(inbox).ok()) {
+				inbox.append(Value::from(number as f32));
+			}
+			return Ok(Value::NULL);
+		}
 		let proc = Proc::find("/proc/auxtools_expr_stub").ok_or("the world has no /proc/auxtools_expr_stub to evaluate expressions in")?;
 
 		proc.set_bytecode(assembly);
@@ -2239,6 +2325,108 @@ impl Server {
 			}))
 		};
 		self.send_or_disconnect(response);
+	}
+
+	/// What `Request::Spawn` asks for: an expression compiled now, and run
+	/// by the world's loop on its next tick
+	fn handle_spawn(&mut self, expression: &str, object: Option<&str>) {
+		let result = self.spawn(expression, object);
+		self.send_or_disconnect(Response::Spawned(result));
+	}
+
+	fn spawn(&mut self, expression: &str, object: Option<&str>) -> Result<u64, String> {
+		crate::launched::can_spawn()?;
+		let object = object.map(|object| self.object_of(object)).transpose()?;
+		let number = NEXT_SPAWN.fetch_add(1, Ordering::Relaxed);
+		self.eval_src = object;
+		self.spawning = Some(number);
+		let compiled = self.eval_expr(None, expression);
+		self.spawning = None;
+		compiled?;
+		self.spawned.insert(number, (expression.to_owned(), None));
+		Ok(number)
+	}
+
+	/// The list the world's loop looks at, which has an entry when there's
+	/// spawned code to run
+	pub fn spawn_inbox(&mut self) -> Value {
+		let inbox = Value::from(List::new());
+		self.spawn_inbox = Some(inbox.clone());
+		inbox
+	}
+
+	/// The next spawned expression for the world's loop to run, with its code
+	/// put in `/proc/auxtools_spawn_stub`: `list(number, list(arguments))`,
+	/// or null when there's none. Code that's running keeps its own.
+	pub fn next_spawn(&mut self) -> DMResult {
+		let Some(spawn) = self.spawns.pop_front() else {
+			return Ok(Value::NULL);
+		};
+		let Some(stub) = Proc::find("/proc/auxtools_spawn_stub") else {
+			self.spawn_failed(spawn.number, "the world has no /proc/auxtools_spawn_stub to run it in".to_owned());
+			return Ok(Value::NULL);
+		};
+		// A body's own vars: the stub has room for them from this call on.
+		// Code that's asleep has its own already.
+		if let Err(error) = self.set_stub_locals(&stub, &spawn.locals) {
+			self.spawn_failed(spawn.number, error);
+			return self.next_spawn();
+		}
+		stub.set_bytecode(spawn.bytecode);
+		let args = List::new();
+		for arg in &spawn.args {
+			args.append(arg);
+		}
+		let next = List::new();
+		next.append(Value::from(spawn.number as f32));
+		next.append(Value::from(args));
+		Ok(Value::from(next))
+	}
+
+	/// Gives the spawn stub the locals its next code declares, or none
+	fn set_stub_locals(&mut self, stub: &Proc, locals: &[String]) -> Result<(), String> {
+		use auxtools::runtime_tables::{self, ProcEntryWords};
+		let now = runtime_tables::proc_entry(stub.id).ok_or("couldn't read the spawn stub's proc entry")?.0[ProcEntryWords::LOCALS];
+		// What this world's stub was compiled with, which is no locals at all
+		let none = *self.spawn_stub_locals.get_or_insert(now);
+		let table = hot_reload::locals_table(locals, none)?;
+		if table != now {
+			runtime_tables::set_proc_entry_word(stub.id, ProcEntryWords::LOCALS, table);
+		}
+		Ok(())
+	}
+
+	/// What spawned code gave: the list its code returns (its value first),
+	/// or null if it failed
+	pub fn spawn_done(&mut self, number: u64, returned: &Value) {
+		let Some((expression, error)) = self.spawned.remove(&number) else {
+			return;
+		};
+		let result = match (error, returned.as_list()) {
+			(Some(error), _) => Err(error),
+			(None, Ok(list)) => {
+				let value = list.get(1).unwrap_or(Value::NULL);
+				Ok(SpawnedValue {
+					text: Self::stringify(&value),
+					rendered: Self::render(&value, 1)
+				})
+			}
+			(None, Err(_)) => Err("it ended without a value".to_owned())
+		};
+		self.journal(JournalEvent::Spawned { spawn: number, expression, result }, None);
+	}
+
+	/// Spawned code that couldn't be run: the record says why
+	fn spawn_failed(&mut self, number: u64, why: String) {
+		let expression = self.spawned.remove(&number).map(|(expression, _)| expression).unwrap_or_default();
+		self.journal(
+			JournalEvent::Spawned {
+				spawn: number,
+				expression,
+				result: Err(why)
+			},
+			None
+		);
 	}
 
 	/// The object `ref()` gave this for, `[0x2000001]` (or without the
@@ -2505,6 +2693,7 @@ impl Server {
 			Request::RenderVariables { vars, depth } => self.handle_render_variables(vars, depth),
 			Request::EvalOn { object, expression, depth } => self.handle_eval_on(&object, &expression, depth),
 			Request::Defines(macros) => crate::macros::set(macros),
+			Request::Spawn { expression, object } => self.handle_spawn(&expression, object.as_deref()),
 
 			// The following requests are special cases and handled outside of
 			// this function
@@ -3092,10 +3281,13 @@ impl Drop for Server {
 	}
 }
 
-/// Whether a frame is the one an expression the debugger evaluates runs in
+/// Whether a frame is the one an expression the debugger evaluates runs in,
+/// or one a client spawned
 pub(crate) fn is_expression_frame(ctx: *mut raw_types::procs::ExecutionContext) -> bool {
 	let id = unsafe { (**(*ctx).proc_instance()).proc };
-	Proc::find("/proc/auxtools_expr_stub").is_some_and(|stub| stub.id == id)
+	["/proc/auxtools_expr_stub", "/proc/auxtools_spawn_stub"]
+		.into_iter()
+		.any(|path| Proc::find(path).is_some_and(|stub| stub.id == id))
 }
 
 /// Reads one request off a connection: a u32 length, then the request in

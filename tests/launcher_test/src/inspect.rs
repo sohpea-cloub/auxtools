@@ -67,6 +67,7 @@ pub fn command_line_inspect(pid: u64, dir: &Path, code: &Path) {
 	as_json(pid, dir);
 	on_an_object(pid);
 	macros(pid, code);
+	spawned(pid, code);
 }
 
 /// `eval` fails on stderr with exit code 1, whatever went wrong, and a
@@ -400,4 +401,69 @@ fn macros(pid: &str, code: &Path) {
 	eval_becomes(pid, "ANSWER", "42");
 	assert!(fails(pid, &["eval", "GONE"]).starts_with("undefined var: GONE"));
 	println!("ok: a reload that changes the code's macros gives the world the new ones");
+}
+
+/// eval --spawn: the world's own code, on its next tick
+fn spawned(pid: &str, code: &Path) {
+	let number = run(pid, &["eval", "--spawn", "slow_double(4)"], 0).out;
+	let number: u64 = number.trim().parse().unwrap_or_else(|_| panic!("eval --spawn printed {}", number));
+	let mut entry = Value::Null;
+	for _ in 0..100 {
+		let printed = run(pid, &["log", "--spawned", "--last", "1", "--json"], 0).out;
+		entry = serde_json::from_str(&printed).unwrap_or_default();
+		if entry["spawn"] == number {
+			break;
+		}
+		std::thread::sleep(std::time::Duration::from_millis(100));
+	}
+	assert!(entry["spawn"] == number && entry["value"] == 8 && entry["expression"] == "slow_double(4)", "{}", entry);
+	let printed = run(pid, &["log", "--spawned", "--last", "1"], 0).out;
+	assert!(printed.ends_with(&format!(" spawned {}: slow_double(4) gave 8\n", number)), "log said {}", printed);
+	println!("ok: eval --spawn prints a number and returns; the world runs it, sleep and all, and its record has what it gave");
+
+	assert_eq!(run(pid, &["eval", "--spawn", "--wait", "slow_double(5)"], 0).out, "10\n");
+	let reference = run(pid, &["eval", "ref(held)"], 0).out.trim().trim_matches('"').to_owned();
+	assert_eq!(run(pid, &["eval", "--spawn", "--wait", "--src", &reference, "double(count) + DOUBLE_IT(1)"], 0).out, "8\n");
+	let both = json_of(pid, &["eval", "--spawn", "--wait", "--json", "list(slow_double(1), held)"]);
+	assert!(both[0] == 2 && both[1]["type"] == "/datum/held" && both[1].get("vars").is_none(), "{}", both);
+	println!("ok: eval --spawn --wait prints what it gave as eval does, --json and --src too");
+
+	// A proc's body, with vars of its own, which can sleep here
+	let body = "var/n = slow_double(2)\nsleep(1)\nvar/list/both = list(n, n + 1)\nboth[2]";
+	assert_eq!(run(pid, &["eval", "--spawn", "--wait", body], 0).out, "5\n");
+	assert_eq!(run(pid, &["eval", "--spawn", "--wait", "slow_double(5)"], 0).out, "10\n");
+	println!("ok: eval --spawn takes a proc's body, which keeps its vars across a sleep");
+
+	// A runtime error, before a sleep and after one
+	let said = fails(pid, &["eval", "--spawn", "--wait", "fail_in(3)"]);
+	assert!(said.starts_with("runtime error: ") && said.contains("\n  in /fail_deeper  ") && said.ends_with("\n  called by the expression"), "eval said {}", said);
+	let said = fails(pid, &["eval", "--spawn", "--wait", "slow_fail()"]);
+	let lines: Vec<&str> = said.lines().collect();
+	assert!(lines.len() == 4 && lines[0].starts_with("runtime error: "), "eval said {}", said);
+	assert_eq!(lines[1], format!("  in /fail_deeper  attach_host.dm:{}", line_of(code, "\treturn L[n]")));
+	assert_eq!(lines[2], format!("  called by /slow_fail  attach_host.dm:{}", line_of(code, "\treturn fail_deeper(5)")));
+	let printed = run(pid, &["log", "--spawned", "--last", "1"], 0).out;
+	assert!(printed.contains(": slow_fail() failed: runtime error: ") && printed.contains("\n  in /fail_deeper  "), "log said {}", printed);
+	println!("ok: a runtime error in spawned code is what it gave, with the procs it was in, after a sleep too");
+
+	// A breakpoint in what it calls stops the world
+	let waiting = crate::journal::Background::start(pid.parse().unwrap(), &["wait", "--break", "/proc/slow_double", "--timeout", "60"]);
+	// (it says where the breakpoint went on stderr, which is read once it's done)
+	std::thread::sleep(std::time::Duration::from_secs(2));
+	run(pid, &["eval", "--spawn", "slow_double(6)"], 0);
+	let (exit, printed) = waiting.finish();
+	assert!(exit == 0 && printed.contains("paused at a breakpoint\n#0 /slow_double  "), "wait gave {}: {}", exit, printed);
+	let stack = run(pid, &["stack"], 0).out;
+	assert!(stack.lines().nth(1).is_some_and(|line| line.starts_with("#1 /auxtools_spawn_stub")), "stack said {}", stack);
+	assert_eq!(run(pid, &["eval", "n"], 0).out, "6\n");
+	run(pid, &["continue"], 0);
+	println!("ok: a breakpoint in what spawned code calls stops the world there");
+
+	let ran = run(pid, &["eval", "--spawn", "--wait", "--timeout", "0.5", "slow_double(1, 50)"], 2);
+	assert!(ran.err.starts_with("timed out: spawned ") && ran.err.contains("hasn't finished"), "eval said {}", ran.err);
+	assert!(fails(pid, &["eval", "--spawn", "1 +"]).starts_with("parser error: "));
+	assert!(fails(pid, &["eval", "--spawn", "--src", "[0x2100ffff]", "1"]).starts_with("there's no object [0x2100ffff]"));
+	assert_eq!(fails(pid, &["eval", "--wait", "1"]), "--wait and --timeout go with --spawn");
+	assert_eq!(fails(pid, &["eval", "--spawn", "--frame", "0", "1"]), "--spawn and --frame don't go together: it runs on the next tick, in no frame");
+	println!("ok: eval --spawn --wait gives up after --timeout, and what can't be spawned fails at once");
 }

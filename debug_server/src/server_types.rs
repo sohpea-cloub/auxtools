@@ -231,7 +231,16 @@ pub enum Request {
 	/// of them, in place of any given before. They last as long as the
 	/// process, through reboots, and expressions from every client use them.
 	/// It has no answer.
-	Defines(Vec<Macro>)
+	Defines(Vec<Macro>),
+	/// Runs an expression as the world's own code on its next tick, in no
+	/// frame (with `src` an object, given as for `EvalOn`): breakpoints stop
+	/// in what it calls, and it may sleep. Answered with `Response::Spawned`
+	/// once it's compiled; what it gives goes in the world's record
+	/// (`JournalEvent::Spawned`).
+	Spawn {
+		expression: String,
+		object: Option<String>
+	}
 }
 
 /// A `#define` of the world's code, as its preprocessor has it
@@ -380,7 +389,10 @@ pub enum Response {
 	/// What an expression gave, or why it gave nothing
 	Render(Result<Rendered, String>),
 	/// Each var's name and value, or why there are none
-	RenderVariables(Result<Vec<(String, Rendered)>, String>)
+	RenderVariables(Result<Vec<(String, Rendered)>, String>),
+	/// The number of what `Request::Spawn` asked to run, which its entry in
+	/// the world's record will have, or why it won't run
+	Spawned(Result<u64, String>)
 }
 
 /// An entry in the world's record of what happened in it. The record keeps
@@ -423,7 +435,25 @@ pub enum JournalEvent {
 	/// A pause held for clients that come and go (`Request::HoldPause`) was
 	/// let go by the debug server: no client that debugs was there for this
 	/// many seconds
-	HoldEnded { seconds: f64 }
+	HoldEnded { seconds: f64 },
+	/// What came of an expression `Request::Spawn` ran: its value, or its
+	/// runtime error (with the procs between it and the expression)
+	Spawned {
+		/// The number `Response::Spawned` gave it
+		spawn: u64,
+		expression: String,
+		result: Result<SpawnedValue, String>
+	}
+}
+
+/// What a spawned expression gave
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct SpawnedValue {
+	/// As `Eval` writes it
+	pub text: String,
+	/// Written out to a depth of 1: a list's entries, an object without its
+	/// vars
+	pub rendered: Rendered
 }
 
 impl JournalEvent {
@@ -432,7 +462,8 @@ impl JournalEvent {
 			Self::Runtime { .. } => JournalKind::Runtime,
 			Self::Reload { .. } => JournalKind::Reload,
 			Self::Loaded { .. } | Self::HoldEnded { .. } => JournalKind::World,
-			Self::Output { .. } => JournalKind::Output
+			Self::Output { .. } => JournalKind::Output,
+			Self::Spawned { .. } => JournalKind::Spawned
 		}
 	}
 }
@@ -444,7 +475,9 @@ pub enum JournalKind {
 	Reload,
 	/// Worlds loading, and what the debug server did by itself
 	World,
-	Output
+	Output,
+	/// What came of expressions run with `Request::Spawn`
+	Spawned
 }
 
 /// A proc a runtime error happened in

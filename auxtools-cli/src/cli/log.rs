@@ -17,7 +17,7 @@ pub fn log(world: &mut World, args: &[String]) -> Result<()> {
 	let flags = Flags::parse(
 		args,
 		&["--since", "--last"],
-		&["--follow", "--runtimes", "--reloads", "--output", "--world", "--json"]
+		&["--follow", "--runtimes", "--reloads", "--output", "--world", "--spawned", "--json"]
 	)?;
 	flags.nothing_else("log")?;
 	let kinds = kinds(&flags);
@@ -130,7 +130,8 @@ pub fn kinds(flags: &Flags) -> Vec<JournalKind> {
 		("--runtimes", JournalKind::Runtime),
 		("--reloads", JournalKind::Reload),
 		("--output", JournalKind::Output),
-		("--world", JournalKind::World)
+		("--world", JournalKind::World),
+		("--spawned", JournalKind::Spawned)
 	]
 	.into_iter()
 	.filter(|(flag, _)| flags.has(flag))
@@ -328,7 +329,13 @@ pub fn describe(event: &JournalEvent) -> (String, Vec<String>) {
 				number(*seconds)
 			),
 			vec![]
-		)
+		),
+		JournalEvent::Spawned { spawn, expression, result: Ok(value) } => (format!("spawned {}: {} gave {}", spawn, expression, value.text), vec![]),
+		JournalEvent::Spawned { spawn, expression, result: Err(error) } => {
+			// Its first line, then the procs it was in
+			let mut lines = error.lines().map(|line| line.trim_start().to_owned());
+			(format!("spawned {}: {} failed: {}", spawn, expression, lines.next().unwrap_or_default()), lines.collect())
+		}
 	}
 }
 
@@ -386,7 +393,15 @@ pub fn to_json(entry: &JournalEntry) -> serde_json::Value {
 		} => json!({ "kind": "reload", "applied": applied, "summary": summary, "errors": errors, "warnings": warnings }),
 		JournalEvent::Loaded { load } => json!({ "kind": "world", "event": "loaded", "load": load }),
 		JournalEvent::Output { lines } => json!({ "kind": "output", "lines": lines }),
-		JournalEvent::HoldEnded { seconds } => json!({ "kind": "world", "event": "hold_ended", "seconds": seconds })
+		JournalEvent::HoldEnded { seconds } => json!({ "kind": "world", "event": "hold_ended", "seconds": seconds }),
+		JournalEvent::Spawned { spawn, expression, result } => json!({
+			"kind": "spawned",
+			"spawn": spawn,
+			"expression": expression,
+			"value": result.as_ref().ok().map(|value| super::json::value(&value.rendered)),
+			"text": result.as_ref().ok().map(|value| &value.text),
+			"error": result.as_ref().err()
+		})
 	};
 	value["number"] = entry.number.into();
 	value["time"] = entry.time.into();

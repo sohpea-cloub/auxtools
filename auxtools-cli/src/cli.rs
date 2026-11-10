@@ -177,6 +177,7 @@ them, so `log --runtimes --follow` watches them without pausing the world.
                that started it and reads it: DreamDaemon's and dd's. DreamSeeker gives a
                launcher nothing to read, so a world it hosts has none.
   --world      The world loading and rebooting, and what the debugger did by itself
+  --spawned    What came of expressions `eval --spawn` ran: their values or their errors
   --since N    Only the entries after number N
   --last N     Only the last N entries (of those asked for)
   --json       An entry a line, as a JSON object: number, time (milliseconds since 1970,
@@ -219,13 +220,13 @@ them, so `log --runtimes --follow` watches them without pausing the world.
 		},
 		Command {
 			name: "eval",
-			usage: "EXPRESSION | -f FILE | - [--frame N | --src REF] [OPTIONS]",
+			usage: "EXPRESSION | -f FILE | - [--frame N|--src REF|--spawn] [OPTIONS]",
 			about: "The value of a DM expression, or of a proc's body",
 			details: "In a paused world, the expression is in a frame of the stack: it can name that
 proc's vars, and `src`. In a running world it can name globals and call procs.
 More than one statement is a proc's body (given as one argument with newlines or `;`
 in it, or with -f or -): `var/n = 0; for(var/i in 1 to 3) n += i; n` gives what it
-returns, or its last line's value when that's an expression. It can't sleep.
+returns, or its last line's value when that's an expression. It can't sleep (with --spawn it can).
 The code's #defines work in it (`get_turf(src)`), when the world was started by a
 launcher that reads its code for hot reloading (not with --no-hot-reload).
 When it fails, it says why on stderr and exits with 1: for a runtime error in a proc
@@ -236,6 +237,14 @@ it called, with that proc's file and line and the procs between it and the expre
   --src REF    In no frame, with `src` the object whose ref() is REF ([0x2000001], or
                0x2000001): a bare name is its var, a bare call its proc, as in its own
                procs. Paused or not. It fails if the object isn't there (deleted).
+  --spawn      Run it as the world's own code, on its next tick, in no frame (--src can
+               give it one): breakpoints stop in what it calls, and it may sleep. Prints
+               its number and returns at once; what it gives goes in the world's record
+               (`log --spawned`). A world not started by auxtools' launcher may not have
+               what it needs: it says so.
+  --wait       With --spawn: wait for it to finish, and print what it gave as a plain
+               eval does (exit code 1 for a runtime error in it)
+  --timeout S  How long --wait waits (exit code 2 when it's longer: it still runs)
   --json       The value as JSON: a number, text or null as itself; a list as an array of
                its entries, or an object when they're text keys with values (else an
                array of {\"key\", \"value\"}); an object (a datum, atom, client...) as
@@ -245,11 +254,19 @@ it called, with that proc's file and line and the procs between it and the expre
                while N is 1 or more, an object's vars while it's 2 or more, each a level
                lower. Past that, a list is {\"list\": true, \"len\"} and an object no vars.",
 			run: Run::World(|world, args| {
-				let flags = Flags::parse(args, &["--frame", "-f", "--depth", "--src"], &["--json"])?;
+				let flags = Flags::parse(args, &["--frame", "-f", "--depth", "--src", "--timeout"], &["--json", "--spawn", "--wait"])?;
 				world.output(&flags)?;
 				let expression = expression(&flags.rest, flags.value("-f"), read_stdin)?;
+				if !flags.has("--spawn") && (flags.has("--wait") || flags.has("--timeout")) {
+					return Err("--wait and --timeout go with --spawn".into());
+				}
 				match flags.value("--src") {
+					_ if flags.has("--spawn") && flags.has("--frame") => Err("--spawn and --frame don't go together: it runs on the next tick, in no frame".into()),
 					Some(_) if flags.has("--frame") => Err("--src and --frame don't go together: --src is in no frame".into()),
+					object if flags.has("--spawn") => {
+						let wait = flags.has("--wait").then(|| flags.number::<f64>("--timeout")).transpose()?;
+						world.spawn(&expression, object, wait.map(|timeout| timeout.map(Duration::from_secs_f64)))
+					}
 					Some(object) => world.eval_on(object, &expression),
 					None => world.eval(&expression, flags.number("--frame")?)
 				}
@@ -1166,6 +1183,63 @@ impl World {
 			other => return Err(unexpected(&other))
 		}
 		Ok(())
+	}
+
+	/// `eval --spawn`: runs the expression on the world's next tick, and with
+	/// `wait` (and how long for), waits for what it gave
+	fn spawn(&mut self, expression: &str, object: Option<&str>, wait: Option<Option<Duration>>) -> Result<()> {
+		// Where the record is now, so that its entry can't be missed
+		let newest = match self.request(Request::Journal {
+			after: u64::MAX,
+			kinds: vec![],
+			limit: Some(0),
+			follow: false
+		})? {
+			Response::Journal { last, .. } => last,
+			other => return Err(unexpected(&other))
+		};
+		self.notes.clear();
+		let number = match self.request(Request::Spawn {
+			expression: expression.to_owned(),
+			object: object.map(str::to_owned)
+		})? {
+			Response::Spawned(number) => number,
+			other => return Err(unexpected(&other))
+		};
+		for note in std::mem::take(&mut self.notes) {
+			eprintln!("{}", note);
+		}
+		let number = number?;
+		let Some(timeout) = wait else {
+			match self.json {
+				Some(_) => println!("{}", serde_json::json!({ "spawn": number })),
+				None => println!("{}", number)
+			}
+			return Ok(());
+		};
+		if self.paused()?.is_some() {
+			eprintln!("the world is paused: spawned {} runs once it carries on", number);
+		}
+
+		let until = timeout.map(|timeout| Instant::now() + timeout);
+		let mut follower = log::Follower::new(newest, vec![JournalKind::Spawned, JournalKind::World]);
+		loop {
+			let Some(entry) = follower.next(self, until)? else {
+				return Err(Failure(TIMED_OUT, format!("timed out: spawned {} hasn't finished (it still runs)", number)));
+			};
+			match entry.event {
+				JournalEvent::Spawned { spawn, result, .. } if spawn == number => {
+					let value = result?;
+					match self.json {
+						Some(_) => println!("{}", json::value(&value.rendered)),
+						None => println!("{}", value.text)
+					}
+					return Ok(());
+				}
+				JournalEvent::Loaded { .. } => return Err(Failure(HUNG_UP, format!("the world rebooted before spawned {} finished", number))),
+				_ => {}
+			}
+		}
 	}
 
 	/// What the world knows of a proc

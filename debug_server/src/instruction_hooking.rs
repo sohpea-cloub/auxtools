@@ -247,6 +247,11 @@ fn handle_runtime(error: &str) {
 			}
 		}
 
+		// Spawned code's runtime is what it gives, as well as the world's
+		if let Some(server) = &mut *DEBUG_SERVER.get() {
+			server.spawn_runtime(error, ctx);
+		}
+
 		// One nobody pauses for leaves a step in progress as it was
 		let reason = BreakpointReason::Runtime {
 			message: error.to_string(),

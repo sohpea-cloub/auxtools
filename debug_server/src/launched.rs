@@ -47,8 +47,34 @@ const HELPER_PROCS: &str = r#"
 
 /proc/auxtools_keepalive()
 	set waitfor = FALSE
+	// Has an entry when a client asks for code to be run as the world's own.
+	// Only then does the loop call a proc: one called while the world reboots
+	// would start the debugger in the world that's going.
+	var/list/inbox = auxtools_spawn_inbox()
 	while(TRUE)
+		if(inbox && inbox.len)
+			inbox.len = 0
+			var/list/next = auxtools_spawn_next()
+			while(next)
+				auxtools_spawned(next[1], next[2])
+				next = auxtools_spawn_next()
 		sleep(1)
+
+/proc/auxtools_spawn_inbox()
+	return null
+
+/proc/auxtools_spawn_next()
+	return null
+
+/proc/auxtools_spawn_stub()
+	CRASH("auxtools_spawn_stub is where the debugger runs what it's asked to spawn")
+
+/proc/auxtools_spawned(number, list/given)
+	set waitfor = FALSE
+	auxtools_spawn_done(number, auxtools_spawn_stub(arglist(given)))
+
+/proc/auxtools_spawn_done(number, result)
+	CRASH("the debugger's library isn't loaded")
 
 /proc/auxtools_launched_world_del()
 	CRASH("the debugger's library isn't loaded")
@@ -81,6 +107,25 @@ const HELPER_OVERRIDES: [&str; 2] = ["/world/Del", "/world/Reboot"];
 /// Set when `world/Reboot` is called, for `world/Del` to tell a reboot from
 /// the end
 static REBOOTING: AtomicBool = AtomicBool::new(false);
+
+/// Whether the world's loop is ours, which runs what clients spawn: a world
+/// with an `auxtools_keepalive` of its own keeps it
+static KEEPALIVE_OURS: AtomicBool = AtomicBool::new(false);
+
+/// Whether the world runs what clients spawn: its loop is ours, and the
+/// procs it calls are hooked
+static SPAWNS: AtomicBool = AtomicBool::new(false);
+
+/// Why the world can't run what a client spawns, if it can't
+pub fn can_spawn() -> Result<(), String> {
+	if SPAWNS.load(Ordering::Relaxed) {
+		return Ok(());
+	}
+	if !KEEPALIVE_OURS.load(Ordering::Relaxed) && Proc::find("/proc/auxtools_keepalive").is_some() {
+		return Err("this world can't run spawned code: it has an /proc/auxtools_keepalive of its own, which doesn't run it".to_owned());
+	}
+	Err("this world can't run spawned code: it doesn't have the debugger's helper procs for it".to_owned())
+}
 
 static WORLD_LOAD: WorldLoad = WorldLoad { prepare, ready, failed };
 
@@ -136,6 +181,10 @@ fn attach() {
 /// Adds the procs in [`HELPER_PROCS`] the world doesn't have
 fn prepare() -> Result<(), String> {
 	let request = helper_procs()?;
+	KEEPALIVE_OURS.store(
+		request.new_procs.iter().any(|proc| proc.type_path.is_empty() && proc.name == "auxtools_keepalive"),
+		Ordering::Relaxed
+	);
 	if request.is_empty() {
 		return Ok(());
 	}
@@ -208,6 +257,13 @@ fn ready() {
 		let _ = proc.hook(world_reboot);
 	}
 	REBOOTING.store(false, Ordering::Relaxed);
+	let hooked = |path: &str, hook: fn(&Value, &Value, Vec<Value>) -> auxtools::DMResult| Proc::find(path).is_some_and(|proc| proc.hook(hook).is_ok());
+	let spawns = KEEPALIVE_OURS.load(Ordering::Relaxed)
+		& hooked("/proc/auxtools_spawn_inbox", spawn_inbox)
+		& hooked("/proc/auxtools_spawn_next", spawn_next)
+		& hooked("/proc/auxtools_spawn_done", spawn_done)
+		&& ["/proc/auxtools_spawn_stub", "/proc/auxtools_spawned"].into_iter().all(|path| Proc::find(path).is_some());
+	SPAWNS.store(spawns, Ordering::Relaxed);
 	for path in HELPER_OVERRIDES {
 		// Ours is the last
 		if let Some(proc) = overrides(path).checked_sub(1).and_then(|last| Proc::find_override(path, last)) {
@@ -252,6 +308,33 @@ fn world_del(_: &Value, _: &Value, _: Vec<Value>) -> auxtools::DMResult {
 
 fn world_reboot(_: &Value, _: &Value, _: Vec<Value>) -> auxtools::DMResult {
 	REBOOTING.store(true, Ordering::Relaxed);
+	Ok(Value::NULL)
+}
+
+/// The list the world's loop looks at for spawned code to run
+fn spawn_inbox(_: &Value, _: &Value, _: Vec<Value>) -> auxtools::DMResult {
+	match unsafe { &mut *crate::DEBUG_SERVER.get() } {
+		Some(server) => Ok(server.spawn_inbox()),
+		None => Ok(Value::NULL)
+	}
+}
+
+/// What the world's loop runs next of what clients spawned: its number and
+/// the arguments for its code, which is in `/proc/auxtools_spawn_stub` now;
+/// null for nothing
+fn spawn_next(_: &Value, _: &Value, _: Vec<Value>) -> auxtools::DMResult {
+	match unsafe { &mut *crate::DEBUG_SERVER.get() } {
+		Some(server) => server.next_spawn(),
+		None => Ok(Value::NULL)
+	}
+}
+
+/// What spawned code gave: the list its code returns, or null if it failed
+fn spawn_done(_: &Value, _: &Value, args: Vec<Value>) -> auxtools::DMResult {
+	let number = args.first().and_then(|number| number.as_number().ok());
+	if let (Some(server), Some(number)) = (unsafe { &mut *crate::DEBUG_SERVER.get() }, number) {
+		server.spawn_done(number as u64, args.get(1).unwrap_or(&Value::NULL));
+	}
 	Ok(Value::NULL)
 }
 
