@@ -615,6 +615,15 @@ impl Flags {
 			.map(|v| v.parse().map_err(|_| Failure::from(format!("{} {} isn't a number", name, v))))
 			.transpose()
 	}
+
+	/// A time in seconds: not negative, and a number
+	fn seconds(&self, name: &str) -> Result<Option<Duration>> {
+		match self.number::<f64>(name)? {
+			Some(seconds) if seconds.is_finite() && seconds >= 0.0 => Ok(Some(Duration::from_secs_f64(seconds))),
+			Some(_) => Err(format!("{} {} isn't a time in seconds", name, self.value(name).unwrap_or_default()).into()),
+			None => Ok(None)
+		}
+	}
 }
 
 fn execute(pid: Option<u32>, words: &[String]) -> Result<()> {
@@ -668,7 +677,7 @@ fn wait(world: &mut World, args: &[String]) -> Result<()> {
 		condition: flags.value("--if").map(given_text).transpose()?,
 		runtimes: flags.has("--runtimes") || flags.has("--caught"),
 		caught: flags.has("--caught"),
-		timeout: flags.number::<f64>("--timeout")?.map(Duration::from_secs_f64),
+		timeout: flags.seconds("--timeout")?,
 		hold: !flags.has("--no-hold")
 	})
 }
@@ -1642,6 +1651,17 @@ mod tests {
 			assert!(proc_ref(wrong).is_err(), "{}", wrong);
 		}
 		assert!(one_proc("dis", &args(&["/a", "/b"])).is_err() && one_proc("dis", &[]).is_err());
+	}
+
+	#[test]
+	fn a_time_is_a_number_of_seconds_that_isnt_negative() {
+		let flags = |value: &str| Flags::parse(&args(&["--timeout", value]), &["--timeout"], &[]).ok().unwrap();
+		assert_eq!(flags("1.5").seconds("--timeout").ok().unwrap(), Some(std::time::Duration::from_millis(1500)));
+		assert_eq!(flags("0").seconds("--timeout").ok().unwrap(), Some(std::time::Duration::ZERO));
+		for wrong in ["-1", "NaN", "inf", "soon"] {
+			assert!(flags(wrong).seconds("--timeout").is_err(), "{}", wrong);
+		}
+		assert_eq!(Flags::parse(&[], &["--timeout"], &[]).ok().unwrap().seconds("--timeout").ok().unwrap(), None);
 	}
 
 	#[test]

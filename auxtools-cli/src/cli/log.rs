@@ -77,7 +77,7 @@ pub fn wait_on_record(world: &mut World, args: &[String]) -> Option<Result<()>> 
 		}
 		let flags = Flags::parse(args, &["--timeout", "--since"], &["--reload", "--reboot", "--json"])?;
 		flags.nothing_else("wait")?;
-		let until = flags.number::<f64>("--timeout")?.map(|t| Instant::now() + Duration::from_secs_f64(t));
+		let until = flags.seconds("--timeout")?.map(|t| Instant::now() + t);
 		let since = flags.number::<u64>("--since")?;
 		if reload {
 			wait_reload(world, since, until, flags.has("--json"))
