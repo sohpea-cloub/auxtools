@@ -1453,10 +1453,13 @@ impl Server {
 		}
 	}
 
-	/// Tells every client
+	/// Tells every client, or the world's own output when there's nobody to
+	/// tell (a launcher passes that on too, so it's one or the other)
 	pub fn notify<T: Into<String>>(&mut self, message: T) {
 		let message = message.into();
-		eprintln!("Debug Server: {:?}", message);
+		if self.clients.is_empty() {
+			eprintln!("Debug Server: {}", message);
+		}
 
 		self.broadcast(Response::Notification { message }, None);
 	}
@@ -1520,7 +1523,6 @@ impl Server {
 			}
 		}
 
-		self.notify(format!("Pausing execution (reason: {:?})", reason));
 		self.paused = Some(reason.clone());
 		self.broadcast(Response::BreakpointHit { reason }, None);
 

@@ -95,8 +95,6 @@ impl Debuggee {
 					match response {
 						Response::Disconnect => break "the debug server disconnected".to_owned(),
 
-						// Said when it pauses, which the client hears anyway
-						Response::Notification { message } if message.starts_with("Pausing execution") => {}
 						Response::Notification { message } => out.console(format!("[auxtools] {}", message)),
 
 						Response::BreakpointHit { .. } | Response::Resumed if !debugging => {}

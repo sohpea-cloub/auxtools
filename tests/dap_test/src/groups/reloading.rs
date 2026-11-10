@@ -60,6 +60,12 @@ pub fn run() {
 	assert_eq!(world.local("y"), "4");
 	ok("a breakpoint the client moved with its line, after a reload that moved the code, stops on the same statement");
 
+	// What the debug server has to say comes once, as the launcher's words
+	assert_eq!(world.count("[auxtools] Hot reload: new code for"), 1, "the reload wasn't announced once");
+	assert!(!world.output.contains("Debug Server:"), "the debug server's own output was passed on as well");
+	assert!(!world.output.contains("Pausing execution"), "a stop was announced in the console");
+	ok("the debug server's messages reach the console once, and a stop isn't one of them");
+
 	// Paused in leaf(), whose code changes under it
 	edit(
 		&mut world,
