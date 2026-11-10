@@ -156,9 +156,16 @@ pub fn run() {
 	assert_eq!(local("error"), "boom");
 	let inside = world.children(&variable("error"));
 	assert_eq!((value_of(&inside, "file"), value_of(&inside, "line")), ("\"file.dm\"", "3"));
-	assert_eq!(local("save"), "dap_test.sav");
 	assert_eq!(value_of(&world.children(&variable("img")), "type"), "/image");
-	ok("a matrix, a regex, an exception, a savefile and an image");
+	ok("a matrix, a regex, an exception and an image");
+
+	assert_eq!(local("save"), "dap_test.sav");
+	let inside = world.children(&variable("save"));
+	assert_eq!(inside[0], ("type".to_owned(), "/savefile".to_owned()));
+	assert_eq!((value_of(&inside, "name"), value_of(&inside, "cd")), ("\"dap_test.sav\"", "\"/\""));
+	assert_eq!(value_of(&inside, "dir"), "/list {len = 0}");
+	assert!(!world.output.contains("BUG:"), "BYOND complained:\n{}", world.output);
+	ok("a savefile opens to its vars, and BYOND has nothing to say about it");
 
 	assert_eq!(local("pointer"), "&whole");
 	ok("a pointer shows what it points at");

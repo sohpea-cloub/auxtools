@@ -479,12 +479,15 @@ impl Server {
 	}
 
 	// 516 primitives have no `vars` list, so their fields are spelled out here.
-	// a callee only reads while its proc is still running
+	// a callee only reads while its proc is still running. A savefile has a
+	// `vars` list, but not one BYOND counts references to: holding it gets a
+	// "Bad ref" in the world's log each time.
 	const fn primitive_fields(value: &Value) -> Option<&'static [&'static str]> {
 		match value.raw.tag {
 			ValueTag::Vector => Some(&["x", "y", "z", "len", "size"]),
 			ValueTag::PixLoc => Some(&["x", "y", "z", "step_x", "step_y", "loc"]),
 			ValueTag::Callee => Some(&["proc", "file", "line", "src", "usr", "args", "caller"]),
+			ValueTag::SaveFile => Some(&["type", "name", "cd", "dir", "eof", "byond_version", "byond_build"]),
 			_ => None
 		}
 	}
