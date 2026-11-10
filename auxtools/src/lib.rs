@@ -291,7 +291,8 @@ fn shutdown_partial() {
 	proc::clear_procs();
 
 	unsafe {
-		raw_types::funcs::VARIABLE_NAMES = std::ptr::null();
+		raw_types::funcs::VARIABLE_NAME_ENTRIES = std::ptr::null();
+		raw_types::funcs::VARIABLE_NAME_COUNT = std::ptr::null();
 	}
 
 	set_init_level(InitLevel::Partial);

@@ -15,6 +15,9 @@ use std::{any::Any, cell::UnsafeCell, ffi::c_void};
 // platform has its own assembly in execute_instruction_hook.*.
 #[cfg(windows)]
 const DISPATCH_MASK: &str = "0F B7 47 ?? 8B 4F ?? 8B F0 8B 14 ?? 89 95 ?? ?? ?? ?? 81 FA ?? 01 00 00";
+// Linux 515 before 515.1644: the frame is in EDI
+#[cfg(unix)]
+const DISPATCH_MASK_EARLY_515: &str = "0F B7 57 14 8B 47 10 0F B7 DA 8B 0C 98 81 F9 ?? 01 00 00 77 ?? FF 24 8D ?? ?? ?? ??";
 #[cfg(unix)]
 const DISPATCH_MASK_515: &str = "0F B7 46 14 8B 56 10 8D 3C 85 00 00 00 00 66 89 85 ?? ?? ?? ?? 89 85 ?? ?? ?? ?? 8D 04 3A 8B 18 81 FB ?? 01 00 00 0F \
                                  87 ?? ?? ?? ?? FF 24 9D ?? ?? ?? ??";
@@ -35,15 +38,25 @@ const EXECUTE_INSTRUCTION: Recipe = Recipe {
 	extract: Extract::Entry
 };
 
-// The frame is in ESI there too
+// The frame is in ESI from 515.1644, as on 516; in EDI before
 #[cfg(unix)]
-const EXECUTE_INSTRUCTIONS: &[Recipe] = &[EXECUTE_INSTRUCTION, Recipe {
-	name: "execute_instruction",
-	versions: VersionRange { min: 1644, max: 1647 },
-	anchor: Anchor::Signature(SignatureTreatment::NoOffset, DISPATCH_MASK_515),
-	hops: &[],
-	extract: Extract::Entry
-}];
+const EXECUTE_INSTRUCTIONS: &[Recipe] = &[
+	EXECUTE_INSTRUCTION,
+	Recipe {
+		name: "execute_instruction",
+		versions: VersionRange { min: 1644, max: 1647 },
+		anchor: Anchor::Signature(SignatureTreatment::NoOffset, DISPATCH_MASK_515),
+		hops: &[],
+		extract: Extract::Entry
+	},
+	Recipe {
+		name: "execute_instruction",
+		versions: VersionRange { min: 1637, max: 1643 },
+		anchor: Anchor::Signature(SignatureTreatment::NoOffset, DISPATCH_MASK_EARLY_515),
+		hops: &[],
+		extract: Extract::Entry
+	}
+];
 #[cfg(windows)]
 const EXECUTE_INSTRUCTIONS: &[Recipe] = &[EXECUTE_INSTRUCTION];
 
@@ -75,6 +88,10 @@ extern "C" {
 	// The 514 version of the instruction hook.
 	#[cfg(windows)]
 	fn execute_instruction_hook_514();
+
+	// For Linux 515 before 515.1644, where the frame is in EDI
+	#[cfg(unix)]
+	fn execute_instruction_hook_edi();
 }
 
 // Read on every instruction (see `auxtools::hooks::calls_bypass_detour`)
@@ -94,7 +111,11 @@ fn instruction_hooking_init() -> Result<(), String> {
 		execute_instruction_hook as *const ()
 	};
 	#[cfg(unix)]
-	let versioned_hook = execute_instruction_hook as *const ();
+	let versioned_hook = if auxtools::version::get().1 < 1644 {
+		execute_instruction_hook_edi as *const ()
+	} else {
+		execute_instruction_hook as *const ()
+	};
 
 	unsafe {
 		let hook = RawDetour::new(execute_instruction as *const (), versioned_hook).map_err(|_| "Couldn't detour execute_instruction")?;

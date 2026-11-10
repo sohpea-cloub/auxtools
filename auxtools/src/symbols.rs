@@ -17,12 +17,17 @@ use linux::RECIPES;
 #[cfg(windows)]
 use windows::RECIPES;
 
-use crate::raw_types::{funcs, lists, procs, variables::VariableNameIdTable};
+use crate::raw_types::{funcs, lists, procs};
 
 /// The BYOND major versions the patterns were checked against, with the first
 /// build of each. The same build number under another major is a different
 /// binary.
 const SUPPORTED_VERSIONS: &[(u32, u32)] = &[(515, 1637), (516, 1648)];
+
+/// From this build, GCC lays out pairs of BYOND's globals on Linux the other
+/// way round from Windows: the sleeping-proc queue's back before its front,
+/// and the var names' count before the names.
+const LINUX_FLIPPED_BUILD: u32 = 1644;
 
 /// The first build with alists. Before it there's no alist table to find.
 pub(crate) const ALIST_BUILD: u32 = 1648;
@@ -105,7 +110,13 @@ pub(crate) fn resolve_full() -> Result<(), String> {
 
 	unsafe {
 		funcs::CURRENT_EXECUTION_CONTEXT = address("current_execution_context")? as *mut *mut procs::ExecutionContext;
-		funcs::SUSPENDED_PROCS = address("suspended_procs")? as *mut procs::SuspendedProcs;
+		// Windows keeps the queue's front index first, then the back. So does
+		// Linux before 515.1644; later Linux builds the other way round, and
+		// there the pattern finds the back.
+		let queue = address("suspended_procs")?;
+		let (front, back) = if cfg!(unix) && build.1 >= LINUX_FLIPPED_BUILD { (queue + 4, queue) } else { (queue, queue + 4) };
+		funcs::SUSPENDED_FRONT = front as *const usize;
+		funcs::SUSPENDED_BACK = back as *const usize;
 		funcs::SUSPENDED_PROCS_BUFFER = address("suspended_procs_buffer")? as *mut procs::SuspendedProcsBuffer;
 		if build.1 >= ALIST_BUILD {
 			funcs::ALIST_TABLE = address("alist_table_ptr")? as *const *const *const lists::Alist;
@@ -133,6 +144,7 @@ pub(crate) fn resolve_full() -> Result<(), String> {
 		#[cfg(unix)]
 		{
 			funcs::remove_from_list_in_registers = build.1 < linux::REMOVE_FROM_LIST_STACK_BUILD;
+			funcs::get_length_returns_count = build.1 < LINUX_FLIPPED_BUILD;
 		}
 		funcs::get_length_byond = function("get_length")?;
 		funcs::value_is_list_byond = function("value_is_list")?;
@@ -148,11 +160,14 @@ pub(crate) fn resolve_full() -> Result<(), String> {
 /// runs on every partial init and not only the first.
 pub(crate) fn resolve_partial() -> Result<(), String> {
 	let (module, build) = module_and_build()?;
-	// the recipe finds the name array, which is not where the table starts on
-	// Linux
-	let address = resolve(&module, build, "variable_names")? - std::mem::offset_of!(VariableNameIdTable, entries);
+	// The recipe finds the name array. Its count is the word after it on
+	// Windows and on Linux before 515.1644, the word before it on later Linux
+	// builds.
+	let names = resolve(&module, build, "variable_names")?;
+	let count = if cfg!(unix) && build.1 >= LINUX_FLIPPED_BUILD { names - 4 } else { names + 4 };
 	unsafe {
-		funcs::VARIABLE_NAMES = address as *const VariableNameIdTable;
+		funcs::VARIABLE_NAME_ENTRIES = names as *const *const crate::raw_types::strings::StringId;
+		funcs::VARIABLE_NAME_COUNT = count as *const u32;
 	}
 	Ok(())
 }

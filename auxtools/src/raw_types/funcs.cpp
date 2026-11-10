@@ -92,6 +92,9 @@ extern "C"
 	DEFINE_byond(remove_from_list, bool, (Value, Value));
 	using Fnremove_from_list_regparm_byond = bool(LINUX_REGPARM2 *)(Value, Value);
 	bool remove_from_list_in_registers = false;
+	// Linux 515 before 515.1644 hands the count back in `eax`, as Windows does
+	using Fnget_length_count_byond = uint32_t (*)(Value);
+	bool get_length_returns_count = false;
 	// The one function here whose *return* differs by platform, not just its
 	// argument placement. Windows hands the count straight back in `eax`. Linux
 	// returns a DM Value through a caller-supplied buffer, so the count has to be
@@ -404,7 +407,14 @@ extern "C" uint8_t get_length(uint32_t *out, Value value)
 #ifdef _WIN32
 		*out = get_length_byond(value);
 #else
-		*out = length_value_to_count(get_length_byond(value));
+		if (get_length_returns_count)
+		{
+			*out = reinterpret_cast<Fnget_length_count_byond>(get_length_byond)(value);
+		}
+		else
+		{
+			*out = length_value_to_count(get_length_byond(value));
+		}
 #endif
 		return 1;
 	}

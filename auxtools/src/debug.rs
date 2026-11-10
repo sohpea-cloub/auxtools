@@ -138,11 +138,7 @@ impl CallStacks {
 
 		unsafe {
 			let buffer = (*funcs::SUSPENDED_PROCS_BUFFER).buffer;
-			let procs = funcs::SUSPENDED_PROCS;
-			let front = (*procs).front;
-			let back = (*procs).back;
-
-			for x in front..back {
+			for x in funcs::suspended_range() {
 				let instance = *buffer.add(x);
 				let context = (*instance).context;
 				suspended.push(CallStacks::from_context(context, CallStackKind::Suspended));

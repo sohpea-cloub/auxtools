@@ -856,7 +856,7 @@ fn locals_table(names: &[String], empty: u32) -> Result<u32, String> {
 		let id = match variable_ids(name.as_bytes()).into_iter().find(null_slot) {
 			Some(id) => id,
 			None => {
-				let count = unsafe { (*raw_types::funcs::VARIABLE_NAMES).count };
+				let count = unsafe { *raw_types::funcs::VARIABLE_NAME_COUNT };
 				(0..count).find(null_slot).ok_or("no var id has a null value to start a local with")?
 			}
 		};
@@ -2299,8 +2299,8 @@ fn variable_ids(name: &[u8]) -> Vec<u32> {
 	let id = string.get_id();
 
 	unsafe {
-		let table = &*raw_types::funcs::VARIABLE_NAMES;
-		(0..table.count).filter(|&i| *table.entries.add(i as usize) == id).collect()
+		let entries = *raw_types::funcs::VARIABLE_NAME_ENTRIES;
+		(0..*raw_types::funcs::VARIABLE_NAME_COUNT).filter(|&i| *entries.add(i as usize) == id).collect()
 	}
 }
 

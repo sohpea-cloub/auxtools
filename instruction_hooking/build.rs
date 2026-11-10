@@ -26,4 +26,5 @@ fn main() {
 	}
 
 	build.compile("instruction-hooking-cpp");
+	println!("cargo:rerun-if-changed=src");
 }

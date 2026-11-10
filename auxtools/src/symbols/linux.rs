@@ -18,6 +18,9 @@ const SUPPORTED: VersionRange = VersionRange { min: 1648, max: 1688 };
 const FROM_515_1644: VersionRange = VersionRange { min: 1644, max: 1688 };
 // What 515.1644 to 515.1647 have in place of the others
 const LATE_515: VersionRange = VersionRange { min: 1644, max: 1647 };
+// 515.1637 to 515.1643, which GCC compiled with frame pointers. The patterns
+// marked "auxtools before byond-scan" are the ones it had for these builds.
+const EARLY_515: VersionRange = VersionRange { min: 1637, max: 1643 };
 
 // The first build where `remove_from_list` takes its arguments on the stack.
 // Every build before it wants the list in `eax:edx`. Read off the prologue of
@@ -430,4 +433,249 @@ pub(crate) const RECIPES: &[Recipe] = &[
 		hops: &[],
 		extract: Extract::Entry
 	},
+	Recipe {
+		name: "get_proc_array_entry",
+		versions: EARLY_515,
+		// auxtools before byond-scan
+		anchor: Anchor::Signature(
+			SignatureTreatment::OffsetByCall,
+			"E8 ?? ?? ?? ?? 0F B7 F6 89 C7 89 B5 ?? ?? ?? ?? 89 34 24 E8 ?? ?? ?? ??"
+		),
+		hops: &[],
+		extract: Extract::Entry
+	},
+	Recipe {
+		name: "get_string_table_entry",
+		versions: EARLY_515,
+		// auxtools before byond-scan
+		anchor: Anchor::Signature(
+			SignatureTreatment::NoOffset,
+			"55 89 E5 83 EC 18 8B 45 ?? 39 05 ?? ?? ?? ?? 76 ?? 8B 15 ?? ?? ?? ?? 8B 04 ??"
+		),
+		hops: &[],
+		extract: Extract::Entry
+	},
+	Recipe {
+		name: "get_string_id",
+		versions: EARLY_515,
+		// auxtools before byond-scan
+		anchor: Anchor::Signature(
+			SignatureTreatment::NoOffset,
+			"55 89 E5 57 56 89 CE 53 89 D3 83 EC 5C 8B 55 ?? 85 C0 88 55 ?? 0F 84 ?? ?? ?? ??"
+		),
+		hops: &[],
+		extract: Extract::Entry
+	},
+	Recipe {
+		name: "call_proc_by_id",
+		versions: EARLY_515,
+		// what CallByNameWithCallback calls with a proc id
+		anchor: Anchor::Signature(
+			SignatureTreatment::NoOffset,
+			"55 89 E5 57 56 53 81 EC ?? ?? 00 00 0F B6 45 14 81 7D ?? ?? ?? ?? 00 8B 55 0C 8B 4D 10"
+		),
+		hops: &[],
+		extract: Extract::Entry
+	},
+	Recipe {
+		name: "call_datum_proc_by_name",
+		versions: EARLY_515,
+		// CallByNameWithCallback, which the build has two identical copies of: the one the export's helper calls
+		anchor: Anchor::Export(c"Byond_CallProcByStrId"),
+		hops: &[11, 2],
+		extract: Extract::Entry
+	},
+	Recipe {
+		name: "get_variable",
+		versions: EARLY_515,
+		anchor: Anchor::Signature(
+			SignatureTreatment::NoOffset,
+			"55 89 E5 81 EC ?? ?? 00 00 8B 55 0C 89 5D F4 8B 5D 10 89 75 F8 8B 75 08 89 7D FC 8B 7D 14"
+		),
+		hops: &[],
+		extract: Extract::Entry
+	},
+	Recipe {
+		name: "set_variable",
+		versions: EARLY_515,
+		anchor: Anchor::Signature(
+			SignatureTreatment::NoOffset,
+			"55 89 E5 81 EC ?? ?? 00 00 89 5D F4 8B 5D 08 8B 45 0C 89 75 F8 8B 55 18 89 7D FC 8B 75 10"
+		),
+		hops: &[],
+		extract: Extract::Entry
+	},
+	Recipe {
+		name: "inc_ref_count",
+		versions: EARLY_515,
+		// auxtools before byond-scan
+		anchor: Anchor::Signature(
+			SignatureTreatment::OffsetByCall,
+			"E8 ?? ?? ?? ?? 8B 43 ?? 80 48 ?? 04 8B 5D ?? 8B 75 ?? 8B 7D ?? 89 EC 5D"
+		),
+		hops: &[],
+		extract: Extract::Entry
+	},
+	Recipe {
+		name: "dec_ref_count",
+		versions: EARLY_515,
+		// auxtools before byond-scan
+		anchor: Anchor::Signature(
+			SignatureTreatment::OffsetByCall,
+			"E8 ?? ?? ?? ?? C7 06 00 00 00 00 C7 46 ?? 00 00 00 00 A1 ?? ?? ?? ?? 0F B7 50 ??"
+		),
+		hops: &[],
+		extract: Extract::Entry
+	},
+	Recipe {
+		name: "get_assoc_element",
+		versions: EARLY_515,
+		anchor: Anchor::Signature(
+			SignatureTreatment::NoOffset,
+			"55 89 E5 83 EC 58 89 5D F4 8B 5D 0C 89 75 F8 8B 75 10 89 7D FC 80 FB 3C 89 DF 0F 84 ?? ?? ?? ??"
+		),
+		hops: &[],
+		extract: Extract::Entry
+	},
+	Recipe {
+		name: "set_assoc_element",
+		versions: EARLY_515,
+		anchor: Anchor::Signature(
+			SignatureTreatment::NoOffset,
+			"55 89 E5 83 EC 68 89 5D F4 8B 5D 08 89 75 F8 8B 75 10 8B 45 14 89 7D FC 8B 7D 0C 80 FB 3C"
+		),
+		hops: &[],
+		extract: Extract::Entry
+	},
+	Recipe {
+		name: "create_list",
+		versions: EARLY_515,
+		// auxtools before byond-scan
+		anchor: Anchor::Signature(
+			SignatureTreatment::NoOffset,
+			"55 89 E5 57 56 53 83 EC 2C A1 ?? ?? ?? ?? 8B 75 ?? 85 C0 0F 84 ?? ?? ?? ??"
+		),
+		hops: &[],
+		extract: Extract::Entry
+	},
+	Recipe {
+		name: "append_to_list",
+		versions: EARLY_515,
+		// auxtools before byond-scan; the list in `eax:edx`
+		anchor: Anchor::Signature(
+			SignatureTreatment::NoOffset,
+			"55 89 E5 83 EC 38 3C 54 89 5D ?? 8B 5D ?? 89 75 ?? 8B 75 ?? 89 7D ?? 76 ??"
+		),
+		hops: &[],
+		extract: Extract::Entry
+	},
+	Recipe {
+		name: "remove_from_list",
+		versions: EARLY_515,
+		// auxtools before byond-scan; the list in `eax:edx`
+		anchor: Anchor::Signature(
+			SignatureTreatment::NoOffset,
+			"55 89 E5 83 EC 48 3C 54 89 5D ?? 89 C3 89 75 ?? 8B 75 ?? 89 7D ?? 8B 7D ??"
+		),
+		hops: &[],
+		extract: Extract::Entry
+	},
+	Recipe {
+		name: "get_length",
+		versions: EARLY_515,
+		// auxtools before byond-scan; returns the count, not a Value
+		anchor: Anchor::Signature(
+			SignatureTreatment::NoOffset,
+			"55 89 E5 57 56 53 83 EC 6C 8B 45 ?? 8B 5D ?? 3C 54 76 ?? 31 F6 8D 65 ??"
+		),
+		hops: &[],
+		extract: Extract::Entry
+	},
+	Recipe {
+		name: "value_is_list",
+		versions: EARLY_515,
+		// what the list exports check first, as 516's do
+		anchor: Anchor::Signature(
+			SignatureTreatment::NoOffset,
+			"55 89 E5 83 EC 48 89 5D F4 8B 5D 08 89 75 F8 ?? ?? ?? ?? 89 7D FC 8B 7D 0C 89 DE 8D 46 F1"
+		),
+		hops: &[],
+		extract: Extract::Entry
+	},
+	Recipe {
+		name: "get_misc_by_id",
+		versions: EARLY_515,
+		// auxtools before byond-scan
+		anchor: Anchor::Signature(
+			SignatureTreatment::OffsetByCall,
+			"E8 ?? ?? ?? ?? 0F B7 55 ?? 03 1F 0F B7 4B ?? 89 8D ?? ?? ?? ?? 0F B7 5B ??"
+		),
+		hops: &[],
+		extract: Extract::Entry
+	},
+	Recipe {
+		name: "to_string",
+		versions: EARLY_515,
+		// auxtools before byond-scan
+		anchor: Anchor::Signature(
+			SignatureTreatment::NoOffset,
+			"55 89 E5 83 ?? ?? 89 5D F4 8D ?? ?? 89 75 F8 89 7D FC 80 ?? ?? ?? ?? ?? B8"
+		),
+		hops: &[],
+		extract: Extract::Entry
+	},
+	Recipe {
+		name: "runtime",
+		versions: EARLY_515,
+		// auxtools before byond-scan
+		anchor: Anchor::Signature(
+			SignatureTreatment::OffsetByCall,
+			"E8 ?? ?? ?? ?? 31 C0 8D B4 26 00 00 00 00 8B 5D ?? 8B 75 ?? 8B 7D ?? 89 EC"
+		),
+		hops: &[],
+		extract: Extract::Entry
+	},
+	Recipe {
+		name: "current_execution_context",
+		versions: EARLY_515,
+		// auxtools before byond-scan
+		anchor: Anchor::Signature(
+			SignatureTreatment::NoOffset,
+			"A1 ?? ?? ?? ?? C7 44 24 ?? 00 00 00 00 C7 44 24 ?? 00 00 00 00 89 74 24"
+		),
+		hops: &[],
+		extract: Extract::AbsMem(OperandSelect::NthAbsMem(0))
+	},
+	Recipe {
+		name: "variable_names",
+		versions: EARLY_515,
+		// auxtools before byond-scan
+		anchor: Anchor::Signature(
+			SignatureTreatment::NoOffset,
+			"A1 ?? ?? ?? ?? 8B 13 8B 39 8B 75 ?? 8B 14 ?? 89 7D ?? 8B 3C ?? 83 EE 02"
+		),
+		hops: &[],
+		extract: Extract::AbsMem(OperandSelect::NthAbsMem(0))
+	},
+	Recipe {
+		name: "suspended_procs",
+		versions: EARLY_515,
+		// a proc made ready, checked against the queue: front=0, back=1, buffer=2
+		anchor: Anchor::Signature(
+			SignatureTreatment::NoOffset,
+			"E8 ?? ?? ?? ?? A1 ?? ?? ?? ?? 3B 05 ?? ?? ?? ?? 0F 83 ?? ?? ?? ?? 8B 15 ?? ?? ?? ?? 3B 34 82 0F 85 ?? ?? ?? ?? 8B 8E 88 00 00 00"
+		),
+		hops: &[],
+		extract: Extract::AbsMem(OperandSelect::NthAbsMem(0))
+	},
+	Recipe {
+		name: "suspended_procs_buffer",
+		versions: EARLY_515,
+		anchor: Anchor::Signature(
+			SignatureTreatment::NoOffset,
+			"E8 ?? ?? ?? ?? A1 ?? ?? ?? ?? 3B 05 ?? ?? ?? ?? 0F 83 ?? ?? ?? ?? 8B 15 ?? ?? ?? ?? 3B 34 82 0F 85 ?? ?? ?? ?? 8B 8E 88 00 00 00"
+		),
+		hops: &[],
+		extract: Extract::AbsMem(OperandSelect::NthAbsMem(2))
+	}
 ];

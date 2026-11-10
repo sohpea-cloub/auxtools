@@ -1,18 +1,29 @@
 use std::{ffi::c_void, os::raw::c_char};
 
-use super::{lists, misc, procs, strings, values, variables};
+use super::{lists, misc, procs, strings, values};
 
 // TODO: Doesn't belong here at all
 pub static mut CURRENT_EXECUTION_CONTEXT: *mut *mut procs::ExecutionContext = std::ptr::null_mut();
 pub static mut SUSPENDED_PROCS_BUFFER: *mut procs::SuspendedProcsBuffer = std::ptr::null_mut();
-pub static mut SUSPENDED_PROCS: *mut procs::SuspendedProcs = std::ptr::null_mut();
+// The sleeping-proc queue's front and back indices, two globals side by side
+// whose order depends on the platform and build
+pub static mut SUSPENDED_FRONT: *const usize = std::ptr::null();
+pub static mut SUSPENDED_BACK: *const usize = std::ptr::null();
+
+/// The sleeping procs: their range in `SUSPENDED_PROCS_BUFFER`
+pub unsafe fn suspended_range() -> std::ops::Range<usize> {
+	*SUSPENDED_FRONT..*SUSPENDED_BACK
+}
 
 // BYOND's globals for the alist table: a pointer to the table, and its length.
 // The table holds one record pointer per alist id, null for a free slot.
 pub static mut ALIST_TABLE: *const *const *const lists::Alist = std::ptr::null();
 pub static mut ALIST_TABLE_COUNT: *const u32 = std::ptr::null();
 
-pub static mut VARIABLE_NAMES: *const variables::VariableNameIdTable = std::ptr::null();
+// The var names (a string id per var id) and how many there are, two globals
+// whose order depends on the platform and build
+pub static mut VARIABLE_NAME_ENTRIES: *const *const strings::StringId = std::ptr::null();
+pub static mut VARIABLE_NAME_COUNT: *const u32 = std::ptr::null();
 
 // Function pointers exported by C++ but set by Rust
 // Rust shouldn't call these so we're going to treat them as void ptrs for
@@ -33,6 +44,7 @@ extern "C" {
 	pub static mut append_to_list_byond: *const c_void;
 	pub static mut remove_from_list_byond: *const c_void;
 	pub static mut remove_from_list_in_registers: bool;
+	pub static mut get_length_returns_count: bool;
 	pub static mut get_length_byond: *const c_void;
 	pub static mut value_is_list_byond: *const c_void;
 	pub static mut get_misc_by_id_byond: *const c_void;

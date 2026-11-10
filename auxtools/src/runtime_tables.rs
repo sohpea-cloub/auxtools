@@ -128,10 +128,19 @@ pub mod type_fields {
 /// from the path when asked.
 const TYPEPATH_BUILD: u32 = 1641;
 
+/// Linux builds before this one were compiled with frame pointers, and keep
+/// some tables' pointers before their counts, as on Windows.
+#[cfg(unix)]
+const LINUX_SWAPPED_BUILD: u32 = 1644;
+
 /// The size of a type table entry on `build`
 fn type_stride(build: u32) -> usize {
 	if build < TYPEPATH_BUILD {
-		0x90
+		if cfg!(windows) {
+			0x90
+		} else {
+			0x8C
+		}
 	} else if cfg!(windows) {
 		0x98
 	} else {
@@ -141,7 +150,9 @@ fn type_stride(build: u32) -> usize {
 
 struct Functions {
 	procdef_add: extern "C" fn(*const ProcEntryWords) -> u32,
-	misc_intern_copy: extern "C" fn(*const u32, u32) -> u32,
+	/// BYOND's own, or on builds that inlined it (Linux before 515.1644),
+	/// `misc_intern`, which takes a 12-byte entry the caller allocated
+	misc_intern: MiscIntern,
 	alloc_shared: extern "C" fn(usize) -> *mut c_void,
 	free_shared: extern "C" fn(*mut c_void) -> bool,
 	copy_shared: extern "C" fn(*mut c_void) -> *mut c_void,
@@ -180,6 +191,15 @@ struct Functions {
 	/// type's declared var. A new frame's locals start as their var ids'
 	/// values.
 	global_values: *const *const crate::raw_types::values::Value
+}
+
+#[derive(Clone, Copy)]
+enum MiscIntern {
+	/// Copies `count` words into a new entry, or finds an identical one
+	Copy(extern "C" fn(*const u32, u32) -> u32),
+	/// Interns an entry (u16 count, refcount at +4, words at +8) and its
+	/// words, which it owns from then on (freeing them if one like it exists)
+	Take(extern "C" fn(*mut u8) -> u32)
 }
 
 static mut FUNCTIONS: Option<Result<Functions, String>> = None;
@@ -457,7 +477,7 @@ fn resolve() -> Result<Functions, String> {
 	unsafe {
 		Ok(Functions {
 			procdef_add: std::mem::transmute(find(&PROCDEF_ADD)?),
-			misc_intern_copy: std::mem::transmute(find(&MISC_INTERN_COPY)?),
+			misc_intern: MiscIntern::Copy(std::mem::transmute(find(&MISC_INTERN_COPY)?)),
 			alloc_shared: std::mem::transmute(find(&ALLOC_SHARED)?),
 			free_shared: std::mem::transmute(find(&FREE_SHARED)?),
 			copy_shared: std::mem::transmute(find(&COPY_SHARED)?),
@@ -494,6 +514,8 @@ mod recipes {
 	use byond_scan::{Anchor, Extract, OperandSelect, Recipe, SignatureTreatment, VersionRange};
 
 	const CHECKED: VersionRange = VersionRange { min: 1644, max: 1688 };
+	// exported by name on every build from 515.1637
+	const EXPORTED: VersionRange = VersionRange { min: 1637, max: 1688 };
 
 	pub const PROCDEF_ADD: Recipe = Recipe {
 		name: "procdef_add",
@@ -553,7 +575,7 @@ mod recipes {
 
 	pub const ALLOC_SHARED: Recipe = Recipe {
 		name: "AllocShared",
-		versions: CHECKED,
+		versions: EXPORTED,
 		anchor: Anchor::Export(c"_Z11AllocSharedm"),
 		hops: &[],
 		extract: Extract::Entry
@@ -561,7 +583,7 @@ mod recipes {
 
 	pub const FREE_SHARED: Recipe = Recipe {
 		name: "FreeShared",
-		versions: CHECKED,
+		versions: EXPORTED,
 		anchor: Anchor::Export(c"_Z10FreeSharedPv"),
 		hops: &[],
 		extract: Extract::Entry
@@ -569,7 +591,7 @@ mod recipes {
 
 	pub const COPY_SHARED: Recipe = Recipe {
 		name: "CopyShared",
-		versions: CHECKED,
+		versions: EXPORTED,
 		anchor: Anchor::Export(c"_Z10CopySharedPv"),
 		hops: &[],
 		extract: Extract::Entry
@@ -584,20 +606,32 @@ mod recipes {
 	                           10 85 FF 74 08 85 C0 0F 84 ?? ?? ?? ?? 83 EC 0C FF B5 ?? ?? ?? ?? A3 ?? ?? ?? ?? E8 ?? ?? ?? ?? 83 C4 10 85 C0 75 ?? \
 	                           80 BD ?? ?? ?? ?? 00 0F 85 ?? ?? ?? ?? A3 ?? ?? ?? ??";
 
-	pub const PREORDER: [Recipe; 1] = [Recipe {
+	pub const PREORDER: [Recipe; 2] = [Recipe {
 		name: "type_preorder",
 		versions: CHECKED,
 		anchor: Anchor::Signature(SignatureTreatment::NoOffset, TYPE_LOADER),
 		hops: &[],
 		extract: Extract::AbsMem(OperandSelect::NthAbsMem(4))
+	}, Recipe {
+		name: "type_preorder",
+		versions: EARLY,
+		anchor: Anchor::Signature(SignatureTreatment::NoOffset, TYPE_LOADER_EARLY),
+		hops: &[],
+		extract: Extract::AbsMem(OperandSelect::NthAbsMem(4))
 	}];
 
-	pub const APPEARANCE_CACHE: [Recipe; 1] = [Recipe {
+	pub const APPEARANCE_CACHE: [Recipe; 2] = [Recipe {
 		name: "type_appearance_cache",
 		versions: CHECKED,
 		anchor: Anchor::Signature(SignatureTreatment::NoOffset, TYPE_LOADER),
 		hops: &[],
 		extract: Extract::AbsMem(OperandSelect::NthAbsMem(6))
+	}, Recipe {
+		name: "type_appearance_cache",
+		versions: EARLY,
+		anchor: Anchor::Signature(SignatureTreatment::NoOffset, TYPE_LOADER_EARLY),
+		hops: &[],
+		extract: Extract::AbsMem(OperandSelect::NthAbsMem(8))
 	}];
 
 	// The loader of the procs that return parameters' `in` lists: the count
@@ -698,6 +732,117 @@ mod recipes {
 		hops: &[],
 		extract: Extract::Entry
 	};
+
+	// Linux 515 before 515.1644, which GCC compiled with frame pointers. The
+	// loaders' operands are numbered as above.
+	const EARLY: VersionRange = VersionRange { min: 1637, max: 1643 };
+	const TYPE_LOADER_EARLY: &str = "A3 ?? ?? ?? ?? 69 F0 ?? 00 00 00 89 34 24 E8 ?? ?? ?? ?? 85 F6 0F 85 ?? ?? ?? ?? 8B 35 ?? ?? ?? ?? A3 ?? ?? ?? ?? C1 \
+	                                 E6 02 89 34 24 E8 ?? ?? ?? ?? 85 C0 0F 84 ?? ?? ?? ?? 8B 35 ?? ?? ?? ?? A3 ?? ?? ?? ?? C1 E6 03 89 34 24 E8 ?? ?? \
+	                                 ?? ?? 85 C0 0F 84 ?? ?? ?? ?? 8B 35 ?? ?? ?? ?? A3 ?? ?? ?? ?? C1 E6 02 89 34 24 E8 ?? ?? ?? ?? 85 C0 0F 84 ?? ?? \
+	                                 ?? ?? 8B 15 ?? ?? ?? ?? A3 ?? ?? ?? ??";
+	const VAR_LOADER_EARLY: &str = "A3 ?? ?? ?? ?? 8D 34 C5 00 00 00 00 89 34 24 E8 ?? ?? ?? ?? 85 F6 0F 85 ?? ?? ?? ?? 8B 35 ?? ?? ?? ?? A3 ?? ?? ?? ?? C1 \
+	                                E6 02";
+	const IN_LIST_LOADER_EARLY: &str = "A3 ?? ?? ?? ?? C1 E0 02 31 F6 89 04 24 E8 ?? ?? ?? ?? A3 ?? ?? ?? ?? EB ?? 89 1C 24 E8 ?? ?? ?? ?? 8B 15 ?? ?? ?? ?? \
+	                                    89 04 B2";
+	const MOB_LOADER_EARLY: &str = "A3 ?? ?? ?? ?? 89 C6 C1 E6 04 89 34 24 E8 ?? ?? ?? ?? 85 F6 0F 85 ?? ?? ?? ?? 8B 3D ?? ?? ?? ?? A3 ?? ?? ?? ??";
+	const INSTANCE_LOADER_EARLY: &str = "A3 ?? ?? ?? ?? 6B C0 0C 31 FF 31 F6 89 04 24 E8 ?? ?? ?? ?? A3 ?? ?? ?? ?? EB ?? A1 ?? ?? ?? ?? 83 C6 01";
+
+	pub const PROCDEF_ADD_EARLY: Recipe = Recipe {
+		name: "procdef_add",
+		versions: EARLY,
+		anchor: Anchor::Signature(SignatureTreatment::NoOffset, "55 31 C0 89 E5 57 56 53 83 EC 2C 8B 35 ?? ?? ?? ?? 8B 7D 08 85 F6 74 ?? 31 F6 31 DB"),
+		hops: &[],
+		extract: Extract::Entry
+	};
+	// What a misc entry's words are copied into is inlined into every caller:
+	// this is what they hand the entry to
+	pub const MISC_INTERN: Recipe = Recipe {
+		name: "misc_intern",
+		versions: EARLY,
+		anchor: Anchor::Signature(SignatureTreatment::NoOffset, "55 B8 FF FF 00 00 89 E5 83 EC 68 89 5D F4 8B 5D 08 89 75 F8 89 7D FC 85 DB 74"),
+		hops: &[],
+		extract: Extract::Entry
+	};
+	pub const TYPE_COUNT_EARLY: Recipe = Recipe {
+		name: "obj_type_count",
+		versions: EARLY,
+		anchor: Anchor::Signature(SignatureTreatment::NoOffset, TYPE_LOADER_EARLY),
+		hops: &[],
+		extract: Extract::AbsMem(OperandSelect::NthAbsMem(0))
+	};
+	pub const NAME_MAPS_EARLY: Recipe = Recipe {
+		name: "proc_name_maps",
+		versions: EARLY,
+		anchor: Anchor::Signature(SignatureTreatment::NoOffset, TYPE_LOADER_EARLY),
+		hops: &[],
+		extract: Extract::AbsMem(OperandSelect::NthAbsMem(6))
+	};
+	pub const GLOBAL_VALUES_EARLY: Recipe = Recipe {
+		name: "global_values",
+		versions: EARLY,
+		anchor: Anchor::Signature(SignatureTreatment::NoOffset, VAR_LOADER_EARLY),
+		hops: &[],
+		extract: Extract::AbsMem(OperandSelect::NthAbsMem(3))
+	};
+	pub const IN_LIST_COUNT_EARLY: Recipe = Recipe {
+		name: "in_list_count",
+		versions: EARLY,
+		anchor: Anchor::Signature(SignatureTreatment::NoOffset, IN_LIST_LOADER_EARLY),
+		hops: &[],
+		extract: Extract::AbsMem(OperandSelect::NthAbsMem(0))
+	};
+	pub const IN_LIST_PROCS_EARLY: Recipe = Recipe {
+		name: "in_list_procs",
+		versions: EARLY,
+		anchor: Anchor::Signature(SignatureTreatment::NoOffset, IN_LIST_LOADER_EARLY),
+		hops: &[],
+		extract: Extract::AbsMem(OperandSelect::NthAbsMem(1))
+	};
+	pub const MOB_COUNT_EARLY: Recipe = Recipe {
+		name: "mob_count",
+		versions: EARLY,
+		anchor: Anchor::Signature(SignatureTreatment::NoOffset, MOB_LOADER_EARLY),
+		hops: &[],
+		extract: Extract::AbsMem(OperandSelect::NthAbsMem(0))
+	};
+	pub const MOBS_EARLY: Recipe = Recipe {
+		name: "mobs",
+		versions: EARLY,
+		anchor: Anchor::Signature(SignatureTreatment::NoOffset, MOB_LOADER_EARLY),
+		hops: &[],
+		extract: Extract::AbsMem(OperandSelect::NthAbsMem(2))
+	};
+	pub const INSTANCE_COUNT_EARLY: Recipe = Recipe {
+		name: "instance_count",
+		versions: EARLY,
+		anchor: Anchor::Signature(SignatureTreatment::NoOffset, INSTANCE_LOADER_EARLY),
+		hops: &[],
+		extract: Extract::AbsMem(OperandSelect::NthAbsMem(0))
+	};
+	pub const INSTANCES_EARLY: Recipe = Recipe {
+		name: "instances",
+		versions: EARLY,
+		anchor: Anchor::Signature(SignatureTreatment::NoOffset, INSTANCE_LOADER_EARLY),
+		hops: &[],
+		extract: Extract::AbsMem(OperandSelect::NthAbsMem(1))
+	};
+	// the world's proc name map, which the lookup of a proc on the world hands
+	// to the map search
+	pub const WORLD_NAME_MAP_EARLY: Recipe = Recipe {
+		name: "world_name_map",
+		versions: EARLY,
+		anchor: Anchor::Signature(SignatureTreatment::NoOffset, "89 7C 24 0C 89 5C 24 08 C7 04 24 ?? ?? ?? ?? 89 74 24 04 E8 ?? ?? ?? ?? E9"),
+		hops: &[],
+		extract: Extract::Offset(11)
+	};
+	// from 515.1641, when types started keeping their typepath values
+	pub const REGISTER_TYPEPATH_EARLY: Recipe = Recipe {
+		name: "register_typepath",
+		versions: VersionRange { min: 1641, max: 1643 },
+		anchor: Anchor::Signature(SignatureTreatment::NoOffset, "55 89 E5 53 83 EC 24 8B 45 08 3B 05 ?? ?? ?? ?? 73 ?? 69 D8 94 00 00 00 03 1D ?? ?? ?? ?? 74 ?? 80 BB 8C 00 00 00 00 74 ?? C7 44 24 08 06 00 00 00"),
+		hops: &[],
+		extract: Extract::Entry
+	};
 }
 
 // libbyond.so allocates with the C library, as we do
@@ -710,35 +855,41 @@ fn resolve() -> Result<Functions, String> {
 	let find = |recipe| crate::find_recipe(recipe);
 	let build = crate::byond_build()?;
 
-	let type_count = find(&TYPE_COUNT)?;
+	let type_count = crate::find_recipe_of(&[TYPE_COUNT, TYPE_COUNT_EARLY])?;
 	unsafe {
 		Ok(Functions {
-			procdef_add: std::mem::transmute(find(&PROCDEF_ADD)?),
-			misc_intern_copy: std::mem::transmute(find(&MISC_INTERN_COPY)?),
+			procdef_add: std::mem::transmute(crate::find_recipe_of(&[PROCDEF_ADD, PROCDEF_ADD_EARLY])?),
+			misc_intern: if build < LINUX_SWAPPED_BUILD {
+				MiscIntern::Take(std::mem::transmute(find(&MISC_INTERN)?))
+			} else {
+				MiscIntern::Copy(std::mem::transmute(find(&MISC_INTERN_COPY)?))
+			},
 			alloc_shared: std::mem::transmute(find(&ALLOC_SHARED)?),
 			free_shared: std::mem::transmute(find(&FREE_SHARED)?),
 			copy_shared: std::mem::transmute(find(&COPY_SHARED)?),
 			register_typepath: if build < TYPEPATH_BUILD {
 				None
 			} else {
-				Some(std::mem::transmute(find(&REGISTER_TYPEPATH).or_else(|_| find(&REGISTER_TYPEPATH_OLD))?))
+				Some(std::mem::transmute(crate::find_recipe_of(&[REGISTER_TYPEPATH, REGISTER_TYPEPATH_OLD, REGISTER_TYPEPATH_EARLY])?))
 			},
 			type_stride: type_stride(build),
 			crt_realloc: std::mem::transmute::<unsafe extern "C" fn(*mut c_void, usize) -> *mut c_void, _>(realloc),
 			type_count: type_count as *const u32,
-			type_table: (type_count + 4) as *const *mut u8,
-			name_maps: find(&NAME_MAPS)? as *const *mut ProcNameMap,
+			// the table's pointer is the word after its count, or before it (as on
+			// Windows) on builds before 515.1644
+			type_table: if build < LINUX_SWAPPED_BUILD { type_count - 4 } else { type_count + 4 } as *const *mut u8,
+			name_maps: crate::find_recipe_of(&[NAME_MAPS, NAME_MAPS_EARLY])? as *const *mut ProcNameMap,
 			preorder: crate::find_recipe_of(&PREORDER)? as *const *mut u32,
 			appearance_cache: crate::find_recipe_of(&APPEARANCE_CACHE)? as *const *mut u32,
-			in_list_count: find(&IN_LIST_COUNT)? as *const u32,
-			in_list_procs: find(&IN_LIST_PROCS)? as *const *mut u32,
-			instance_count: find(&INSTANCE_COUNT)? as *const u32,
-			instances: find(&INSTANCES)? as *const *mut Instance,
-			mob_count: find(&MOB_COUNT)? as *const u32,
-			mobs: find(&MOBS)? as *const *mut MobType,
+			in_list_count: crate::find_recipe_of(&[IN_LIST_COUNT, IN_LIST_COUNT_EARLY])? as *const u32,
+			in_list_procs: crate::find_recipe_of(&[IN_LIST_PROCS, IN_LIST_PROCS_EARLY])? as *const *mut u32,
+			instance_count: crate::find_recipe_of(&[INSTANCE_COUNT, INSTANCE_COUNT_EARLY])? as *const u32,
+			instances: crate::find_recipe_of(&[INSTANCES, INSTANCES_EARLY])? as *const *mut Instance,
+			mob_count: crate::find_recipe_of(&[MOB_COUNT, MOB_COUNT_EARLY])? as *const u32,
+			mobs: crate::find_recipe_of(&[MOBS, MOBS_EARLY])? as *const *mut MobType,
 			// The code holds the map's address
-			world_name_map: (find(&WORLD_NAME_MAP)? as *const *mut ProcNameMap).read_unaligned(),
-			global_values: find(&GLOBAL_VALUES)? as *const *const crate::raw_types::values::Value
+			world_name_map: (crate::find_recipe_of(&[WORLD_NAME_MAP, WORLD_NAME_MAP_EARLY])? as *const *mut ProcNameMap).read_unaligned(),
+			global_values: crate::find_recipe_of(&[GLOBAL_VALUES, GLOBAL_VALUES_EARLY])? as *const *const crate::raw_types::values::Value
 		})
 	}
 }
@@ -828,7 +979,30 @@ pub fn intern_misc(words: &[u32]) -> Result<u32, String> {
 	if words.len() > u16::MAX as usize {
 		return Err(format!("{} words is too many for a misc entry", words.len()));
 	}
-	let id = (functions()?.misc_intern_copy)(words.as_ptr(), words.len() as u32);
+	let functions = functions()?;
+	let id = match functions.misc_intern {
+		MiscIntern::Copy(copy) => copy(words.as_ptr(), words.len() as u32),
+		MiscIntern::Take(take) => unsafe {
+			// allocated as BYOND allocates them, so it can free them
+			let entry = (functions.crt_realloc)(std::ptr::null_mut(), 12) as *mut u8;
+			if entry.is_null() {
+				return Err("out of memory making a misc entry".to_owned());
+			}
+			let mut data = std::ptr::null_mut::<u32>();
+			if !words.is_empty() {
+				data = (functions.crt_realloc)(std::ptr::null_mut(), words.len() * 4) as *mut u32;
+				if data.is_null() {
+					return Err("out of memory making a misc entry".to_owned());
+				}
+				std::ptr::copy_nonoverlapping(words.as_ptr(), data, words.len());
+			}
+			*(entry as *mut u16) = words.len() as u16;
+			*(entry.add(2) as *mut u16) = 0;
+			*(entry.add(4) as *mut u32) = 0;
+			*(entry.add(8) as *mut *mut u32) = data;
+			take(entry)
+		}
+	};
 	if id == NONE {
 		return Err("BYOND couldn't make the misc entry".to_owned());
 	}
@@ -1122,8 +1296,7 @@ pub fn set_global_words(var_id: u32, tag: u8, data: u32) -> Result<(), String> {
 pub fn global_value(var_id: u32) -> Result<crate::raw_types::values::Value, String> {
 	let functions = functions()?;
 	unsafe {
-		let table = &*crate::raw_types::funcs::VARIABLE_NAMES;
-		if var_id >= table.count {
+		if var_id >= variable_count() {
 			return Err(format!("there's no var id {}", var_id));
 		}
 		Ok(*(*functions.global_values).add(var_id as usize))
@@ -1132,14 +1305,13 @@ pub fn global_value(var_id: u32) -> Result<crate::raw_types::values::Value, Stri
 
 /// How many var ids there are.
 pub fn variable_count() -> u32 {
-	unsafe { (*crate::raw_types::funcs::VARIABLE_NAMES).count }
+	unsafe { *crate::raw_types::funcs::VARIABLE_NAME_COUNT }
 }
 
 /// The string id of a var id's name.
 pub fn variable_name(var_id: u32) -> Option<u32> {
 	unsafe {
-		let table = &*crate::raw_types::funcs::VARIABLE_NAMES;
-		(var_id < table.count).then(|| (*table.entries.add(var_id as usize)).0)
+		(var_id < variable_count()).then(|| (*(*crate::raw_types::funcs::VARIABLE_NAME_ENTRIES).add(var_id as usize)).0)
 	}
 }
 
@@ -1149,17 +1321,18 @@ pub fn variable_name(var_id: u32) -> Option<u32> {
 pub fn add_variable(name: u32, tag: u8, data: u32) -> Result<u32, String> {
 	let functions = functions()?;
 	unsafe {
-		let table = crate::raw_types::funcs::VARIABLE_NAMES as *mut crate::raw_types::variables::VariableNameIdTable;
-		let count = (*table).count as usize;
+		let entries = crate::raw_types::funcs::VARIABLE_NAME_ENTRIES as *mut *const crate::raw_types::strings::StringId;
+		let count_ptr = crate::raw_types::funcs::VARIABLE_NAME_COUNT as *mut u32;
+		let count = *count_ptr as usize;
 		if count as u32 >= NONE {
 			return Err("the world has as many vars as BYOND can number".to_owned());
 		}
 
-		let names = (functions.crt_realloc)((*table).entries as *mut c_void, (count + 1) * 4) as *mut u32;
+		let names = (functions.crt_realloc)(*entries as *mut c_void, (count + 1) * 4) as *mut u32;
 		if names.is_null() {
 			return Err("out of memory growing the var names".to_owned());
 		}
-		(*table).entries = names as *const crate::raw_types::strings::StringId;
+		*entries = names as *const crate::raw_types::strings::StringId;
 
 		let slots = functions.global_values as *mut *mut [u32; 2];
 		let values = (functions.crt_realloc)(*slots as *mut c_void, (count + 1) * 8) as *mut [u32; 2];
@@ -1170,7 +1343,7 @@ pub fn add_variable(name: u32, tag: u8, data: u32) -> Result<u32, String> {
 
 		names.add(count).write(name);
 		values.add(count).write([tag as u32, data]);
-		(*table).count += 1;
+		*count_ptr += 1;
 		Ok(count as u32)
 	}
 }
