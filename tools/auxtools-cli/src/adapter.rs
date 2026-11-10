@@ -1757,6 +1757,7 @@ impl Adapter {
 		let mut threads = vec![];
 		if self.debuggee.is_some() {
 			// One more than the list has: the debug library's own is left out
+			// while it sleeps (when it runs, the world is paused in it)
 			let limit = self.sleeping_threads as usize;
 			let wanted = self.sleeping_threads.saturating_add(1);
 			match self.request(&AuxRequest::Stacks { sleeping: Some(wanted) })? {
@@ -1764,7 +1765,7 @@ impl Adapter {
 					let mut asleep = sleeping as usize;
 					let mut listed = 0;
 					for stack in stacks {
-						if strip_declaration(&stack.name) == KEEPALIVE {
+						if stack.sleeping && strip_declaration(&stack.name) == KEEPALIVE {
 							asleep -= 1;
 							continue;
 						}

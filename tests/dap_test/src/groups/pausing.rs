@@ -51,14 +51,16 @@ pub fn run() {
 	world.eval_global("idle_ticks = 30");
 	world.wait_output("dap: running");
 	world.request("pause", json!({ "threadId": 0 }));
-	world.stopped("pause");
+	let stop = world.stopped("pause");
+	let thread = stop["body"]["threadId"].as_u64().unwrap();
+	assert!(world.threads().iter().any(|(id, _)| *id == thread), "the stop's thread {} isn't listed", thread);
 	let frames = world.frames(0);
 	assert_eq!(frames.len(), 1, "{:?}", frames);
 	assert_eq!(frames[0]["presentationHint"], "subtle", "{}", frames[0]);
 	assert!(frames[0]["source"].is_null(), "{}", frames[0]);
 	world.resume();
 	world.wait_output("dap: idle over");
-	ok("pause in a world with nothing running stops it all the same, in a frame with no source");
+	ok("pause in a world with nothing running stops it all the same, in a listed thread, in a frame with no source");
 
 	// nap(10) sleeps for a second while leaf() stops
 	let set = world.try_break_if(&[("leaf_1", "")]);
