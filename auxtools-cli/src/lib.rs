@@ -14,3 +14,9 @@ pub mod local;
 #[allow(dead_code)]
 #[path = "../../debug_server/src/server_types.rs"]
 pub mod server_types;
+
+// How the world expands the code's macros, which the launcher writes out the
+// same way
+#[allow(dead_code)]
+#[path = "../../debug_server/src/macros.rs"]
+pub mod macros;

@@ -56,6 +56,7 @@ fn behind_the_clients_back() {
 	world.configure();
 	world.wait_output("Hot reload: watching");
 	let at = world.marks.clone();
+	assert_eq!(world.eval_global("TWICE(21)"), "42");
 
 	// Three lines more above the breakpoint, which the client still has on
 	// the old line
@@ -66,6 +67,8 @@ fn behind_the_clients_back() {
 	world.run("middle");
 	world.stop_on("breakpoint", "/leaf", "leaf_2");
 	assert_eq!(world.local("y"), "4");
+	assert_eq!(world.eval("TWICE(y)"), "8");
+	ok("the debug console expands the code's macros, in a frame and in none");
 	world.resume();
 	world.stop_on("breakpoint", "/leaf", "leaf_2");
 	world.resume_through("middle");
@@ -248,6 +251,10 @@ fn saved_without_reloading() {
 	world.set_breakpoints(&file, json!([]));
 	world.resume_through("middle");
 	ok("without hot reloading, breakpoints sent with sourceModified are set as given, and the console says once that the file changed");
+	// Its code isn't read, so it hasn't its macros
+	let said = world.refused("evaluate", json!({ "expression": "TWICE(21)", "context": "repl" }));
+	assert!(said.contains("this world hasn't been given its code's macros"), "{}", said);
+	ok("without hot reloading, an expression that uses a macro says the world hasn't been given them");
 	world.end();
 }
 

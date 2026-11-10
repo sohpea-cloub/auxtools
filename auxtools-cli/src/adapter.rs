@@ -316,6 +316,9 @@ pub struct Adapter {
 	/// relative to
 	root: Option<PathBuf>,
 	stddef: Option<Stddef>,
+	/// The code's macros, as the world was last given them: again each time
+	/// it connects, in case they were sent while it rebooted
+	macros: Option<Vec<aux::Macro>>,
 
 	debuggee: Option<Debuggee>,
 	generation: u64,
@@ -426,6 +429,7 @@ pub fn serve(out: Output, inputs: mpsc::Sender<Input>, receiver: &mpsc::Receiver
 		said_ready: false,
 		root: None,
 		stddef: None,
+		macros: None,
 		debuggee: None,
 		generation: 0,
 		ending: false,
@@ -950,6 +954,7 @@ impl Adapter {
 			_ => return
 		};
 		self.send_output();
+		self.give_macros();
 		self.follow_reloads();
 		// Here to run the world and reload it: a pause another client makes
 		// isn't this one's to end
@@ -1053,7 +1058,19 @@ impl Adapter {
 				}
 			}
 			code::Event::NotReloaded { summary, errors, warnings } => self.journal_reload(false, summary, errors, warnings),
-			code::Event::NothingChanged { warnings } => self.journal_reload(true, "nothing the world runs changed".to_owned(), vec![], warnings)
+			code::Event::NothingChanged { warnings } => self.journal_reload(true, "nothing the world runs changed".to_owned(), vec![], warnings),
+			code::Event::Macros(macros) => {
+				self.macros = Some(macros);
+				self.give_macros();
+			}
+		}
+	}
+
+	/// Gives the world the code's macros, if they've been read
+	fn give_macros(&mut self) {
+		if let (Some(macros), Some(debuggee)) = (&self.macros, &mut self.debuggee) {
+			// It has no answer
+			let _ = debuggee.send(&AuxRequest::Defines(macros.clone()));
 		}
 	}
 

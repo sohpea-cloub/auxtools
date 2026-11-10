@@ -1381,7 +1381,11 @@ impl Server {
 		names.extend(proc.parameter_names().iter().map(String::from));
 		names.extend(proc.local_names().iter().map(String::from));
 		let names: Vec<&str> = names.iter().map(String::as_str).collect();
-		dmasm::compiler::compile_expr_for(condition, &names, crate::world_byond())
+		let condition = match crate::macros::expand(condition) {
+			Ok(condition) => condition,
+			Err(e) => return Some(e)
+		};
+		dmasm::compiler::compile_expr_for(&condition, &names, crate::world_byond())
 			.err()
 			.map(|e| e.to_string())
 	}
@@ -1394,7 +1398,7 @@ impl Server {
 			match part {
 				LogPart::Text(text) => message.push_str(text),
 				LogPart::Expr(expression) => {
-					match self.eval_expr(Some(0), expression) {
+					match self.eval_expr_plain(Some(0), expression) {
 						Ok(value) => message.push_str(&value.as_string().unwrap_or_else(|_| Self::stringify(&value))),
 						Err(error) => message.push_str(&format!("{{{}: {}}}", expression, error))
 					}
@@ -1901,6 +1905,12 @@ impl Server {
 	/// What an expression gives in a frame (or in none), or why it gives
 	/// nothing
 	fn eval_expr(&mut self, frame_id: Option<u32>, command: &str) -> Result<Value, String> {
+		self.eval_expr_plain(frame_id, command).map_err(Self::unknown_name)
+	}
+
+	/// The same without the hint about macros, for a log message, which says
+	/// its expression's error in the middle of a line on every hit
+	fn eval_expr_plain(&mut self, frame_id: Option<u32>, command: &str) -> Result<Value, String> {
 		// Assembling the expression runs DM code of its own to look up
 		// typepaths and resources, so it counts as eval code too. Otherwise the
 		// instruction hook would handle the client's next request in the middle
@@ -1921,6 +1931,27 @@ impl Server {
 			Some(error) => Err(format!("runtime error: {}", error)),
 			None => result
 		}
+	}
+
+	/// An error about a name the world doesn't know, which could be one of
+	/// the code's macros if the world had them
+	fn unknown_name(error: String) -> String {
+		let name = match (error.strip_prefix("undefined var: "), error.strip_prefix("there's no proc ")) {
+			(Some(name), _) => name,
+			(_, Some(path)) => path.rsplit('/').next().unwrap_or(path),
+			_ => return error
+		};
+		// Macros are written in capitals nearly everywhere; any other name
+		// is far more likely a slip than a #define
+		let capitals = name.chars().any(|c| c.is_ascii_uppercase()) && !name.chars().any(|c| c.is_ascii_lowercase());
+		if !capitals || crate::macros::given() {
+			return error;
+		}
+		format!(
+			"{} (if that's a #define: this world hasn't been given its code's macros, which the launcher that reads its code for hot \
+			 reloading gives it)",
+			error
+		)
 	}
 
 	/// An assemble error in plain words
@@ -1949,6 +1980,9 @@ impl Server {
 		}
 
 		// The world's globals, which the expression reads and writes by name
+		// What it says with the code's macros expanded
+		let command = &*crate::macros::expand(command)?;
+
 		let globals = unsafe { Value::new(ValueTag::GlobalVars, ValueData { id: 0 }) };
 		let mut src = None;
 		let given_src = self.eval_src.take();
@@ -2470,6 +2504,7 @@ impl Server {
 			Request::Render { frame_id, expression, depth } => self.handle_render(frame_id, &expression, depth),
 			Request::RenderVariables { vars, depth } => self.handle_render_variables(vars, depth),
 			Request::EvalOn { object, expression, depth } => self.handle_eval_on(&object, &expression, depth),
+			Request::Defines(macros) => crate::macros::set(macros),
 
 			// The following requests are special cases and handled outside of
 			// this function

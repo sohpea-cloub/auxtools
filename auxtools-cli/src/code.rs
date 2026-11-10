@@ -8,7 +8,7 @@
 //! applied.
 
 use std::{
-	cell::Cell,
+	cell::{Cell, RefCell},
 	collections::{HashMap, HashSet},
 	path::{Path, PathBuf},
 	sync::{mpsc, Arc},
@@ -16,7 +16,7 @@ use std::{
 };
 
 use dmasm::reload::{diff, Changes, ParseOptions, ProcKey, Snapshot};
-use auxtools_cli::server_types::{HotReloadInitProc, HotReloadLines, HotReloadNewProc, HotReloadProc, HotReloadRequest, HotReloadVarDefault, ProcRef};
+use auxtools_cli::server_types::{HotReloadInitProc, HotReloadLines, HotReloadNewProc, HotReloadProc, HotReloadRequest, HotReloadVarDefault, Macro, ProcRef};
 
 use crate::{adapter::Input, dap::Output};
 
@@ -54,7 +54,10 @@ pub enum Event {
 		warnings: Vec<String>
 	},
 	/// Files changed, and nothing the world runs did: for its record
-	NothingChanged { warnings: Vec<String> }
+	NothingChanged { warnings: Vec<String> },
+	/// The code's macros, for the world to expand in expressions: when the
+	/// code has been read, and when a reload changed them
+	Macros(Vec<Macro>)
 }
 
 /// From the adapter to the code's thread
@@ -84,7 +87,8 @@ pub fn start(mut options: Options, out: Arc<Output>, inputs: mpsc::Sender<Input>
 				out,
 				inputs,
 				commands: receiver,
-				reconnected: Cell::new(false)
+				reconnected: Cell::new(false),
+				macros: RefCell::new(None)
 			};
 			code.run();
 		})
@@ -100,7 +104,9 @@ struct Code {
 	inputs: mpsc::Sender<Input>,
 	commands: mpsc::Receiver<Command>,
 	/// The world connected again while a reload was waiting for its answer
-	reconnected: Cell<bool>
+	reconnected: Cell<bool>,
+	/// The macros the world was last given
+	macros: RefCell<Option<Vec<Macro>>>
 }
 
 /// What the world runs, and what's changed on disk since
@@ -161,11 +167,16 @@ impl Code {
 			applied: None,
 			built
 		};
+		let took = started.elapsed();
+		// The macros first: a world that's said to be watched can use them
+		if !self.give_macros() {
+			return;
+		}
 		self.log(format!(
 			"watching {} files with {} procs (read in {:.1} s)",
 			files.len(),
 			watching.built.procs().count(),
-			started.elapsed().as_secs_f32()
+			took.as_secs_f32()
 		));
 		if !self.send(Event::Watching) {
 			return;
@@ -273,7 +284,7 @@ impl Code {
 				self.send(Event::Changed);
 				watching.applied = Some(new);
 				watching.built.clear_patches();
-				true
+				self.give_macros()
 			}
 			Some(false) => true
 		}
@@ -292,7 +303,7 @@ impl Code {
 			}
 			watching.applied = None;
 			watching.edited_since_built.clear();
-			return self.send(Event::Changed);
+			return self.send(Event::Changed) && self.give_macros();
 		}
 
 		// Whatever was reloaded went with the old world
@@ -317,10 +328,28 @@ impl Code {
 				if applied {
 					watching.applied = Some(current);
 					watching.built.clear_patches();
+					return self.give_macros();
 				}
 				true
 			}
 		}
+	}
+
+	/// Gives the world the code's macros as they are now, if they aren't
+	/// what it was given last. False once the adapter has gone.
+	fn give_macros(&self) -> bool {
+		let macros = match macros(&self.options.dme, &self.parse_options) {
+			Ok(macros) => macros,
+			Err(e) => {
+				self.log(format!("couldn't read the code's macros, so expressions can't use them: {}", e));
+				return true;
+			}
+		};
+		if self.macros.borrow().as_ref() == Some(&macros) {
+			return true;
+		}
+		*self.macros.borrow_mut() = Some(macros.clone());
+		self.send(Event::Macros(macros))
 	}
 
 	/// The code couldn't be read, so nothing was reloaded: the world's record
@@ -549,6 +578,58 @@ fn changed_files(root: &Path, modified: &mut HashMap<PathBuf, Option<SystemTime>
 		.collect();
 	*modified = now;
 	changed
+}
+
+/// What the preprocessor defines itself, or is told for the world's BYOND:
+/// not the code's own macros
+const NOT_THE_CODES: [&str; 4] = ["DM_VERSION", "DM_BUILD", "FILE_DIR", "SPACEMAN_DMM"];
+
+/// The macros defined at the end of the code, read as `Snapshot::parse`
+/// reads it (with the defines it's given and the world's BYOND version),
+/// sorted by name. The preprocessor's own aren't among them.
+pub fn macros(dme: &Path, options: &ParseOptions) -> Result<Vec<Macro>, String> {
+	let ctx = dreammaker::Context::default();
+	let mut pp = dreammaker::Preprocessor::new(&ctx, dme.to_owned()).map_err(|e| format!("couldn't read {}: {}", dme.display(), e))?;
+	let mut prelude = String::from("#undef SPACEMAN_DMM\n");
+	if let Some((version, build)) = options.byond {
+		prelude += &format!("#undef DM_VERSION\n#define DM_VERSION {}\n#undef DM_BUILD\n#define DM_BUILD {}\n", version, build);
+	}
+	for (name, value) in &options.defines {
+		prelude += &format!("#define {} {}\n", name, value.as_deref().unwrap_or(""));
+	}
+	pp.push_file(PathBuf::from("<auxtools defines>"), std::io::Cursor::new(prelude.into_bytes()))
+		.map_err(|e| e.to_string())?;
+	pp.by_ref().for_each(drop);
+	let history = pp.finalize();
+
+	// Those still defined at the end are given an end past every file's. A
+	// name defined again over itself has more than one: the last is the one
+	// that counts.
+	let mut defined: HashMap<String, (u16, Macro)> = HashMap::new();
+	for (range, (name, define)) in history.iter() {
+		let at_end = range.end.file == dreammaker::FileId::UNKNOWN && range.end.line == !0;
+		if !at_end || define.location.file == dreammaker::FileId::BUILTINS || NOT_THE_CODES.contains(&name.as_str()) {
+			continue;
+		}
+		if defined.get(name.as_str()).is_some_and(|(order, _)| *order > range.end.column) {
+			continue;
+		}
+		let mut params: Vec<String> = define.params.iter().map(|param| param.to_string()).collect();
+		if define.variadic {
+			if let Some(last) = params.last_mut() {
+				last.push_str("...");
+			}
+		}
+		let text = auxtools_cli::macros::text_of(&define.subst);
+		defined.insert(name.to_string(), (range.end.column, Macro {
+			name: name.to_string(),
+			params,
+			text
+		}));
+	}
+	let mut macros: Vec<Macro> = defined.into_values().map(|(_, define)| define).collect();
+	macros.sort_by(|a, b| a.name.cmp(&b.name));
+	Ok(macros)
 }
 
 /// `NAME` or `NAME=VALUE`, as DreamMaker takes them after `-D`

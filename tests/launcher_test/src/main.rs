@@ -992,7 +992,7 @@ fn launch_from_the_command_line(server: &str) {
 
 	// A world whose world/Del() doesn't end it
 	let mut started = Started::default();
-	let args = launch_args(&dmb, server, &["--detach"]);
+	let args = launch_args(&dmb, server, &["--detach", "--no-hot-reload"]);
 	let (got, printed) = launcher_command(&args.iter().map(String::as_str).collect::<Vec<_>>());
 	assert_eq!(got, 0, "launch --detach said {}", printed);
 	let pid: u64 = printed
@@ -1012,6 +1012,14 @@ fn launch_from_the_command_line(server: &str) {
 		assert_eq!(got, code, "`{}` gave {}, not {}: {}", args.join(" "), got, code, printed);
 		printed
 	};
+	// Its code isn't read, so it has no macros, and says so
+	let printed = run(&["eval", "DOUBLE_IT(1)"], 1);
+	assert!(
+		printed.starts_with("there's no proc /proc/DOUBLE_IT (if that's a #define: this world hasn't been given its code's macros"),
+		"eval said {}",
+		printed
+	);
+	println!("ok: a world that hasn't been given its code's macros says so when an expression uses a name it doesn't know");
 	let printed = run(&["stop", "--timeout", "2"], 1);
 	assert!(
 		printed.starts_with(&format!("the world (process {}) is still running 2 s on: its world/Del() didn't end it", pid)),

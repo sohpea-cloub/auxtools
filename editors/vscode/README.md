@@ -172,6 +172,13 @@ it returns, or its last line's when that's an expression; names mean the same as
 expression, and it can change the frame's vars too. A body or an expression can't wait:
 one that sleeps, or calls something that does, is given up on.
 
+The code's `#define`s work in all of these, and in breakpoints' log messages:
+`get_turf(src)`, `isitem(I)`, `DOUBLE(x) + MAX_HEALTH`. The launcher reads them from the
+code when it reads it for hot reloading (so not with `"hotReload": false`) and gives them
+to the world, which keeps them, again when a reload changes them; one the code `#undef`s
+isn't there. A world no launcher has read the code for has none (one started without hot
+reloading, say), and an expression that uses one says so.
+
 While the world is paused, resting the mouse on a name in the code shows its value in the
 selected frame: `health`, or `target.loc.name` with the mouse on `name`. A hover only
 reads: it doesn't call procs, and doesn't run bodies.

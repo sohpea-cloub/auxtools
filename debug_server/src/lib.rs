@@ -5,6 +5,7 @@ mod hot_reload;
 mod instruction_hooking;
 mod journal;
 mod launched;
+mod macros;
 mod server;
 mod server_types;
 mod stddef;

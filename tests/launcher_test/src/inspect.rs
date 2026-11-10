@@ -66,6 +66,7 @@ pub fn command_line_inspect(pid: u64, dir: &Path, code: &Path) {
 	instruction_steps(pid, dir);
 	as_json(pid, dir);
 	on_an_object(pid);
+	macros(pid, code);
 }
 
 /// `eval` fails on stderr with exit code 1, whatever went wrong, and a
@@ -357,4 +358,46 @@ fn on_an_object(pid: &str) {
 	assert_eq!(fails(pid, &["eval", "--src", &bare, "--frame", "0", "count"]), "--src and --frame don't go together: --src is in no frame");
 	assert!(fails(pid, &["eval", "--src", &bare, "nothing_called_this"]).starts_with("undefined var: nothing_called_this"));
 	println!("ok: eval --src fails on an object that's gone, or a ref that isn't one");
+}
+
+/// What `eval` gives, once it gives `wanted`: the world is given the code's
+/// macros a moment after a reload
+fn eval_becomes(pid: &str, expression: &str, wanted: &str) {
+	let mut got = String::new();
+	for _ in 0..100 {
+		got = auxtools(pid, &["eval", expression], None).out;
+		if got.trim() == wanted {
+			return;
+		}
+		std::thread::sleep(std::time::Duration::from_millis(100));
+	}
+	panic!("eval {} gave {}, not {}", expression, got, wanted);
+}
+
+/// The code's #defines, in every kind of expression
+fn macros(pid: &str, code: &Path) {
+	assert_eq!(run(pid, &["eval", "DOUBLE_IT(ANSWER) + 1"], 0).out, "85\n");
+	assert_eq!(run(pid, &["eval", "\"[ANSWER]!\""], 0).out, "\"42!\"\n");
+	assert!(fails(pid, &["eval", "GONE"]).starts_with("undefined var: GONE"));
+	let reference = run(pid, &["eval", "ref(held)"], 0).out.trim().trim_matches('"').to_owned();
+	assert_eq!(run(pid, &["eval", "--src", &reference, "DOUBLE_IT(count)"], 0).out, "6\n");
+	println!("ok: eval expands the code's macros, and not one it #undefs");
+
+	// In a breakpoint's condition and its message, and in a paused frame
+	let ran = run(pid, &["wait", "--break", "/proc/tick", "--if", "n == DOUBLE_IT(1) && ANSWER == 42", "--timeout", "60"], 0);
+	assert!(ran.out.starts_with("paused at a breakpoint\n#0 /tick"), "wait said {}", ran.out);
+	assert_eq!(run(pid, &["eval", "DOUBLE_IT(n)"], 0).out, "4\n");
+	run(pid, &["continue"], 0);
+	let ran = run(pid, &["trace", "/proc/tick", "--if", "n == 1", "--log", "doubled: {DOUBLE_IT(n)}", "--count", "1"], 0);
+	assert!(ran.out.contains("doubled: 2\n"), "trace said {}", ran.out);
+	println!("ok: breakpoints' conditions and messages expand the code's macros, and so does eval in a paused frame");
+
+	// A reload that changes them gives the world the new ones
+	let source = std::fs::read_to_string(code).unwrap();
+	std::fs::write(code, source.replace("#define ANSWER 42", "#define ANSWER 43\n#define GONE 2")).unwrap();
+	eval_becomes(pid, "ANSWER + GONE", "45");
+	std::fs::write(code, &source).unwrap();
+	eval_becomes(pid, "ANSWER", "42");
+	assert!(fails(pid, &["eval", "GONE"]).starts_with("undefined var: GONE"));
+	println!("ok: a reload that changes the code's macros gives the world the new ones");
 }

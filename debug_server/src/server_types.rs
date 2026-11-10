@@ -226,7 +226,23 @@ pub enum Request {
 		object: String,
 		expression: String,
 		depth: Option<u32>
-	}
+	},
+	/// The `#define`s of the world's code, from a launcher that read it: all
+	/// of them, in place of any given before. They last as long as the
+	/// process, through reboots, and expressions from every client use them.
+	/// It has no answer.
+	Defines(Vec<Macro>)
+}
+
+/// A `#define` of the world's code, as its preprocessor has it
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct Macro {
+	pub name: String,
+	/// Its parameters, none for a macro without them. A variadic one's
+	/// last is written with its `...`.
+	pub params: Vec<String>,
+	/// What it's replaced by, as text on one line
+	pub text: String
 }
 
 // Message from server -> client

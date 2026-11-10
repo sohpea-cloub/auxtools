@@ -2,6 +2,12 @@
 
 var/rounds = 0
 
+// Macros for the command line's eval, and one that's gone by the end
+#define DOUBLE_IT(x) ((x) * 2)
+#define ANSWER 42
+#define GONE 1
+#undef GONE
+
 // An object for the command line's eval --src
 var/datum/held/held = new
 
