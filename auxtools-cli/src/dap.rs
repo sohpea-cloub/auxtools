@@ -42,14 +42,45 @@ pub fn read_message(input: &mut impl BufRead) -> io::Result<Option<String>> {
 /// something to say.
 pub struct Output {
 	seq: AtomicI64,
-	stdout: Mutex<io::Stdout>
+	to: To
+}
+
+enum To {
+	/// A client on stdout, in DAP
+	Client(Mutex<io::Stdout>),
+	/// Whoever runs the adapter in-process (`auxtools launch`), which is told
+	/// only what a person reading a terminal would be
+	Plain(Box<dyn Fn(Note) + Send + Sync>)
+}
+
+/// What an adapter run in-process hears of what it would tell a client
+pub enum Note {
+	/// A line of the world's output, or of what the adapter says (`console`)
+	Line { category: String, text: String },
+	/// A request it was given failed
+	Failed { command: String, message: String },
+	/// The world's process started
+	Process(u32),
+	/// The world is up and connected, and its code is read and watched, if
+	/// it's to be hot reloaded: what's changed from now on is reloaded
+	Ready,
+	/// The world ended, with this exit code (-1 if it was killed)
+	Exited(i64)
 }
 
 impl Output {
 	pub fn new() -> Self {
 		Self {
 			seq: AtomicI64::new(1),
-			stdout: Mutex::new(io::stdout())
+			to: To::Client(Mutex::new(io::stdout()))
+		}
+	}
+
+	/// Tells `to` what happens, in place of a client
+	pub fn plain(to: impl Fn(Note) + Send + Sync + 'static) -> Self {
+		Self {
+			seq: AtomicI64::new(1),
+			to: To::Plain(Box::new(to))
 		}
 	}
 
@@ -61,8 +92,11 @@ impl Output {
 	}
 
 	fn send(&self, message: &impl serde::Serialize) {
+		let To::Client(stdout) = &self.to else {
+			return;
+		};
 		let json = serde_json::to_string(message).expect("a DAP message that can't be encoded");
-		let mut stdout = self.stdout.lock().unwrap();
+		let mut stdout = stdout.lock().unwrap();
 		// Nobody to tell if the client has gone
 		let _ = write!(stdout, "Content-Length: {}\r\n\r\n{}", json.len(), json);
 		let _ = stdout.flush();
@@ -70,6 +104,20 @@ impl Output {
 
 	pub fn event<E: Event>(&self, event: E) {
 		let body = serde_json::to_value(event).expect("a DAP event that can't be encoded");
+		if let To::Plain(to) = &self.to {
+			let text = |name: &str| body[name].as_str().unwrap_or_default().to_owned();
+			match E::EVENT {
+				"output" => to(Note::Line {
+					category: text("category"),
+					text: text("output")
+				}),
+				"process" => to(Note::Process(body["systemProcessId"].as_u64().unwrap_or_default() as u32)),
+				"exited" => to(Note::Exited(body["exitCode"].as_i64().unwrap_or(-1))),
+				// The rest is for a debugger
+				_ => {}
+			}
+			return;
+		}
 		self.send(&EventMessage {
 			protocol_message: self.protocol_message(EventMessage::TYPE),
 			event: E::EVENT.to_owned(),
@@ -78,6 +126,15 @@ impl Output {
 	}
 
 	pub fn response(&self, request_seq: i64, command: &str, result: Result<serde_json::Value, String>) {
+		if let To::Plain(to) = &self.to {
+			if let Err(message) = result {
+				to(Note::Failed {
+					command: command.to_owned(),
+					message
+				});
+			}
+			return;
+		}
 		let (success, message, body) = match result {
 			Ok(body) => (true, None, Some(body)),
 			Err(message) => (false, Some(message), None)
@@ -95,6 +152,14 @@ impl Output {
 	/// A line in the debug console
 	pub fn console(&self, text: impl Into<String>) {
 		self.output("console", text.into() + "\n");
+	}
+
+	/// The world is ready to be used (see `Note::Ready`). A client is told
+	/// as much in other ways.
+	pub fn ready(&self) {
+		if let To::Plain(to) = &self.to {
+			to(Note::Ready);
+		}
 	}
 
 	pub fn output(&self, category: &str, output: String) {

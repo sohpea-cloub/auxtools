@@ -7,6 +7,13 @@ var/rounds = 0
 	spawn(1)
 		run_until_stopped()
 
+// A world whose shutdown code doesn't shut it down, when the test asks for one
+/world/Del()
+	world.log << "attach test: world/Del"
+	if (fexists("refuse_del"))
+		return
+	..()
+
 /proc/run_until_stopped()
 	var/said = 0
 	while (!fexists("stop"))

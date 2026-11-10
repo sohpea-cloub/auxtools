@@ -3,8 +3,10 @@
 //! debugger itself, stop at breakpoints, pick up again after the world
 //! reboots, and go away when the world ends. Then a world launched without
 //! debugging is found with `--list`, two more launchers attach to it at once,
-//! and the first hot reloads it. Last, the launcher's command line pauses it
-//! and looks around, a command at a time.
+//! and the first hot reloads it. Then the launcher's command line pauses it
+//! and looks around, a command at a time. Last, the command line starts
+//! worlds itself (`launch`, in the foreground and in the background), reboots
+//! them and stops them.
 //!
 //! Build the launcher and the debug library first:
 //! `cargo build -p auxtools-cli -p debug_server -p launcher_test`, then run this
@@ -22,11 +24,14 @@ mod client;
 mod paths;
 
 use std::{
+	io::{BufRead, BufReader, Read},
 	path::{Path, PathBuf},
-	process::Command
+	process::{Child, Command, Stdio},
+	sync::{Arc, Mutex},
+	time::{Duration, Instant}
 };
 
-use client::{launcher_command, library_path, test_args, Launcher};
+use client::{launcher_command, launcher_path, library_path, test_args, Launcher};
 use paths::ByondCommand;
 use serde_json::json;
 
@@ -165,6 +170,7 @@ fn main() {
 	let _ = std::fs::remove_file(host_file("rebooted"));
 
 	attach_and_reload(&server, &library);
+	launch_from_the_command_line(&server);
 	println!("all ok");
 }
 
@@ -238,7 +244,9 @@ fn command_line_shape() {
 	assert_eq!(code, 0, "{}", alone);
 	assert!(alone.starts_with("auxtools: debug BYOND worlds"), "auxtools said {}", alone);
 	assert!(alone.contains("Usage: auxtools [--pid PID] COMMAND [OPTIONS]"), "auxtools said {}", alone);
-	for command in ["list", "status", "stack", "vars", "eval", "pause", "continue", "next", "step", "out", "wait", "dap", "help", "version"] {
+	for command in [
+		"launch", "stop", "reboot", "list", "status", "stack", "vars", "eval", "pause", "continue", "next", "step", "out", "wait", "dap", "help", "version"
+	] {
 		assert!(alone.lines().any(|line| line.starts_with(&format!("  {} ", command))), "{} isn't in the help:\n{}", command, alone);
 	}
 	for args in [&["help"][..], &["--help"][..], &["-h"][..]] {
@@ -460,16 +468,8 @@ fn line_of(file: &Path, text: &str) -> u64 {
 /// A world launched without debugging, found with `--list`, attached to by
 /// two launchers at once, and hot reloaded by the one that launched it
 fn attach_and_reload(server: &str, library: &Path) {
-	// A copy, so the code can be edited
-	let dir = std::env::temp_dir().join(format!("launcher_test_attach-{}", std::process::id()));
-	std::fs::create_dir_all(&dir).unwrap();
-	for file in ["attach_host.dme", "attach_host.dm"] {
-		std::fs::copy(host_file(file), dir.join(file)).unwrap();
-	}
-	let dme = dir.join("attach_host.dme");
+	let (dir, dme) = attach_host_copy("attach");
 	let code = dir.join("attach_host.dm");
-	let res = Command::new(paths::find_dm()).with_byond_paths().arg(&dme).status().unwrap();
-	assert!(res.success(), "dreammaker build failed");
 
 	let mut runner = Launcher::start();
 	runner.initialize();
@@ -562,5 +562,295 @@ fn attach_and_reload(server: &str, library: &Path) {
 	assert!(runner.output.contains("attach test: done"), "the world didn't finish");
 	runner.disconnect(json!({}));
 	println!("ok: the world ended, and the launcher with it");
+	let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A copy of the world that runs until told to stop, built, in a directory of
+/// its own named after `name`, so its code can be edited
+fn attach_host_copy(name: &str) -> (PathBuf, PathBuf) {
+	let dir = std::env::temp_dir().join(format!("launcher_test_{}-{}", name, std::process::id()));
+	std::fs::create_dir_all(&dir).unwrap();
+	for file in ["attach_host.dme", "attach_host.dm"] {
+		std::fs::copy(host_file(file), dir.join(file)).unwrap();
+	}
+	let dme = dir.join("attach_host.dme");
+	let res = Command::new(paths::find_dm()).with_byond_paths().arg(&dme).status().unwrap();
+	assert!(res.success(), "dreammaker build failed");
+	(dir, dme)
+}
+
+/// Processes the test started, ended when it's done with them, whether it
+/// passes or fails: a world, a launcher in the background, a launcher in the
+/// foreground (`child`)
+#[derive(Default)]
+struct Started {
+	child: Option<Child>,
+	pids: Vec<u64>
+}
+
+impl Drop for Started {
+	fn drop(&mut self) {
+		if let Some(child) = &mut self.child {
+			let _ = child.kill();
+			let _ = child.wait();
+		}
+		// A check that failed may not have got as far as hearing which
+		// processes there were: the worlds of this run's copies are found, and
+		// their launchers go with them
+		if std::thread::panicking() {
+			let list = Command::new(launcher_path()).arg("list").output().ok();
+			let worlds: serde_json::Value = list.and_then(|list| serde_json::from_slice(&list.stdout).ok()).unwrap_or_default();
+			let ours = format!("launcher_test_launch-{}", std::process::id());
+			for world in worlds.as_array().into_iter().flatten() {
+				if world["dmb"].as_str().is_some_and(|dmb| dmb.contains(&ours)) {
+					self.pids.extend(world["pid"].as_u64());
+				}
+			}
+		}
+		for pid in &self.pids {
+			let _ = if cfg!(windows) {
+				Command::new("taskkill").args(["/F", "/PID", &pid.to_string()]).output()
+			} else {
+				Command::new("kill").args(["-9", &pid.to_string()]).output()
+			};
+		}
+	}
+}
+
+/// Whether process `pid` is running
+fn alive(pid: u64) -> bool {
+	if cfg!(windows) {
+		let listed = Command::new("tasklist").args(["/FI", &format!("PID eq {}", pid), "/NH"]).output().unwrap();
+		String::from_utf8_lossy(&listed.stdout).split_whitespace().any(|word| word == pid.to_string())
+	} else {
+		// One that's ended and not waited for yet is a zombie, `Z`
+		std::fs::read_to_string(format!("/proc/{}/stat", pid))
+			.is_ok_and(|stat| stat.rsplit_once(") ").is_some_and(|(_, rest)| !rest.starts_with('Z')))
+	}
+}
+
+fn gone_within(pid: u64, seconds: u64) -> bool {
+	let until = Instant::now() + Duration::from_secs(seconds);
+	while alive(pid) {
+		if Instant::now() > until {
+			return false;
+		}
+		std::thread::sleep(Duration::from_millis(100));
+	}
+	true
+}
+
+/// Waits for `text` to be in what `read` gives
+fn wait_for_text(what: &str, text: &str, read: impl Fn() -> String) {
+	let until = Instant::now() + Duration::from_secs(60);
+	loop {
+		let now = read();
+		if now.contains(text) {
+			return;
+		}
+		assert!(Instant::now() < until, "{} didn't say {:?}:\n{}", what, text, now);
+		std::thread::sleep(Duration::from_millis(100));
+	}
+}
+
+/// `auxtools launch DMB` and the options every launch here has
+fn launch_args(dmb: &Path, server: &str, more: &[&str]) -> Vec<String> {
+	let mut args: Vec<String> = vec!["launch".into(), dmb.to_string_lossy().into_owned()];
+	args.extend(["--byond".into(), paths::find_byond().to_string_lossy().into_owned(), "--server".into(), server.to_owned()]);
+	args.extend(more.iter().map(|arg| (*arg).to_owned()));
+	if let Some(theirs) = test_args() {
+		args.push("--".into());
+		args.extend(theirs);
+	}
+	args
+}
+
+/// `auxtools launch` in the foreground, its output collected as it comes
+fn launch_here(dmb: &Path, server: &str, started: &mut Started) -> Arc<Mutex<String>> {
+	let mut child = Command::new(launcher_path())
+		.args(launch_args(dmb, server, &[]))
+		.stdin(Stdio::null())
+		.stdout(Stdio::piped())
+		.stderr(Stdio::piped())
+		.spawn()
+		.unwrap();
+	let output = Arc::new(Mutex::new(String::new()));
+	for stream in [Box::new(child.stdout.take().unwrap()) as Box<dyn Read + Send>, Box::new(child.stderr.take().unwrap())] {
+		let output = output.clone();
+		std::thread::spawn(move || {
+			for line in BufReader::new(stream).lines() {
+				let Ok(line) = line else { return };
+				let mut output = output.lock().unwrap();
+				output.push_str(&line);
+				output.push('\n');
+			}
+		});
+	}
+	started.child = Some(child);
+	output
+}
+
+/// The exit code of the foreground launcher, once it's gone
+fn launcher_exit(started: &mut Started, output: &Mutex<String>) -> i32 {
+	let child = started.child.as_mut().unwrap();
+	let until = Instant::now() + Duration::from_secs(30);
+	loop {
+		if let Some(status) = child.try_wait().unwrap() {
+			return status.code().unwrap_or(-1);
+		}
+		assert!(Instant::now() < until, "the launcher didn't exit:\n{}", output.lock().unwrap());
+		std::thread::sleep(Duration::from_millis(100));
+	}
+}
+
+/// The process id in `launch`'s line about the program it started
+fn started_pid(output: &str) -> u64 {
+	output
+		.lines()
+		.find_map(|line| line.strip_prefix("Started ")?.rsplit_once("(process ")?.1.strip_suffix(')')?.parse().ok())
+		.unwrap_or_else(|| panic!("launch didn't say which process it started:\n{}", output))
+}
+
+/// `auxtools launch`, `stop` and `reboot`: worlds the command line starts and
+/// ends itself, in the foreground and in the background
+fn launch_from_the_command_line(server: &str) {
+	let (dir, dme) = attach_host_copy("launch");
+	let dmb = dme.with_extension("dmb");
+	let code = dir.join("attach_host.dm");
+
+	// The launcher never builds: a world that isn't built isn't launched
+	let missing = dir.join("nothing.dmb");
+	for more in [&[][..], &["--detach"][..]] {
+		let args = launch_args(&missing, server, more);
+		let (got, printed) = launcher_command(&args.iter().map(String::as_str).collect::<Vec<_>>());
+		assert_eq!(got, 1, "launch of a world that isn't there gave {}: {}", got, printed);
+		assert!(printed.contains("nothing.dmb: build the world first"), "launch said {}", printed);
+	}
+	println!("ok: launch says a world that isn't built isn't there, and exits with 1");
+
+	// In the foreground: the world's output, its hot reloads, and its end
+	let mut started = Started::default();
+	let output = launch_here(&dmb, server, &mut started);
+	let read = || output.lock().unwrap().clone();
+	wait_for_text("launch", "Hot reload: watching", read);
+	wait_for_text("launch", "attach test: 1", read);
+	started.pids.push(started_pid(&read()));
+	let source = std::fs::read_to_string(&code).unwrap();
+	std::fs::write(&code, source.replace("\treturn 1", "\treturn 2")).unwrap();
+	wait_for_text("launch", "Hot reload: reloaded /value", read);
+	wait_for_text("launch", "attach test: 2", read);
+	std::fs::write(dir.join("stop"), "yes").unwrap();
+	let exit = launcher_exit(&mut started, &output);
+	let printed = read();
+	assert_eq!(exit, 0, "launch exited with {}:\n{}", exit, printed);
+	assert!(printed.contains("attach test: done") && printed.contains("The world exited with code 0"), "launch said:\n{}", printed);
+	std::fs::remove_file(dir.join("stop")).unwrap();
+	std::fs::write(&code, source).unwrap();
+	drop(started);
+	println!("ok: launch in the foreground prints the world's output and its hot reloads, and ends with it");
+
+	// Interrupted, it has the world end itself
+	if cfg!(unix) {
+		let mut started = Started::default();
+		let output = launch_here(&dmb, server, &mut started);
+		let read = || output.lock().unwrap().clone();
+		wait_for_text("launch", "Hot reload: watching", read);
+		started.pids.push(started_pid(&read()));
+		let launcher = started.child.as_ref().unwrap().id().to_string();
+		assert!(Command::new("kill").args(["-TERM", &launcher]).status().unwrap().success());
+		let exit = launcher_exit(&mut started, &output);
+		let printed = read();
+		assert_eq!(exit, 0, "launch exited with {}:\n{}", exit, printed);
+		assert!(
+			printed.contains("Interrupted: asking the world to end") && printed.contains("attach test: world/Del"),
+			"launch said:\n{}",
+			printed
+		);
+		println!("ok: launch, interrupted, has the world end itself through its world/Del()");
+	}
+
+	// In the background: it returns once the world is up, and other
+	// commands work with it
+	let mut started = Started::default();
+	let args = launch_args(&dmb, server, &["--detach", "--json"]);
+	let (got, printed) = launcher_command(&args.iter().map(String::as_str).collect::<Vec<_>>());
+	assert_eq!(got, 0, "launch --detach said {}", printed);
+	let up: serde_json::Value = serde_json::from_str(&printed).unwrap_or_else(|_| panic!("launch --detach --json said {}", printed));
+	let (pid, launcher) = (up["pid"].as_u64().unwrap(), up["launcher"].as_u64().unwrap());
+	started.pids.extend([pid, launcher]);
+	let log = PathBuf::from(up["log"].as_str().unwrap());
+	assert_eq!(log, dir.join("attach_host.auxtools.log"));
+	let read_log = || std::fs::read_to_string(&log).unwrap_or_default();
+	assert!(read_log().contains("Hot reload: watching"), "the world was up before its code was watched:\n{}", read_log());
+	let listed = client::listed_worlds();
+	assert!(
+		listed.iter().any(|world| world["pid"] == pid && world["dmb"].as_str().is_some_and(|dmb| dmb.contains("launcher_test_launch-"))),
+		"list doesn't show the world: {:?}",
+		listed
+	);
+	let pid_text = pid.to_string();
+	let run = |args: &[&str], code: i32| {
+		let args: Vec<&str> = ["--pid", pid_text.as_str()].iter().chain(args).copied().collect();
+		let (got, printed) = launcher_command(&args);
+		assert_eq!(got, code, "`{}` gave {}, not {}: {}", args.join(" "), got, code, printed);
+		printed
+	};
+	assert_eq!(run(&["status"], 0).trim(), "running");
+	assert_eq!(run(&["eval", "6", "*", "7"], 0).trim(), "42");
+	wait_for_text("the background launcher's log", "attach test: 1", read_log);
+	println!("ok: launch --detach returns when the world is up, with its process, and commands work with it");
+
+	let printed = run(&["reboot"], 0);
+	assert!(printed.starts_with("The world rebooted and is answering again, "), "reboot said {}", printed);
+	assert_eq!(run(&["status"], 0).trim(), "running");
+	wait_for_text("the background launcher's log", "The world restarted", read_log);
+	println!("ok: reboot reboots the world, and returns when it answers again; the launcher connects again");
+
+	let printed = run(&["stop"], 0);
+	assert_eq!(printed.trim(), format!("The world has ended (process {})", pid));
+	assert!(!alive(pid), "the world is still there");
+	assert!(gone_within(launcher, 10), "the background launcher didn't go with the world");
+	let said = read_log();
+	assert!(said.contains("attach test: world/Del") && said.contains("The world exited with code 0"), "the log has:\n{}", said);
+	drop(started);
+	println!("ok: stop has the world end itself, and the background launcher goes with it");
+
+	// A world whose world/Del() doesn't end it
+	let mut started = Started::default();
+	let args = launch_args(&dmb, server, &["--detach"]);
+	let (got, printed) = launcher_command(&args.iter().map(String::as_str).collect::<Vec<_>>());
+	assert_eq!(got, 0, "launch --detach said {}", printed);
+	let pid: u64 = printed
+		.strip_prefix("The world is up: process ")
+		.and_then(|rest| rest.lines().next()?.parse().ok())
+		.unwrap_or_else(|| panic!("launch --detach said {}", printed));
+	let launcher: u64 = printed
+		.split_once("Its launcher is process ")
+		.and_then(|(_, rest)| rest.split_once(',')?.0.parse().ok())
+		.unwrap_or_else(|| panic!("launch --detach said {}", printed));
+	started.pids.extend([pid, launcher]);
+	std::fs::write(dir.join("refuse_del"), "yes").unwrap();
+	let pid_text = pid.to_string();
+	let run = |args: &[&str], code: i32| {
+		let args: Vec<&str> = ["--pid", pid_text.as_str()].iter().chain(args).copied().collect();
+		let (got, printed) = launcher_command(&args);
+		assert_eq!(got, code, "`{}` gave {}, not {}: {}", args.join(" "), got, code, printed);
+		printed
+	};
+	let printed = run(&["stop", "--timeout", "2"], 1);
+	assert!(
+		printed.starts_with(&format!("the world (process {}) is still running 2 s on: its world/Del() didn't end it", pid)),
+		"stop said {}",
+		printed
+	);
+	assert!(alive(pid), "the world ended");
+	let printed = run(&["stop", "--timeout", "0", "--kill"], 0);
+	assert_eq!(printed.trim(), format!("The world didn't end in 0 s, so its process ({}) was ended", pid));
+	assert!(!alive(pid), "the world is still there");
+	wait_for_text("the background launcher's log", "The world was ended", || std::fs::read_to_string(&log).unwrap_or_default());
+	assert!(gone_within(launcher, 10), "the background launcher didn't go with the world");
+	drop(started);
+	println!("ok: stop says when the world's Del() doesn't end it, and --kill ends its process");
+
 	let _ = std::fs::remove_dir_all(&dir);
 }

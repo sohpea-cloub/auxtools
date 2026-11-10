@@ -231,9 +231,17 @@ fn server_processes() -> Vec<(u32, String)> {
 /// Whether process `pid` is still running
 #[cfg(unix)]
 pub fn alive(pid: u32) -> bool {
-	// Our own children are waited for, so a zombie is never one of ours for
-	// long. Signal 0 only checks.
-	unsafe { libc::kill(pid as i32, 0) == 0 }
+	// Signal 0 only checks
+	if unsafe { libc::kill(pid as i32, 0) } != 0 {
+		return false;
+	}
+	// A process that has ended but whose parent hasn't heard yet (a zombie)
+	// is still there to signal: our own children are waited for, others'
+	// aren't always. Its state is the letter after its name in `stat`.
+	let zombie = std::fs::read_to_string(format!("/proc/{}/stat", pid))
+		.ok()
+		.and_then(|stat| Some(stat.rsplit_once(") ")?.1.starts_with('Z')));
+	zombie != Some(true)
 }
 
 #[cfg(windows)]

@@ -38,6 +38,8 @@ pub enum Event {
 	/// Done with the world that last connected: it has the code it should, as
 	/// far as it can be given it, and can be let run
 	Ready,
+	/// The files are being watched: a change from now on is reloaded
+	Watching,
 	/// Changes to swap in, then say whether they were (`Command::Reloaded`)
 	Reload {
 		request: Box<HotReloadRequest>,
@@ -155,6 +157,9 @@ impl Code {
 			watching.built.procs().count(),
 			started.elapsed().as_secs_f32()
 		));
+		if !self.send(Event::Watching) {
+			return;
+		}
 		self.watch(&mut watching);
 	}
 

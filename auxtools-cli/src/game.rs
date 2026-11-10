@@ -72,10 +72,14 @@ impl Game {
 			if let Some((library, _)) = &launch.debug {
 				command.env("LD_PRELOAD", library);
 			}
-			// SAFETY: prctl is async-signal-safe
+			// SAFETY: prctl and setpgid are async-signal-safe
 			unsafe {
 				command.pre_exec(|| {
 					libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL);
+					// A group of its own, so a Ctrl-C in the terminal goes to
+					// the launcher, which has the world end itself, and not
+					// to the world too, which DreamDaemon ends there and then
+					libc::setpgid(0, 0);
 					Ok(())
 				});
 			}
@@ -84,7 +88,9 @@ impl Game {
 		#[cfg(windows)]
 		{
 			use std::os::windows::process::CommandExt;
-			command.creation_flags(winapi::um::winbase::CREATE_SUSPENDED);
+			// A process group of its own ignores Ctrl-C in the console: the
+			// launcher hears it, and has the world end itself
+			command.creation_flags(winapi::um::winbase::CREATE_SUSPENDED | winapi::um::winbase::CREATE_NEW_PROCESS_GROUP);
 		}
 
 		let mut child = command

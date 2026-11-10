@@ -301,6 +301,12 @@ pub struct Adapter {
 	hot_reload: bool,
 	/// Whether the code has been read (or couldn't be) once
 	code_read: bool,
+	/// Whether the code's thread is watching the files
+	watching: bool,
+	/// Whether the world has been configured once, and whether whoever runs
+	/// the adapter has been told it's ready (`Output::ready`)
+	configured: bool,
+	said_ready: bool,
 	/// The directory the world's code is in, which the world names its files
 	/// relative to
 	root: Option<PathBuf>,
@@ -373,7 +379,6 @@ pub struct Adapter {
 
 /// Runs the adapter on stdin and stdout until the client leaves
 pub fn run() {
-	let out = Arc::new(Output::new());
 	let (inputs, receiver) = mpsc::channel();
 
 	let stdin_inputs = inputs.clone();
@@ -387,8 +392,20 @@ pub fn run() {
 		let _ = stdin_inputs.send(Input::StdinClosed);
 	});
 
+	serve(Output::new(), inputs, &receiver);
+}
+
+/// Runs the adapter on what `receiver` hears, which is everything sent to
+/// `inputs`, until it's done: until the client leaves, or the world ends and
+/// the client is told. The world it launched ends with it. Whoever runs it
+/// in-process (`auxtools launch`) makes up the client's requests itself, and
+/// is told what happens through `out`.
+///
+/// It's to run on the thread that started the program: on Linux, the world
+/// it launches is ended when the thread that started it ends.
+pub fn serve(out: Output, inputs: mpsc::Sender<Input>, receiver: &mpsc::Receiver<Input>) {
 	let mut adapter = Adapter {
-		out,
+		out: Arc::new(out),
 		inputs,
 		debugging: true,
 		pid: None,
@@ -397,6 +414,9 @@ pub fn run() {
 		code: None,
 		hot_reload: false,
 		code_read: false,
+		watching: false,
+		configured: false,
+		said_ready: false,
 		root: None,
 		stddef: None,
 		debuggee: None,
@@ -727,11 +747,7 @@ impl Adapter {
 			hot_reload: args.hot_reload
 		});
 
-		let default_args = match server {
-			Server::DreamDaemon if cfg!(windows) => vec!["-trusted".to_owned(), "-close".to_owned()],
-			_ => vec!["-trusted".to_owned()]
-		};
-		let game_args = args.args.unwrap_or(default_args);
+		let game_args = args.args.unwrap_or_else(|| default_args(server));
 		// While debugging, the world waits for the client's breakpoints
 		let launch = Launch {
 			program,
@@ -995,6 +1011,7 @@ impl Adapter {
 				self.out.console(format!("Couldn't read the code, so hot reloading won't work: {}", e));
 				self.code_read = true;
 				self.code = None;
+				self.say_ready();
 				if self.waiting_for_code {
 					self.waiting_for_code = false;
 					self.ready();
@@ -1005,6 +1022,10 @@ impl Adapter {
 					self.waiting_for_code = false;
 					self.ready();
 				}
+			}
+			code::Event::Watching => {
+				self.watching = true;
+				self.say_ready();
 			}
 			code::Event::Reload { request, summary } => {
 				self.reload_seen = Some(std::time::SystemTime::now());
@@ -1076,6 +1097,17 @@ impl Adapter {
 		}
 		let _ = self.ack(&AuxRequest::Configured);
 		self.catch_up_on_pause();
+		self.configured = true;
+		self.say_ready();
+	}
+
+	/// Tells whoever runs the adapter, once, that the world is up and that
+	/// what changes in its code from now on is reloaded
+	fn say_ready(&mut self) {
+		if !self.said_ready && self.configured && (self.code.is_none() || self.watching) {
+			self.said_ready = true;
+			self.out.ready();
+		}
 	}
 
 	/// Tells the client if the world was paused before this connected
@@ -2540,6 +2572,14 @@ fn thread_name(stack: &aux::Stack) -> String {
 
 fn unexpected(response: AuxResponse) -> String {
 	format!("the world answered something else: {:?}", response)
+}
+
+/// What follows the .dmb on the program's command line unless a launch says
+pub fn default_args(server: Server) -> Vec<String> {
+	match server {
+		Server::DreamDaemon if cfg!(windows) => vec!["-trusted".to_owned(), "-close".to_owned()],
+		_ => vec!["-trusted".to_owned()]
+	}
 }
 
 /// The debug library, next to the launcher

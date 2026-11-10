@@ -16,6 +16,9 @@ use auxtools_cli::{
 	server_types::*
 };
 
+mod launch;
+mod stop;
+
 /// What went wrong, and the exit code it gives
 pub struct Failure(pub i32, pub String);
 
@@ -66,6 +69,55 @@ pub enum Run {
 /// and a line here.
 pub const COMMANDS: &[(&str, &[Command])] = &[
 	("Worlds", &[
+		Command {
+			name: "launch",
+			usage: "DMB [--detach] [--port N] [OPTIONS] [-- ARGS...]",
+			about: "Starts a world with the debug library in it, and hot reloads its code",
+			details: "In the foreground it prints what the world prints and each hot reload, and stays
+until the world ends: exit code 0 if it exited with 0, 4 if it exited with another or
+was killed. Ctrl-C (or SIGTERM, or the terminal closing) has the world end itself, as
+`stop` does; a second ends it there and then. It doesn't build the world (DreamMaker
+does): after a rebuild, `reboot` loads the new .dmb. It doesn't debug it either: other
+commands, and editors, attach to it as to any world, and it never pauses for them.
+  --detach         Run in the background, and return once the world is up: prints its
+                   process id, and where the launcher's output goes
+  --json           With --detach: print {\"pid\", \"launcher\", \"log\"}
+  --log FILE       Write what would be printed to FILE. With --detach, NAME.auxtools.log
+                   next to NAME.dmb unless given
+  --dme DME        The world's code, if it isn't NAME.dme next to NAME.dmb
+  -D NAME[=VALUE]  A define the .dmb was built with, so its code is read as it was
+                   built (for hot reloading). Can be given more than once.
+  --no-hot-reload  Don't watch the code
+  --server PROGRAM dd, dreamdaemon or dreamseeker: on Windows, dreamseeker unless given;
+                   on Linux there's only DreamDaemon
+  --port N         The port the world listens on (DreamDaemon and dd)
+  --byond PATH     Where BYOND is, if not where it's installed (or BYOND_SYSTEM)
+  -- ARGS...       The program's arguments after the .dmb (and the port), in place of
+                   -trusted (and -close for Windows' DreamDaemon)",
+			run: Run::Alone(launch::launch)
+		},
+		Command {
+			name: "stop",
+			usage: "[--timeout SECONDS] [--kill]",
+			about: "Has the world end itself, through its world/Del(), and waits for it to be gone",
+			details: "A world started by `launch` takes its launcher with it. One whose world/Del() doesn't
+end it has had its debugger shut down all the same (the debug library ends with
+world/Del()), so other commands can't reach it: `--kill` is the way to end it.
+  --timeout SECONDS  How long to wait for the process to be gone (10 unless given): if
+                     it isn't, the exit code is 1
+  --kill             End the process if it's still there then",
+			run: Run::World(stop::stop)
+		},
+		Command {
+			name: "reboot",
+			usage: "[--timeout SECONDS]",
+			about: "Reboots the world, which loads its .dmb again, and waits for it to answer",
+			details: "world.Reboot(): how a world rebuilt by its own tools is picked up. Every client is
+let go (a `wait` exits with 3); a launcher connects again, and hot reloads what changed
+since the .dmb was built.
+  --timeout SECONDS  How long to wait for it (60 unless given): exit code 2 if it's longer",
+			run: Run::World(stop::reboot)
+		},
 		Command {
 			name: "list",
 			usage: "",
@@ -264,8 +316,9 @@ A command is for the one world that's running the debug library. With more than 
 	text += "
 `auxtools help COMMAND` shows a command's options.
 
-Exit codes: 0 done (for `wait`, the world paused), 1 failed, 2 `wait` timed out, 3 the
-world went away (it ended or rebooted).
+Exit codes: 0 done (for `wait`, the world paused), 1 failed, 2 timed out (`wait`,
+`reboot`), 3 the world went away (it ended or rebooted), 4 the world `launch` started
+ended with an exit code other than 0, or was killed.
 ";
 	text
 }
@@ -482,6 +535,8 @@ struct Wait {
 }
 
 pub struct World {
+	/// Its process
+	pid: u32,
 	stream: Shared,
 	received: Receiver<io::Result<Response>>,
 	/// Pauses and resumes that came between a request and its response
@@ -503,6 +558,7 @@ impl World {
 			}
 		});
 		Ok(Self {
+			pid,
 			stream,
 			received,
 			events: vec![],
@@ -902,7 +958,7 @@ mod tests {
 				names.push(listed.name);
 			}
 		}
-		for name in ["dap", "list", "version", "help", "status", "wait", "eval"] {
+		for name in ["dap", "list", "version", "help", "status", "wait", "eval", "launch", "stop", "reboot"] {
 			assert!(command(name).is_some(), "{}", name);
 		}
 		for gone in ["--list", "--build", "--version", "run", ""] {
