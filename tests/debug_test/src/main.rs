@@ -46,7 +46,8 @@ fn start_of(proc: &str) -> InstructionRef {
 fn set_breakpoint(client: &mut Client, proc: &str, condition: Option<&str>) {
 	let response = client.request(Request::BreakpointSet {
 		instruction: start_of(proc),
-		condition: condition.map(str::to_owned)
+		condition: condition.map(str::to_owned),
+		hit: None
 	});
 
 	assert!(
@@ -288,7 +289,8 @@ fn protocol(world: &World, mut client: Client) -> Client {
 	);
 	let response = client.request(Request::BreakpointSet {
 		instruction: start_of(BREAKPOINT_TARGET),
-		condition: Some("1 +".to_owned())
+		condition: Some("1 +".to_owned()),
+		hit: None
 	});
 	assert!(
 		matches!(&response, Response::BreakpointSet { result: BreakpointSetResult::Refused { reason } } if reason.starts_with("the condition doesn't compile: ")),

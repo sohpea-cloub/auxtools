@@ -128,9 +128,18 @@ struct Client {
 	debugs: bool
 }
 
-/// The breakpoints, by where they are, and the clients that set each: with a
-/// condition, or `None` to stop every time
-pub type Breakpoints = HashMap<(raw_types::procs::ProcId, u16), BTreeMap<ClientId, Option<String>>>;
+/// What a client wants of a breakpoint it set
+pub struct Claim {
+	/// It only counts as hit when this holds: `None` for every time
+	condition: Option<String>,
+	/// Which of its hits to stop at: `None` for all of them
+	hit: Option<HitCondition>,
+	/// How many times it's been hit since it was set
+	hits: u32
+}
+
+/// The breakpoints, by where they are, and the clients that set each
+pub type Breakpoints = HashMap<(raw_types::procs::ProcId, u16), BTreeMap<ClientId, Claim>>;
 
 /// The name an expression's code knows the world's list of globals by. It
 /// isn't one an expression can write, so it can't hide anything.
@@ -819,7 +828,7 @@ impl Server {
 		}
 	}
 
-	fn handle_breakpoint_set(&mut self, mut instruction: InstructionRef, condition: Option<String>) {
+	fn handle_breakpoint_set(&mut self, mut instruction: InstructionRef, condition: Option<String>, hit: Option<HitCondition>) {
 		let (Some(proc), Some(client)) = (
 			auxtools::Proc::find_override(instruction.proc.path.clone(), instruction.proc.override_id),
 			self.current
@@ -844,9 +853,10 @@ impl Server {
 		match hook_instruction(&proc, instruction.offset) {
 			Ok(()) => {
 				// The client re-sends breakpoints it already set, and no
-				// condition this time means the old one is gone
+				// condition this time means the old one is gone. Its hits are
+				// counted from now.
 				let key = (proc.id, instruction.offset as u16);
-				self.breakpoints.entry(key).or_default().insert(client, condition);
+				self.breakpoints.entry(key).or_default().insert(client, Claim { condition, hit, hits: 0 });
 
 				// The client has found out where a reload moved a breakpoint to
 				if !self.breakpoints.values().any(|claims| claims.len() > 1) {
@@ -1428,7 +1438,7 @@ impl Server {
 					client.caught = caught;
 				}
 			}
-			Request::BreakpointSet { instruction, condition } => self.handle_breakpoint_set(instruction, condition),
+			Request::BreakpointSet { instruction, condition, hit } => self.handle_breakpoint_set(instruction, condition, hit),
 			Request::BreakpointUnset { instruction } => self.handle_breakpoint_unset(instruction),
 			Request::Stacks => self.handle_stacks(),
 			Request::Scopes { frame_id } => self.handle_scopes(frame_id),
@@ -1589,20 +1599,23 @@ impl Server {
 
 		self.state = Some(State::new());
 
-		// Exit now if this is a conditional breakpoint and no condition passes.
-		// One set without a condition always stops.
+		// A breakpoint stops the world when a client that set it wants this
+		// hit: its condition holds, if it has one, and the hit is one of
+		// those it asked for. Each client's is looked at, so each one's
+		// count of hits is its own.
 		if reason == BreakpointReason::Breakpoint {
 			let proc = unsafe { (*(*(*_ctx).proc_instance())).proc };
 			let offset = unsafe { *(*_ctx).bytecode_offset() };
-			let conditions: Option<Vec<String>> = self
-				.breakpoints
-				.get(&(proc, offset))
-				.filter(|claims| claims.values().all(Option::is_some))
-				.map(|claims| claims.values().flatten().cloned().collect());
+			let key = (proc, offset);
+			let clients: Vec<ClientId> = self.breakpoints.get(&key).map(|claims| claims.keys().copied().collect()).unwrap_or_default();
 
-			if let Some(conditions) = conditions {
-				let mut pause = false;
-				for condition in conditions {
+			// One nobody is known to have set stops, as it always has
+			let mut pause = clients.is_empty();
+			for client in clients {
+				let Some(condition) = self.breakpoints.get(&key).and_then(|claims| claims.get(&client)).map(|claim| claim.condition.clone()) else {
+					continue;
+				};
+				if let Some(condition) = condition {
 					// One that can't be worked out pauses: better a stop too
 					// many than one missed
 					let passed = match self.eval_expr(Some(0), &condition) {
@@ -1616,16 +1629,24 @@ impl Server {
 					// We might have just executed some code so invalidate the
 					// stacks we already fetched
 					self.state.as_mut().unwrap().invalidate_stacks();
-					if passed {
-						pause = true;
-						break;
+					if !passed {
+						continue;
 					}
 				}
 
-				if !pause {
-					self.state = None;
-					return None;
+				// The condition's code could have taken the breakpoint away
+				let Some(claim) = self.breakpoints.get_mut(&key).and_then(|claims| claims.get_mut(&client)) else {
+					continue;
+				};
+				claim.hits += 1;
+				if claim.hit.is_none_or(|hit| hit.takes(claim.hits)) {
+					pause = true;
 				}
+			}
+
+			if !pause {
+				self.state = None;
+				return None;
 			}
 		}
 

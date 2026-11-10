@@ -101,5 +101,70 @@ pub fn run() {
 	world.stop_on("breakpoint", "/leaf", "leaf_1");
 	world.resume_through("middle");
 	ok("a breakpoint set again without its condition stops every time");
+
+	hit_counts(&mut world);
 	world.end();
+}
+
+/// Sets the one breakpoint, on the first line of recurse(), with a hit
+/// condition and maybe a condition, runs recurse(3), which reaches it four
+/// times (at depths 3, 2, 1 and 0), and returns the depths it stopped at
+fn stops_with(world: &mut World, hit: &str, condition: Option<&str>) -> Vec<String> {
+	let (file, line) = world.marks.place("recurse_1");
+	let set = world.set_breakpoints(&file, json!([{ "line": line, "hitCondition": hit, "condition": condition }]));
+	assert_eq!(set[0]["verified"], true, "{}", set[0]);
+	stops_of(world)
+}
+
+/// Runs recurse(3) and returns the depths it stopped at
+fn stops_of(world: &mut World) -> Vec<String> {
+	world.run_collecting("recurse", |world| world.argument("depth"))
+}
+
+fn hit_counts(world: &mut World) {
+	assert_eq!(stops_with(world, "3", None), ["1", "0"]);
+	assert_eq!(stops_with(world, ">= 2", None), ["2", "1", "0"]);
+	ok("a hit count stops from that hit on");
+
+	assert_eq!(stops_with(world, "== 2", None), ["2"]);
+	assert_eq!(stops_with(world, "=4", None), ["0"]);
+	assert_eq!(stops_with(world, "> 3", None), ["0"]);
+	assert_eq!(stops_with(world, "< 3", None), ["3", "2"]);
+	assert_eq!(stops_with(world, "<= 1", None), ["3"]);
+	assert_eq!(stops_with(world, "% 2", None), ["2", "0"]);
+	assert_eq!(stops_with(world, "9", None), Vec::<String>::new());
+	ok("a hit count with ==, >, <, <= and %");
+
+	// Only the hits where the condition holds are counted: depths 3, 1, 0
+	assert_eq!(stops_with(world, "2", Some("depth != 2")), ["1", "0"]);
+	assert_eq!(stops_with(world, "% 2", Some("depth < 3")), ["1"]);
+	ok("a hit count with a condition counts the hits where the condition holds");
+
+	// The count goes on until the breakpoint is set again
+	assert_eq!(stops_with(world, "== 6", None), Vec::<String>::new());
+	assert_eq!(stops_of(world), ["2"]);
+	assert_eq!(stops_of(world), Vec::<String>::new());
+	ok("hits are counted from when the breakpoint is set, across runs");
+
+	let (file, line) = world.marks.place("recurse_1");
+	for (hit, why) in [("soon", "\"soon\" isn't a hit count"), ("% 0", "every 0 hits is never"), ("== two", "\"== two\" isn't a hit count")] {
+		let set = world.set_breakpoints(&file, json!([{ "line": line, "hitCondition": hit }]));
+		assert_eq!(set[0]["verified"], false, "{}", set[0]);
+		assert!(set[0]["message"].as_str().unwrap().starts_with(why), "{}", set[0]);
+	}
+	world.set_breakpoints(&file, json!([]));
+	ok("a hit count that isn't one is refused, with what one looks like");
+
+	// leaf(3), then leaf(8)
+	let set = world.request(
+		"setFunctionBreakpoints",
+		json!({ "breakpoints": [{ "name": "/proc/leaf", "hitCondition": "2" }] })
+	);
+	assert_eq!(set["breakpoints"][0]["verified"], true);
+	world.run("middle");
+	world.stop_on("breakpoint", "/leaf", "leaf_1");
+	assert_eq!(world.argument("x"), "8");
+	world.resume_through("middle");
+	world.function_breakpoints(&[]);
+	ok("a function breakpoint with a hit count");
 }

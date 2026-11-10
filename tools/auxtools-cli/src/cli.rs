@@ -530,7 +530,8 @@ impl World {
 		for instruction in instructions {
 			match self.request(Request::BreakpointSet {
 				instruction,
-				condition: condition.clone()
+				condition: condition.clone(),
+				hit: None
 			})? {
 				Response::BreakpointSet {
 					result: BreakpointSetResult::Success { .. }

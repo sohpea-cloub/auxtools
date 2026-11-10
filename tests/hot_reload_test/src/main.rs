@@ -356,7 +356,8 @@ fn main() {
 			},
 			offset: old_offset
 		},
-		condition: None
+		condition: None,
+		hit: None
 	});
 	assert!(matches!(response, Response::BreakpointSet { .. }), "{:?}", response);
 	eval(&mut client, "arm_breakpoint()");

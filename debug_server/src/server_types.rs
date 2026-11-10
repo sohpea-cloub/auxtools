@@ -27,7 +27,10 @@ pub enum Request {
 	},
 	BreakpointSet {
 		instruction: InstructionRef,
-		condition: Option<String>
+		condition: Option<String>,
+		/// Which of its hits to stop at, counted from when it's set (those
+		/// where its condition holds, if it has one). `None` for all.
+		hit: Option<HitCondition>
 	},
 	BreakpointUnset {
 		instruction: InstructionRef
@@ -176,6 +179,62 @@ pub enum BreakpointReason {
 	/// A runtime error, or a `throw`: its message, and whether it's inside
 	/// a `try` that will catch it
 	Runtime { message: String, caught: bool }
+}
+
+/// Which hits of a breakpoint stop the world, by their number, from 1
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HitCondition {
+	AtLeast(u32),
+	Equal(u32),
+	More(u32),
+	Less(u32),
+	AtMost(u32),
+	/// Every so many: the 3rd, the 6th, ...
+	Every(u32)
+}
+
+#[allow(dead_code)]
+impl HitCondition {
+	/// As a client writes one: `5` for the fifth hit and every one after,
+	/// or a number after `==`, `>`, `>=`, `<`, `<=`, or `%` (every so many)
+	pub fn parse(text: &str) -> Result<Self, String> {
+		let text = text.trim();
+		let (make, number): (fn(u32) -> Self, &str) = if let Some(rest) = text.strip_prefix(">=") {
+			(Self::AtLeast, rest)
+		} else if let Some(rest) = text.strip_prefix("<=") {
+			(Self::AtMost, rest)
+		} else if let Some(rest) = text.strip_prefix("==").or_else(|| text.strip_prefix('=')) {
+			(Self::Equal, rest)
+		} else if let Some(rest) = text.strip_prefix('>') {
+			(Self::More, rest)
+		} else if let Some(rest) = text.strip_prefix('<') {
+			(Self::Less, rest)
+		} else if let Some(rest) = text.strip_prefix('%') {
+			(Self::Every, rest)
+		} else {
+			(Self::AtLeast, text)
+		};
+		match number.trim().parse::<u32>() {
+			Ok(0) if make(0) == Self::Every(0) => Err("every 0 hits is never".to_owned()),
+			Ok(number) => Ok(make(number)),
+			Err(_) => Err(format!(
+				"{:?} isn't a hit count: it's a number (stop from that hit on), or one after ==, >, >=, <, <= or % (every so many)",
+				text
+			))
+		}
+	}
+
+	/// Whether the hit of this number is one to stop at
+	pub const fn takes(self, hits: u32) -> bool {
+		match self {
+			Self::AtLeast(n) => hits >= n,
+			Self::Equal(n) => hits == n,
+			Self::More(n) => hits > n,
+			Self::Less(n) => hits < n,
+			Self::AtMost(n) => hits <= n,
+			Self::Every(n) => n != 0 && hits % n == 0
+		}
+	}
 }
 
 /// Which runtime errors to pause on, by their messages

@@ -376,6 +376,7 @@ impl Adapter {
 			supportsConfigurationDoneRequest: Some(true),
 			supportsFunctionBreakpoints: Some(true),
 			supportsConditionalBreakpoints: Some(true),
+			supportsHitConditionalBreakpoints: Some(true),
 			supportsExceptionInfoRequest: Some(true),
 			supportTerminateDebuggee: Some(true),
 			..Default::default()
@@ -871,14 +872,14 @@ impl Adapter {
 	/// Sets a file's breakpoints in the world, in place of the ones it had
 	fn apply_breakpoints(&mut self, path: &str) -> Vec<Breakpoint> {
 		self.unset(path);
-		let wanted: Vec<(i64, i64, Option<String>)> = self.breakpoints[path]
+		let wanted: Vec<(i64, i64, Option<String>, Option<String>)> = self.breakpoints[path]
 			.iter()
-			.map(|(number, b)| (*number, b.line, b.condition.clone()))
+			.map(|(number, b)| (*number, b.line, b.condition.clone(), b.hitCondition.clone()))
 			.collect();
 
 		let mut breakpoints = vec![];
 		let mut set = vec![];
-		for (number, line, condition) in wanted {
+		for (number, line, condition, hit) in wanted {
 			let unverified = |message: &str| Breakpoint {
 				id: Some(number),
 				verified: false,
@@ -895,6 +896,13 @@ impl Adapter {
 				breakpoints.push(unverified("the world isn't running"));
 				continue;
 			}
+			let hit = match hit_condition(hit.as_deref()) {
+				Ok(hit) => hit,
+				Err(e) => {
+					breakpoints.push(unverified(&e));
+					continue;
+				}
+			};
 
 			// The world knows which of its procs have code on the line
 			let instructions = match self.request(&AuxRequest::Locate {
@@ -918,7 +926,7 @@ impl Adapter {
 
 			let mut result = None;
 			for instruction in instructions {
-				match self.set_breakpoint(&instruction, condition.clone()) {
+				match self.set_breakpoint(&instruction, condition.clone(), hit) {
 					Ok(Some(set_line)) => {
 						result.get_or_insert(Ok(set_line));
 					}
@@ -945,10 +953,16 @@ impl Adapter {
 	}
 
 	/// `Some(line)` when it's set
-	fn set_breakpoint(&mut self, instruction: &InstructionRef, condition: Option<String>) -> Result<Option<Option<u32>>, String> {
+	fn set_breakpoint(
+		&mut self,
+		instruction: &InstructionRef,
+		condition: Option<String>,
+		hit: Option<aux::HitCondition>
+	) -> Result<Option<Option<u32>>, String> {
 		match self.request(&AuxRequest::BreakpointSet {
 			instruction: instruction.clone(),
-			condition
+			condition,
+			hit
 		})? {
 			AuxResponse::BreakpointSet {
 				result: aux::BreakpointSetResult::Success { line }
@@ -980,11 +994,15 @@ impl Adapter {
 	/// for its second definition
 	fn apply_function_breakpoints(&mut self) -> Vec<Breakpoint> {
 		self.unset(FUNCTION_BREAKPOINTS);
-		let wanted: Vec<(String, Option<String>)> = self.function_breakpoints.iter().map(|b| (b.name.clone(), b.condition.clone())).collect();
+		let wanted: Vec<(String, Option<String>, Option<String>)> = self
+			.function_breakpoints
+			.iter()
+			.map(|b| (b.name.clone(), b.condition.clone(), b.hitCondition.clone()))
+			.collect();
 
 		let mut breakpoints = vec![];
 		let mut set = vec![];
-		for (name, condition) in wanted {
+		for (name, condition, hit) in wanted {
 			if !self.debugging || self.debuggee.is_none() {
 				breakpoints.push(Breakpoint {
 					verified: false,
@@ -997,7 +1015,8 @@ impl Adapter {
 				proc: named_proc(&name),
 				offset: 0
 			};
-			breakpoints.push(match self.set_breakpoint(&instruction, condition) {
+			let set_as_asked = hit_condition(hit.as_deref()).and_then(|hit| self.set_breakpoint(&instruction, condition, hit));
+			breakpoints.push(match set_as_asked {
 				Ok(Some(line)) => Breakpoint {
 					verified: true,
 					line: line.map(i64::from),
@@ -1260,6 +1279,14 @@ impl Adapter {
 	}
 }
 
+/// The hits a breakpoint stops at, as the client wrote them, if it did
+fn hit_condition(text: Option<&str>) -> Result<Option<aux::HitCondition>, String> {
+	match text.map(str::trim).filter(|text| !text.is_empty()) {
+		Some(text) => aux::HitCondition::parse(text).map(Some),
+		None => Ok(None)
+	}
+}
+
 /// The proc a function breakpoint names: its path, and after a `#` which of
 /// its definitions, the first unless it says
 fn named_proc(name: &str) -> ProcRef {
@@ -1300,9 +1327,43 @@ fn default_library() -> Result<PathBuf, String> {
 mod tests {
 	use std::path::Path;
 
-	use auxtools_cli::server_types::RuntimeFilter;
+	use auxtools_cli::server_types::{HitCondition, RuntimeFilter};
 
 	use super::{file_name_in, named_proc};
+
+	#[test]
+	fn a_hit_count_is_a_number_or_one_after_a_sign() {
+		for (text, expected) in [
+			("5", HitCondition::AtLeast(5)),
+			(" 5 ", HitCondition::AtLeast(5)),
+			(">= 5", HitCondition::AtLeast(5)),
+			(">=5", HitCondition::AtLeast(5)),
+			("> 5", HitCondition::More(5)),
+			("== 5", HitCondition::Equal(5)),
+			("=5", HitCondition::Equal(5)),
+			("< 5", HitCondition::Less(5)),
+			("<= 5", HitCondition::AtMost(5)),
+			("% 5", HitCondition::Every(5)),
+			("%5", HitCondition::Every(5))
+		] {
+			assert_eq!(HitCondition::parse(text), Ok(expected), "{:?}", text);
+		}
+		for text in ["", "five", "5 times", "-1", "% 0", "=> 5", "5 5", "> ", "1.5"] {
+			assert!(HitCondition::parse(text).is_err(), "{:?}", text);
+		}
+	}
+
+	#[test]
+	fn a_hit_count_takes_the_hits_it_says() {
+		let taken = |hit: HitCondition| -> Vec<u32> { (1..=8).filter(|&n| hit.takes(n)).collect() };
+		assert_eq!(taken(HitCondition::AtLeast(6)), [6, 7, 8]);
+		assert_eq!(taken(HitCondition::More(6)), [7, 8]);
+		assert_eq!(taken(HitCondition::Equal(3)), [3]);
+		assert_eq!(taken(HitCondition::Less(3)), [1, 2]);
+		assert_eq!(taken(HitCondition::AtMost(3)), [1, 2, 3]);
+		assert_eq!(taken(HitCondition::Every(3)), [3, 6]);
+		assert_eq!(taken(HitCondition::Every(1)), [1, 2, 3, 4, 5, 6, 7, 8]);
+	}
 
 	#[test]
 	fn a_runtime_filter_with_nothing_in_it_takes_every_error() {

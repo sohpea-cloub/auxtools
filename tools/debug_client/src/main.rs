@@ -242,7 +242,8 @@ fn main() {
 	};
 	conn.request(Request::BreakpointSet {
 		instruction: instruction.clone(),
-		condition: options.condition.clone()
+		condition: options.condition.clone(),
+		hit: None
 	});
 	// Runtimes would stop us somewhere else. This one gets no reply.
 	conn.send(&Request::CatchRuntimes {

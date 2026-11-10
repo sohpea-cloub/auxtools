@@ -239,6 +239,27 @@ impl World {
 		assert!(!self.has_event("stopped"), "the world stopped during {}", scenario);
 	}
 
+	/// Runs a scenario to its end, letting the world carry on from each stop
+	/// on the way, and returns what `at_stop` made of each
+	pub fn run_collecting<T>(&mut self, scenario: &str, mut at_stop: impl FnMut(&mut World) -> T) -> Vec<T> {
+		self.run(scenario);
+		let finished = self.finished[scenario];
+		let over = format!("dap: finished {}\n", scenario);
+		let deadline = std::time::Instant::now() + crate::client::TIMEOUT;
+		let mut seen = vec![];
+		loop {
+			// What the launcher has sent comes in order: a stop before the
+			// end is seen before it
+			if self.launcher.event_within("stopped", std::time::Duration::from_millis(20)).is_some() {
+				seen.push(at_stop(self));
+				self.resume();
+			} else if self.count(&over) > finished {
+				return seen;
+			}
+			assert!(std::time::Instant::now() < deadline, "{} never finished", scenario);
+		}
+	}
+
 	/// Lets the world carry on from a stop, to the end of the scenario
 	pub fn resume_through(&mut self, scenario: &str) {
 		self.resume();

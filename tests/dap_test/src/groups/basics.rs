@@ -36,7 +36,8 @@ fn capabilities() {
 		"supportsConfigurationDoneRequest",
 		"supportsExceptionFilterOptions",
 		"supportsExceptionInfoRequest",
-		"supportsFunctionBreakpoints"
+		"supportsFunctionBreakpoints",
+		"supportsHitConditionalBreakpoints"
 	]);
 	let filters: Vec<&str> = capabilities["exceptionBreakpointFilters"]
 		.as_array()

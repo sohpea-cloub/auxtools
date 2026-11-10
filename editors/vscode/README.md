@@ -54,6 +54,16 @@ new world up again, breakpoints and all.
 Windows' DreamDaemon asks before it runs a world in trusted mode; tick "Don't ask me
 this again" to stop it asking.
 
+## Breakpoints
+
+Besides a line, a breakpoint can be on a proc by name (**Add Function Breakpoint**:
+`/mob/proc/Login`, or `/mob/Login#1` for its second definition), and can have:
+
+- a **condition**, an expression that has to be true for it to stop;
+- a **hit count**: `5` stops from the fifth hit on, `== 5` only then, `% 5` every fifth,
+  and `>`, `>=`, `<`, `<=` work too. With a condition, only the hits where it's true are
+  counted. The count starts again when the breakpoint is changed.
+
 ## Runtime errors
 
 Under **Breakpoints** in the Run and Debug view:
