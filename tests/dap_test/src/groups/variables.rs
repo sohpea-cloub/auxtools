@@ -203,12 +203,12 @@ pub fn run() {
 	assert_eq!(value_of(&globals, "NORTH"), "1");
 	ok("the globals: the world's own, types' static vars, BYOND's constants");
 
-	for reference in [-5, 99_999] {
+	for reference in [-5, 0, 99_999] {
 		let vars = world.request("variables", json!({ "variablesReference": reference }));
 		assert_eq!(vars["variables"].as_array().unwrap().len(), 0);
 	}
 	assert_eq!(world.local("whole"), "42");
-	ok("a reference that was never given answers nothing");
+	ok("a reference that was never given, 0 among them, answers nothing");
 
 	// whole += length(args)
 	world.step("next");

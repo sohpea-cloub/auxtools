@@ -64,7 +64,9 @@ impl State {
 
 	fn get_variables(&self, reference: VariablesRef) -> Option<Variables> {
 		let variables = self.variables.borrow();
-		variables.get(reference.0 as usize - 1).map(|x| (*x).clone())
+		// References start at 1: 0 is what a client has for "nothing to open"
+		let index = usize::try_from(reference.0).ok()?.checked_sub(1)?;
+		variables.get(index).cloned()
 	}
 }
 
