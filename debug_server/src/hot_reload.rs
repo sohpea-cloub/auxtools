@@ -338,7 +338,9 @@ impl TypeVars {
 		let mut out = vec![];
 		for (field, tables) in [(type_fields::VAR_TABLE, self.tables), (type_fields::DECLARED_VARS, self.declared)] {
 			for (type_id, words) in tables {
-				out.push((type_id, field, runtime_tables::intern_misc(&words)?));
+				// (an empty one is none at all, as in a built world)
+				let id = if words.is_empty() { NONE } else { runtime_tables::intern_misc(&words)? };
+				out.push((type_id, field, id));
 			}
 		}
 		Ok(out)
