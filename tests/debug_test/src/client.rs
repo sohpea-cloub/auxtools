@@ -67,6 +67,20 @@ impl World {
 		self.connect_as(true)
 	}
 
+	/// Connects and says nothing: the world doesn't wait for this client, and
+	/// isn't told it's configured
+	pub fn connect_silent(&self) -> Client {
+		let start = Instant::now();
+		loop {
+			assert!(start.elapsed() < TIMEOUT, "the world never took a connection");
+			if let Ok(stream) = local::connect(self.game.pid()) {
+				let stream = Shared::new(stream);
+				return Client::new(Box::new(stream.clone()), Box::new(stream), false);
+			}
+			std::thread::sleep(Duration::from_millis(100));
+		}
+	}
+
 	fn connect_as(&self, watcher: bool) -> Client {
 		let start = Instant::now();
 		loop {
@@ -144,6 +158,18 @@ impl Client {
 		let data = bincode::serialize(request).unwrap();
 		self.writer.write_all(&(data.len() as u32).to_le_bytes())?;
 		self.writer.write_all(&data)
+	}
+
+	/// Sends bytes as they are
+	pub fn send_bytes(&mut self, bytes: &[u8]) {
+		self.writer.write_all(bytes).unwrap();
+	}
+
+	/// Says goodbye, and waits for the server to have let this client go:
+	/// what another client does next comes after
+	pub fn leave(mut self) {
+		let _ = self.try_send(&Request::Disconnect);
+		self.wait_closed();
 	}
 
 	/// The next message that isn't a notification, or another client

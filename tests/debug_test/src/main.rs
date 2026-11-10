@@ -20,7 +20,7 @@ use std::{path::PathBuf, process::Command, time::Duration};
 
 use client::{Client, World};
 use paths::ByondCommand;
-use server_types::{BreakpointReason, BreakpointSetResult, InstructionRef, ProcRef, Request, Response};
+use server_types::{BreakpointReason, BreakpointSetResult, InstructionRef, ProcRef, Request, Response, VariablesRef};
 
 // The debug server names global procs without the /proc part
 const BREAKPOINT_TARGET: &str = "/breakpoint_target";
@@ -160,6 +160,202 @@ fn values_516(client: &mut Client) {
 	println!("ok: a callee shows its proc");
 }
 
+/// The line of the host's code that starts with `text`
+fn host_line(text: &str) -> u32 {
+	let source = std::fs::read_to_string(host_file("debug_test_host.dm")).unwrap();
+	source.lines().position(|line| line.starts_with(text)).expect("no such line") as u32 + 1
+}
+
+fn status(client: &mut Client) -> Option<BreakpointReason> {
+	match client.request(Request::Status) {
+		Response::Status { paused } => paused,
+		other => panic!("expected Status, got {:?}", other)
+	}
+}
+
+fn locate(client: &mut Client, file: &str, line: u32) -> Vec<InstructionRef> {
+	match client.request(Request::Locate { file: file.to_owned(), line }) {
+		Response::Locate { instructions } => instructions,
+		other => panic!("expected Locate, got {:?}", other)
+	}
+}
+
+/// The requests the launcher makes that the checks above don't. It starts and
+/// ends with the world paused in breakpoint_target, with no breakpoints.
+fn protocol(world: &World, mut client: Client) -> Client {
+	assert_eq!(status(&mut client), Some(BreakpointReason::Breakpoint));
+	println!("ok: a paused world says why it's paused");
+
+	// breakpoint_target, called by main_loop, which world/New spawned
+	let response = client.request(Request::StackFrames {
+		stack_id: 0,
+		start_frame: Some(1),
+		count: Some(1)
+	});
+	let Response::StackFrames { frames, total_count } = response else {
+		panic!("expected StackFrames, got {:?}", response);
+	};
+	assert_eq!(total_count, 3);
+	assert_eq!(frames.len(), 1);
+	assert_eq!(frames[0].instruction.proc.path, "/main_loop");
+	assert_eq!(frames[0].file.as_deref(), Some("debug_test_host.dm"));
+	assert_eq!(frames[0].line, Some(host_line("\t\tbreakpoint_target()")));
+	println!("ok: a page of the stack's frames, each with its file and line");
+
+	let returns = host_line("\treturn 2");
+	let response = client.request(Request::Offset {
+		proc: start_of(BREAKPOINT_TARGET).proc,
+		line: returns
+	});
+	let Response::Offset { offset: Some(offset) } = response else {
+		panic!("expected the offset of breakpoint_target's line, got {:?}", response);
+	};
+	let response = client.request(Request::Offset {
+		proc: start_of(BREAKPOINT_TARGET).proc,
+		line: returns + 100
+	});
+	assert!(matches!(response, Response::Offset { offset: None }), "a line the proc doesn't have got {:?}", response);
+	println!("ok: where a proc's line is in its code");
+
+	// However the client spells the file
+	let expected = vec![InstructionRef {
+		proc: start_of(BREAKPOINT_TARGET).proc,
+		offset
+	}];
+	for file in [
+		"debug_test_host.dm",
+		"tests/debug_test_host/debug_test_host.dm",
+		"C:\\somewhere\\tests\\debug_test_host\\debug_test_host.dm",
+		"DEBUG_TEST_HOST.DM"
+	] {
+		assert_eq!(locate(&mut client, file, returns), expected, "{}", file);
+	}
+	// The proc's declaration has no code: its first line with code is the next
+	assert_eq!(locate(&mut client, "debug_test_host.dm", returns - 1), expected);
+	assert_eq!(locate(&mut client, "another_file.dm", returns), vec![]);
+	assert_eq!(locate(&mut client, "debug_test_host.dm", 100_000), vec![]);
+	println!("ok: the code on a file's line is found by the file's name, a longer path, backslashes and another case");
+
+	let response = client.request(Request::StdDef);
+	assert!(
+		matches!(&response, Response::StdDef(Some(text)) if text.contains("Standard definitions")),
+		"expected stddef.dm, got something else"
+	);
+	let response = client.request(Request::WorldInfo);
+	let Response::WorldInfo { args, cwd } = response else {
+		panic!("expected WorldInfo, got {:?}", response);
+	};
+	assert!(args.iter().any(|arg| arg.ends_with("debug_test_host.dmb")), "the world's command line is {:?}", args);
+	assert!(!cwd.is_empty());
+	println!("ok: the world gives stddef.dm's text, and its own command line");
+
+	client.resume();
+	assert_eq!(status(&mut client), None);
+	let response = client.request(Request::Scopes { frame_id: 0 });
+	assert!(
+		matches!(response, Response::Scopes {
+			arguments: None,
+			locals: None,
+			globals: None
+		}),
+		"scopes of a running world: {:?}",
+		response
+	);
+	let response = client.request(Request::Variables { vars: VariablesRef(1) });
+	assert!(matches!(&response, Response::Variables { vars } if vars.is_empty()), "variables of a running world: {:?}", response);
+	let response = client.request(Request::StackFrames {
+		stack_id: 0,
+		start_frame: None,
+		count: None
+	});
+	assert!(
+		matches!(&response, Response::StackFrames { frames, total_count: 0 } if frames.is_empty()),
+		"frames of a running world: {:?}",
+		response
+	);
+	println!("ok: a running world has no scopes, variables or frames to give, and says so");
+
+	// Two clients want one breakpoint: it's there until both have let go
+	let mut second = world.connect();
+	pause(&mut client);
+	assert_eq!(second.expect_pause(), BreakpointReason::Pause);
+	set_breakpoint(&mut client, BREAKPOINT_TARGET, None);
+	set_breakpoint(&mut second, BREAKPOINT_TARGET, None);
+	client.resume();
+	expect_breakpoint_in(&mut client, BREAKPOINT_TARGET);
+	assert_eq!(second.expect_pause(), BreakpointReason::Breakpoint);
+	let unset = |client: &mut Client, proc: &str| {
+		let response = client.request(Request::BreakpointUnset { instruction: start_of(proc) });
+		assert!(matches!(response, Response::BreakpointUnset { success: true }), "couldn't unset {}: {:?}", proc, response);
+	};
+	unset(&mut client, BREAKPOINT_TARGET);
+	client.resume();
+	assert_eq!(second.expect_pause(), BreakpointReason::Breakpoint);
+	assert_eq!(client.expect_pause(), BreakpointReason::Breakpoint);
+	assert_eq!(paused_in(&mut second), BREAKPOINT_TARGET);
+	// tick_marker is called right after: the next stop is there
+	unset(&mut second, BREAKPOINT_TARGET);
+	set_breakpoint(&mut second, TICK_MARKER, None);
+	second.resume();
+	assert_eq!(second.expect_pause(), BreakpointReason::Breakpoint);
+	assert_eq!(client.expect_pause(), BreakpointReason::Breakpoint);
+	assert_eq!(paused_in(&mut second), TICK_MARKER);
+	second.resume();
+	assert_eq!(second.expect_pause(), BreakpointReason::Breakpoint);
+	assert_eq!(client.expect_pause(), BreakpointReason::Breakpoint);
+	assert_eq!(paused_in(&mut second), TICK_MARKER);
+	println!("ok: a breakpoint two clients set stays until both have unset it");
+
+	// A client that leaves takes its breakpoints, and the world carries on
+	// when the last has gone
+	second.leave();
+	client.leave();
+	let mut client = world.connect();
+	assert_eq!(status(&mut client), None);
+	println!("ok: the last client leaves a paused world, which carries on");
+
+	// A pause that's held outlasts its clients
+	pause(&mut client);
+	let response = client.request(Request::HoldPause);
+	assert!(matches!(response, Response::Ack), "expected Ack for HoldPause, got {:?}", response);
+	client.leave();
+	let mut client = world.connect();
+	assert_eq!(status(&mut client), Some(BreakpointReason::Pause));
+	client.resume();
+	assert_eq!(status(&mut client), None);
+	println!("ok: a held pause is still there for the next client, until one lets the world carry on");
+
+	// Asked for by a client that goes before there's a pause, it's forgotten
+	let response = client.request(Request::HoldPause);
+	assert!(matches!(response, Response::Ack), "expected Ack for HoldPause, got {:?}", response);
+	client.leave();
+	let mut client = world.connect();
+	pause(&mut client);
+	client.leave();
+	let mut client = world.connect();
+	assert_eq!(status(&mut client), None);
+	println!("ok: a hold asked for by a client that left before the pause is forgotten");
+
+	// Whatever arrives that isn't a request: that client is hung up on, and
+	// nothing else notices
+	let mut rubbish = world.connect_silent();
+	rubbish.send_bytes(&[0xff, 0xff, 0xff, 0xff, 1, 2, 3]);
+	rubbish.wait_closed();
+	let mut rubbish = world.connect_silent();
+	rubbish.send_bytes(&[3, 0, 0, 0, 0xfe, 0xfe, 0xfe]);
+	rubbish.wait_closed();
+	let quiet = world.connect_silent();
+	assert_eq!(status(&mut client), None);
+	assert_eq!(eval(&mut client, None, "1 + 1"), "2");
+	drop(quiet);
+	println!("ok: bytes that aren't a request get that client hung up on, and a client that says nothing is left alone");
+
+	set_breakpoint(&mut client, BREAKPOINT_TARGET, None);
+	expect_breakpoint_in(&mut client, BREAKPOINT_TARGET);
+	unset(&mut client, BREAKPOINT_TARGET);
+	client
+}
+
 fn main() {
 	let res = Command::new(paths::find_dm())
 		.with_byond_paths()
@@ -235,6 +431,8 @@ fn main() {
 			response
 		);
 	}
+
+	let mut client = protocol(&world, client);
 
 	// Runtime errors don't pause it when the launcher says not to
 	client.send(Request::CatchRuntimes { should_catch: false });
