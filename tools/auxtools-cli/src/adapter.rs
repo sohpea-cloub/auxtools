@@ -316,7 +316,7 @@ impl Adapter {
 			"next" => arguments::<NextArguments>(args).and_then(|args| self.step(|stack_id| ContinueKind::StepOver { stack_id }, args.threadId)),
 			"stepIn" => arguments::<StepInArguments>(args).and_then(|args| self.step(|stack_id| ContinueKind::StepInto { stack_id }, args.threadId)),
 			"stepOut" => arguments::<StepOutArguments>(args).and_then(|args| self.step(|stack_id| ContinueKind::StepOut { stack_id }, args.threadId)),
-			"pause" => self.ack(&AuxRequest::Pause).map(|()| Value::Null),
+			"pause" => self.pause(),
 			"evaluate" => arguments(args).and_then(|args| self.evaluate(args)),
 			"exceptionInfo" => json(ExceptionInfoResponse {
 				exceptionId: self.last_error.lock().unwrap().clone(),
@@ -1071,6 +1071,15 @@ impl Adapter {
 			})
 			.collect();
 		json(VariablesResponse { variables })
+	}
+
+	fn pause(&mut self) -> Handled {
+		// The client isn't told of stops, so it would have nothing to let
+		// the world carry on from
+		if !self.debugging {
+			return Err("the world runs without debugging".to_owned());
+		}
+		self.ack(&AuxRequest::Pause).map(|()| Value::Null)
 	}
 
 	fn resume(&mut self, kind: ContinueKind) -> Result<(), String> {

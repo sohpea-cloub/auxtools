@@ -118,6 +118,11 @@ fn without_debugging() {
 	assert_eq!(evaluate_when_connected(&mut world, "global_number + 1"), "6");
 	world.run_through("middle");
 	ok("a world run without debugging runs, and still evaluates expressions");
+
+	let why = world.refused("pause", json!({ "threadId": 0 }));
+	assert_eq!(why, "the world runs without debugging");
+	world.run_through("middle");
+	ok("a world run without debugging isn't paused: the client would never hear it had been");
 	world.end();
 }
 
