@@ -4,7 +4,8 @@ use std::{
 	error::Error,
 	io::{Read, Write},
 	sync::{mpsc, Mutex},
-	thread
+	thread,
+	time::{Duration, Instant}
 };
 
 use auxtools::{
@@ -198,7 +199,9 @@ struct Client {
 	follow: Option<Vec<JournalKind>>,
 	/// Where what it's sent goes, for the thread that writes it, once it
 	/// follows the record (see `deliver`)
-	outbox: Option<mpsc::SyncSender<Vec<u8>>>
+	outbox: Option<mpsc::SyncSender<Vec<u8>>>,
+	/// How long a pause it holds lasts with nobody debugging (`Request::HoldMax`)
+	hold_max: Option<Duration>
 }
 
 /// How many messages can wait for a client that follows the record before it
@@ -257,7 +260,9 @@ enum Wait {
 	/// While there's a client that debugs to send one
 	WhileClients,
 	/// For as long as it takes, clients coming and going
-	Forever
+	Forever,
+	/// Until then (if ever), or a client comes or goes
+	Until(Option<Instant>)
 }
 
 /// The world's one listener, which lasts as long as the process. A world
@@ -297,6 +302,8 @@ pub struct Server {
 	/// The client that asked for the world to stay paused once every client
 	/// has gone (`Request::HoldPause`)
 	hold: Option<ClientId>,
+	/// How long that pause lasts with no client that debugs connected
+	hold_max: Option<Duration>,
 	/// The procs in each file (as the world's DbgFile spells them), and how
 	/// many procs the world had when they were counted
 	procs_by_file: Option<(u32, HashMap<String, Vec<u32>>)>,
@@ -372,6 +379,7 @@ impl Server {
 			next_watch: 0,
 			eval_given: vec![],
 			hold: None,
+			hold_max: None,
 			procs_by_file: None,
 			old_codes: RefCell::new(vec![]),
 			app: Self::setup_app()
@@ -2181,6 +2189,7 @@ impl Server {
 
 			Request::HoldPause => {
 				self.hold = self.current;
+				self.hold_max = self.current.and_then(|id| self.clients.get(&id)).and_then(|client| client.hold_max);
 				self.send_or_disconnect(Response::Ack);
 			}
 
@@ -2247,6 +2256,13 @@ impl Server {
 
 			Request::Journal { after, kinds, limit, follow } => self.handle_journal(after, kinds, limit, follow),
 			Request::JournalAdd(event) => self.journal(event, self.current),
+			Request::HoldMax { seconds } => {
+				let hold_max = seconds.filter(|seconds| seconds.is_finite() && *seconds >= 0.0).map(Duration::from_secs_f64);
+				if let Some(client) = self.current.and_then(|id| self.clients.get_mut(&id)) {
+					client.hold_max = hold_max;
+				}
+				self.send_or_disconnect(Response::Ack);
+			}
 			Request::Uptime => {
 				let (loaded, up, loads, last_reload) = journal::uptime();
 				self.send_or_disconnect(Response::Uptime {
@@ -2274,10 +2290,10 @@ impl Server {
 	/// client left.
 	fn recv_request(&mut self, wait: Wait) -> Option<Request> {
 		loop {
-			let event = if wait == Wait::No {
-				self.events.try_recv().ok()?
-			} else {
-				self.events.recv().ok()?
+			let event = match wait {
+				Wait::No => self.events.try_recv().ok()?,
+				Wait::Until(Some(until)) => self.events.recv_timeout(until.saturating_duration_since(Instant::now())).ok()?,
+				_ => self.events.recv().ok()?
 			};
 
 			match event {
@@ -2288,14 +2304,18 @@ impl Server {
 						caught: None,
 						debugs: true,
 						follow: None,
-						outbox: None
+						outbox: None,
+						hold_max: None
 					});
+					if let Wait::Until(_) = wait {
+						return None;
+					}
 				}
 
 				Event::Disconnected(id) => {
 					self.remove_client(id);
 
-					if wait == Wait::WhileClients && !self.has_debuggers() {
+					if (wait == Wait::WhileClients && !self.has_debuggers()) || matches!(wait, Wait::Until(_)) {
 						return None;
 					}
 				}
@@ -2480,14 +2500,35 @@ impl Server {
 		self.paused = Some(stop.clone());
 		self.broadcast(Response::BreakpointHit(stop), None);
 
+		// Since when a held pause first had nobody debugging it. Clients that
+		// come and look (a `status`) don't start the time again; one that's
+		// there when it's up has the pause until it goes.
+		let mut unattended: Option<Instant> = None;
 		loop {
 			// Held, it waits for clients to come back
-			let wait = if self.hold.is_some() { Wait::Forever } else { Wait::WhileClients };
+			let mut wait = if self.hold.is_some() { Wait::Forever } else { Wait::WhileClients };
 			if wait == Wait::WhileClients && !self.has_debuggers() {
 				break;
 			}
-			let Some(request) = self.recv_request(wait) else {
-				break;
+			// For so long, if the client that held it said
+			if let (Wait::Forever, Some(max)) = (wait, self.hold_max) {
+				if self.has_debuggers() {
+					wait = Wait::Until(None);
+				} else {
+					wait = Wait::Until(Some(*unattended.get_or_insert_with(Instant::now) + max));
+				}
+			}
+			let request = match self.recv_request(wait) {
+				Some(request) => request,
+				None => match wait {
+					Wait::Until(Some(until)) if Instant::now() >= until => {
+						self.let_hold_go();
+						return Some(ContinueKind::Continue);
+					}
+					// A client came or went
+					Wait::Until(_) => continue,
+					_ => break
+				}
 			};
 
 			// Hijack and handle any Continue requests. The other clients are
@@ -2508,6 +2549,7 @@ impl Server {
 				self.state = None;
 				self.paused = None;
 				self.hold = None;
+				self.hold_max = None;
 				return Some(kind);
 			}
 
@@ -2527,6 +2569,19 @@ impl Server {
 		self.state = None;
 		self.paused = None;
 		Some(ContinueKind::Continue)
+	}
+
+	/// Nobody debugging came back to a held pause in the time its client
+	/// gave it: the world carries on, and its record says why
+	fn let_hold_go(&mut self) {
+		let seconds = self.hold_max.map_or(0.0, |max| max.as_secs_f64());
+		eprintln!("Debug Server: nobody came back to the held pause in {} seconds: the world carries on", seconds);
+		self.hold = None;
+		self.hold_max = None;
+		self.state = None;
+		self.paused = None;
+		self.journal(JournalEvent::HoldEnded { seconds }, None);
+		self.broadcast(Response::Resumed, None);
 	}
 
 	// returns true if we need to pause
@@ -2604,6 +2659,7 @@ impl Server {
 		// A hold on a pause that hasn't come yet goes with its client
 		if self.hold == Some(id) && self.paused.is_none() {
 			self.hold = None;
+			self.hold_max = None;
 		}
 
 		self.forget_watches_of(id);

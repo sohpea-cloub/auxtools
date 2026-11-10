@@ -189,7 +189,15 @@ pub enum Request {
 	/// It has no answer, and isn't sent back to this client if it follows.
 	JournalAdd(JournalEvent),
 	/// How long the world has been up, and its last hot reload
-	Uptime
+	Uptime,
+	/// How long a pause this client holds (`HoldPause`) lasts once no client
+	/// that debugs is connected, before the world carries on by itself and
+	/// its record says so (if one is connected when the time is up, once it
+	/// goes). `None` for no limit, as there is unless asked.
+	/// Answered with `Ack`.
+	HoldMax {
+		seconds: Option<f64>
+	}
 }
 
 // Message from server -> client

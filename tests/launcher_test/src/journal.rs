@@ -285,3 +285,42 @@ pub fn world_went_away(waiting: Background) {
 	assert!(exit == 3 && printed.contains("the world hung up"), "wait --reboot gave {}: {}", exit, printed);
 	println!("ok: wait --reboot on a world that ends says it went away (exit code 3)");
 }
+
+/// Waits for the world to be running again, and says how long that took
+fn until_running(pid: u64) -> Duration {
+	let started = Instant::now();
+	loop {
+		if run(pid, &["status"], 0).starts_with("running\n") {
+			return started.elapsed();
+		}
+		assert!(started.elapsed() < TIMEOUT, "the world stayed paused");
+		std::thread::sleep(Duration::from_millis(200));
+	}
+}
+
+/// A held pause with --hold-max ends by itself when nobody debugging comes
+/// back to it, and the record says so; AUXTOOLS_HOLD_MAX does the same
+pub fn hold_max(pid: u64) {
+	let printed = run(pid, &["pause", "--hold-max", "2"], 0);
+	assert!(printed.starts_with("paused where it was asked to"), "pause said {}", printed);
+	assert!(run(pid, &["status"], 0).starts_with("paused"), "the pause wasn't held");
+	let took = until_running(pid);
+	assert!(took > Duration::from_secs(1), "the pause was let go after {:?}", took);
+	let printed = run(pid, &["log", "--world", "--last", "1"], 0);
+	assert!(printed.contains("the world carried on by itself") && printed.contains(" in 2 s (--hold-max)"), "log --world said {}", printed);
+	println!("ok: a pause held with --hold-max ends by itself, and the record says so");
+
+	let out = Command::new(launcher_path())
+		.args(["--pid", &pid.to_string(), "pause"])
+		.env("AUXTOOLS_HOLD_MAX", "1")
+		.output()
+		.unwrap();
+	assert!(out.status.success(), "pause said {}", String::from_utf8_lossy(&out.stderr));
+	until_running(pid);
+	// Without it, a held pause lasts
+	run(pid, &["pause"], 0);
+	std::thread::sleep(Duration::from_secs(3));
+	assert!(run(pid, &["status"], 0).starts_with("paused"), "a pause without --hold-max was let go");
+	run(pid, &["continue"], 0);
+	println!("ok: AUXTOOLS_HOLD_MAX does the same, and without either a held pause lasts");
+}

@@ -5,6 +5,7 @@
 //! A command that leaves the world paused (`pause`, `next`, `wait` and the
 //! like) asks it to stay paused after the connection goes, until a `continue`.
 
+mod hold;
 mod log;
 
 use std::{
@@ -207,9 +208,12 @@ proc's vars, and `src`. In a running world it can name globals and call procs.
 	("Running it", &[
 		Command {
 			name: "pause",
-			usage: "",
+			usage: "[--hold-max SECONDS]",
 			about: "Pauses the world where it is",
-			details: "The world stays paused after this command has gone, until `continue`.",
+			details: "The world stays paused after this command has gone, until `continue`.
+  --hold-max SECONDS  Let the world carry on by itself this long after the command has
+                      gone (once nobody debugging is connected to it). The default is
+                      no limit, or AUXTOOLS_HOLD_MAX if it's set. Its `log` says so.",
 			run: Run::World(|world, args| {
 				Flags::parse(args, &[], &[])?.nothing_else("pause")?;
 				world.pause()
@@ -227,9 +231,10 @@ proc's vars, and `src`. In a running world it can name globals and call procs.
 		},
 		Command {
 			name: "next",
-			usage: "",
+			usage: "[--hold-max SECONDS]",
 			about: "Runs to the next line, over any procs this one calls",
-			details: "",
+			details: "The world stays paused afterwards, until `continue`.
+  --hold-max SECONDS  As for `pause`",
 			run: Run::World(|world, args| {
 				Flags::parse(args, &[], &[])?.nothing_else("next")?;
 				world.resume(ContinueKind::StepOver { stack_id: 0 })
@@ -237,9 +242,10 @@ proc's vars, and `src`. In a running world it can name globals and call procs.
 		},
 		Command {
 			name: "step",
-			usage: "",
+			usage: "[--hold-max SECONDS]",
 			about: "Runs to the next line, going into a proc this one calls",
-			details: "",
+			details: "The world stays paused afterwards, until `continue`.
+  --hold-max SECONDS  As for `pause`",
 			run: Run::World(|world, args| {
 				Flags::parse(args, &[], &[])?.nothing_else("step")?;
 				world.resume(ContinueKind::StepInto { stack_id: 0 })
@@ -247,9 +253,10 @@ proc's vars, and `src`. In a running world it can name globals and call procs.
 		},
 		Command {
 			name: "out",
-			usage: "",
+			usage: "[--hold-max SECONDS]",
 			about: "Runs until this proc returns to the one that called it",
-			details: "",
+			details: "The world stays paused afterwards, until `continue`.
+  --hold-max SECONDS  As for `pause`",
 			run: Run::World(|world, args| {
 				Flags::parse(args, &[], &[])?.nothing_else("out")?;
 				world.resume(ContinueKind::StepOut { stack_id: 0 })
@@ -276,6 +283,8 @@ breakpoint, a `pause`. The world stays paused afterwards, until `continue`.
                        values of the {expressions} in it
   --timeout SECONDS    Give up after this long (exit code 2)
   --no-hold            Let the world carry on once this command has gone
+  --hold-max SECONDS   As for `pause`: let it carry on by itself this long after this
+                       command has gone (once nobody debugging is connected to it)
 
 wait --reload [--since N] [--timeout SECONDS] [--json]
   Waits for the next hot reload to be tried (or the first after entry N of `log`), by the
@@ -350,6 +359,10 @@ A command is for the one world that's running the debug library. With more than 
 	}
 	text += "
 `auxtools help COMMAND` shows a command's options.
+
+A command that leaves the world paused (pause, wait, next, step, out) can be given
+--hold-max SECONDS, or AUXTOOLS_HOLD_MAX in its environment: a pause nobody debugging comes
+back to in that long ends by itself, so a client that dies doesn't leave every player frozen.
 
 Exit codes: 0 done (for `wait`, the world paused), 1 failed, 2 timed out (`wait`,
 `reboot`), 3 the world went away (it ended or rebooted), 4 the world `launch` started
@@ -493,12 +506,16 @@ fn execute(pid: Option<u32>, words: &[String]) -> Result<()> {
 	match command.run {
 		Run::Alone(run) => run(args),
 		Run::World(run) => {
+			let (args, hold_max) = hold::take(command.name, args)?;
 			let pid = match pid {
 				Some(pid) => pid,
 				None => only_world()?
 			};
 			let mut world = World::connect(pid)?;
-			let result = run(&mut world, args);
+			if let Some(seconds) = hold_max {
+				world.hold_max(seconds)?;
+			}
+			let result = run(&mut world, &args);
 			world.leave();
 			result
 		}
