@@ -61,16 +61,6 @@
 				"category": "auxtools"
 			},
 			{
-				"command": "auxtools.runDreamSeeker",
-				"title": "Run in DreamSeeker without debugging",
-				"category": "auxtools"
-			},
-			{
-				"command": "auxtools.runDreamDaemon",
-				"title": "Run in DreamDaemon without debugging",
-				"category": "auxtools"
-			},
-			{
 				"command": "auxtools.attach",
 				"title": "Attach to a running world",
 				"category": "auxtools"
@@ -85,10 +75,6 @@
 			"commandPalette": [
 				{
 					"command": "auxtools.debugDreamSeeker",
-					"when": "isWindows"
-				},
-				{
-					"command": "auxtools.runDreamSeeker",
 					"when": "isWindows"
 				},
 				{
@@ -162,6 +148,11 @@
 								"type": "boolean",
 								"description": "Swap changed code into the running world as files are saved, with or without debugging",
 								"default": true
+							},
+							"noDebug": {
+								"type": "boolean",
+								"description": "Run the world without debugging: no breakpoints or pauses, and hot reloading still works. The same as starting it with Run Without Debugging.",
+								"default": false
 							},
 							"sleepingThreads": {
 								"type": "integer",

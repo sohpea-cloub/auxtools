@@ -17,7 +17,9 @@ language extension alongside it.
   (Windows) or DreamDaemon (Linux) with the debugger attached. With more than one
   `.dmb`, you pick which.
 - Or run **auxtools: Debug in DreamSeeker** or **auxtools: Debug in DreamDaemon**
-  from the command palette, or the **Run without debugging** versions.
+  from the command palette.
+- To run a world without debugging it (hot reloading still works), start a
+  configuration with **Run Without Debugging** (Ctrl+F5), or give it `"noDebug": true`.
 - For a configuration you can keep, add one to `launch.json` (**Add Configuration...**
   has snippets):
 
@@ -39,6 +41,7 @@ Launch options:
 | `dme` | The world's `.dme`, if it isn't the one next to the `.dmb`. Its directory is where the world's files are, and hot reloading reads it. |
 | `server` | `dreamseeker`, `dreamdaemon`, or `dd` (Windows' DreamDaemon without a window, whose output shows in the debug console). |
 | `defines` | The `-D` defines the `.dmb` was built with (`NAME` or `NAME=VALUE`), so that hot reloading reads the code as DreamMaker did. |
+| `noDebug` | Run the world without debugging (off unless set). |
 | `hotReload` | Swap changed code into the running world as files are saved (on unless set to `false`). |
 | `sleepingThreads` | How many sleeping procs the call stack view lists when the world is paused (100 unless set). |
 | `byondPath` | Where BYOND is installed, if it isn't found. |

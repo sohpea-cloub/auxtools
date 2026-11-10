@@ -202,8 +202,8 @@ async function attach() {
 	});
 }
 
-// A command that starts a world from one of the workspace's .dmb files
-function startCommand(server, noDebug) {
+// A command that debugs a world from one of the workspace's .dmb files
+function startCommand(server) {
 	return async () => {
 		const editor = vscode.window.activeTextEditor;
 		const folder = editor ? vscode.workspace.getWorkspaceFolder(editor.document.uri) : undefined;
@@ -211,8 +211,8 @@ function startCommand(server, noDebug) {
 		if (!dmb) {
 			return;
 		}
-		const name = `${noDebug ? "Run" : "Debug"} ${path.basename(dmb.fsPath)}`;
-		await vscode.debug.startDebugging(vscode.workspace.getWorkspaceFolder(dmb), launchConfiguration(dmb.fsPath, server, name), { noDebug });
+		const name = `Debug ${path.basename(dmb.fsPath)}`;
+		await vscode.debug.startDebugging(vscode.workspace.getWorkspaceFolder(dmb), launchConfiguration(dmb.fsPath, server, name));
 	};
 }
 
@@ -255,10 +255,8 @@ function activate(context) {
 		vscode.debug.registerDebugAdapterDescriptorFactory(DEBUG_TYPE, new AdapterFactory(context)),
 		vscode.debug.registerDebugConfigurationProvider(DEBUG_TYPE, provider),
 		vscode.debug.registerDebugConfigurationProvider(DEBUG_TYPE, provider, vscode.DebugConfigurationProviderTriggerKind.Dynamic),
-		vscode.commands.registerCommand("auxtools.debugDreamSeeker", startCommand("dreamseeker", false)),
-		vscode.commands.registerCommand("auxtools.debugDreamDaemon", startCommand("dreamdaemon", false)),
-		vscode.commands.registerCommand("auxtools.runDreamSeeker", startCommand("dreamseeker", true)),
-		vscode.commands.registerCommand("auxtools.runDreamDaemon", startCommand("dreamdaemon", true)),
+		vscode.commands.registerCommand("auxtools.debugDreamSeeker", startCommand("dreamseeker")),
+		vscode.commands.registerCommand("auxtools.debugDreamDaemon", startCommand("dreamdaemon")),
 		vscode.commands.registerCommand("auxtools.attach", attach),
 		// For `${command:auxtools.pickWorld}` in attach configurations
 		vscode.commands.registerCommand("auxtools.pickWorld", () => pickWorld(context)),
