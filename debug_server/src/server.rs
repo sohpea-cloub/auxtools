@@ -167,8 +167,11 @@ pub struct Claim {
 	log: Option<Vec<LogPart>>
 }
 
-/// The breakpoints, by where they are, and the clients that set each
-pub type Breakpoints = HashMap<(raw_types::procs::ProcId, u16), BTreeMap<ClientId, Claim>>;
+/// The breakpoints, by where they are, and the clients that set each. A
+/// client can have two in one place: one on the line, and one on the proc
+/// (set with offset 0, `true` here), which starts on that line. Each has its
+/// own condition, and goes when it's taken away, not when the other is.
+pub type Breakpoints = HashMap<(raw_types::procs::ProcId, u16), BTreeMap<(ClientId, bool), Claim>>;
 
 /// The name an expression's code knows the world's list of globals by. It
 /// isn't one an expression can write, so it can't hide anything.
@@ -1028,6 +1031,7 @@ impl Server {
 			});
 			return;
 		};
+		let on_proc = instruction.offset == 0;
 		instruction.offset = Self::breakpoint_offset(&proc, instruction.offset);
 		let line = self.get_line_number(instruction.proc.clone(), instruction.offset);
 
@@ -1059,7 +1063,7 @@ impl Server {
 				// condition this time means the old one is gone. Its hits are
 				// counted from now.
 				let key = (proc.id, instruction.offset as u16);
-				self.breakpoints.entry(key).or_default().insert(client, Claim {
+				self.breakpoints.entry(key).or_default().insert((client, on_proc), Claim {
 					condition,
 					hit,
 					hits: 0,
@@ -1067,7 +1071,7 @@ impl Server {
 				});
 
 				// The client has found out where a reload moved a breakpoint to
-				if !self.breakpoints.values().any(|claims| claims.len() > 1) {
+				if !self.breakpoints.values().any(|claims| claims.keys().any(|(other, _)| *other != client)) {
 					self.moved_breakpoints.retain(|(id, _), at| *id != proc.id || *at != instruction.offset);
 				}
 
@@ -1131,12 +1135,13 @@ impl Server {
 		};
 
 		// It might be one a reload moved, known to the client by where it was
+		let on_proc = instruction.offset == 0;
 		let asked = Self::breakpoint_offset(&proc, instruction.offset);
 		let offset = self.moved_breakpoints.get(&(proc.id, asked)).copied().unwrap_or(asked);
 
 		let key = (proc.id, offset as u16);
 		let claims = self.breakpoints.entry(key).or_default();
-		let had = claims.remove(&client).is_some();
+		let had = claims.remove(&(client, on_proc)).is_some();
 		let success = if claims.is_empty() {
 			// Nobody else wants it
 			self.breakpoints.remove(&key);
@@ -2094,7 +2099,7 @@ impl Server {
 			let proc = unsafe { (*(*(*_ctx).proc_instance())).proc };
 			let offset = unsafe { *(*_ctx).bytecode_offset() };
 			let key = (proc, offset);
-			let clients: Vec<ClientId> = self.breakpoints.get(&key).map(|claims| claims.keys().copied().collect()).unwrap_or_default();
+			let clients: Vec<(ClientId, bool)> = self.breakpoints.get(&key).map(|claims| claims.keys().copied().collect()).unwrap_or_default();
 
 			// One nobody is known to have set stops, as it always has
 			let mut pause = clients.is_empty();
@@ -2148,9 +2153,9 @@ impl Server {
 						line: self.get_line_number(place, offset as u32)
 					}
 				});
-				if let (Some(logged), Some(to)) = (logged, self.clients.get_mut(&client)) {
+				if let (Some(logged), Some(to)) = (logged, self.clients.get_mut(&client.0)) {
 					if Self::send(&mut to.connection, &logged).is_err() {
-						self.remove_client(client);
+						self.remove_client(client.0);
 					}
 				}
 			}
@@ -2301,7 +2306,7 @@ impl Server {
 
 		let mut unclaimed = vec![];
 		for (key, claims) in &mut self.breakpoints {
-			claims.remove(&id);
+			claims.retain(|(client, _), _| *client != id);
 			if claims.is_empty() {
 				unclaimed.push(*key);
 			}
