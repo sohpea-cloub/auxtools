@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 /// The version of the messages here. Bump it by hand with any change a client
 /// and a world built before it wouldn't agree on: it's in the name of the
 /// world's socket, so a client only finds worlds that speak its version.
-pub const PROTOCOL_VERSION: u32 = 3;
+pub const PROTOCOL_VERSION: u32 = 4;
 
 /// The local socket the world in process `pid` listens on, when it has the
 /// debug library: `auxtools-debug-v1-1234`
