@@ -161,6 +161,20 @@ pub fn run() {
 	assert!(!world.has_event("stopped"), "stepOut from the last proc stopped somewhere");
 	ok("stepOut with no caller to stop in lets the world carry on");
 
+	// Off the end of that block, whatever runs next (the world's loop, the
+	// debugger's own) is no part of the step
+	for command in ["next", "stepIn"] {
+		world.run_to("plain", "/sc_plain", "plain_3");
+		assert_eq!(world.step(command).proc, "/main_loop");
+		// The block's last line says the scenario is over
+		assert_eq!(world.step(command).proc, "/main_loop");
+		world.request(command, json!({ "threadId": 0 }));
+		world.finish("plain");
+		// Something of the world's has run since
+		world.run_through("plain");
+	}
+	ok("next and stepIn off the end of a proc that nothing called let the world carry on");
+
 	world.catch_runtimes(true);
 	world.run_to("fail_null", "/fail_deep", "fail_deep");
 	let stop = world.step("next");

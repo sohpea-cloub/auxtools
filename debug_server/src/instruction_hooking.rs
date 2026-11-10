@@ -52,8 +52,10 @@ impl ProcInstanceRef {
 enum DebuggerAction {
 	None,
 	Pause,
-	StepOver { target: ProcInstanceRef },
-	StepInto { parent: ProcInstanceRef },
+	/// `caller` is the proc that called the one stepping, where the step ends
+	/// if that one returns
+	StepOver { target: ProcInstanceRef, caller: Option<ProcInstanceRef> },
+	StepInto { parent: ProcInstanceRef, caller: Option<ProcInstanceRef> },
 	BreakOnNext,
 	StepOut { target: ProcInstanceRef }
 }
@@ -93,22 +95,35 @@ fn is_generated_proc(ctx: *mut raw_types::procs::ExecutionContext) -> bool {
 	true
 }
 
-fn get_proc_ctx(stack_id: u32) -> *mut raw_types::procs::ExecutionContext {
-	if stack_id == 0 {
-		return unsafe { *raw_types::funcs::CURRENT_EXECUTION_CONTEXT };
-	}
-
+/// The frame a step in a stack is about, the innermost, and the frame that
+/// called it. Stack 0 is the running one, the rest are the sleeping procs.
+fn get_proc_ctx(stack_id: u32) -> (*mut raw_types::procs::ExecutionContext, *mut raw_types::procs::ExecutionContext) {
 	unsafe {
+		let running = *raw_types::funcs::CURRENT_EXECUTION_CONTEXT;
+		let running = (running, *(*running).parent_context());
+		if stack_id == 0 {
+			return running;
+		}
+
 		let buffer = (*raw_types::funcs::SUSPENDED_PROCS_BUFFER).buffer;
 		let std::ops::Range { start: front, end: back } = raw_types::funcs::suspended_range();
 
 		// bad default
 		if back - front < stack_id as usize {
-			return *raw_types::funcs::CURRENT_EXECUTION_CONTEXT;
+			return running;
 		}
 
 		let instance = *buffer.add(front + (stack_id - 1) as usize);
-		(*instance).context
+		((*instance).context, std::ptr::null_mut())
+	}
+}
+
+/// Marks the proc instance of a frame, if there is one
+unsafe fn mark(ctx: *mut raw_types::procs::ExecutionContext) -> Option<ProcInstanceRef> {
+	if ctx.is_null() {
+		None
+	} else {
+		Some(ProcInstanceRef::new(unsafe { *(*ctx).proc_instance() }))
 	}
 }
 
@@ -125,29 +140,25 @@ fn handle_breakpoint(ctx: *mut raw_types::procs::ExecutionContext, reason: Break
 	Some(match action {
 		ContinueKind::Continue => DebuggerAction::None,
 		ContinueKind::StepOver { stack_id } => {
-			let ctx = get_proc_ctx(stack_id);
+			let (ctx, caller) = get_proc_ctx(stack_id);
 			DebuggerAction::StepOver {
-				target: ProcInstanceRef::new(unsafe { *(*ctx).proc_instance() })
+				target: ProcInstanceRef::new(unsafe { *(*ctx).proc_instance() }),
+				caller: unsafe { mark(caller) }
 			}
 		}
 		ContinueKind::StepInto { stack_id } => {
-			let ctx = get_proc_ctx(stack_id);
+			let (ctx, caller) = get_proc_ctx(stack_id);
 			DebuggerAction::StepInto {
-				parent: ProcInstanceRef::new(unsafe { *(*ctx).proc_instance() })
+				parent: ProcInstanceRef::new(unsafe { *(*ctx).proc_instance() }),
+				caller: unsafe { mark(caller) }
 			}
 		}
 		ContinueKind::StepOut { stack_id } => {
-			unsafe {
-				// Just continue the code if we've got no parent
-				let ctx = get_proc_ctx(stack_id);
-				let parent = *(*ctx).parent_context();
-				if parent.is_null() {
-					DebuggerAction::None
-				} else {
-					DebuggerAction::StepOut {
-						target: ProcInstanceRef::new(*(*parent).proc_instance())
-					}
-				}
+			// Just continue the code if nothing called it
+			let (_, caller) = get_proc_ctx(stack_id);
+			match unsafe { mark(caller) } {
+				Some(target) => DebuggerAction::StepOut { target },
+				None => DebuggerAction::None
 			}
 		}
 	})
@@ -278,17 +289,18 @@ impl InstructionHook for Server {
 				}
 
 				// StepOver breaks on either of the following conditions:
-				// 1) The target context has disappeared - this means it has returned or runtimed
+				// 1) The target context has disappeared (it has returned or runtimed) and we're in its caller
 				// 2) We're inside the target context and on a DbgLine instruction
-				DebuggerAction::StepOver { target } => {
+				DebuggerAction::StepOver { target, caller } => {
 					if is_dbgline && target.is(*(*ctx).proc_instance()) {
 						CURRENT_ACTION = DebuggerAction::BreakOnNext;
-					} else {
-						// If the context isn't in any stacks, it has just
-						// returned. Break! TODO: Don't
-						// break if the context's stack is gone (returned to C)
-						if !proc_instance_is_in_stack(ctx, target) && !proc_instance_is_suspended(target) {
-							CURRENT_ACTION = DebuggerAction::None;
+					} else if !proc_instance_is_in_stack(ctx, target) && !proc_instance_is_suspended(target) {
+						// It's over. Back in the proc that called it, the
+						// step ends there; if nothing of the world's called
+						// it, whatever runs now has nothing to do with the
+						// step, which just ends.
+						CURRENT_ACTION = DebuggerAction::None;
+						if caller.is_some_and(|caller| caller.is(*(*ctx).proc_instance())) {
 							CURRENT_ACTION = handle_breakpoint(ctx, BreakpointReason::Step).unwrap_or(DebuggerAction::None);
 							did_breakpoint = true;
 						}
@@ -296,10 +308,10 @@ impl InstructionHook for Server {
 				}
 
 				// StepInto breaks on any of the following conditions:
-				// 1) The parent context has disappeared - this means it has returned or runtimed
+				// 1) The parent context has disappeared (it has returned or runtimed) and we're in its caller
 				// 2) We're inside a context that is inside the parent context and on a DbgLine instruction
 				// 3) We're inside the parent context and on a DbgLine instruction
-				DebuggerAction::StepInto { parent } => {
+				DebuggerAction::StepInto { parent, caller } => {
 					if !is_generated_proc(ctx) {
 						let is_in_parent = parent.is(*(*ctx).proc_instance());
 
@@ -310,13 +322,14 @@ impl InstructionHook for Server {
 							let is_suspended = proc_instance_is_suspended(parent);
 
 							// If the context isn't in any stacks, it has just
-							// returned. Break!
-							// TODO: Don't break if the context's stack is gone
-							// (returned to C)
+							// returned: the step ends in its caller, or with
+							// nothing if this isn't its caller (see StepOver)
 							if !in_stack && !is_suspended {
 								CURRENT_ACTION = DebuggerAction::None;
-								CURRENT_ACTION = handle_breakpoint(ctx, BreakpointReason::Step).unwrap_or(DebuggerAction::None);
-								did_breakpoint = true;
+								if caller.is_some_and(|caller| caller.is(*(*ctx).proc_instance())) {
+									CURRENT_ACTION = handle_breakpoint(ctx, BreakpointReason::Step).unwrap_or(DebuggerAction::None);
+									did_breakpoint = true;
+								}
 							} else if in_stack && is_dbgline {
 								CURRENT_ACTION = DebuggerAction::BreakOnNext;
 							}
