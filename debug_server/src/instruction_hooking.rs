@@ -1,10 +1,7 @@
 use std::{cell::UnsafeCell, collections::HashMap, sync::Mutex};
 
 use auxtools::*;
-use instruction_hooking::{
-	disassemble_env::{self, DisassembleEnv},
-	InstructionHook
-};
+use instruction_hooking::{disassemble_env, InstructionHook};
 use lazy_static::lazy_static;
 
 use crate::{
@@ -475,27 +472,22 @@ pub enum InstructionHookError {
 	InvalidOffset
 }
 
-fn find_instruction<'a>(env: &'a mut DisassembleEnv, proc: &'a Proc, offset: u32) -> Option<(dmasm::Instruction, dmasm::DebugData<'a>)> {
-	let bytecode = unsafe { proc.bytecode() };
+/// How many words the instruction at `offset` has, if one starts there. The
+/// code is read without our breakpoints in it: the words they put in the
+/// rest of an instruction would read as instructions of their own.
+fn instruction_length(proc: &Proc, offset: u32) -> Option<usize> {
+	let bytecode = original_bytecode(proc);
+	let mut env = disassemble_env::DisassembleEnv;
+	let (nodes, _error) = dmasm::disassembler::disassemble(&bytecode, &mut env);
 
-	let (nodes, _error) = dmasm::disassembler::disassemble(bytecode, env);
-
-	for node in nodes {
-		if let dmasm::Node::Instruction(ins, debug) = node {
-			if debug.offset == offset {
-				return Some((ins, debug));
-			}
-		}
-	}
-
-	None
+	nodes.into_iter().find_map(|node| match node {
+		dmasm::Node::Instruction(_, debug) if debug.offset == offset => Some(debug.bytecode.len()),
+		_ => None
+	})
 }
 
 pub fn hook_instruction(proc: &Proc, offset: u32) -> Result<(), InstructionHookError> {
-	let mut env = disassemble_env::DisassembleEnv;
-	let (_, debug) = find_instruction(&mut env, proc, offset).ok_or(InstructionHookError::InvalidOffset)?;
-
-	let instruction_length = debug.bytecode.len();
+	let instruction_length = instruction_length(proc, offset).ok_or(InstructionHookError::InvalidOffset)?;
 
 	let bytecode;
 	let opcode;
@@ -535,8 +527,7 @@ pub enum InstructionUnhookError {
 }
 
 pub fn unhook_instruction(proc: &Proc, offset: u32) -> Result<(), InstructionUnhookError> {
-	let mut env = disassemble_env::DisassembleEnv;
-	let (..) = find_instruction(&mut env, proc, offset).ok_or(InstructionUnhookError::InvalidOffset)?;
+	instruction_length(proc, offset).ok_or(InstructionUnhookError::InvalidOffset)?;
 
 	let opcode_ptr = unsafe {
 		let bytecode = {

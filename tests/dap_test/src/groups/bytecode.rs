@@ -44,6 +44,20 @@ fn texts(listing: &[Value]) -> Vec<String> {
 	listing.iter().map(|i| i["instruction"].as_str().unwrap().to_owned()).collect()
 }
 
+/// Makes these the client's instruction breakpoints, and returns them as
+/// the launcher answered
+fn break_at(world: &mut World, addresses: &[u64]) -> Vec<Value> {
+	let breakpoints: Vec<Value> = addresses.iter().map(|&a| json!({ "instructionReference": hex(a) })).collect();
+	let set = world.request("setInstructionBreakpoints", json!({ "breakpoints": breakpoints }));
+	set["breakpoints"].as_array().unwrap().clone()
+}
+
+/// The address of the first instruction of a listing with this text
+fn find(listing: &[Value], text: &str) -> u64 {
+	let found = listing.iter().find(|i| i["instruction"] == text);
+	address(&found.unwrap_or_else(|| panic!("no {} in {:?}", text, texts(listing)))["address"])
+}
+
 /// The paused frame's instruction
 fn frame_address(world: &mut World) -> u64 {
 	let frame = world.top_frame();
@@ -111,8 +125,93 @@ pub fn run() {
 	ok("leaf()'s instructions: its file, a DbgLine for each of its lines, a return and the end, each on its line");
 	world.resume_through("middle");
 
+	instruction_breakpoints(&mut world, &leaf);
 	world.end();
 	old_code();
+}
+
+fn instruction_breakpoints(world: &mut World, leaf: &[Value]) {
+	let at = world.marks.clone();
+	// `return y * 2`: the multiplication, which no line starts at
+	let mul = find(leaf, "Mul");
+	let set = break_at(world, &[mul]);
+	assert_eq!(set[0]["verified"], true, "{}", set[0]);
+	assert_eq!(address(&set[0]["instructionReference"]), mul);
+	assert_eq!(set[0]["line"], at.line("leaf_2"));
+	let id = set[0]["id"].as_u64().unwrap();
+	world.run("middle");
+	let stop = world.stop();
+	assert_eq!((stop.reason.as_str(), stop.proc.as_str(), stop.line), ("instruction breakpoint", "/leaf", at.line("leaf_2")));
+	assert_eq!(stop.hit, [id]);
+	assert_eq!(frame_address(world), mul);
+	assert_eq!(world.eval("y"), "4");
+	ok("an instruction breakpoint at an address from the disassembly stops there, as an instruction breakpoint, with its id");
+	world.resume();
+	world.stopped("instruction breakpoint");
+	break_at(world, &[]);
+	world.resume_through("middle");
+	ok("taken away, it doesn't stop again");
+
+	// Inside an instruction of more than one word: in its words, a
+	// breakpoint would turn the rest into instructions of their own
+	let wide = leaf.iter().find(|i| i["instructionBytes"].as_str().unwrap().contains(' ')).unwrap();
+	let wide = address(&wide["address"]);
+	let past = break_at(world, &[(mul & CODE) + 0xFFF0]);
+	assert_eq!(past[0]["verified"], false, "{}", past[0]);
+	let set = break_at(world, &[wide + 1, wide]);
+	assert_eq!(set[0]["verified"], false, "{}", set[0]);
+	let why = set[0]["message"].as_str().unwrap();
+	assert!(why.contains("in the middle of an instruction") && why.contains(&hex(wide)), "{}", why);
+	assert_eq!(set[1]["verified"], true, "{}", set[1]);
+	world.run("middle");
+	let stop = world.stop();
+	assert_eq!((stop.proc.as_str(), stop.hit.len()), ("/leaf", 1));
+	world.resume();
+	world.stopped("instruction breakpoint");
+	break_at(world, &[]);
+	world.resume_through("middle");
+	ok("an address in the middle of an instruction, or past the end of the proc, is refused, and one at the instruction's start beside it works");
+
+	// The instruction a line's breakpoint is on, with one of each: each is
+	// its own
+	let line_2 = leaf.iter().position(|i| i["instruction"] == format!("DbgLine {}", at.line("leaf_2"))).unwrap();
+	let after = address(&leaf[line_2 + 1]["address"]);
+	world.break_on(&["leaf_2"]);
+	let by_address = break_at(world, &[after])[0]["id"].as_u64().unwrap();
+	world.run("middle");
+	let stop = world.stop();
+	assert_eq!(stop.reason, "breakpoint");
+	assert_eq!(stop.hit.len(), 2, "{:?}", stop.hit);
+	assert!(stop.hit.contains(&by_address));
+	assert_eq!(frame_address(world), after);
+	break_at(world, &[]);
+	world.resume();
+	world.stop_on("breakpoint", "/leaf", "leaf_2");
+	world.break_on(&[]);
+	world.resume_through("middle");
+	ok("a line's breakpoint and an instruction's at one place both stop there; taking the instruction's away leaves the line's");
+
+	// A condition and a hit count, and a reboot: the proc is the same proc
+	// in the world that starts again
+	let set = world.request(
+		"setInstructionBreakpoints",
+		json!({ "breakpoints": [{ "instructionReference": hex(mul), "condition": "x == 8", "hitCondition": "2" }] })
+	);
+	assert_eq!(set["breakpoints"][0]["verified"], true, "{}", set);
+	let worlds = world.count("dap: world/New");
+	world.run("reboot");
+	world.wait_count("dap: world/New", worlds + 1);
+	world.wait_output("The world restarted");
+	// Each run calls leaf(3) and leaf(8): the second x == 8 stops
+	world.run("middle");
+	world.finish("middle");
+	assert!(!world.has_event("stopped"), "it stopped at the first hit");
+	world.run("middle");
+	world.stopped("instruction breakpoint");
+	assert_eq!((world.eval("x"), frame_address(world)), ("8".to_owned(), mul));
+	break_at(world, &[]);
+	world.resume_through("middle");
+	ok("an instruction breakpoint has a condition and a hit count, and is set again after a reboot");
 }
 
 /// A frame on code a hot reload replaced disassembles to that code

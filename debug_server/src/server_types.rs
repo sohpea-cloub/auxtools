@@ -149,6 +149,21 @@ pub enum Request {
 	/// The instructions of some code: a proc's, or the old code a frame runs
 	Disassemble {
 		code: CodeRef
+	},
+	/// A breakpoint at exactly this instruction, which has to be the start of
+	/// one: offset 0 is the proc's first instruction, not the proc itself as
+	/// for `BreakpointSet`. It's the client's apart from any breakpoint it
+	/// has on the instruction's line or proc. Answered as `BreakpointSet` is.
+	InstructionBreakpointSet {
+		instruction: InstructionRef,
+		condition: Option<String>,
+		hit: Option<HitCondition>,
+		log: Option<Vec<LogPart>>
+	},
+	/// Takes away what `InstructionBreakpointSet` set. Answered as
+	/// `BreakpointUnset` is.
+	InstructionBreakpointUnset {
+		instruction: InstructionRef
 	}
 }
 

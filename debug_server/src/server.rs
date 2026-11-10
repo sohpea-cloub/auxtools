@@ -208,10 +208,30 @@ pub struct Claim {
 }
 
 /// The breakpoints, by where they are, and the clients that set each. A
-/// client can have two in one place: one on the line, and one on the proc
-/// (set with offset 0, `true` here), which starts on that line. Each has its
-/// own condition, and goes when it's taken away, not when the other is.
-pub type Breakpoints = HashMap<(raw_types::procs::ProcId, u16), BTreeMap<(ClientId, bool), Claim>>;
+/// client can have three in one place: one on the line, one on the proc
+/// (set with offset 0), which starts on that line, and one on the
+/// instruction. Each has its own condition, and goes when it's taken away,
+/// not when the others do.
+pub type Breakpoints = HashMap<(raw_types::procs::ProcId, u16), BTreeMap<(ClientId, Placed), Claim>>;
+
+/// What a client set a breakpoint on
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
+pub enum Placed {
+	Line,
+	Proc,
+	Instruction
+}
+
+impl Placed {
+	/// For a breakpoint asked for at `offset`: by instruction, `exactly` there
+	fn of(offset: u32, exactly: bool) -> Self {
+		match offset {
+			_ if exactly => Self::Instruction,
+			0 => Self::Proc,
+			_ => Self::Line
+		}
+	}
+}
 
 /// The name an expression's code knows the world's list of globals by. It
 /// isn't one an expression can write, so it can't hide anything.
@@ -267,7 +287,7 @@ pub struct Server {
 	/// The procs in each file (as the world's DbgFile spells them), and how
 	/// many procs the world had when they were counted
 	procs_by_file: Option<(u32, HashMap<String, Vec<u32>>)>,
-	moved_breakpoints: hot_reload::MovedBreakpoints<(ClientId, bool)>,
+	moved_breakpoints: hot_reload::MovedBreakpoints<(ClientId, Placed)>,
 	/// Where the old code is that frames have been seen running, each by
 	/// its number less one (`CodeRef::old`)
 	old_codes: RefCell<Vec<usize>>,
@@ -1136,7 +1156,16 @@ impl Server {
 		}
 	}
 
-	fn handle_breakpoint_set(&mut self, mut instruction: InstructionRef, condition: Option<String>, hit: Option<HitCondition>, log: Option<Vec<LogPart>>) {
+	/// Sets a breakpoint: `exactly` at the instruction asked for, or else
+	/// where a client means (`breakpoint_offset`)
+	fn handle_breakpoint_set(
+		&mut self,
+		mut instruction: InstructionRef,
+		condition: Option<String>,
+		hit: Option<HitCondition>,
+		log: Option<Vec<LogPart>>,
+		exactly: bool
+	) {
 		let (Some(proc), Some(client)) = (
 			auxtools::Proc::find_override(instruction.proc.path.clone(), instruction.proc.override_id),
 			self.current
@@ -1146,8 +1175,10 @@ impl Server {
 			});
 			return;
 		};
-		let on_proc = instruction.offset == 0;
-		instruction.offset = Self::breakpoint_offset(&proc, instruction.offset);
+		let placed = Placed::of(instruction.offset, exactly);
+		if !exactly {
+			instruction.offset = Self::breakpoint_offset(&proc, instruction.offset);
+		}
 		let line = self.get_line_number(instruction.proc.clone(), instruction.offset);
 
 		// A condition that doesn't compile would pause at every hit, to say so
@@ -1178,7 +1209,7 @@ impl Server {
 				// condition this time means the old one is gone. Its hits are
 				// counted from now.
 				let key = (proc.id, instruction.offset as u16);
-				self.breakpoints.entry(key).or_default().insert((client, on_proc), Claim {
+				self.breakpoints.entry(key).or_default().insert((client, placed), Claim {
 					condition,
 					hit,
 					hits: 0,
@@ -1190,7 +1221,7 @@ impl Server {
 				// a reload moved away from it
 				let offset = instruction.offset;
 				self.moved_breakpoints
-					.retain(|&(id, from, who), &mut at| id != proc.id || who != (client, on_proc) || (at != offset && from != offset));
+					.retain(|&(id, from, who), &mut at| id != proc.id || who != (client, placed) || (at != offset && from != offset));
 
 				// As the proc itself names it, whatever the client called it
 				instruction.proc = ProcRef {
@@ -1242,7 +1273,7 @@ impl Server {
 		message
 	}
 
-	fn handle_breakpoint_unset(&mut self, instruction: InstructionRef) {
+	fn handle_breakpoint_unset(&mut self, instruction: InstructionRef, exactly: bool) {
 		let (Some(proc), Some(client)) = (
 			auxtools::Proc::find_override(instruction.proc.path, instruction.proc.override_id),
 			self.current
@@ -1252,9 +1283,9 @@ impl Server {
 		};
 
 		// It might be one a reload moved, known to the client by where it was
-		let on_proc = instruction.offset == 0;
-		let asked = Self::breakpoint_offset(&proc, instruction.offset);
-		let who = (client, on_proc);
+		let placed = Placed::of(instruction.offset, exactly);
+		let asked = if exactly { instruction.offset } else { Self::breakpoint_offset(&proc, instruction.offset) };
+		let who = (client, placed);
 		let offset = self.moved_breakpoints.get(&(proc.id, asked, who)).copied().unwrap_or(asked);
 
 		// The client doesn't know it by any other place now
@@ -2091,8 +2122,8 @@ impl Server {
 				condition,
 				hit,
 				log
-			} => self.handle_breakpoint_set(instruction, condition, hit, log),
-			Request::BreakpointUnset { instruction } => self.handle_breakpoint_unset(instruction),
+			} => self.handle_breakpoint_set(instruction, condition, hit, log, false),
+			Request::BreakpointUnset { instruction } => self.handle_breakpoint_unset(instruction, false),
 			Request::Stacks { sleeping } => self.handle_stacks(sleeping),
 			Request::Scopes { frame_id } => self.handle_scopes(frame_id),
 			Request::Variables { vars, start, count } => self.handle_variables(vars, start, count),
@@ -2193,6 +2224,14 @@ impl Server {
 				self.send_or_disconnect(Response::Disassemble(disassembly));
 			}
 
+			Request::InstructionBreakpointSet {
+				instruction,
+				condition,
+				hit,
+				log
+			} => self.handle_breakpoint_set(instruction, condition, hit, log, true),
+			Request::InstructionBreakpointUnset { instruction } => self.handle_breakpoint_unset(instruction, true),
+
 			// The following requests are special cases and handled outside of
 			// this function
 			Request::Configured | Request::Continue { .. } => {
@@ -2280,7 +2319,7 @@ impl Server {
 	/// stop here.
 	fn breakpoint_hit(&mut self, key: (raw_types::procs::ProcId, u16)) -> bool {
 		let (proc, offset) = key;
-		let clients: Vec<(ClientId, bool)> = self.breakpoints.get(&key).map(|claims| claims.keys().copied().collect()).unwrap_or_default();
+		let clients: Vec<(ClientId, Placed)> = self.breakpoints.get(&key).map(|claims| claims.keys().copied().collect()).unwrap_or_default();
 
 		// One nobody is known to have set stops, as it always has
 		let mut pause = clients.is_empty();

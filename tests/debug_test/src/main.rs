@@ -324,6 +324,50 @@ fn protocol(world: &World, mut client: Client) -> Client {
 	);
 	println!("ok: an expression and a condition that don't compile are refused, with why");
 
+	// The world puts a breakpoint in the words of an instruction. One in
+	// the middle of another's, `return 2`'s value, would make instructions
+	// of the rest, with one there already or not.
+	pause(&mut client);
+	let set = |client: &mut Client, instruction: &InstructionRef| {
+		client.request(Request::BreakpointSet {
+			instruction: instruction.clone(),
+			condition: None,
+			hit: None,
+			log: None
+		})
+	};
+	let Response::BreakpointSet {
+		result: BreakpointSetResult::Success { at, .. }
+	} = set(&mut client, &start_of(BREAKPOINT_TARGET))
+	else {
+		panic!("couldn't set a breakpoint on {}", BREAKPOINT_TARGET);
+	};
+	let inside = InstructionRef {
+		offset: at.offset + 1,
+		..at.clone()
+	};
+	let response = set(&mut client, &inside);
+	assert!(
+		matches!(response, Response::BreakpointSet { result: BreakpointSetResult::Failed }),
+		"a breakpoint inside an instruction with one got {:?}",
+		response
+	);
+	let response = client.request(Request::BreakpointUnset { instruction: start_of(BREAKPOINT_TARGET) });
+	assert!(matches!(response, Response::BreakpointUnset { success: true }), "{:?}", response);
+	let response = client.request(Request::InstructionBreakpointSet {
+		instruction: inside,
+		condition: None,
+		hit: None,
+		log: None
+	});
+	assert!(
+		matches!(response, Response::BreakpointSet { result: BreakpointSetResult::Failed }),
+		"a breakpoint inside an instruction got {:?}",
+		response
+	);
+	client.resume();
+	println!("ok: a breakpoint in the middle of an instruction isn't set, with a breakpoint at its start or not");
+
 	// Two clients want one breakpoint: it's there until both have let go
 	let mut second = world.connect();
 	pause(&mut client);

@@ -64,7 +64,11 @@ fn changes_text(changes: &[DataChange]) -> String {
 		.join("\n")
 }
 
-/// The breakpoints set in the world now, by file (or `FUNCTION_BREAKPOINTS`)
+/// Where the key for instruction breakpoints' records is
+pub const INSTRUCTION_BREAKPOINTS: &str = "<instructions>";
+
+/// The breakpoints set in the world now, by file (or `FUNCTION_BREAKPOINTS`,
+/// or `INSTRUCTION_BREAKPOINTS`)
 pub type SetBreakpoints = Arc<Mutex<HashMap<String, Vec<SetBreakpoint>>>>;
 
 fn announce_stop(out: &Output, last_error: &Mutex<LastError>, set: &SetBreakpoints, stop: Stop) {
@@ -75,16 +79,19 @@ fn announce_stop(out: &Output, last_error: &Mutex<LastError>, set: &SetBreakpoin
 		BreakpointReason::Step => Reasons::REASON_STEP,
 		BreakpointReason::Pause => Reasons::REASON_PAUSE,
 		BreakpointReason::Breakpoint => {
-			hit = set
-				.lock()
-				.unwrap()
-				.values()
-				.flatten()
-				.filter(|breakpoint| breakpoint.at.as_ref() == Some(&stop.at))
-				.map(|breakpoint| breakpoint.id)
-				.collect();
+			let mut by_instruction = true;
+			for (key, breakpoints) in set.lock().unwrap().iter() {
+				for breakpoint in breakpoints.iter().filter(|breakpoint| breakpoint.at.as_ref() == Some(&stop.at)) {
+					hit.push(breakpoint.id);
+					by_instruction &= key == INSTRUCTION_BREAKPOINTS;
+				}
+			}
 			hit.sort_unstable();
-			Reasons::REASON_BREAKPOINT
+			if by_instruction && !hit.is_empty() {
+				"instruction breakpoint"
+			} else {
+				Reasons::REASON_BREAKPOINT
+			}
 		}
 		BreakpointReason::Runtime { message, caught } => {
 			*last_error.lock().unwrap() = LastError {

@@ -183,6 +183,7 @@ fn capabilities() {
 		"supportsExceptionInfoRequest",
 		"supportsFunctionBreakpoints",
 		"supportsHitConditionalBreakpoints",
+		"supportsInstructionBreakpoints",
 		"supportsLoadedSourcesRequest",
 		"supportsLogPoints",
 		"supportsSetExpression",

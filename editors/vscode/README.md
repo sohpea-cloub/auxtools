@@ -171,6 +171,10 @@ one number (`0x0000002A00000013` is offset `0x13` in proc `0x2A`). A frame that 
 before a hot reload changed its proc shows the old code it still runs (its source lines
 aren't shown: they were lines of the file as it was then).
 
+A breakpoint can go on any instruction: click to the left of its address. It has to be
+the start of an instruction, and in a proc's code as it is now, not in old code. It can
+have a condition and a hit count, and stays set across reboots of the world.
+
 ## Hot reloading (experimental)
 
 While a world runs, saving a file swaps the procs that changed into it, with or without

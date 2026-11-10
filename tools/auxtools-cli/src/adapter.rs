@@ -33,7 +33,7 @@ use serde_json::Value;
 use crate::{
 	code,
 	dap::{self, Output},
-	debuggee::{Debuggee, LastError, SetBreakpoint, SetBreakpoints},
+	debuggee::{Debuggee, LastError, SetBreakpoint, SetBreakpoints, INSTRUCTION_BREAKPOINTS},
 	stddef::{strip_declaration, Stddef}
 };
 
@@ -224,6 +224,23 @@ struct ExceptionFilterOption {
 	condition: Option<String>
 }
 
+/// What `setInstructionBreakpoints` takes
+#[derive(Deserialize)]
+struct InstructionBreakpointsArguments {
+	breakpoints: Vec<InstructionBreakpoint>
+}
+
+#[derive(Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct InstructionBreakpoint {
+	/// An address from `disassemble`, or a frame's
+	instruction_reference: String,
+	/// How far on from it, in words
+	offset: Option<i64>,
+	condition: Option<String>,
+	hit_condition: Option<String>
+}
+
 const fn yes() -> bool {
 	true
 }
@@ -286,6 +303,8 @@ pub struct Adapter {
 	breakpoint_texts: HashMap<String, Option<Vec<String>>>,
 	next_breakpoint_id: i64,
 	function_breakpoints: Vec<FunctionBreakpoint>,
+	/// The client's instruction breakpoints, with the ids they were given
+	instruction_breakpoints: Vec<(i64, InstructionBreakpoint)>,
 	/// Which runtime errors to pause on: of those nothing catches, and of
 	/// those inside a `try`
 	uncaught: Option<aux::RuntimeFilter>,
@@ -341,6 +360,7 @@ pub fn run() {
 		breakpoint_texts: HashMap::new(),
 		next_breakpoint_id: 1,
 		function_breakpoints: vec![],
+		instruction_breakpoints: vec![],
 		uncaught: Some(aux::RuntimeFilter::default()),
 		caught: None,
 		set: SetBreakpoints::default(),
@@ -483,6 +503,7 @@ impl Adapter {
 			"configurationDone" => self.configuration_done(),
 			"setBreakpoints" => arguments(args).and_then(|args| self.set_breakpoints(args)),
 			"setFunctionBreakpoints" => arguments(args).and_then(|args| self.set_function_breakpoints(args)),
+			"setInstructionBreakpoints" => arguments(args).and_then(|args| self.set_instruction_breakpoints(args)),
 			"setExceptionBreakpoints" => arguments(args).and_then(|args| self.set_exception_breakpoints(args)),
 			"dataBreakpointInfo" => arguments(args).and_then(|args| self.data_breakpoint_info(args)),
 			"setDataBreakpoints" => arguments(args).and_then(|args| self.set_data_breakpoints(args)),
@@ -542,6 +563,7 @@ impl Adapter {
 			supportsDisassembleRequest: Some(true),
 			..Default::default()
 		})?;
+		capabilities["supportsInstructionBreakpoints"] = true.into();
 		// What dap-types has no fields for
 		let condition = "Text the error's message has to have, like \"bounds, null\" for either, or mustn't, like \"!libdreamluau\"";
 		capabilities["supportsExceptionFilterOptions"] = true.into();
@@ -947,6 +969,7 @@ impl Adapter {
 			}
 			let _ = self.apply_function_breakpoints();
 			self.rewatch();
+			let _ = self.apply_instruction_breakpoints();
 		}
 		let _ = self.ack(&AuxRequest::Configured);
 		self.catch_up_on_pause();
@@ -1272,12 +1295,18 @@ impl Adapter {
 		hit: Option<aux::HitCondition>,
 		log: Option<Vec<aux::LogPart>>
 	) -> Result<Option<(Option<u32>, InstructionRef)>, String> {
-		match self.request(&AuxRequest::BreakpointSet {
+		self.breakpoint_set(&AuxRequest::BreakpointSet {
 			instruction: instruction.clone(),
 			condition,
 			hit,
 			log
-		})? {
+		})
+	}
+
+	/// What the world made of a request to set a breakpoint: `Some(line)`
+	/// when it's set
+	fn breakpoint_set(&mut self, request: &AuxRequest) -> Result<Option<(Option<u32>, InstructionRef)>, String> {
+		match self.request(request)? {
 			AuxResponse::BreakpointSet {
 				result: aux::BreakpointSetResult::Success { line, at }
 			} => Ok(Some((line, at))),
@@ -1295,8 +1324,11 @@ impl Adapter {
 	fn unset(&mut self, key: &str) {
 		let set = self.set.lock().unwrap().remove(key).unwrap_or_default();
 		for breakpoint in set {
-			let _ = self.request(&AuxRequest::BreakpointUnset {
-				instruction: breakpoint.asked
+			let instruction = breakpoint.asked;
+			let _ = self.request(&if key == INSTRUCTION_BREAKPOINTS {
+				AuxRequest::InstructionBreakpointUnset { instruction }
+			} else {
+				AuxRequest::BreakpointUnset { instruction }
 			});
 		}
 	}
@@ -1367,6 +1399,115 @@ impl Adapter {
 			});
 		}
 		self.set.lock().unwrap().insert(FUNCTION_BREAKPOINTS.to_owned(), set);
+		breakpoints
+	}
+
+	fn set_instruction_breakpoints(&mut self, args: InstructionBreakpointsArguments) -> Handled {
+		let mut wanted = vec![];
+		for breakpoint in args.breakpoints {
+			wanted.push((self.next_breakpoint_id, breakpoint));
+			self.next_breakpoint_id += 1;
+		}
+		self.instruction_breakpoints = wanted;
+		let breakpoints = self.apply_instruction_breakpoints();
+		Ok(serde_json::json!({ "breakpoints": breakpoints }))
+	}
+
+	/// Breakpoints at instructions, by the addresses `disassemble` gave them.
+	/// Only the start of an instruction will do: the world puts a breakpoint
+	/// in its words, and one in the middle would make other instructions of
+	/// them.
+	fn apply_instruction_breakpoints(&mut self) -> Vec<Value> {
+		self.unset(INSTRUCTION_BREAKPOINTS);
+		let wanted = self.instruction_breakpoints.clone();
+
+		let mut breakpoints = vec![];
+		let mut set = vec![];
+		let mut code: HashMap<aux::CodeRef, Option<aux::Disassembly>> = HashMap::new();
+		for (id, breakpoint) in wanted {
+			let reference = breakpoint.instruction_reference.clone();
+			let unverified = |message: String| {
+				serde_json::json!({ "id": id, "verified": false, "message": message, "instructionReference": reference })
+			};
+			if !self.debugging || self.debuggee.is_none() {
+				breakpoints.push(unverified("the world isn't being debugged".to_owned()));
+				continue;
+			}
+			let Some(address) = parse_address(&reference).map(|address| address.wrapping_add_signed(breakpoint.offset.unwrap_or(0))) else {
+				breakpoints.push(unverified(format!("{:?} isn't an address", reference)));
+				continue;
+			};
+			let (place, offset) = aux::from_address(address);
+			if place.old != 0 {
+				breakpoints.push(unverified("it's in old code that a frame runs: breakpoints go in procs' code as it is now".to_owned()));
+				continue;
+			}
+			if !code.contains_key(&place) {
+				let disassembly = match self.request(&AuxRequest::Disassemble { code: place }) {
+					Ok(AuxResponse::Disassemble(Ok(disassembly))) => Some(disassembly),
+					_ => None
+				};
+				code.insert(place, disassembly);
+			}
+			let Some(disassembly) = &code[&place] else {
+				breakpoints.push(unverified(format!("there's no proc at {}", address_text(address))));
+				continue;
+			};
+			let proc = disassembly.proc.clone();
+			let starts = disassembly.instructions.iter().rev().find(|instruction| instruction.offset <= offset).map(|instruction| instruction.offset);
+			let past_end = disassembly.instructions.last().is_none_or(|last| usize::from(offset) >= usize::from(last.offset) + last.words.len());
+			match starts {
+				_ if past_end => {
+					breakpoints.push(unverified(format!("{} is past the end of {}", address_text(address), proc.path)));
+					continue;
+				}
+				Some(start) if start != offset => {
+					breakpoints.push(unverified(format!(
+						"{} is in the middle of an instruction of {}, which starts at {}",
+						address_text(address),
+						proc.path,
+						address_text(aux::address(place, start))
+					)));
+					continue;
+				}
+				_ => {}
+			}
+			let hit = match hit_condition(breakpoint.hit_condition.as_deref()) {
+				Ok(hit) => hit,
+				Err(e) => {
+					breakpoints.push(unverified(e));
+					continue;
+				}
+			};
+
+			let instruction = InstructionRef {
+				proc,
+				offset: offset.into()
+			};
+			let mut at = None;
+			breakpoints.push(
+				match self.breakpoint_set(&AuxRequest::InstructionBreakpointSet {
+					instruction: instruction.clone(),
+					condition: breakpoint.condition.clone(),
+					hit,
+					log: None
+				}) {
+					Ok(Some((line, set_at))) => {
+						at = Some(set_at);
+						serde_json::json!({ "id": id, "verified": true, "line": line, "instructionReference": address_text(address) })
+					}
+					Ok(None) => unverified("the world couldn't set it".to_owned()),
+					Err(e) => unverified(e)
+				}
+			);
+			set.push(SetBreakpoint {
+				asked: instruction,
+				at,
+				watch: None,
+				id
+			});
+		}
+		self.set.lock().unwrap().insert(INSTRUCTION_BREAKPOINTS.to_owned(), set);
 		breakpoints
 	}
 
