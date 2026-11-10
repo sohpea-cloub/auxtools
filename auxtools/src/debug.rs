@@ -134,6 +134,20 @@ impl Default for CallStacks {
 
 impl CallStacks {
 	pub fn new() -> CallStacks {
+		CallStacks {
+			active: Self::active(),
+			suspended: Self::suspended()
+		}
+	}
+
+	/// The stack of the proc that's running, innermost frame first
+	pub fn active() -> Vec<StackFrame> {
+		unsafe { CallStacks::from_context(*funcs::CURRENT_EXECUTION_CONTEXT, CallStackKind::Active) }
+	}
+
+	/// The stacks of the procs that are asleep, each innermost frame first.
+	/// A world can have thousands.
+	pub fn suspended() -> Vec<Vec<StackFrame>> {
 		let mut suspended = vec![];
 
 		unsafe {
@@ -145,10 +159,7 @@ impl CallStacks {
 			}
 		}
 
-		CallStacks {
-			active: unsafe { CallStacks::from_context(*funcs::CURRENT_EXECUTION_CONTEXT, CallStackKind::Active) },
-			suspended
-		}
+		suspended
 	}
 
 	fn from_context(mut context: *mut procs::ExecutionContext, kind: CallStackKind) -> Vec<StackFrame> {

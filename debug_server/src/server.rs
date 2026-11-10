@@ -1,5 +1,5 @@
 use std::{
-	cell::RefCell,
+	cell::{OnceCell, RefCell},
 	collections::{BTreeMap, HashMap},
 	error::Error,
 	io::{Read, Write},
@@ -32,8 +32,14 @@ enum Variables {
 	ListPair { key: Value, value: Value }
 }
 
+/// What a pause has been asked about. The stacks are read when they're first
+/// wanted: a breakpoint with a condition needs the running proc's to work its
+/// condition out, and most hits end there. The sleeping procs' stacks, which
+/// a world can have thousands of, are only read for a client that looks at
+/// them.
 struct State {
-	stacks: debug::CallStacks,
+	active: OnceCell<Vec<debug::StackFrame>>,
+	suspended: OnceCell<Vec<Vec<debug::StackFrame>>>,
 	variables: RefCell<Vec<Variables>>,
 	variables_to_refs: RefCell<HashMap<Variables, VariablesRef>>
 }
@@ -41,14 +47,28 @@ struct State {
 impl State {
 	fn new() -> Self {
 		Self {
-			stacks: debug::CallStacks::new(),
+			active: OnceCell::new(),
+			suspended: OnceCell::new(),
 			variables: RefCell::new(vec![]),
 			variables_to_refs: RefCell::new(HashMap::new())
 		}
 	}
 
+	/// Code has run since the stacks were read: they're read again when
+	/// they're next wanted
 	fn invalidate_stacks(&mut self) {
-		self.stacks = debug::CallStacks::new();
+		self.active = OnceCell::new();
+		self.suspended = OnceCell::new();
+	}
+
+	/// The running proc's stack
+	fn active(&self) -> &Vec<debug::StackFrame> {
+		self.active.get_or_init(debug::CallStacks::active)
+	}
+
+	/// The sleeping procs' stacks
+	fn suspended(&self) -> &Vec<Vec<debug::StackFrame>> {
+		self.suspended.get_or_init(debug::CallStacks::suspended)
 	}
 
 	fn get_ref(&self, vars: Variables) -> VariablesRef {
@@ -641,29 +661,28 @@ impl Server {
 
 	fn get_stack(&self, stack_id: u32) -> Option<&Vec<debug::StackFrame>> {
 		let stack_id = stack_id as usize;
-		let stacks = &self.state.as_ref()?.stacks;
+		let state = self.state.as_ref()?;
 
 		if stack_id == 0 {
-			return Some(&stacks.active);
+			return Some(state.active());
 		}
 
-		stacks.suspended.get(stack_id - 1)
+		state.suspended().get(stack_id - 1)
 	}
 
 	fn get_stack_base_frame_id(&self, stack_id: u32) -> u32 {
 		let stack_id = stack_id as usize;
-		let stacks = match &self.state {
-			Some(state) => &state.stacks,
-			None => return 0
+		let Some(state) = &self.state else {
+			return 0;
 		};
 
 		if stack_id == 0 {
 			return 0;
 		}
 
-		let mut current_base = stacks.active.len();
+		let mut current_base = state.active().len();
 
-		for frame in &stacks.suspended[..stack_id - 1] {
+		for frame in &state.suspended()[..stack_id - 1] {
 			current_base += frame.len();
 		}
 
@@ -672,15 +691,16 @@ impl Server {
 
 	fn get_stack_frame(&self, frame_index: u32) -> Option<&debug::StackFrame> {
 		let mut frame_index = frame_index as usize;
-		let stacks = &self.state.as_ref()?.stacks;
+		let state = self.state.as_ref()?;
+		let active = state.active();
 
-		if frame_index < stacks.active.len() {
-			return Some(&stacks.active[frame_index]);
+		if frame_index < active.len() {
+			return Some(&active[frame_index]);
 		}
 
-		frame_index -= stacks.active.len();
+		frame_index -= active.len();
 
-		for frame in &stacks.suspended {
+		for frame in state.suspended() {
 			if frame_index < frame.len() {
 				return Some(&frame[frame_index]);
 			}
@@ -863,10 +883,10 @@ impl Server {
 				let mut ret = vec![];
 				ret.push(Stack {
 					id: 0,
-					name: state.stacks.active[0].proc.path.clone()
+					name: state.active()[0].proc.path.clone()
 				});
 
-				for (idx, stack) in state.stacks.suspended.iter().enumerate() {
+				for (idx, stack) in state.suspended().iter().enumerate() {
 					ret.push(Stack {
 						id: (idx + 1) as u32,
 						name: stack[0].proc.path.clone()
