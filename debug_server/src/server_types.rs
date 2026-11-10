@@ -193,7 +193,10 @@ pub struct StackFrame {
 	pub line: Option<u32>,
 	/// The file its proc is in, as its DbgFile names it (a world built with
 	/// DEBUG has them)
-	pub file: Option<String>
+	pub file: Option<String>,
+	/// It started before a hot reload changed its proc's code, and runs the
+	/// code it started with: its line is a line of the file as it was then
+	pub old_code: bool
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]

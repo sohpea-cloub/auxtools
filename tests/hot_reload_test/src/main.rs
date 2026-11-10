@@ -370,8 +370,8 @@ fn main() {
 	assert!(changes.line_moves.iter().any(|m| m.proc.path == "/breakpoint_target"));
 	let result = reload(&mut watcher, &changes);
 	assert!(result.warnings.is_empty(), "{:?}", result.warnings);
-	// The paused frame runs the old code, and still knows its line
-	assert_eq!(paused_line(&mut client), ("/breakpoint_target".to_owned(), Some(line)));
+	// The paused frame's code is as it was, two lines further down the file
+	assert_eq!(paused_line(&mut client), ("/breakpoint_target".to_owned(), Some(line + 2)));
 	client.resume();
 
 	eval(&mut client, "arm_breakpoint()");

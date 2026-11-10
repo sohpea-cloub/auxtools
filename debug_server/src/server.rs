@@ -331,19 +331,45 @@ impl Server {
 		}
 	}
 
-	/// The line a frame is on. A frame that started before a hot reload runs
-	/// the code it started with, not the proc's current code. A frame that's
-	/// `asleep` is where it will wake, after the instruction it sleeps in:
-	/// when that's the start of the next line, it's still on the one before.
-	fn frame_line_number(&self, frame: &debug::StackFrame, asleep: bool) -> Option<u32> {
+	/// The code a frame runs, when it isn't its proc's current code but what
+	/// that was before a hot reload: a frame runs the code it started with.
+	/// `None` too when the two only differ in their line numbers (the proc's
+	/// lines moved, its code didn't): the current ones are right for it.
+	fn old_code_of(frame: &debug::StackFrame) -> Option<Vec<u32>> {
 		let running = unsafe { *(*frame.context).bytecode() };
 		let (current, _) = unsafe { frame.proc.bytecode_mut_ptr() };
+		if running == current {
+			return None;
+		}
+		let old = auxtools::bytecode_at(running)?;
+
+		let instructions = |bytecode: &[u32]| -> Vec<dmasm::Instruction> {
+			let mut env = disassemble_env::DisassembleEnv;
+			let (nodes, _error) = dmasm::disassembler::disassemble(bytecode, &mut env);
+			nodes
+				.into_iter()
+				.filter_map(|node| match node {
+					dmasm::Node::Instruction(dmasm::Instruction::DbgLine(_), _) => Some(dmasm::Instruction::DbgLine(0)),
+					dmasm::Node::Instruction(ins, _) => Some(ins),
+					_ => None
+				})
+				.collect()
+		};
+		let now = original_bytecode(&frame.proc);
+		if old.len() == now.len() && instructions(&old) == instructions(&now) {
+			return None;
+		}
+		Some(old)
+	}
+
+	/// The line a frame is on. A frame that's `asleep` is where it will wake,
+	/// after the instruction it sleeps in: when that's the start of the next
+	/// line, it's still on the one before.
+	fn frame_line_number(&self, frame: &debug::StackFrame, asleep: bool) -> Option<u32> {
 		let offset = if asleep { (frame.offset as u32).saturating_sub(1) } else { frame.offset as u32 };
 
-		if running != current {
-			if let Some(bytecode) = auxtools::bytecode_at(running) {
-				return Self::line_number_in(&bytecode, offset);
-			}
+		if let Some(bytecode) = Self::old_code_of(frame) {
+			return Self::line_number_in(&bytecode, offset);
 		}
 
 		self.get_line_number(
@@ -932,7 +958,8 @@ impl Server {
 						},
 						// A sleeping stack's innermost frame is the one asleep
 						line: self.frame_line_number(&stack[i], stack_id != 0 && i == 0),
-						file: Self::file_of(&stack[i].proc)
+						file: Self::file_of(&stack[i].proc),
+						old_code: Self::old_code_of(&stack[i]).is_some()
 					});
 				}
 

@@ -177,16 +177,23 @@ pub fn run() {
 		"\tvar/y = x + 1 // @leaf_1\n",
 		"\tvar/y = x + 1 // @leaf_1\n\tvar/extra = 5 // @leaf_extra\n\ty += extra\n"
 	);
-	let frame = world.top_frame();
-	assert_eq!(frame["name"], "/leaf");
+	let frames = world.frames(0);
+	assert_eq!(frames[0]["name"], "/leaf (old code)");
 	let locals = world.scope_values("Locals");
 	assert_eq!(locals.iter().map(|(name, _)| name.as_str()).collect::<Vec<_>>(), [".", "y"]);
-	ok("a reload while the world is paused is taken, and the paused frame keeps the code and the locals it started with");
+	ok("a reload while the world is paused is taken, and the paused frame keeps the code and the locals it started with, and says so");
+
+	// Its caller's code is as it was, two lines further down
+	assert_eq!(
+		(frames[1]["name"].as_str().unwrap(), frames[1]["line"].as_u64().unwrap()),
+		("/middle", world.marks.line("middle_1"))
+	);
+	ok("a frame of a proc whose lines only moved is on its new line");
 
 	// middle()'s r is what the old leaf() gives for 3
 	world.break_on(&[]);
-	assert_eq!(world.step("stepOut").proc, "/middle");
-	assert_eq!(world.step("next").proc, "/middle");
+	world.step_on("stepOut", "/middle", "middle_1");
+	world.step_on("next", "/middle", "middle_2");
 	assert_eq!(world.local("r"), "8");
 	ok("the frame that was paused finishes on its old code");
 

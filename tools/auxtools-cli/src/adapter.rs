@@ -1042,7 +1042,9 @@ impl Adapter {
 			let proc = &frame.instruction.proc;
 			let mut dap_frame = StackFrame {
 				id: frame.id.into(),
-				name: proc.path.clone(),
+				// One that runs what its proc's code was before a hot reload
+				// is on a line of the file as it was
+				name: if frame.old_code { format!("{} (old code)", proc.path) } else { proc.path.clone() },
 				instructionPointerReference: Some(format!("{}#{}@{}", proc.path, proc.override_id, frame.instruction.offset)),
 				// Has to be more than 0 for the client to show an exception
 				column: if i == 0 { 1 } else { 0 },

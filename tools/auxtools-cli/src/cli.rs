@@ -542,6 +542,7 @@ fn place(frame: &StackFrame) -> String {
 		0 => proc.path.clone(),
 		n => format!("{}#{}", proc.path, n)
 	};
+	let name = if frame.old_code { format!("{} (old code)", name) } else { name };
 	match (&frame.file, frame.line) {
 		(Some(file), Some(line)) => format!("{}  {}:{}", name, file, line),
 		(None, Some(line)) => format!("{}  line {}", name, line),
