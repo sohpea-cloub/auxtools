@@ -345,6 +345,11 @@ pub struct Adapter {
 	function_breakpoints: Vec<FunctionBreakpoint>,
 	/// The client's instruction breakpoints, with the ids they were given
 	instruction_breakpoints: Vec<(i64, InstructionBreakpoint)>,
+	/// The ids of `function_breakpoints`, in their order
+	function_breakpoint_ids: Vec<i64>,
+	/// What the client was last told of each breakpoint, by id: whether it's
+	/// set, its line and why not
+	told: HashMap<i64, (bool, Option<i64>, Option<String>)>,
 	/// Which runtime errors to pause on: of those nothing catches, and of
 	/// those inside a `try`
 	uncaught: Option<aux::RuntimeFilter>,
@@ -404,6 +409,8 @@ pub fn run() {
 		next_breakpoint_id: 1,
 		function_breakpoints: vec![],
 		instruction_breakpoints: vec![],
+		function_breakpoint_ids: vec![],
+		told: HashMap::new(),
 		uncaught: Some(aux::RuntimeFilter::default()),
 		caught: None,
 		set: SetBreakpoints::default(),
@@ -1048,10 +1055,14 @@ impl Adapter {
 			let _ = self.catch_runtimes();
 			// Those on lines of unsaved text wait for it to be saved
 			let files: Vec<String> = self.breakpoints.keys().filter(|file| !self.deferred.contains(*file)).cloned().collect();
+			// The client is told of those that aren't as it was told: set
+			// now, after a reboot, or on another line in the new world
 			for file in files {
-				let _ = self.apply_breakpoints(&file);
+				let breakpoints = self.apply_breakpoints(&file);
+				self.tell(breakpoints, false);
 			}
-			let _ = self.apply_function_breakpoints();
+			let breakpoints = self.apply_function_breakpoints();
+			self.tell(breakpoints, false);
 			self.rewatch();
 			let _ = self.apply_instruction_breakpoints();
 		}
@@ -1088,12 +1099,8 @@ impl Adapter {
 			}
 			self.breakpoint_texts.insert(file.clone(), now);
 
-			for breakpoint in self.apply_breakpoints(&file) {
-				self.out.event(dap::BreakpointEvent {
-					reason: "changed".to_owned(),
-					breakpoint
-				});
-			}
+			let breakpoints = self.apply_breakpoints(&file);
+			self.tell(breakpoints, true);
 		}
 
 		// A paused world's frames may be on other lines now
@@ -1247,6 +1254,9 @@ impl Adapter {
 		// sends it after the save, never for unsaved text.)
 		let saved_since = args.sourceModified.unwrap_or(false);
 		let reloading = self.code.is_some();
+		for (id, _) in self.breakpoints.get(&path).into_iter().flatten() {
+			self.told.remove(id);
+		}
 		let mut wanted = vec![];
 		for breakpoint in args.breakpoints.unwrap_or_default() {
 			wanted.push((self.next_breakpoint_id, breakpoint));
@@ -1269,7 +1279,8 @@ impl Adapter {
 					line: Some(breakpoint.line),
 					..Default::default()
 				})
-				.collect();
+				.collect::<Vec<_>>();
+			self.told(&breakpoints);
 			// What's set in the world for the file stays until then, on the
 			// code the world runs: which of these each was isn't known. With
 			// none left, none of them are wanted.
@@ -1292,7 +1303,35 @@ impl Adapter {
 		self.breakpoints.insert(path.clone(), wanted);
 		self.breakpoint_texts.insert(path.clone(), crate::lines::read(&path));
 		let breakpoints = self.apply_breakpoints(&path);
+		self.told(&breakpoints);
 		json(SetBreakpointsResponse { breakpoints })
+	}
+
+	/// Remembers what the client is told of these breakpoints in a response
+	fn told(&mut self, breakpoints: &[Breakpoint]) {
+		for breakpoint in breakpoints {
+			if let Some(id) = breakpoint.id {
+				self.told.insert(id, (breakpoint.verified, breakpoint.line, breakpoint.message.clone()));
+			}
+		}
+	}
+
+	/// Tells the client what's become of these breakpoints: of `all` of
+	/// them, or only of those it was told something else of
+	fn tell(&mut self, breakpoints: Vec<Breakpoint>, all: bool) {
+		for breakpoint in breakpoints {
+			if let Some(id) = breakpoint.id {
+				let now = (breakpoint.verified, breakpoint.line, breakpoint.message.clone());
+				if !all && self.told.get(&id) == Some(&now) {
+					continue;
+				}
+				self.told.insert(id, now);
+			}
+			self.out.event(dap::BreakpointEvent {
+				reason: "changed".to_owned(),
+				breakpoint
+			});
+		}
 	}
 
 	/// The client says whether a file has edits it hasn't saved. Breakpoints
@@ -1308,12 +1347,8 @@ impl Adapter {
 			// If the world doesn't have the change yet, they're set again
 			// when it does
 			self.breakpoint_texts.insert(path.clone(), crate::lines::read(&path));
-			for breakpoint in self.apply_breakpoints(&path) {
-				self.out.event(dap::BreakpointEvent {
-					reason: "changed".to_owned(),
-					breakpoint
-				});
-			}
+			let breakpoints = self.apply_breakpoints(&path);
+			self.tell(breakpoints, true);
 		}
 		Ok(Value::Null)
 	}
@@ -1463,8 +1498,16 @@ impl Adapter {
 	}
 
 	fn set_function_breakpoints(&mut self, args: SetFunctionBreakpointsArguments) -> Handled {
+		for id in &self.function_breakpoint_ids {
+			self.told.remove(id);
+		}
+		// Each keeps its id while it's there, for the client to be told of
+		// it again
+		self.function_breakpoint_ids = (0..args.breakpoints.len() as i64).map(|i| self.next_breakpoint_id + i).collect();
+		self.next_breakpoint_id += args.breakpoints.len() as i64;
 		self.function_breakpoints = args.breakpoints;
 		let breakpoints = self.apply_function_breakpoints();
+		self.told(&breakpoints);
 		json(SetFunctionBreakpointsResponse { breakpoints })
 	}
 
@@ -1472,17 +1515,19 @@ impl Adapter {
 	/// for its second definition
 	fn apply_function_breakpoints(&mut self) -> Vec<Breakpoint> {
 		self.unset(FUNCTION_BREAKPOINTS);
-		let wanted: Vec<(String, Option<String>, Option<String>)> = self
+		let wanted: Vec<(i64, String, Option<String>, Option<String>)> = self
 			.function_breakpoints
 			.iter()
-			.map(|b| (b.name.clone(), b.condition.clone(), b.hitCondition.clone()))
+			.zip(&self.function_breakpoint_ids)
+			.map(|(b, id)| (*id, b.name.clone(), b.condition.clone(), b.hitCondition.clone()))
 			.collect();
 
 		let mut breakpoints = vec![];
 		let mut set = vec![];
-		for (name, condition, hit) in wanted {
+		for (id, name, condition, hit) in wanted {
 			if !self.debugging || self.debuggee.is_none() {
 				breakpoints.push(Breakpoint {
+					id: Some(id),
 					verified: false,
 					message: Some("the world isn't being debugged".to_owned()),
 					..Default::default()
@@ -1494,8 +1539,6 @@ impl Adapter {
 				offset: 0
 			};
 			let set_as_asked = hit_condition(hit.as_deref()).and_then(|hit| self.set_breakpoint(&instruction, condition, hit, None));
-			let id = self.next_breakpoint_id;
-			self.next_breakpoint_id += 1;
 			let mut at = None;
 			breakpoints.push(match set_as_asked {
 				Ok(Some((line, set_at))) => {

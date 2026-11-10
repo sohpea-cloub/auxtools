@@ -226,7 +226,7 @@ fn instruction_breakpoints(world: &mut World, leaf: &[Value]) {
 
 /// A frame on code a hot reload replaced disassembles to that code
 fn old_code() {
-	let dir = copy_of_the_world();
+	let dir = copy_of_the_world("bytecode");
 	let mut world = World::launch_in(dir, json!({ "hotReload": true }));
 	world.catch_runtimes(false);
 	world.configure();

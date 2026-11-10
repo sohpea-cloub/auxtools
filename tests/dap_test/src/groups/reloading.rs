@@ -10,9 +10,9 @@ use crate::{
 	world::{host_file, World}
 };
 
-/// A copy of the world's code, to edit
-pub(super) fn copy_of_the_world() -> PathBuf {
-	let dir = std::env::temp_dir().join(format!("dap_test_reloading-{}", std::process::id()));
+/// A copy of the world's code, to edit, in a directory of its own
+pub fn copy_of_the_world(name: &str) -> PathBuf {
+	let dir = std::env::temp_dir().join(format!("dap_test_{}-{}", name, std::process::id()));
 	let _ = std::fs::remove_dir_all(&dir);
 	std::fs::create_dir_all(&dir).unwrap();
 	for entry in std::fs::read_dir(host_file("")).unwrap() {
@@ -33,7 +33,7 @@ fn reloads(output: &str) -> usize {
 }
 
 /// Changes a file, and waits for the world to have the change
-pub(super) fn edit(world: &mut World, file: &str, old: &str, new: &str) {
+pub fn edit(world: &mut World, file: &str, old: &str, new: &str) {
 	let before = reloads(&world.output);
 	world.marks.edit(file, old, new);
 	world.wait_until("the hot reload", |output| reloads(output) > before);
@@ -50,7 +50,7 @@ fn moved(world: &mut World) -> (u64, bool) {
 
 /// Edits the client has no part in: an agent's, another editor's, a checkout
 fn behind_the_clients_back() {
-	let dir = copy_of_the_world();
+	let dir = copy_of_the_world("reloading");
 	let mut world = World::launch_in(dir.clone(), json!({ "hotReload": true }));
 	world.catch_runtimes(false);
 	world.configure();
@@ -240,7 +240,7 @@ pub fn run() {
 	saved_without_reloading();
 	behind_the_clients_back();
 
-	let dir = copy_of_the_world();
+	let dir = copy_of_the_world("reloading");
 	let mut world = World::launch_as(json!({ "supportsInvalidatedEvent": true }), dir.clone(), json!({ "hotReload": true }));
 	world.catch_runtimes(false);
 	world.configure();
