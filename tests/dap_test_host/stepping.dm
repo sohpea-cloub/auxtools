@@ -170,3 +170,32 @@ var/many = 50
 		nap(10)
 	sleep(1)
 	leaf(1)
+
+// Three procs asleep, each with an object of its own for src
+/datum/dozer
+	var/n = 0
+
+/datum/dozer/proc/doze()
+	set waitfor = FALSE
+	var/mine = n
+	sleep(600) // @doze_sleep
+	return mine
+
+var/list/dozers
+
+// An expression can't delete, but it can call this
+/proc/end_dozer(datum/dozer/d)
+	del(d)
+
+/proc/sc_dozers()
+	dozers = list()
+	for (var/i in 1 to 3)
+		var/datum/dozer/d = new
+		d.n = i
+		dozers += d
+		d.doze()
+	sleep(1)
+	leaf(1)
+	for (var/datum/dozer/d in dozers)
+		del(d)
+	dozers = null

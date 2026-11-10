@@ -497,6 +497,9 @@ pub struct Stop {
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]
 pub struct StackFrame {
+	/// The running stack's frames are 0, 1, 2, ... from the innermost. A
+	/// sleeping stack's are given ids of their own, which name that frame
+	/// for as long as the world is paused, or nothing once it's gone.
 	pub id: u32,
 	pub instruction: InstructionRef,
 	pub line: Option<u32>,

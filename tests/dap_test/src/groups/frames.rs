@@ -2,7 +2,7 @@
 
 use std::path::Path;
 
-use serde_json::json;
+use serde_json::{json, Value};
 
 use crate::{ok, world::World};
 
@@ -79,5 +79,31 @@ pub fn run() {
 	assert_eq!(crate::client::value_of(&crate::client::named(&world.variables(&arguments)), "depth"), "120");
 	world.resume_through("deep");
 	ok("a stack 124 frames deep, whole and by its last page");
+
+	// Three procs asleep, each with its own src. Deleting one's src from an
+	// expression in its frame doesn't end it (BYOND ends it when it wakes,
+	// if at all) but it moves the sleeping procs about: the frames are still
+	// the ones they were.
+	world.run_to("dozers", "/leaf", "leaf_1");
+	let threads = world.threads();
+	let mut dozing: Vec<(Value, String)> = vec![];
+	for (thread, name) in &threads {
+		if name.starts_with("/datum/dozer/doze  ") {
+			let frame = world.frames(*thread)[0]["id"].clone();
+			let mine = world.evaluate_in(&frame, "mine", "watch")["result"].as_str().unwrap().to_owned();
+			dozing.push((frame, mine));
+		}
+	}
+	assert_eq!(dozing.len(), 3, "{:?}", threads);
+	let (first, _) = &dozing[0];
+	assert_eq!(world.evaluate_in(first, "end_dozer(src)", "repl")["result"], "null");
+	assert_eq!(world.evaluate_in(first, "src", "watch")["result"], "null");
+	for (frame, mine) in &dozing {
+		assert_eq!(&world.evaluate_in(frame, "mine", "watch")["result"], mine.as_str());
+		let locals = world.scope(frame, "Locals");
+		assert_eq!(crate::client::value_of(&crate::client::named(&world.variables(&locals)), "mine"), mine);
+	}
+	world.resume_through("dozers");
+	ok("an expression that moves the sleeping procs about leaves their frames' ids naming the same frames");
 	world.end();
 }

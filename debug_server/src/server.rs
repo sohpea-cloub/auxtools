@@ -62,7 +62,28 @@ struct State {
 	/// has asked to see
 	sleeping: usize,
 	variables: RefCell<Vec<Variables>>,
-	variables_to_refs: RefCell<HashMap<Variables, VariablesRef>>
+	variables_to_refs: RefCell<HashMap<Variables, VariablesRef>>,
+	/// The sleeping stacks' frames a client has been given ids for, by id
+	/// (less `SLEEPING_FRAMES`)
+	sleeping_frames: RefCell<Vec<SleepingFrame>>,
+	sleeping_frame_ids: RefCell<HashMap<SleepingFrame, u32>>
+}
+
+/// Frame ids from here on are sleeping stacks' frames, which `State` keeps a
+/// list of. Those below are the running stack's, by how deep they are,
+/// innermost first.
+const SLEEPING_FRAMES: u32 = 1 << 30;
+
+/// A frame of a sleeping stack: the stack's id (`Server::thread_of`), how
+/// deep in it the frame is, innermost first, and the frame's proc instance.
+/// Code an expression runs can end sleeping procs and start others, which
+/// moves the stacks about; what a frame's id names stays the same, or is
+/// gone.
+#[derive(Clone, Copy, Hash, PartialEq, Eq)]
+struct SleepingFrame {
+	thread: u32,
+	depth: usize,
+	instance: usize
 }
 
 impl State {
@@ -72,8 +93,23 @@ impl State {
 			suspended: OnceCell::new(),
 			sleeping: DEFAULT_SLEEPING_STACKS as usize,
 			variables: RefCell::new(vec![]),
-			variables_to_refs: RefCell::new(HashMap::new())
+			variables_to_refs: RefCell::new(HashMap::new()),
+			sleeping_frames: RefCell::new(vec![]),
+			sleeping_frame_ids: RefCell::new(HashMap::new())
 		}
+	}
+
+	/// The id of a sleeping stack's frame, which it keeps for the pause
+	fn sleeping_frame_id(&self, frame: SleepingFrame) -> u32 {
+		let mut frames = self.sleeping_frames.borrow_mut();
+		*self.sleeping_frame_ids.borrow_mut().entry(frame).or_insert_with(|| {
+			frames.push(frame);
+			SLEEPING_FRAMES + (frames.len() as u32 - 1)
+		})
+	}
+
+	fn sleeping_frame(&self, id: u32) -> Option<SleepingFrame> {
+		self.sleeping_frames.borrow().get(id.checked_sub(SLEEPING_FRAMES)? as usize).copied()
 	}
 
 	/// Code has run since the stacks were read: they're read again when
@@ -926,44 +962,18 @@ impl Server {
 		state.suspended().get(position - 1)
 	}
 
-	fn get_stack_base_frame_id(&self, position: usize) -> u32 {
-		let Some(state) = &self.state else {
-			return 0;
-		};
-
-		if position == 0 {
-			return 0;
-		}
-
-		let mut current_base = state.active().len();
-
-		for frame in &state.suspended()[..position - 1] {
-			current_base += frame.len();
-		}
-
-		current_base as u32
-	}
-
+	/// The frame a client knows by `frame_index`, if it's still there
 	fn get_stack_frame(&self, frame_index: u32) -> Option<&debug::StackFrame> {
-		let mut frame_index = frame_index as usize;
 		let state = self.state.as_ref()?;
-		let active = state.active();
-
-		if frame_index < active.len() {
-			return Some(&active[frame_index]);
+		if frame_index < SLEEPING_FRAMES {
+			return state.active().get(frame_index as usize);
 		}
 
-		frame_index -= active.len();
-
-		for frame in state.suspended() {
-			if frame_index < frame.len() {
-				return Some(&frame[frame_index]);
-			}
-
-			frame_index -= frame.len();
-		}
-
-		None
+		let frame = state.sleeping_frame(frame_index)?;
+		let position = self.stack_position(frame.thread).filter(|&position| position != 0)?;
+		self.get_stack(position)?
+			.get(frame.depth)
+			.filter(|found| found.instance as usize == frame.instance)
 	}
 
 	fn get_args(&mut self, frame_index: u32) -> Vec<Variable> {
@@ -1215,7 +1225,7 @@ impl Server {
 		let response = match position.and_then(|position| self.get_stack(position)) {
 			Some(stack) => {
 				let stack_id = position.unwrap_or(0);
-				let frame_base = self.get_stack_base_frame_id(stack_id);
+				let thread = self.thread_of(stack);
 				let start_frame = start_frame.unwrap_or(0);
 				let end_frame = start_frame.saturating_add(count.unwrap_or(stack.len() as u32));
 
@@ -1234,8 +1244,16 @@ impl Server {
 						override_id: stack[i].proc.override_id()
 					};
 
+					let id = match &self.state {
+						Some(state) if stack_id != 0 => state.sleeping_frame_id(SleepingFrame {
+							thread,
+							depth: i,
+							instance: stack[i].instance as usize
+						}),
+						_ => i as u32
+					};
 					frames.push(StackFrame {
-						id: frame_base + (i as u32),
+						id,
 						instruction: InstructionRef {
 							proc: proc_ref.clone(),
 							offset: stack[i].offset as u32
@@ -1389,12 +1407,14 @@ impl Server {
 		let mut found: BTreeMap<String, bool> = BTreeMap::new();
 		match base {
 			Some(base) => {
-				let Ok(value) = self.eval_expr(frame_id, base) else {
-					return vec![];
-				};
+				// Its code ran, whether it gave a value or not
+				let value = self.eval_expr(frame_id, base);
 				if let Some(state) = self.state.as_mut() {
 					state.invalidate_stacks();
 				}
+				let Ok(value) = value else {
+					return vec![];
+				};
 				Self::members_of(&value, &mut found);
 			}
 
@@ -1547,8 +1567,10 @@ impl Server {
 			Variables::Arguments { frame } | Variables::Locals { frame } => *frame,
 			_ => 0
 		};
-		let value = self.eval_expr(Some(frame), value)?;
+		// Its code ran, whether it gave a value or not
+		let value = self.eval_expr(Some(frame), value);
 		self.state.as_mut().unwrap().invalidate_stacks();
+		let value = value?;
 
 		// A runtime error on the way is this request's, not one to pause for
 		self.in_eval = true;
@@ -1777,6 +1799,13 @@ impl Server {
 		match result {
 			Ok(res) => {
 				if let Ok(list) = res.as_list() {
+					// The expression's code can end the frame's proc (a
+					// sleeping one whose src it deletes), and its frame with
+					// it: there's nowhere to put them back
+					if frame_id.is_some() && !Self::frame_is_live(ctx) {
+						return Err("the expression ended the proc of the frame it was evaluated in".to_owned());
+					}
+
 					// The rest are the potentially mutated parameters. We need
 					// to commit them to the function that
 					// called us. TODO: This sucks, obviously.
@@ -1830,6 +1859,22 @@ impl Server {
 			// A runtime error, which the world's runtime hook has the text of
 			Err(Runtime { message }) => Err(format!("runtime error: {}", message))
 		}
+	}
+
+	/// Whether a frame is still on one of the world's stacks, running or
+	/// asleep
+	fn frame_is_live(ctx: *mut raw_types::procs::ExecutionContext) -> bool {
+		let on = |mut at: *mut raw_types::procs::ExecutionContext| {
+			while !at.is_null() {
+				if at == ctx {
+					return true;
+				}
+				at = unsafe { *(*at).parent_context() };
+			}
+			false
+		};
+		on(unsafe { *raw_types::funcs::CURRENT_EXECUTION_CONTEXT })
+			|| debug::CallStacks::suspended_instances().into_iter().any(|instance| on(unsafe { (*instance).context }))
 	}
 
 	fn handle_eval(&mut self, frame_id: Option<u32>, command: &str) {
