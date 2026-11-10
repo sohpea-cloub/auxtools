@@ -70,6 +70,11 @@ impl LineMap {
 	/// the next line that's still there.
 	pub fn line(&self, old: u32) -> u32 {
 		let last = self.new_len.max(1);
+		// An empty file has nothing to go by: the line is where it was, if
+		// the new text has it
+		if self.to.is_empty() {
+			return old.clamp(1, last);
+		}
 		match self.to.get(old.saturating_sub(1) as usize) {
 			Some(new) => (new + 1).min(last),
 			// Past the end of the old text: as far past the end of the new
@@ -194,7 +199,13 @@ mod tests {
 	#[test]
 	fn an_empty_file_has_one_place() {
 		assert_eq!(moved(OLD, "", &[1, 6]), [1, 1]);
-		assert_eq!(moved("", OLD, &[1, 3]), [7, 9]);
+	}
+
+	#[test]
+	fn lines_of_an_empty_file_stay_where_they_are() {
+		assert_eq!(moved("", OLD, &[1, 3, 6]), [1, 3, 6]);
+		assert_eq!(moved("", "one\ntwo\n", &[1, 5]), [1, 2]);
+		assert_eq!(moved("", "", &[1, 4]), [1, 1]);
 	}
 
 	#[test]
