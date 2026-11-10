@@ -146,11 +146,6 @@ impl Debuggee {
 		Ok(())
 	}
 
-	/// Whether the world is paused
-	pub fn stopped(&self) -> bool {
-		self.stopped.load(Ordering::Relaxed)
-	}
-
 	/// Sends a request that isn't answered
 	pub fn send(&mut self, request: &Request) -> Result<(), String> {
 		local::send(&mut self.writer, request).map_err(|e| format!("couldn't reach the world: {}", e))

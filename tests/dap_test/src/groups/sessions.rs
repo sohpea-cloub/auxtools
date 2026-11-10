@@ -111,15 +111,30 @@ pub fn run() {
 	a.run_through("fail_null");
 	ok("a runtime error stops the world when any session wants it to, for all of them");
 
-	// A session that leaves takes its breakpoints with it
+	// A session leaves in the middle of a stop that was its own: the world
+	// stays paused for the others
 	b.break_on(&["leaf_1"]);
 	c.break_on(&["middle_3"]);
-	b.end();
 	a.run("middle");
+	for session in [&mut a, &mut b, &mut c] {
+		session.stop_on("breakpoint", "/leaf", "leaf_1");
+	}
+	a.drop_events("continued");
+	c.drop_events("continued");
+	b.end();
+	assert_eq!(c.eval("x"), "3");
+	assert_eq!(a.frames(0).len(), 4);
+	assert!(!a.has_event("continued") && !c.has_event("continued"), "the world carried on when one session left");
+	ok("a session that leaves a paused world leaves it paused for the others");
+
+	// Its breakpoint went with it: leaf() is called once more, and doesn't
+	// stop
+	a.resume();
+	c.event("continued");
 	a.stop_on("breakpoint", "/middle", "middle_3");
 	c.stop_on("breakpoint", "/middle", "middle_3");
 	a.resume_through("middle");
-	ok("a session that disconnects takes its breakpoints with it, and leaves the world running");
+	ok("a session that disconnects takes its breakpoints with it");
 
 	// So does one whose launcher dies
 	c.launcher.child.kill().unwrap();
@@ -147,6 +162,28 @@ fn last_one_leaves() {
 	session.end();
 	runner.run_through("plain");
 	ok("the only debugging session leaves a paused world, which carries on");
+
+	// The launcher that runs the world is connected to it all along, to
+	// reload it, and a pause isn't its to end: it doesn't keep one going
+	let mut session = World::attach(pid);
+	session.request("pause", json!({ "threadId": 0 }));
+	session.stopped("pause");
+	session.launcher.child.kill().unwrap();
+	session.launcher.child.wait().unwrap();
+	runner.run_through("plain");
+	ok("the only debugging session is killed in a paused world, which carries on");
+
+	let mut first = World::attach(pid);
+	let mut second = World::attach(pid);
+	first.request("pause", json!({ "threadId": 0 }));
+	first.stopped("pause");
+	second.stopped("pause");
+	second.end();
+	assert!(!first.frames(0).is_empty());
+	assert!(!first.has_event("continued"), "the world carried on with a debugging session still there");
+	first.end();
+	runner.run_through("plain");
+	ok("two sessions in a paused world: it stays paused when one leaves, and carries on when both have");
 
 	let mut session = World::attach(pid);
 	session.break_on(&["plain_1"]);

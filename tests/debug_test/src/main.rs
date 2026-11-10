@@ -314,6 +314,15 @@ fn protocol(world: &World, mut client: Client) -> Client {
 	assert_eq!(status(&mut client), None);
 	println!("ok: the last client leaves a paused world, which carries on");
 
+	// A client that's there for something else doesn't keep a pause going
+	let watcher = world.connect_watcher();
+	pause(&mut client);
+	client.leave();
+	let mut client = world.connect();
+	assert_eq!(status(&mut client), None);
+	watcher.leave();
+	println!("ok: a pause doesn't wait for a client that says it isn't debugging");
+
 	// A pause that's held outlasts its clients
 	pause(&mut client);
 	let response = client.request(Request::HoldPause);

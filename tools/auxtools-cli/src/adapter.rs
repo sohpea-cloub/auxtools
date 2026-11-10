@@ -525,6 +525,11 @@ impl Adapter {
 			Ok(AuxResponse::ByondVersion { version, build }) => (version, build),
 			_ => return
 		};
+		// Here to run the world and reload it: a pause another client makes
+		// isn't this one's to end
+		if !self.debugging {
+			let _ = self.ack(&AuxRequest::Watcher);
+		}
 		if self.stddef.is_none() {
 			if let Ok(AuxResponse::StdDef(Some(text))) = self.request(&AuxRequest::StdDef) {
 				self.stddef = Some(Stddef::new(text));
@@ -702,13 +707,9 @@ impl Adapter {
 	}
 
 	fn disconnect(&mut self, terminate: Option<bool>) {
+		// A paused world stays paused for the other clients that debug it,
+		// and carries on when this was the last
 		if let Some(debuggee) = &mut self.debuggee {
-			// The world doesn't stay paused for a client that's gone
-			if debuggee.stopped() {
-				let _ = debuggee.request(&AuxRequest::Continue {
-					kind: ContinueKind::Continue
-				});
-			}
 			let _ = debuggee.send(&AuxRequest::Disconnect);
 		}
 		self.debuggee = None;

@@ -274,6 +274,12 @@ fn command_line_more(pid: u64, dir: &Path) {
 	run(&["continue"], 0);
 	println!("ok: the command line waits for a runtime error");
 
+	// A wait that doesn't hold its pause: the world carries on when it's gone
+	let printed = run(&["wait", "--break", "/proc/value", "--no-hold", "--timeout", "60"], 0);
+	assert!(printed.starts_with("paused at a breakpoint\n#0 /value"), "wait --no-hold said {}", printed);
+	assert_eq!(run(&["status"], 0).trim(), "running");
+	println!("ok: a wait that doesn't hold its pause leaves the world running");
+
 	for (args, said) in [
 		(&["frobnicate"][..], "there's no command frobnicate"),
 		(&["stack", "--sideways"][..], "there's no --sideways here"),

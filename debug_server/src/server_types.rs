@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 /// The version of the messages here. Bump it by hand with any change a client
 /// and a world built before it wouldn't agree on: it's in the name of the
 /// world's socket, so a client only finds worlds that speak its version.
-pub const PROTOCOL_VERSION: u32 = 2;
+pub const PROTOCOL_VERSION: u32 = 3;
 
 /// The local socket the world in process `pid` listens on, when it has the
 /// debug library: `auxtools-debug-v1-1234`
@@ -25,9 +25,6 @@ pub enum Request {
 		command: String,
 		context: Option<String>
 	},
-	CurrentInstruction {
-		frame_id: u32
-	},
 	BreakpointSet {
 		instruction: InstructionRef,
 		condition: Option<String>
@@ -37,10 +34,6 @@ pub enum Request {
 	},
 	CatchRuntimes {
 		should_catch: bool
-	},
-	LineNumber {
-		proc: ProcRef,
-		offset: u32
 	},
 	Offset {
 		proc: ProcRef,
@@ -87,7 +80,12 @@ pub enum Request {
 	Locate {
 		file: String,
 		line: u32
-	}
+	},
+	/// From a client that isn't debugging: it's connected for something else,
+	/// like the launcher of a world run without debugging, there to hot
+	/// reload it. A pause doesn't wait for it, as it wouldn't let the world
+	/// carry on: with only such clients left, the world does.
+	Watcher
 }
 
 // Message from server -> client
@@ -96,15 +94,11 @@ pub enum Response {
 	Ack,
 	StdDef(Option<String>),
 	Eval(EvalResponse),
-	CurrentInstruction(Option<InstructionRef>),
 	BreakpointSet {
 		result: BreakpointSetResult
 	},
 	BreakpointUnset {
 		success: bool
-	},
-	LineNumber {
-		line: Option<u32>
 	},
 	Offset {
 		offset: Option<u32>

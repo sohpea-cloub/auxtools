@@ -68,7 +68,8 @@ Any world the launcher started, with debugging or without, can be debugged by an
 of VS Code windows at once: run **auxtools: Attach to a running world**, or use an attach
 configuration, and pick the world from the list. Each window has its own breakpoints; a
 pause stops the world for all of them, and any of them can let it carry on. Leaving
-doesn't end a world that was attached to.
+doesn't end a world that was attached to, and a paused world stays paused for the windows
+still debugging it.
 
 ```json
 {

@@ -98,7 +98,13 @@ impl World {
 				continue;
 			}
 			match client.messages.recv_timeout(TIMEOUT) {
-				Ok(Response::Ack) => return client,
+				Ok(Response::Ack) => {
+					if watcher {
+						let response = client.request(Request::Watcher);
+						assert!(matches!(response, Response::Ack), "expected Ack for Watcher, got {:?}", response);
+					}
+					return client;
+				}
 				Ok(Response::Disconnect) | Err(mpsc::RecvTimeoutError::Disconnected) => std::thread::sleep(Duration::from_millis(100)),
 				other => panic!("expected Ack for Configured, got {:?}", other)
 			}

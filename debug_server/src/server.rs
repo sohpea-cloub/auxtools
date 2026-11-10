@@ -80,7 +80,9 @@ impl State {
 // many debug-clients as connect: the launcher that started it, launchers
 // attached to it, a hot reload watcher. Each has its own breakpoints and its
 // own say on pausing for runtime errors. A pause stops the world for all of
-// them, and any of them can let it carry on.
+// them, and any of them can let it carry on. It lasts while a client that
+// debugs is there: when the last of those leaves, the world carries on,
+// whoever else is still connected.
 //
 
 type ClientId = u32;
@@ -99,7 +101,9 @@ enum Event {
 struct Client {
 	connection: Connection,
 	// Whether it wants the world to pause on runtime errors
-	catch_runtimes: bool
+	catch_runtimes: bool,
+	// Whether it debugs: a pause waits for those that do (`Request::Watcher`)
+	debugs: bool
 }
 
 /// The breakpoints, by where they are, and the clients that set each: with a
@@ -110,7 +114,7 @@ pub type Breakpoints = HashMap<(raw_types::procs::ProcId, u16), BTreeMap<ClientI
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Wait {
 	No,
-	/// While there's a client to send one
+	/// While there's a client that debugs to send one
 	WhileClients,
 	/// For as long as it takes, clients coming and going
 	Forever
@@ -1342,12 +1346,6 @@ impl Server {
 				count
 			} => self.handle_stack_frames(stack_id, start_frame, count),
 
-			Request::LineNumber { proc, offset } => {
-				self.send_or_disconnect(Response::LineNumber {
-					line: self.get_line_number(proc, offset)
-				});
-			}
-
 			Request::Offset { proc, line } => {
 				self.send_or_disconnect(Response::Offset {
 					offset: self.get_offset(proc, line)
@@ -1391,16 +1389,11 @@ impl Server {
 				self.send_or_disconnect(Response::StdDef(stddef));
 			}
 
-			Request::CurrentInstruction { frame_id } => {
-				let response = self.get_stack_frame(frame_id).map(|frame| InstructionRef {
-					proc: ProcRef {
-						path: frame.proc.path.to_owned(),
-						override_id: frame.proc.override_id()
-					},
-					offset: frame.offset as u32
-				});
-
-				self.send_or_disconnect(Response::CurrentInstruction(response));
+			Request::Watcher => {
+				if let Some(client) = self.current.and_then(|id| self.clients.get_mut(&id)) {
+					client.debugs = false;
+				}
+				self.send_or_disconnect(Response::Ack);
 			}
 
 			// The following requests are special cases and handled outside of
@@ -1429,14 +1422,15 @@ impl Server {
 				Event::Connected(id, connection) => {
 					self.clients.insert(id, Client {
 						connection,
-						catch_runtimes: false
+						catch_runtimes: false,
+						debugs: true
 					});
 				}
 
 				Event::Disconnected(id) => {
 					self.remove_client(id);
 
-					if wait == Wait::WhileClients && self.clients.is_empty() {
+					if wait == Wait::WhileClients && !self.has_debuggers() {
 						return None;
 					}
 				}
@@ -1451,6 +1445,11 @@ impl Server {
 				}
 			}
 		}
+	}
+
+	/// Whether a client that debugs is connected
+	fn has_debuggers(&self) -> bool {
+		self.clients.values().any(|client| client.debugs)
 	}
 
 	/// Tells every client, or the world's own output when there's nobody to
@@ -1483,7 +1482,7 @@ impl Server {
 		// unless someone wants them
 		let wanted = match reason {
 			BreakpointReason::Runtime(_) => self.clients.values().any(|client| client.catch_runtimes),
-			_ => !self.clients.is_empty() || self.hold.is_some()
+			_ => self.has_debuggers() || self.hold.is_some()
 		};
 		if !wanted {
 			return None;
@@ -1529,7 +1528,7 @@ impl Server {
 		loop {
 			// Held, it waits for clients to come back
 			let wait = if self.hold.is_some() { Wait::Forever } else { Wait::WhileClients };
-			if wait == Wait::WhileClients && self.clients.is_empty() {
+			if wait == Wait::WhileClients && !self.has_debuggers() {
 				break;
 			}
 			let Some(request) = self.recv_request(wait) else {
@@ -1558,7 +1557,8 @@ impl Server {
 			self.handle_request(request);
 		}
 
-		// Every client left
+		// Every client that debugs left. The others hear the world carries on.
+		self.broadcast(Response::Resumed, None);
 		self.state = None;
 		self.paused = None;
 		Some(ContinueKind::Continue)
