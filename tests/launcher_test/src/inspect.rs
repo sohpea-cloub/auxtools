@@ -61,6 +61,7 @@ pub fn command_line_inspect(pid: u64, dir: &Path, code: &Path) {
 	from_files(pid, dir);
 	procs(pid, code);
 	where_breakpoints_bound(pid, code);
+	instruction_steps(pid, dir);
 }
 
 /// `eval` fails on stderr with exit code 1, whatever went wrong, and a
@@ -211,4 +212,59 @@ fn where_breakpoints_bound(pid: &str, code: &Path) {
 	}
 	run(pid, &["continue"], 0);
 	println!("ok: wait fails at once on a file the world doesn't have, a line past its code, and a proc it doesn't have, paused or not");
+}
+
+/// The instruction a pause after a step of one is on: its offset and text,
+/// as `dis` has them for the frame's proc
+fn instruction_at(printed: &str, proc: &str, pid: &str) -> u32 {
+	let mut lines = printed.lines();
+	assert_eq!(lines.next(), Some("paused after a step"), "the step said {}", printed);
+	let top = lines.next().unwrap_or_default();
+	assert!(top.starts_with(&format!("#0 {}  ", proc)), "the step said {}", printed);
+	let (offset, text) = lines
+		.next()
+		.and_then(|line| line.strip_prefix("   instruction "))
+		.and_then(|line| line.split_once(": "))
+		.unwrap_or_else(|| panic!("the step didn't say its instruction: {}", printed));
+	let offset: u32 = offset.parse().unwrap();
+	let listing = run(pid, &["dis", proc], 0).out;
+	assert!(listing.contains(&format!("\n{:>6}  {}\n", offset, text)), "{} {} isn't in\n{}", offset, text, listing);
+	offset
+}
+
+/// Steps of one instruction, over and into
+fn instruction_steps(pid: &str, dir: &Path) {
+	// The world calls it when it finds this file
+	std::fs::write(dir.join("call"), "yes").unwrap();
+	run(pid, &["wait", "--break", "/proc/fail_in", "--timeout", "60"], 0);
+	let printed = run(pid, &["next", "--instruction"], 0).out;
+	let mut last = instruction_at(&printed, "/fail_in", pid);
+	// A breakpoint on a proc is on the instruction after its first DbgLine,
+	// and this is the one after that
+	let offsets: Vec<u32> = run(pid, &["dis", "/fail_in"], 0)
+		.out
+		.lines()
+		.filter_map(|line| line.trim_start().split_once("  ").and_then(|(offset, text)| Some((offset.parse().ok()?, text))))
+		.skip_while(|(_, text)| !text.starts_with("DbgLine"))
+		.map(|(offset, _)| offset)
+		.collect();
+	assert_eq!(last, offsets[2], "next --instruction went to {} of {:?}", last, offsets);
+	println!("ok: next --instruction goes one instruction on, and says which");
+	// One at a time, into fail_deeper() when its call comes
+	let mut printed = run(pid, &["step", "--instruction"], 0).out;
+	for _ in 0..10 {
+		if printed.lines().nth(1).is_some_and(|line| line.starts_with("#0 /fail_deeper  ")) {
+			break;
+		}
+		let offset = instruction_at(&printed, "/fail_in", pid);
+		assert!(offset > last, "a step went from {} to {}", last, offset);
+		last = offset;
+		printed = run(pid, &["step", "--instruction"], 0).out;
+	}
+	instruction_at(&printed, "/fail_deeper", pid);
+	// A step of a line still says nothing of instructions
+	let printed = run(pid, &["next"], 0).out;
+	assert!(printed.starts_with("paused after a step\n#0 /fail_deeper  ") && !printed.contains("instruction"), "next said {}", printed);
+	run(pid, &["continue"], 0);
+	println!("ok: step --instruction goes into a proc that's called, an instruction at a time");
 }

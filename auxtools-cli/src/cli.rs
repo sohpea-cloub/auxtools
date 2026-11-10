@@ -258,24 +258,40 @@ now: after a hot reload, the new code.",
 		},
 		Command {
 			name: "next",
-			usage: "[--hold-max SECONDS]",
+			usage: "[--instruction] [--hold-max SECONDS]",
 			about: "Runs to the next line, over any procs this one calls",
 			details: "The world stays paused afterwards, until `continue`.
+  --instruction       One instruction on, in this proc: a call it makes runs to its end
+                      (the pause it ends in shows that instruction's offset and text too)
   --hold-max SECONDS  As for `pause`",
 			run: Run::World(|world, args| {
-				Flags::parse(args, &[], &[])?.nothing_else("next")?;
-				world.resume(ContinueKind::StepOver { stack_id: 0 })
+				let flags = Flags::parse(args, &[], &["--instruction"])?;
+				flags.nothing_else("next")?;
+				world.show_instruction = flags.has("--instruction");
+				world.resume(if world.show_instruction {
+					ContinueKind::StepOverInstruction { stack_id: 0 }
+				} else {
+					ContinueKind::StepOver { stack_id: 0 }
+				})
 			})
 		},
 		Command {
 			name: "step",
-			usage: "[--hold-max SECONDS]",
+			usage: "[--instruction] [--hold-max SECONDS]",
 			about: "Runs to the next line, going into a proc this one calls",
 			details: "The world stays paused afterwards, until `continue`.
+  --instruction       One instruction on, into a proc this one calls
+                      (the pause it ends in shows that instruction's offset and text too)
   --hold-max SECONDS  As for `pause`",
 			run: Run::World(|world, args| {
-				Flags::parse(args, &[], &[])?.nothing_else("step")?;
-				world.resume(ContinueKind::StepInto { stack_id: 0 })
+				let flags = Flags::parse(args, &[], &["--instruction"])?;
+				flags.nothing_else("step")?;
+				world.show_instruction = flags.has("--instruction");
+				world.resume(if world.show_instruction {
+					ContinueKind::StepIntoInstruction { stack_id: 0 }
+				} else {
+					ContinueKind::StepInto { stack_id: 0 }
+				})
 			})
 		},
 		Command {
@@ -729,7 +745,9 @@ pub struct World {
 	/// What the world said in notifications, like why an expression failed
 	notes: Vec<String>,
 	/// What it said of breakpoints' conditions that failed, once each
-	failed_conditions: Vec<String>
+	failed_conditions: Vec<String>,
+	/// A pause it prints shows the instruction it's on, after a step of one
+	show_instruction: bool
 }
 
 impl World {
@@ -750,7 +768,8 @@ impl World {
 			received,
 			events: vec![],
 			notes: vec![],
-			failed_conditions: vec![]
+			failed_conditions: vec![],
+			show_instruction: false
 		})
 	}
 
@@ -839,7 +858,29 @@ impl World {
 			}
 		};
 		println!("paused {}", why);
-		self.print_stack(0, Some(20))
+		let frames = self.frames(0, Some(20))?;
+		for (i, frame) in frames.iter().enumerate() {
+			println!("#{} {}", i, place(frame));
+			if i == 0 && self.show_instruction {
+				let (offset, text) = self.instruction_of(frame)?;
+				println!("   instruction {}: {}", offset, text);
+			}
+		}
+		Ok(())
+	}
+
+	/// The offset of the instruction a frame is about to run, and its text
+	fn instruction_of(&mut self, frame: &StackFrame) -> Result<(u32, String)> {
+		let offset = frame.instruction.offset;
+		let disassembly = self.instructions(frame.code)?;
+		let text = disassembly
+			.instructions
+			.iter()
+			.find(|instruction| u32::from(instruction.offset) == offset)
+			.map(|instruction| instruction.text.clone())
+			.filter(|text| !text.is_empty())
+			.unwrap_or_else(|| "(not read)".to_owned());
+		Ok((offset, text))
 	}
 
 	fn print_stack(&mut self, stack_id: u32, count: Option<u32>) -> Result<()> {

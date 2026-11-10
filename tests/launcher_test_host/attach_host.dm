@@ -30,6 +30,11 @@ var/rounds = 0
 		if (fexists("reboot"))
 			fdel("reboot")
 			world.Reboot()
+		// A call for the command line to step through
+		if (fexists("call"))
+			fdel("call")
+			spawn(0)
+				fail_in(1)
 		sleep(5)
 	world.log << "attach test: done"
 	del(world)
