@@ -5,6 +5,8 @@
 //! A command that leaves the world paused (`pause`, `next`, `wait` and the
 //! like) asks it to stay paused after the connection goes, until a `continue`.
 
+mod log;
+
 use std::{
 	io,
 	sync::mpsc::{self, Receiver, RecvTimeoutError},
@@ -136,6 +138,27 @@ was started by another version of auxtools: this one can't attach to it.",
 				Flags::parse(args, &[], &[])?.nothing_else("status")?;
 				world.status()
 			})
+		},
+		Command {
+			name: "log",
+			usage: "[--follow] [--runtimes] [--reloads] [--output] [--world] [OPTIONS]",
+			about: "What happened in the world: runtime errors, hot reloads, reboots, its output",
+			details: "The world keeps a record of the last few thousand things that happened in it, numbered
+from 1 (the numbers go on through reboots). This prints it, oldest first: every kind, or
+those named. Runtime errors are there with their stacks whether or not anything paused for
+them, so `log --runtimes --follow` watches them without pausing the world.
+  --follow     Keep printing new entries as they come, until interrupted (or the world ends)
+  --runtimes   Runtime errors, and thrown exceptions: caught or not, each with its stack
+  --reloads    Hot reloads: applied or not, and why not (compile errors among them)
+  --output     What the world printed (world.log, runtime errors), passed on by the launcher
+               that started it and reads it: DreamDaemon's and dd's. DreamSeeker gives a
+               launcher nothing to read, so a world it hosts has none.
+  --world      The world loading and rebooting, and what the debugger did by itself
+  --since N    Only the entries after number N
+  --last N     Only the last N entries (of those asked for)
+  --json       An entry a line, as a JSON object: number, time (milliseconds since 1970,
+               UTC), world_time (deciseconds), kind, and what that kind has",
+			run: Run::World(log::log)
 		},
 	]),
 	("Looking at a paused world", &[

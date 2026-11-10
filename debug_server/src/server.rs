@@ -20,7 +20,7 @@ use super::{
 };
 use crate::{
 	connection::{self, Connection},
-	hot_reload, mem_profiler, waker
+	hot_reload, journal, mem_profiler, waker
 };
 
 mod watches;
@@ -192,8 +192,21 @@ struct Client {
 	uncaught: Option<RuntimeFilter>,
 	caught: Option<RuntimeFilter>,
 	// Whether it debugs: a pause waits for those that do (`Request::Watcher`)
-	debugs: bool
+	debugs: bool,
+	/// The kinds of entries of the record it's sent as they're made
+	/// (`Request::Journal`), if it follows the record
+	follow: Option<Vec<JournalKind>>,
+	/// Where what it's sent goes, for the thread that writes it, once it
+	/// follows the record (see `deliver`)
+	outbox: Option<mpsc::SyncSender<Vec<u8>>>
 }
+
+/// How many messages can wait for a client that follows the record before it
+/// counts as gone: it isn't reading, and the world doesn't wait for it
+const OUTBOX: usize = 1024;
+
+/// How many procs of a runtime error's stack the record keeps
+const JOURNAL_FRAMES: usize = 64;
 
 /// What a client wants of a breakpoint it set
 pub struct Claim {
@@ -2232,6 +2245,19 @@ impl Server {
 			} => self.handle_breakpoint_set(instruction, condition, hit, log, true),
 			Request::InstructionBreakpointUnset { instruction } => self.handle_breakpoint_unset(instruction, true),
 
+			Request::Journal { after, kinds, limit, follow } => self.handle_journal(after, kinds, limit, follow),
+			Request::JournalAdd(event) => self.journal(event, self.current),
+			Request::Uptime => {
+				let (loaded, up, loads, last_reload) = journal::uptime();
+				self.send_or_disconnect(Response::Uptime {
+					loaded,
+					up,
+					world_time: journal::world_time(),
+					loads,
+					last_reload
+				});
+			}
+
 			// The following requests are special cases and handled outside of
 			// this function
 			Request::Configured | Request::Continue { .. } => {
@@ -2260,7 +2286,9 @@ impl Server {
 						connection,
 						uncaught: None,
 						caught: None,
-						debugs: true
+						debugs: true,
+						follow: None,
+						outbox: None
 					});
 				}
 
@@ -2374,7 +2402,7 @@ impl Server {
 				}
 			});
 			if let (Some(logged), Some(to)) = (logged, self.clients.get_mut(&client.0)) {
-				if Self::send(&mut to.connection, &logged).is_err() {
+				if !Self::deliver(to, &logged) {
 					self.remove_client(client.0);
 				}
 			}
@@ -2386,6 +2414,19 @@ impl Server {
 	/// says how it should carry on. `None` when it didn't pause: whatever
 	/// the world was doing (a step, say) goes on.
 	pub fn handle_breakpoint(&mut self, _ctx: *mut raw_types::procs::ExecutionContext, reason: BreakpointReason) -> Option<ContinueKind> {
+		// Every runtime error goes in the record, whoever pauses for it
+		if let BreakpointReason::Runtime { message, caught } = &reason {
+			let stack = self.journal_stack();
+			self.journal(
+				JournalEvent::Runtime {
+					message: message.clone(),
+					caught: *caught,
+					stack
+				},
+				None
+			);
+		}
+
 		// Ignore all breakpoints unless someone's connected, and runtime errors
 		// unless someone wants them
 		let wanted = match &reason {
@@ -2528,8 +2569,8 @@ impl Server {
 			return;
 		};
 
-		if let Err(e) = Self::send(&mut client.connection, &response) {
-			eprintln!("Debug server failed to send message: {}", e);
+		if !Self::deliver(client, &response) {
+			eprintln!("Debug server failed to send a message to a client");
 			self.remove_client(id);
 		}
 	}
@@ -2538,7 +2579,7 @@ impl Server {
 	fn broadcast(&mut self, response: Response, except: Option<ClientId>) {
 		let mut gone = vec![];
 		for (&id, client) in &mut self.clients {
-			if Some(id) != except && Self::send(&mut client.connection, &response).is_err() {
+			if Some(id) != except && !Self::deliver(client, &response) {
 				gone.push(id);
 			}
 		}
@@ -2552,7 +2593,11 @@ impl Server {
 		let Some(mut client) = self.clients.remove(&id) else {
 			return;
 		};
-		let _ = Self::send(&mut client.connection, &Response::Disconnect);
+		// One that follows the record is told by its writer, once what's
+		// waiting for it is written (see `writer`)
+		if client.outbox.is_none() {
+			let _ = Self::send(&mut client.connection, &Response::Disconnect);
+		}
 		if self.current == Some(id) {
 			self.current = None;
 		}
@@ -2595,11 +2640,89 @@ impl Server {
 	}
 
 	pub(crate) fn send(stream: &mut impl Write, response: &Response) -> Result<(), Box<dyn Error>> {
-		let data = bincode::serialize(response)?;
-		stream.write_all(&(data.len() as u32).to_le_bytes())?;
-		stream.write_all(&data[..])?;
+		stream.write_all(&Self::encode(response)?)?;
 		stream.flush()?;
 		Ok(())
+	}
+
+	/// A message as it goes on the wire: its length, then it in bincode
+	fn encode(response: &Response) -> Result<Vec<u8>, Box<dyn Error>> {
+		let data = bincode::serialize(response)?;
+		let mut bytes = Vec::with_capacity(data.len() + 4);
+		bytes.extend_from_slice(&(data.len() as u32).to_le_bytes());
+		bytes.extend_from_slice(&data);
+		Ok(bytes)
+	}
+
+	/// Sends a client a message. Whether it went: if not, the client is to be
+	/// given up on. A client that follows the record has a thread that
+	/// writes to it, as it's sent something often and the world mustn't wait
+	/// for one that has stopped reading: it's given up on when too much has
+	/// piled up for it.
+	fn deliver(client: &mut Client, response: &Response) -> bool {
+		match &client.outbox {
+			Some(outbox) => Self::encode(response).is_ok_and(|bytes| outbox.try_send(bytes).is_ok()),
+			None => Self::send(&mut client.connection, response).is_ok()
+		}
+	}
+
+	/// Starts the thread that writes what's sent to a client, from here on.
+	/// When the client is let go, it writes what's left, then says goodbye.
+	fn writer(mut connection: Connection) -> mpsc::SyncSender<Vec<u8>> {
+		let (outbox, sent) = mpsc::sync_channel::<Vec<u8>>(OUTBOX);
+		thread::spawn(move || {
+			while let Ok(bytes) = sent.recv() {
+				if connection.write_all(&bytes).and_then(|()| connection.flush()).is_err() {
+					return;
+				}
+			}
+			let _ = Self::send(&mut connection, &Response::Disconnect);
+		});
+		outbox
+	}
+
+	/// Puts something in the world's record, and sends it to the clients that
+	/// follow the record for it, but `from`, the client it came from
+	fn journal(&mut self, event: JournalEvent, from: Option<ClientId>) {
+		let entry = journal::add(event);
+		let mut gone = vec![];
+		for (&id, client) in &mut self.clients {
+			let follows = client.follow.as_ref().is_some_and(|kinds| journal::wanted(&entry, kinds));
+			if follows && Some(id) != from && !Self::deliver(client, &Response::Journaled(entry.clone())) {
+				gone.push(id);
+			}
+		}
+		for id in gone {
+			self.remove_client(id);
+		}
+	}
+
+	/// The procs the running code is in, as the record keeps them
+	fn journal_stack(&self) -> Vec<JournalFrame> {
+		debug::CallStacks::active()
+			.iter()
+			.take(JOURNAL_FRAMES)
+			.map(|frame| JournalFrame {
+				proc: match frame.proc.override_id() {
+					0 => frame.proc.path.clone(),
+					n => format!("{}#{}", frame.proc.path, n)
+				},
+				file: Self::file_of(&frame.proc),
+				line: self.frame_line_number(frame, false)
+			})
+			.collect()
+	}
+
+	/// What `Request::Journal` asks for
+	fn handle_journal(&mut self, after: u64, kinds: Vec<JournalKind>, limit: Option<u32>, follow: bool) {
+		let (entries, first, last) = journal::read(after, &kinds, limit);
+		if let Some(client) = self.current.and_then(|id| self.clients.get_mut(&id)) {
+			if follow && client.outbox.is_none() {
+				client.outbox = Some(Self::writer(client.connection.clone()));
+			}
+			client.follow = follow.then_some(kinds);
+		}
+		self.send_or_disconnect(Response::Journal { entries, first, last });
 	}
 }
 

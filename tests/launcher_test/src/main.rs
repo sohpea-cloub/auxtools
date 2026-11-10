@@ -22,6 +22,7 @@ mod client;
 #[allow(dead_code)]
 #[path = "../../test_runner/src/paths.rs"]
 mod paths;
+mod journal;
 
 use std::{
 	io::{BufRead, BufReader, Read},
@@ -540,6 +541,7 @@ fn attach_and_reload(server: &str, library: &Path) {
 
 	command_line(pid, &code);
 	command_line_more(pid, &dir);
+	journal::runtimes(pid, &dir);
 
 	// A launcher that attaches to a world that's paused hears it is
 	let (code_given, printed) = launcher_command(&["--pid", &pid.to_string(), "pause"]);

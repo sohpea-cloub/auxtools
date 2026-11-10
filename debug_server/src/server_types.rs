@@ -171,7 +171,25 @@ pub enum Request {
 	/// `BreakpointUnset` is.
 	InstructionBreakpointUnset {
 		instruction: InstructionRef
-	}
+	},
+	/// The world's record of what happened in it (`JournalEntry`): the
+	/// entries numbered after `after`, of these kinds (every kind, if none are
+	/// given), oldest first; with a `limit`, only that many of the newest of
+	/// them. With `follow`, each new entry of those kinds is sent to this
+	/// client as it's made (`Response::Journaled`), until it asks again
+	/// without. Answered with `Response::Journal`.
+	Journal {
+		after: u64,
+		kinds: Vec<JournalKind>,
+		limit: Option<u32>,
+		follow: bool
+	},
+	/// Something for the record that the world can't see for itself: what
+	/// came of a hot reload this client tried, the world's output it reads.
+	/// It has no answer, and isn't sent back to this client if it follows.
+	JournalAdd(JournalEvent),
+	/// How long the world has been up, and its last hot reload
+	Uptime
 }
 
 // Message from server -> client
@@ -264,7 +282,101 @@ pub enum Response {
 		id: u32,
 		reason: String
 	},
-	Disassemble(Result<Disassembly, String>)
+	Disassemble(Result<Disassembly, String>),
+	/// The entries asked for, and the numbers of the oldest entry the
+	/// record still has and of the newest (0 for none)
+	Journal {
+		entries: Vec<JournalEntry>,
+		first: u64,
+		last: u64
+	},
+	/// A new entry, for a client that follows the record. At any moment.
+	Journaled(JournalEntry),
+	Uptime {
+		/// When this world loaded, in milliseconds since 1970 (UTC)
+		loaded: u64,
+		/// How long ago that was, in seconds
+		up: f64,
+		/// `world.time`, in deciseconds
+		world_time: f64,
+		/// How many worlds the process has loaded: 1, then one more for each
+		/// reboot
+		loads: u32,
+		last_reload: Option<JournalEntry>
+	}
+}
+
+/// An entry in the world's record of what happened in it. The record keeps
+/// the last few thousand, and lasts as long as the process: through reboots.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct JournalEntry {
+	/// From 1, one more for each entry, never given again
+	pub number: u64,
+	/// When it was made, in milliseconds since 1970 (UTC)
+	pub time: u64,
+	/// `world.time` then, in deciseconds
+	pub world_time: f64,
+	pub event: JournalEvent
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub enum JournalEvent {
+	/// A runtime error, or a `throw`, whether or not anything paused for it:
+	/// the procs it happened in, innermost first
+	Runtime {
+		message: String,
+		/// It's inside a `try` that catches it
+		caught: bool,
+		stack: Vec<JournalFrame>
+	},
+	/// What came of a hot reload, applied or not, as the client that tried
+	/// it says: errors are why it wasn't (compile errors among them, which
+	/// stop it before the world is sent anything)
+	Reload {
+		applied: bool,
+		summary: String,
+		errors: Vec<String>,
+		warnings: Vec<String>
+	},
+	/// A world has loaded and is running: the process's `load`th, so 2 and
+	/// on are reboots
+	Loaded { load: u32 },
+	/// Lines the world printed, as a launcher that reads them passes them on
+	Output { lines: Vec<String> },
+	/// A pause held for clients that come and go (`Request::HoldPause`) was
+	/// let go by the debug server: no client that debugs was there for this
+	/// many seconds
+	HoldEnded { seconds: f64 }
+}
+
+impl JournalEvent {
+	pub const fn kind(&self) -> JournalKind {
+		match self {
+			Self::Runtime { .. } => JournalKind::Runtime,
+			Self::Reload { .. } => JournalKind::Reload,
+			Self::Loaded { .. } | Self::HoldEnded { .. } => JournalKind::World,
+			Self::Output { .. } => JournalKind::Output
+		}
+	}
+}
+
+/// What a `Request::Journal` can ask for
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum JournalKind {
+	Runtime,
+	Reload,
+	/// Worlds loading, and what the debug server did by itself
+	World,
+	Output
+}
+
+/// A proc a runtime error happened in
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct JournalFrame {
+	/// Its path, with `#N` after it for the Nth override
+	pub proc: String,
+	pub file: Option<String>,
+	pub line: Option<u32>
 }
 
 #[derive(Serialize, Deserialize, Debug, Hash, PartialEq, Eq, Clone)]

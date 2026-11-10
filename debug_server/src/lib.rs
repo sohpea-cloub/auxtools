@@ -3,6 +3,7 @@ mod ckey_override;
 mod connection;
 mod hot_reload;
 mod instruction_hooking;
+mod journal;
 mod launched;
 mod server;
 mod server_types;

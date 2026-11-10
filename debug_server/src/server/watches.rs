@@ -260,7 +260,7 @@ impl Server {
 			reason: reason.to_owned()
 		};
 		if let Some(to) = self.clients.get_mut(&watch.client) {
-			if Self::send(&mut to.connection, &ended).is_err() {
+			if !Self::deliver(to, &ended) {
 				self.remove_client(watch.client);
 			}
 		}

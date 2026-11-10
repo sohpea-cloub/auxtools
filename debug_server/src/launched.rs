@@ -220,6 +220,9 @@ fn ready() {
 	if let Ok(port) = Value::WORLD.get_number(byond_string!("port")) {
 		waker::set_port(port as u16);
 	}
+	// Before anyone can ask: a client waiting for the reboot hears of it in
+	// the first thing it reads
+	crate::journal::world_loaded();
 	let mut server = match Server::listen() {
 		Ok(server) => server,
 		Err(e) => {
