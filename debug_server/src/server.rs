@@ -1217,7 +1217,7 @@ impl Server {
 				let stack_id = position.unwrap_or(0);
 				let frame_base = self.get_stack_base_frame_id(stack_id);
 				let start_frame = start_frame.unwrap_or(0);
-				let end_frame = start_frame + count.unwrap_or(stack.len() as u32);
+				let end_frame = start_frame.saturating_add(count.unwrap_or(stack.len() as u32));
 
 				let start_frame = start_frame as usize;
 				let end_frame = end_frame as usize;

@@ -210,6 +210,19 @@ fn protocol(world: &World, mut client: Client) -> Client {
 	assert_eq!(frames[0].line, Some(host_line("\t\tbreakpoint_target()")));
 	println!("ok: a page of the stack's frames, each with its file and line");
 
+	// As many as there are, however many are asked for
+	let response = client.request(Request::StackFrames {
+		stack_id: 0,
+		start_frame: Some(1),
+		count: Some(u32::MAX)
+	});
+	assert!(
+		matches!(&response, Response::StackFrames { frames, total_count: 3 } if frames.len() == 2),
+		"expected the last two frames, got {:?}",
+		response
+	);
+	println!("ok: a page of frames that would go past the most there can be");
+
 	let returns = host_line("\treturn 2");
 	let response = client.request(Request::Offset {
 		proc: start_of(BREAKPOINT_TARGET).proc,
