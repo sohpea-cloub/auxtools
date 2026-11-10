@@ -495,7 +495,8 @@ impl Server {
 			return true;
 		}
 
-		Self::primitive_fields(value).is_some() || value.get(byond_string!("vars")).is_ok()
+		// A typepath answers for `vars` too, with something that isn't a list
+		Self::primitive_fields(value).is_some() || value.get(byond_string!("vars")).is_ok_and(|vars| List::is_list(&vars))
 	}
 
 	fn stringify(value: &Value) -> String {

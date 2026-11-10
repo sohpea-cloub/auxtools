@@ -56,13 +56,16 @@ pub fn run() {
 	assert_eq!(local("path"), "/datum/thing");
 	assert_eq!(local("proc_path"), "/proc/leaf");
 	assert_eq!(local("file"), "values.dm");
-	ok("a typepath, a proc's path and a file");
+	assert!(!opens("path") && !opens("proc_path") && !opens("file"));
+	ok("a typepath, a proc's path and a file, none of which opens");
 
 	// A datum shows as its name, if it has one
 	assert_eq!(local("named"), "A");
 	assert_eq!(local("unnamed"), "/datum/made");
 	let inside = world.children(&variable("named"));
 	assert_eq!(inside[0], ("type".to_owned(), "/datum/thing".to_owned()));
+	let children = world.variables(&variable("named")["variablesReference"].clone());
+	assert_eq!(children[0]["variablesReference"], 0, "an object's type opens");
 	let names: Vec<String> = inside[1..].iter().map(|(name, _)| name.to_lowercase()).collect();
 	let mut sorted = names.clone();
 	sorted.sort();
