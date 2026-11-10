@@ -120,8 +120,10 @@ enum Event {
 
 struct Client {
 	connection: Connection,
-	// Whether it wants the world to pause on runtime errors
-	catch_runtimes: bool,
+	// Which runtime errors it wants the world to pause on: of those nothing
+	// catches, and of those inside a `try`
+	uncaught: Option<RuntimeFilter>,
+	caught: Option<RuntimeFilter>,
 	// Whether it debugs: a pause waits for those that do (`Request::Watcher`)
 	debugs: bool
 }
@@ -1420,9 +1422,10 @@ impl Server {
 	fn handle_request(&mut self, request: Request) -> bool {
 		match request {
 			Request::Disconnect => unreachable!(),
-			Request::CatchRuntimes { should_catch } => {
+			Request::CatchRuntimes { uncaught, caught } => {
 				if let Some(client) = self.current.and_then(|id| self.clients.get_mut(&id)) {
-					client.catch_runtimes = should_catch;
+					client.uncaught = uncaught;
+					client.caught = caught;
 				}
 			}
 			Request::BreakpointSet { instruction, condition } => self.handle_breakpoint_set(instruction, condition),
@@ -1514,7 +1517,8 @@ impl Server {
 				Event::Connected(id, connection) => {
 					self.clients.insert(id, Client {
 						connection,
-						catch_runtimes: false,
+						uncaught: None,
+						caught: None,
 						debugs: true
 					});
 				}
@@ -1572,8 +1576,11 @@ impl Server {
 	pub fn handle_breakpoint(&mut self, _ctx: *mut raw_types::procs::ExecutionContext, reason: BreakpointReason) -> Option<ContinueKind> {
 		// Ignore all breakpoints unless someone's connected, and runtime errors
 		// unless someone wants them
-		let wanted = match reason {
-			BreakpointReason::Runtime(_) => self.clients.values().any(|client| client.catch_runtimes),
+		let wanted = match &reason {
+			BreakpointReason::Runtime { message, caught } => self.clients.values().any(|client| {
+				let filter = if *caught { &client.caught } else { &client.uncaught };
+				filter.as_ref().is_some_and(|filter| filter.takes(message))
+			}),
 			_ => self.has_debuggers() || self.hold.is_some()
 		};
 		if !wanted {

@@ -33,12 +33,14 @@ use serde_json::Value;
 use crate::{
 	code,
 	dap::{self, Output},
-	debuggee::Debuggee,
+	debuggee::{Debuggee, LastError},
 	stddef::{strip_declaration, Stddef}
 };
 
-/// The exception filter that pauses on runtime errors
+/// The exception filter that pauses on runtime errors nothing catches
 const RUNTIMES: &str = "runtimes";
+/// The exception filter that pauses on runtime errors inside a `try`
+const CAUGHT: &str = "caught";
 /// The source reference stddef.dm is shown under
 const STDDEF_REFERENCE: i64 = 1;
 /// How long to wait for the client to say goodbye once the world has exited
@@ -125,6 +127,24 @@ struct AttachArguments {
 	hot_reload: bool
 }
 
+/// What `setExceptionBreakpoints` takes: the filters ticked, with their
+/// conditions if they have any (dap-types knows the first only)
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ExceptionBreakpointsArguments {
+	#[serde(default)]
+	filters: Vec<String>,
+	#[serde(default)]
+	filter_options: Vec<ExceptionFilterOption>
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ExceptionFilterOption {
+	filter_id: String,
+	condition: Option<String>
+}
+
 const fn yes() -> bool {
 	true
 }
@@ -167,7 +187,7 @@ pub struct Adapter {
 	waiting_for_code: bool,
 	/// Whether the client has been told it can set breakpoints
 	initialized: bool,
-	last_error: Arc<Mutex<String>>,
+	last_error: Arc<Mutex<LastError>>,
 	/// When the last reload was asked for, to say how long it took
 	reload_started: Option<Instant>,
 
@@ -179,7 +199,10 @@ pub struct Adapter {
 	breakpoint_texts: HashMap<String, Option<Vec<String>>>,
 	next_breakpoint_id: i64,
 	function_breakpoints: Vec<FunctionBreakpoint>,
-	catch_runtimes: bool,
+	/// Which runtime errors to pause on: of those nothing catches, and of
+	/// those inside a `try`
+	uncaught: Option<aux::RuntimeFilter>,
+	caught: Option<aux::RuntimeFilter>,
 	/// What's set in the world now, by file (or `FUNCTION_BREAKPOINTS`)
 	set: HashMap<String, Vec<InstructionRef>>
 }
@@ -216,13 +239,14 @@ pub fn run() {
 		generation: 0,
 		waiting_for_code: false,
 		initialized: false,
-		last_error: Arc::new(Mutex::new(String::new())),
+		last_error: Arc::new(Mutex::new(LastError::default())),
 		reload_started: None,
 		breakpoints: BTreeMap::new(),
 		breakpoint_texts: HashMap::new(),
 		next_breakpoint_id: 1,
 		function_breakpoints: vec![],
-		catch_runtimes: true,
+		uncaught: Some(aux::RuntimeFilter::default()),
+		caught: None,
 		set: HashMap::new()
 	};
 
@@ -332,12 +356,7 @@ impl Adapter {
 			"stepOut" => arguments::<StepOutArguments>(args).and_then(|args| self.step(|stack_id| ContinueKind::StepOut { stack_id }, args.threadId)),
 			"pause" => self.pause(),
 			"evaluate" => arguments(args).and_then(|args| self.evaluate(args)),
-			"exceptionInfo" => json(ExceptionInfoResponse {
-				exceptionId: self.last_error.lock().unwrap().clone(),
-				description: None,
-				breakMode: ExceptionBreakMode::Always,
-				details: None
-			}),
+			"exceptionInfo" => self.exception_info(),
 			"source" => arguments(args).and_then(|args| self.source(args)),
 			"disconnect" => {
 				let args: Option<DisconnectArguments> = arguments(args).ok();
@@ -353,19 +372,36 @@ impl Adapter {
 	}
 
 	fn initialize(&mut self) -> Handled {
-		json(Capabilities {
+		let mut capabilities = json(Capabilities {
 			supportsConfigurationDoneRequest: Some(true),
 			supportsFunctionBreakpoints: Some(true),
 			supportsConditionalBreakpoints: Some(true),
 			supportsExceptionInfoRequest: Some(true),
 			supportTerminateDebuggee: Some(true),
-			exceptionBreakpointFilters: Some(vec![ExceptionBreakpointsFilter {
-				filter: RUNTIMES.to_owned(),
-				label: "Runtime errors".to_owned(),
-				default: Some(true)
-			}]),
 			..Default::default()
-		})
+		})?;
+		// What dap-types has no fields for
+		let condition = "Text the error's message has to have, like \"bounds, null\" for either, or mustn't, like \"!libdreamluau\"";
+		capabilities["supportsExceptionFilterOptions"] = true.into();
+		capabilities["exceptionBreakpointFilters"] = serde_json::json!([
+			{
+				"filter": RUNTIMES,
+				"label": "Runtime errors",
+				"description": "Pause on runtime errors, and thrown exceptions, that nothing catches",
+				"default": true,
+				"supportsCondition": true,
+				"conditionDescription": condition
+			},
+			{
+				"filter": CAUGHT,
+				"label": "Caught runtime errors",
+				"description": "Pause on runtime errors and thrown exceptions inside a try block too",
+				"default": false,
+				"supportsCondition": true,
+				"conditionDescription": condition
+			}
+		]);
+		Ok(capabilities)
 	}
 
 	fn launch(&mut self, args: LaunchArguments) -> Handled {
@@ -984,18 +1020,58 @@ impl Adapter {
 		breakpoints
 	}
 
-	fn set_exception_breakpoints(&mut self, args: SetExceptionBreakpointsArguments) -> Handled {
-		self.catch_runtimes = args.filters.iter().any(|filter| filter == RUNTIMES);
+	fn set_exception_breakpoints(&mut self, args: ExceptionBreakpointsArguments) -> Handled {
+		// A filter that's ticked is in one list or the other: with its
+		// condition, or without one
+		let filter = |id: &str| -> Option<aux::RuntimeFilter> {
+			if let Some(option) = args.filter_options.iter().find(|option| option.filter_id == id) {
+				return Some(aux::RuntimeFilter::parse(option.condition.as_deref().unwrap_or_default()));
+			}
+			args.filters.iter().any(|filter| filter == id).then(aux::RuntimeFilter::default)
+		};
+		self.uncaught = filter(RUNTIMES);
+		self.caught = filter(CAUGHT);
 		if self.debugging && self.debuggee.is_some() {
 			self.catch_runtimes()?;
 		}
 		Ok(Value::Null)
 	}
 
-	/// Tells the world whether to pause on runtime errors (it doesn't answer)
+	/// Tells the world which runtime errors to pause on (it doesn't answer)
 	fn catch_runtimes(&mut self) -> Result<(), String> {
-		let should_catch = self.catch_runtimes;
-		self.debuggee()?.send(&AuxRequest::CatchRuntimes { should_catch })
+		let (uncaught, caught) = (self.uncaught.clone(), self.caught.clone());
+		self.debuggee()?.send(&AuxRequest::CatchRuntimes { uncaught, caught })
+	}
+
+	/// The runtime error the world is stopped on: what it says, whether
+	/// something will catch it, and the procs it's in
+	fn exception_info(&mut self) -> Handled {
+		let error = self.last_error.lock().unwrap().clone();
+		let frames = match self.request(&AuxRequest::StackFrames {
+			stack_id: 0,
+			start_frame: None,
+			count: None
+		}) {
+			Ok(AuxResponse::StackFrames { frames, .. }) => frames,
+			_ => vec![]
+		};
+		let trace: Vec<String> = frames
+			.iter()
+			.map(|frame| match (&frame.file, frame.line) {
+				(Some(file), Some(line)) => format!("{} ({}:{})", frame.instruction.proc.path, file, line),
+				_ => frame.instruction.proc.path.clone()
+			})
+			.collect();
+		json(ExceptionInfoResponse {
+			exceptionId: crate::debuggee::error_kind(error.caught).to_owned(),
+			description: Some(error.message.clone()),
+			breakMode: if error.caught { ExceptionBreakMode::Always } else { ExceptionBreakMode::Unhandled },
+			details: Some(ExceptionDetails {
+				message: Some(error.message),
+				stackTrace: (!trace.is_empty()).then(|| trace.join("\n")),
+				..Default::default()
+			})
+		})
 	}
 
 	fn threads(&mut self) -> Handled {
@@ -1224,7 +1300,39 @@ fn default_library() -> Result<PathBuf, String> {
 mod tests {
 	use std::path::Path;
 
+	use auxtools_cli::server_types::RuntimeFilter;
+
 	use super::{file_name_in, named_proc};
+
+	#[test]
+	fn a_runtime_filter_with_nothing_in_it_takes_every_error() {
+		for condition in ["", "  ", ",", "!", " , ! , "] {
+			let filter = RuntimeFilter::parse(condition);
+			assert_eq!(filter, RuntimeFilter::default(), "{:?}", condition);
+			assert!(filter.takes("Division by zero"));
+		}
+	}
+
+	#[test]
+	fn a_runtime_filter_takes_errors_with_one_of_its_texts() {
+		let filter = RuntimeFilter::parse("bounds, Division");
+		assert!(filter.takes("list index out of bounds"));
+		assert!(filter.takes("division by zero"));
+		assert!(!filter.takes("cannot read from list"));
+	}
+
+	#[test]
+	fn a_runtime_filter_leaves_out_errors_with_text_after_a_bang() {
+		let filter = RuntimeFilter::parse("!libdreamluau, ! rust_g ");
+		assert!(filter.takes("list index out of bounds"));
+		assert!(!filter.takes("Could not find LibDreamLuau.so"));
+		assert!(!filter.takes("rust_g: bad call"));
+		// Both kinds: one of these, and none of those
+		let filter = RuntimeFilter::parse("list, !bounds");
+		assert!(filter.takes("cannot read from list"));
+		assert!(!filter.takes("list index out of bounds"));
+		assert!(!filter.takes("Division by zero"));
+	}
 
 	#[test]
 	fn a_function_breakpoint_names_a_proc() {

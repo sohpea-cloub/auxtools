@@ -32,8 +32,12 @@ pub enum Request {
 	BreakpointUnset {
 		instruction: InstructionRef
 	},
+	/// Which runtime errors this client wants the world to pause on: those
+	/// that nothing catches (an uncaught `throw` is one), and those inside a
+	/// `try`. `None` for none of a kind. It has no answer.
 	CatchRuntimes {
-		should_catch: bool
+		uncaught: Option<RuntimeFilter>,
+		caught: Option<RuntimeFilter>
 	},
 	Offset {
 		proc: ProcRef,
@@ -169,7 +173,43 @@ pub enum BreakpointReason {
 	Breakpoint,
 	Step,
 	Pause,
-	Runtime(String)
+	/// A runtime error, or a `throw`: its message, and whether it's inside
+	/// a `try` that will catch it
+	Runtime { message: String, caught: bool }
+}
+
+/// Which runtime errors to pause on, by their messages
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Eq)]
+pub struct RuntimeFilter {
+	/// Text the message has to have some of, if there's any here
+	pub with: Vec<String>,
+	/// Text the message mustn't have any of
+	pub without: Vec<String>
+}
+
+#[allow(dead_code)]
+impl RuntimeFilter {
+	/// As a client writes one: texts with commas between them, one starting
+	/// with `!` for text the message mustn't have. `divi, bounds` is errors
+	/// with either word, `!libdreamluau` every error without that one. Case
+	/// doesn't matter. Empty is every error.
+	pub fn parse(condition: &str) -> Self {
+		let mut filter = Self::default();
+		for text in condition.split(',').map(str::trim).filter(|text| !text.is_empty()) {
+			match text.strip_prefix('!') {
+				Some(text) if !text.trim().is_empty() => filter.without.push(text.trim().to_lowercase()),
+				Some(_) => {}
+				None => filter.with.push(text.to_lowercase())
+			}
+		}
+		filter
+	}
+
+	/// Whether an error with this message is one to pause on
+	pub fn takes(&self, message: &str) -> bool {
+		let message = message.to_lowercase();
+		(self.with.is_empty() || self.with.iter().any(|text| message.contains(text))) && !self.without.iter().any(|text| message.contains(text))
+	}
 }
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]

@@ -19,22 +19,45 @@ use auxtools_cli::{
 
 use crate::{adapter::Input, dap::Output};
 
+/// The runtime error the world last stopped on
+#[derive(Default, Clone)]
+pub struct LastError {
+	pub message: String,
+	/// Whether it's inside a `try`
+	pub caught: bool
+}
+
+/// What a runtime error is called, by whether a `try` will catch it
+pub const fn error_kind(caught: bool) -> &'static str {
+	if caught {
+		"caught runtime error"
+	} else {
+		"runtime error"
+	}
+}
+
 /// Tells the client the world stopped, and why
-fn announce_stop(out: &Output, last_error: &Mutex<String>, reason: BreakpointReason) {
+fn announce_stop(out: &Output, last_error: &Mutex<LastError>, reason: BreakpointReason) {
 	let mut description = None;
+	let mut text = None;
 	let reason = match reason {
 		BreakpointReason::Step => StoppedEvent::REASON_STEP,
 		BreakpointReason::Pause => StoppedEvent::REASON_PAUSE,
 		BreakpointReason::Breakpoint => StoppedEvent::REASON_BREAKPOINT,
-		BreakpointReason::Runtime(error) => {
-			last_error.lock().unwrap().clone_from(&error);
-			description = Some(error);
+		BreakpointReason::Runtime { message, caught } => {
+			*last_error.lock().unwrap() = LastError {
+				message: message.clone(),
+				caught
+			};
+			description = Some(message);
+			text = Some(error_kind(caught).to_owned());
 			StoppedEvent::REASON_EXCEPTION
 		}
 	};
 	out.event(StoppedEvent {
 		reason: reason.to_owned(),
 		description,
+		text,
 		threadId: Some(0),
 		allThreadsStopped: Some(true),
 		..Default::default()
@@ -55,7 +78,7 @@ pub struct Debuggee {
 	/// Whether the world is paused
 	stopped: Arc<AtomicBool>,
 	out: Arc<Output>,
-	last_error: Arc<Mutex<String>>,
+	last_error: Arc<Mutex<LastError>>,
 	/// Tells this connection's events from an earlier one's
 	pub generation: u64
 }
@@ -70,7 +93,7 @@ impl Debuggee {
 		debugging: bool,
 		out: Arc<Output>,
 		inputs: mpsc::Sender<Input>,
-		last_error: Arc<Mutex<String>>
+		last_error: Arc<Mutex<LastError>>
 	) -> Result<Self, String> {
 		let writer = Shared::new(stream);
 		let mut reader = writer.clone();

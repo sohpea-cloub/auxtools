@@ -15,6 +15,7 @@ use crate::{
 
 // Could move these to dmasm
 const OPCODE_DBGLINE: u32 = 0x85;
+const OPCODE_THROW: u32 = 0x12D;
 const OPCODE_DEBUG_BREAK: u32 = 0x1337;
 const OPCODE_DEBUG_OPERAND: u32 = 0x1338;
 
@@ -226,7 +227,11 @@ fn handle_runtime(error: &str) {
 		}
 
 		// One nobody pauses for leaves a step in progress as it was
-		if let Some(action) = handle_breakpoint(ctx, BreakpointReason::Runtime(error.to_string())) {
+		let reason = BreakpointReason::Runtime {
+			message: error.to_string(),
+			caught: in_try(ctx)
+		};
+		if let Some(action) = handle_breakpoint(ctx, reason) {
 			CURRENT_ACTION = action;
 		}
 	});
@@ -235,6 +240,37 @@ fn handle_runtime(error: &str) {
 		if let Some(server) = unsafe { &mut *DEBUG_SERVER.get() } {
 			crate::recover(&*payload, server);
 		}
+	}
+}
+
+/// Whether a runtime error or a `throw` in this frame will be caught: the
+/// frame or one of its callers is inside a `try`
+unsafe fn in_try(mut ctx: *mut raw_types::procs::ExecutionContext) -> bool {
+	unsafe {
+		while !ctx.is_null() {
+			if *(*ctx).throw_handler() != 0 {
+				return true;
+			}
+			ctx = *(*ctx).parent_context();
+		}
+	}
+	false
+}
+
+/// What a `throw` about to run throws, as a runtime error's message: an
+/// exception's name, or the value itself
+unsafe fn thrown(ctx: *mut raw_types::procs::ExecutionContext) -> String {
+	let size = unsafe { *(*ctx).stack_size() } as usize;
+	if size == 0 {
+		return "an exception".to_owned();
+	}
+	let value = unsafe { Value::from_raw(*(*(*ctx).stack()).add(size - 1)) };
+	if let Ok(name) = value.get_string(byond_string!("name")) {
+		return name;
+	}
+	match value.as_string() {
+		Ok(text) => text,
+		Err(_) => value.to_string().unwrap_or_else(|_| "an exception".to_owned())
 	}
 }
 
@@ -365,6 +401,21 @@ impl InstructionHook for Server {
 							}
 						}
 					}
+				}
+			}
+		}
+
+		// A `throw` is about to run. One that nothing catches isn't reported
+		// as a runtime error to anything we could hear it from, so it's
+		// stopped at here, before it's thrown, like any other error.
+		if opcode == OPCODE_THROW && !did_breakpoint && !in_eval {
+			unsafe {
+				let reason = BreakpointReason::Runtime {
+					message: thrown(ctx),
+					caught: in_try(ctx)
+				};
+				if let Some(action) = handle_breakpoint(ctx, reason) {
+					CURRENT_ACTION = action;
 				}
 			}
 		}

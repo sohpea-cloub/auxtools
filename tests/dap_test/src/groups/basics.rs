@@ -34,6 +34,7 @@ fn capabilities() {
 		"supportTerminateDebuggee",
 		"supportsConditionalBreakpoints",
 		"supportsConfigurationDoneRequest",
+		"supportsExceptionFilterOptions",
 		"supportsExceptionInfoRequest",
 		"supportsFunctionBreakpoints"
 	]);
@@ -43,7 +44,14 @@ fn capabilities() {
 		.iter()
 		.filter_map(|f| f["filter"].as_str())
 		.collect();
-	assert_eq!(filters, ["runtimes"]);
+	assert_eq!(filters, ["runtimes", "caught"]);
+	let defaults: Vec<bool> = capabilities["exceptionBreakpointFilters"]
+		.as_array()
+		.unwrap()
+		.iter()
+		.map(|f| f["default"] == true && f["supportsCondition"] == true)
+		.collect();
+	assert_eq!(defaults, [true, false], "runtime errors nothing catches pause by default, caught ones don't");
 	ok("the launcher says what it can do, and nothing it can't");
 
 	let why = launcher.refused("frobnicate", json!({}));

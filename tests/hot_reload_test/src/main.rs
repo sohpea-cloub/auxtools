@@ -277,7 +277,10 @@ fn main() {
 	// the reloads, except where the debugger's own connection is tested.
 	let mut client = world.connect();
 	// Each client says whether it wants runtime errors
-	client.send(Request::CatchRuntimes { should_catch: true });
+	client.send(Request::CatchRuntimes {
+		uncaught: Some(Default::default()),
+		caught: None
+	});
 	let mut watcher = world.connect_watcher();
 
 	// Parsed as DreamMaker does for the BYOND version the world runs on
@@ -406,7 +409,7 @@ fn main() {
 	reload(&mut watcher, &changes);
 	eval(&mut client, "arm_runtime()");
 	match client.expect_pause() {
-		BreakpointReason::Runtime(message) => assert!(message.contains("null.len"), "unexpected runtime: {}", message),
+		BreakpointReason::Runtime { message, .. } => assert!(message.contains("null.len"), "unexpected runtime: {}", message),
 		other => panic!("expected a runtime, got {:?}", other)
 	}
 	let line = source.line_of("reload.dm", "\treturn nothing.len");

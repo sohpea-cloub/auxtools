@@ -54,6 +54,18 @@ new world up again, breakpoints and all.
 Windows' DreamDaemon asks before it runs a world in trusted mode; tick "Don't ask me
 this again" to stop it asking.
 
+## Runtime errors
+
+Under **Breakpoints** in the Run and Debug view:
+
+- **Runtime errors** (on unless you untick it) pauses on a runtime error that nothing
+  catches, and on a `throw` that nothing catches, on the line it happens on.
+- **Caught runtime errors** pauses on the ones inside a `try` too.
+
+Each can have a condition (the pencil next to it): text the error's message has to have,
+or after a `!` mustn't have, with commas between several. `!libdreamluau, !rust_g` pauses
+on every error but those; `bounds, null` only on errors with either word.
+
 ## Expressions
 
 Watches, breakpoint conditions and the debug console take DM expressions, evaluated in

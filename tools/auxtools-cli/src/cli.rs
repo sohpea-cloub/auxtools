@@ -30,10 +30,12 @@ auxtools [--pid PID] COMMAND              one command to a running world, which
   continue                                lets it carry on
   next | step | out                       steps over, into or out of a call
   wait [--break FILE:LINE | --break /proc/path[#N]]... [--if COND]
-       [--runtimes] [--timeout SECS] [--no-hold]
+       [--runtimes] [--caught] [--timeout SECS] [--no-hold]
                                           waits for it to pause, at one of these
-                                          breakpoints, a runtime error, or for
-                                          any other client. Prints why and where.
+                                          breakpoints, a runtime error (one that
+                                          nothing catches, or with --caught any),
+                                          or for any other client. Prints why and
+                                          where.
 Exit codes: 0 done (for `wait`, it paused), 1 failed, 2 `wait` timed out,
 3 the world went away (it ended or rebooted).";
 
@@ -175,14 +177,15 @@ fn execute(pid: Option<u32>, command: &[String]) -> Result<()> {
 		"step" => world.resume(ContinueKind::StepInto { stack_id: 0 }),
 		"out" => world.resume(ContinueKind::StepOut { stack_id: 0 }),
 		"wait" => {
-			let flags = Flags::parse(args, &["--break", "--if", "--timeout"], &["--runtimes", "--no-hold"])?;
+			let flags = Flags::parse(args, &["--break", "--if", "--timeout"], &["--runtimes", "--caught", "--no-hold"])?;
 			if !flags.rest.is_empty() {
 				return Err(format!("wait doesn't take {}", flags.rest.join(" ")).into());
 			}
 			world.wait(Wait {
 				breaks: flags.values("--break").map(str::to_owned).collect(),
 				condition: flags.value("--if").map(str::to_owned),
-				runtimes: flags.has("--runtimes"),
+				runtimes: flags.has("--runtimes") || flags.has("--caught"),
+				caught: flags.has("--caught"),
 				timeout: flags.number::<f64>("--timeout")?.map(Duration::from_secs_f64),
 				hold: !flags.has("--no-hold")
 			})
@@ -218,6 +221,8 @@ struct Wait {
 	breaks: Vec<String>,
 	condition: Option<String>,
 	runtimes: bool,
+	/// Those inside a `try` too
+	caught: bool,
 	timeout: Option<Duration>,
 	hold: bool
 }
@@ -318,7 +323,8 @@ impl World {
 			BreakpointReason::Breakpoint => "at a breakpoint".to_owned(),
 			BreakpointReason::Step => "after a step".to_owned(),
 			BreakpointReason::Pause => "where it was asked to".to_owned(),
-			BreakpointReason::Runtime(error) => format!("on a runtime error: {}", error)
+			BreakpointReason::Runtime { message, caught: false } => format!("on a runtime error: {}", message),
+			BreakpointReason::Runtime { message, caught: true } => format!("on a caught runtime error: {}", message)
 		};
 		println!("paused {}", why);
 		self.print_stack(0, Some(20))
@@ -480,7 +486,11 @@ impl World {
 		}
 		if wait.runtimes {
 			// It has no answer
-			local::send(&mut self.stream, &Request::CatchRuntimes { should_catch: true }).map_err(|_| hung_up())?;
+			let catch = Request::CatchRuntimes {
+				uncaught: Some(RuntimeFilter::default()),
+				caught: wait.caught.then(RuntimeFilter::default)
+			};
+			local::send(&mut self.stream, &catch).map_err(|_| hung_up())?;
 		}
 		let until = wait.timeout.map(|t| Instant::now() + t);
 		match self.await_pause(until, wait.hold)? {

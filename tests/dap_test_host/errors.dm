@@ -55,3 +55,26 @@
 	spawn(0)
 		fail_index()
 	fail_divide()
+
+// A runtime error in the try block itself
+/proc/fail_caught_here()
+	try
+		var/list/L = null
+		return L[1] // @fail_caught_here
+	catch (var/exception/e)
+		return "caught here [e.name]"
+
+/proc/sc_fail_caught_here()
+	world.log << "dap: [fail_caught_here()]"
+
+/proc/throw_caught()
+	try
+		throw EXCEPTION("thrown and caught") // @throw_caught
+	catch (var/exception/e)
+		return "caught [e.name]"
+
+/proc/sc_throw_caught()
+	world.log << "dap: [throw_caught()]"
+
+/proc/sc_throw_text()
+	throw "just text" // @throw_text

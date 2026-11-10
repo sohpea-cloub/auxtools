@@ -449,10 +449,20 @@ impl Launcher {
 		set["breakpoints"].as_array().unwrap().clone()
 	}
 
-	/// Whether to pause on runtime errors
+	/// Whether to pause on runtime errors that nothing catches
 	pub fn catch_runtimes(&mut self, catch: bool) {
 		let filters: &[&str] = if catch { &["runtimes"] } else { &[] };
 		self.request("setExceptionBreakpoints", json!({ "filters": filters }));
+	}
+
+	/// Which runtime errors to pause on: the filters ticked without a
+	/// condition, and those with one, as `(filter, condition)`
+	pub fn exception_filters(&mut self, filters: &[&str], with_conditions: &[(&str, &str)]) {
+		let options: Vec<Value> = with_conditions
+			.iter()
+			.map(|(filter, condition)| json!({ "filterId": filter, "condition": condition }))
+			.collect();
+		self.request("setExceptionBreakpoints", json!({ "filters": filters, "filterOptions": options }));
 	}
 
 	/// Sends every request before reading an answer, as a client does with

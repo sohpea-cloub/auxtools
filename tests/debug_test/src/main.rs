@@ -466,7 +466,10 @@ fn main() {
 	let mut client = protocol(&world, client);
 
 	// Runtime errors don't pause it when the launcher says not to
-	client.send(Request::CatchRuntimes { should_catch: false });
+	client.send(Request::CatchRuntimes {
+		uncaught: None,
+		caught: None
+	});
 	eval(&mut client, None, "start_runtimes()");
 	client.resume();
 	// start_runtimes() gives two seconds of runtime errors, wait them out

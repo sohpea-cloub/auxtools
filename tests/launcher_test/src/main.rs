@@ -79,7 +79,8 @@ fn at_second_target(launcher: &mut Launcher) {
 fn at_runtime(launcher: &mut Launcher) {
 	launcher.stopped("exception");
 	let info = launcher.request("exceptionInfo", json!({ "threadId": 0 }));
-	let message = info["exceptionId"].as_str().unwrap();
+	assert_eq!(info["exceptionId"], "runtime error");
+	let message = info["description"].as_str().unwrap();
 	assert!(message.contains("cannot read from list"), "the runtime was {:?}", message);
 	let frame = launcher.top_frame();
 	assert!(frame["name"].as_str().unwrap().ends_with("fail"), "the runtime was in {}", frame);

@@ -7,15 +7,24 @@ use crate::{
 	world::{host_file, World}
 };
 
-/// Waits for the world to stop on a runtime error, and checks its message
-/// and where it is
+/// Waits for the world to stop on a runtime error that nothing catches, and
+/// checks its message and where it is
 fn stopped_on(world: &mut World, message: &str, proc: &str, mark: &str) {
+	stopped_on_a(world, false, message, proc, mark);
+}
+
+/// The same, for one that's caught or not
+fn stopped_on_a(world: &mut World, caught: bool, message: &str, proc: &str, mark: &str) {
+	let kind = if caught { "caught runtime error" } else { "runtime error" };
 	let event = world.event("stopped");
 	assert_eq!(event["body"]["reason"], "exception", "{}", event);
 	assert_eq!(event["body"]["description"], message, "{}", event);
+	assert_eq!(event["body"]["text"], kind, "{}", event);
 	let info = world.request("exceptionInfo", json!({ "threadId": 0 }));
-	assert_eq!(info["exceptionId"], message, "{}", info);
-	assert_eq!(info["breakMode"], "always", "{}", info);
+	assert_eq!(info["exceptionId"], kind, "{}", info);
+	assert_eq!(info["description"], message, "{}", info);
+	assert_eq!(info["breakMode"], if caught { "always" } else { "unhandled" }, "{}", info);
+	assert_eq!(info["details"]["message"], message, "{}", info);
 	let frame = world.top_frame();
 	assert_eq!(
 		(frame["name"].as_str().unwrap(), frame["line"].as_u64().unwrap()),
@@ -40,6 +49,13 @@ pub fn run() {
 	assert_eq!(world.local("L"), "null");
 	assert_eq!(world.eval("isnull(L)"), "1");
 	ok("at a runtime error the stack, the locals and expressions are there");
+
+	let info = world.request("exceptionInfo", json!({ "threadId": 0 }));
+	let trace: Vec<&str> = info["details"]["stackTrace"].as_str().unwrap().lines().collect();
+	assert_eq!(trace[0], format!("/fail_null (errors.dm:{})", world.marks.line("fail_null")));
+	assert_eq!(trace[1], format!("/fail_deep (errors.dm:{})", world.marks.line("fail_deep")));
+	assert!(trace[2].starts_with("/sc_fail_null (errors.dm:"), "{:?}", trace);
+	ok("a runtime error's details name the procs it's in, with their files and lines");
 
 	// The proc that failed is over, and so is its caller's line; the scenario
 	// carries on
@@ -96,7 +112,94 @@ pub fn run() {
 	stopped_on(&mut world, "Division by zero", "/fail_divide", "fail_divide");
 	world.resume_through("fail_divide");
 	ok("with the filter on again it stops");
+
+	caught_and_thrown(&mut world);
+	conditions(&mut world);
 	world.end();
+}
+
+/// Runtime errors inside a `try`, and exceptions thrown
+fn caught_and_thrown(world: &mut World) {
+	// The world carries on through what its own code deals with
+	let said = world.count("dap: caught cannot read from list");
+	world.run_through("fail_caught");
+	world.run_through("fail_caught_here");
+	world.run_through("throw_caught");
+	assert_eq!(world.count("dap: caught cannot read from list"), said + 1);
+	ok("a runtime error or a throw inside a try doesn't stop the world");
+
+	// throw isn't a runtime error to BYOND until nothing has caught it: the
+	// stop is at the throw, before it happens
+	world.run("fail_throw");
+	stopped_on(world, "thrown on purpose", "/fail_throw", "fail_throw");
+	let logged = world.count("runtime error: thrown on purpose");
+	world.resume_through("fail_throw");
+	assert_eq!(world.count("runtime error: thrown on purpose"), logged + 1);
+	world.run("throw_text");
+	stopped_on(world, "just text", "/sc_throw_text", "throw_text");
+	world.resume_through("throw_text");
+	ok("a throw that nothing catches stops the world like a runtime error, with what was thrown");
+
+	// Both filters ticked
+	world.exception_filters(&["runtimes", "caught"], &[]);
+	world.run("fail_caught");
+	stopped_on_a(world, true, "cannot read from list", "/fail_null", "fail_null");
+	let names: Vec<String> = world.frames(0).iter().map(|f| f["name"].as_str().unwrap().to_owned()).collect();
+	assert_eq!(names[..2], ["/fail_null", "/fail_caught"]);
+	world.resume_through("fail_caught");
+	world.run("fail_caught_here");
+	stopped_on_a(world, true, "cannot read from list", "/fail_caught_here", "fail_caught_here");
+	world.resume_through("fail_caught_here");
+	world.run("throw_caught");
+	stopped_on_a(world, true, "thrown and caught", "/throw_caught", "throw_caught");
+	world.resume_through("throw_caught");
+	world.run("fail_null");
+	stopped_on(world, "cannot read from list", "/fail_null", "fail_null");
+	world.resume_through("fail_null");
+	ok("with caught errors ticked too, a runtime error in a try, in a proc called from one, and a caught throw all stop, and say they're caught");
+
+	// Only the caught ones
+	world.exception_filters(&["caught"], &[]);
+	world.run_through("fail_null");
+	world.run_through("fail_throw");
+	world.run("fail_caught");
+	stopped_on_a(world, true, "cannot read from list", "/fail_null", "fail_null");
+	world.resume_through("fail_caught");
+	ok("with only caught errors ticked, the ones nothing catches don't stop");
+	world.exception_filters(&["runtimes"], &[]);
+}
+
+/// A filter's condition: text the error's message has to have, or mustn't
+fn conditions(world: &mut World) {
+	world.exception_filters(&[], &[("runtimes", "!division, !thrown")]);
+	world.run_through("fail_divide");
+	world.run_through("fail_throw");
+	world.run("fail_index");
+	stopped_on(world, "list index out of bounds", "/fail_index", "fail_index");
+	world.resume_through("fail_index");
+	ok("a filter's condition leaves out errors whose message has its text, whatever the case");
+
+	world.exception_filters(&[], &[("runtimes", "bounds, Division")]);
+	world.run_through("fail_null");
+	world.run("fail_index");
+	stopped_on(world, "list index out of bounds", "/fail_index", "fail_index");
+	world.resume_through("fail_index");
+	world.run("fail_divide");
+	stopped_on(world, "Division by zero", "/fail_divide", "fail_divide");
+	world.resume_through("fail_divide");
+	ok("a filter's condition takes only errors whose message has one of its texts");
+
+	// Each filter has its own
+	world.exception_filters(&["runtimes"], &[("caught", "thrown")]);
+	world.run_through("fail_caught");
+	world.run("throw_caught");
+	stopped_on_a(world, true, "thrown and caught", "/throw_caught", "throw_caught");
+	world.resume_through("throw_caught");
+	world.run("fail_null");
+	stopped_on(world, "cannot read from list", "/fail_null", "fail_null");
+	world.resume_through("fail_null");
+	ok("each filter has its own condition");
+	world.exception_filters(&["runtimes"], &[]);
 }
 
 /// A global var's initial value fails while the world loads

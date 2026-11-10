@@ -245,7 +245,10 @@ fn main() {
 		condition: options.condition.clone()
 	});
 	// Runtimes would stop us somewhere else. This one gets no reply.
-	conn.send(&Request::CatchRuntimes { should_catch: false });
+	conn.send(&Request::CatchRuntimes {
+		uncaught: None,
+		caught: None
+	});
 	conn.request(Request::Configured);
 
 	loop {
