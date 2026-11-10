@@ -1199,15 +1199,10 @@ impl Adapter {
 		self.ending = true;
 		// Not waited for: the world doesn't answer if it ends, and has a
 		// while to if it doesn't
-		let asked = self.debuggee.as_mut().is_some_and(|debuggee| {
-			debuggee
-				.send(&AuxRequest::Eval {
-					frame_id: None,
-					command: "world.Del()".to_owned(),
-					context: None
-				})
-				.is_ok()
-		});
+		let asked = self
+			.debuggee
+			.as_mut()
+			.is_some_and(|debuggee| debuggee.eval_unanswered("world.Del()".to_owned()).is_ok());
 		if asked {
 			self.out.console("Asked the world to end: its world/Del() runs first");
 			let inputs = self.inputs.clone();

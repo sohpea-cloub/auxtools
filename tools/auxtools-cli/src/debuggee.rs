@@ -155,6 +155,9 @@ pub struct Debuggee {
 	caught_up: bool,
 	/// How many times the world has stopped
 	stops: u32,
+	/// How many evaluations were sent without waiting for their answers,
+	/// which aren't to be taken for other requests'
+	unanswered: Arc<AtomicU32>,
 	/// Tells this connection's events from an earlier one's
 	pub generation: u64
 }
@@ -176,6 +179,8 @@ impl Debuggee {
 		let mut reader = writer.clone();
 		let debuggee_out = out.clone();
 		let (responses_sender, responses) = mpsc::channel();
+		let unanswered = Arc::new(AtomicU32::new(0));
+		let reader_unanswered = unanswered.clone();
 
 		std::thread::Builder::new()
 			.name("debuggee reader".to_owned())
@@ -227,6 +232,13 @@ impl Debuggee {
 							}
 						}
 
+						// The answer to an evaluation nobody waited for: the
+						// server answers in order, so it's the first
+						Response::Eval(_)
+							if reader_unanswered
+								.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_sub(1))
+								.is_ok() => {}
+
 						response => {
 							if responses_sender.send(response).is_err() {
 								break "nobody was waiting for responses".to_owned();
@@ -248,6 +260,7 @@ impl Debuggee {
 			thread: Arc::new(AtomicU32::new(0)),
 			caught_up: false,
 			stops: 0,
+			unanswered,
 			generation
 		})
 	}
@@ -332,6 +345,21 @@ impl Debuggee {
 		local::send(&mut self.writer, request).map_err(|e| format!("couldn't reach the world: {}", e))
 	}
 
+	/// Sends an evaluation without waiting for its answer, which is thrown
+	/// away when it comes
+	pub fn eval_unanswered(&mut self, command: String) -> Result<(), String> {
+		self.unanswered.fetch_add(1, Ordering::Relaxed);
+		let sent = self.send(&Request::Eval {
+			frame_id: None,
+			command,
+			context: None
+		});
+		if sent.is_err() {
+			self.unanswered.fetch_sub(1, Ordering::Relaxed);
+		}
+		sent
+	}
+
 	/// Sends a request and waits for its response
 	pub fn request(&mut self, request: &Request) -> Result<Response, String> {
 		// Anything still waiting belonged to a request that timed out
@@ -347,5 +375,63 @@ impl Debuggee {
 			Err(mpsc::RecvTimeoutError::Timeout) => Err("the world didn't answer".to_owned()),
 			Err(mpsc::RecvTimeoutError::Disconnected) => Err("the world disconnected".to_owned())
 		}
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use std::{
+		io::{Read, Write},
+		sync::{mpsc, Arc}
+	};
+
+	use auxtools_cli::{
+		local::Stream,
+		server_types::{Request, Response}
+	};
+	use interprocess::local_socket::{prelude::*, GenericNamespaced, ListenerOptions};
+
+	use super::Debuggee;
+	use crate::dap::Output;
+
+	fn read_request(stream: &mut Stream) -> Request {
+		let mut len = [0u8; 4];
+		stream.read_exact(&mut len).unwrap();
+		let mut data = vec![0; u32::from_le_bytes(len) as usize];
+		stream.read_exact(&mut data).unwrap();
+		bincode::deserialize(&data).unwrap()
+	}
+
+	fn write_response(stream: &mut Stream, response: &Response) {
+		let data = bincode::serialize(response).unwrap();
+		stream.write_all(&(data.len() as u32).to_le_bytes()).unwrap();
+		stream.write_all(&data).unwrap();
+		stream.flush().unwrap();
+	}
+
+	#[test]
+	fn an_answer_nobody_waited_for_isnt_taken_for_the_next() {
+		let name = format!("auxtools-cli-test-{}", std::process::id());
+		let listener = ListenerOptions::new()
+			.name(name.clone().to_ns_name::<GenericNamespaced>().unwrap())
+			.create_sync()
+			.unwrap();
+		let client = Stream::connect(name.to_ns_name::<GenericNamespaced>().unwrap()).unwrap();
+		let mut world = listener.accept().unwrap();
+
+		let (inputs, _heard) = mpsc::channel();
+		let mut debuggee = Debuggee::new(client, 1, true, Arc::new(Output::new()), inputs, Default::default(), Default::default()).unwrap();
+		debuggee.eval_unanswered("world.Del()".to_owned()).unwrap();
+		// The world answers the evaluation once the next request is in
+		let answering = std::thread::spawn(move || {
+			assert!(matches!(read_request(&mut world), Request::Eval { .. }));
+			assert!(matches!(read_request(&mut world), Request::Pause));
+			write_response(&mut world, &Response::Eval(Err("world/Del() slept".to_owned())));
+			write_response(&mut world, &Response::Ack);
+			world
+		});
+		let answer = debuggee.request(&Request::Pause).unwrap();
+		assert!(matches!(answer, Response::Ack), "{:?}", answer);
+		answering.join().unwrap();
 	}
 }
