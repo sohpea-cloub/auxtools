@@ -129,5 +129,20 @@ pub fn run() {
 	assert_eq!(logged_so_far(&other, 0), Vec::<String>::new());
 	other.end();
 	ok("a breakpoint with a message for one session and a plain one for another, on one line: it stops, and the first is told");
+
+	// A step that stops on one: it says its piece there, and the world stops
+	// for the step
+	log_on(&mut world, "recurse_1", json!({ "logMessage": "depth {depth}" }));
+	world.function_breakpoints(&["/proc/sc_recurse"]);
+	world.run("recurse");
+	world.stopped("breakpoint");
+	world.function_breakpoints(&[]);
+	let from = world.outputs.len();
+	world.step_on("stepIn", "/recurse", "recurse_1");
+	assert_eq!(logged(&mut world, from, 1), ["depth 3\n"]);
+	world.resume_through("recurse");
+	assert_eq!(logged(&mut world, from, 4), ["depth 3\n", "depth 2\n", "depth 1\n", "depth 0\n"]);
+	ok("a step that stops on a breakpoint with a message says it, once");
+
 	world.end();
 }

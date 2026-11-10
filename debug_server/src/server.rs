@@ -2129,6 +2129,77 @@ impl Server {
 		self.disconnect_all();
 	}
 
+	/// The running proc has reached the breakpoint at `key`. It's a hit for
+	/// each client that set it and wants this one: its condition holds, if
+	/// it has one, and the hit is one of those it asked for. Each client's is
+	/// looked at, so each one's count of hits is its own. A hit with a
+	/// message says it to its client. Whether one of them wants the world to
+	/// stop here.
+	fn breakpoint_hit(&mut self, key: (raw_types::procs::ProcId, u16)) -> bool {
+		let (proc, offset) = key;
+		let clients: Vec<(ClientId, bool)> = self.breakpoints.get(&key).map(|claims| claims.keys().copied().collect()).unwrap_or_default();
+
+		// One nobody is known to have set stops, as it always has
+		let mut pause = clients.is_empty();
+		for client in clients {
+			let Some(condition) = self.breakpoints.get(&key).and_then(|claims| claims.get(&client)).map(|claim| claim.condition.clone()) else {
+				continue;
+			};
+			if let Some(condition) = condition {
+				// One that can't be worked out pauses: better a stop too
+				// many than one missed
+				let passed = match self.eval_expr(Some(0), &condition) {
+					Ok(result) => result.is_truthy(),
+					Err(error) => {
+						self.notify(format!("A breakpoint's condition ({}) failed, so the world pauses there: {}", condition, error));
+						true
+					}
+				};
+
+				// We might have just executed some code so invalidate the
+				// stacks we already fetched
+				self.state.as_mut().unwrap().invalidate_stacks();
+				if !passed {
+					continue;
+				}
+			}
+
+			// The condition's code could have taken the breakpoint away
+			let Some(claim) = self.breakpoints.get_mut(&key).and_then(|claims| claims.get_mut(&client)) else {
+				continue;
+			};
+			claim.hits += 1;
+			if claim.hit.is_some_and(|hit| !hit.takes(claim.hits)) {
+				continue;
+			}
+
+			// A breakpoint with a message says it to its client, and the
+			// world carries on
+			let Some(log) = claim.log.clone() else {
+				pause = true;
+				continue;
+			};
+			let message = self.log_message(&log);
+			let logged = Proc::from_id(proc).map(|proc| {
+				let place = ProcRef {
+					path: proc.path.clone(),
+					override_id: proc.override_id()
+				};
+				Response::Log {
+					message,
+					file: Self::file_of(&proc),
+					line: self.get_line_number(place, offset as u32)
+				}
+			});
+			if let (Some(logged), Some(to)) = (logged, self.clients.get_mut(&client.0)) {
+				if Self::send(&mut to.connection, &logged).is_err() {
+					self.remove_client(client.0);
+				}
+			}
+		}
+		pause
+	}
+
 	/// Pauses the world, if anyone wants it paused for this, until a client
 	/// says how it should carry on. `None` when it didn't pause: whatever
 	/// the world was doing (a step, say) goes on.
@@ -2148,79 +2219,24 @@ impl Server {
 
 		self.state = Some(State::new());
 
-		// A breakpoint stops the world when a client that set it wants this
-		// hit: its condition holds, if it has one, and the hit is one of
-		// those it asked for. Each client's is looked at, so each one's
-		// count of hits is its own.
-		if reason == BreakpointReason::Breakpoint {
-			let proc = unsafe { (*(*(*_ctx).proc_instance())).proc };
-			let offset = unsafe { *(*_ctx).bytecode_offset() };
-			let key = (proc, offset);
-			let clients: Vec<(ClientId, bool)> = self.breakpoints.get(&key).map(|claims| claims.keys().copied().collect()).unwrap_or_default();
-
-			// One nobody is known to have set stops, as it always has
-			let mut pause = clients.is_empty();
-			for client in clients {
-				let Some(condition) = self.breakpoints.get(&key).and_then(|claims| claims.get(&client)).map(|claim| claim.condition.clone()) else {
-					continue;
-				};
-				if let Some(condition) = condition {
-					// One that can't be worked out pauses: better a stop too
-					// many than one missed
-					let passed = match self.eval_expr(Some(0), &condition) {
-						Ok(result) => result.is_truthy(),
-						Err(error) => {
-							self.notify(format!("A breakpoint's condition ({}) failed, so the world pauses there: {}", condition, error));
-							true
-						}
-					};
-
-					// We might have just executed some code so invalidate the
-					// stacks we already fetched
-					self.state.as_mut().unwrap().invalidate_stacks();
-					if !passed {
-						continue;
-					}
-				}
-
-				// The condition's code could have taken the breakpoint away
-				let Some(claim) = self.breakpoints.get_mut(&key).and_then(|claims| claims.get_mut(&client)) else {
-					continue;
-				};
-				claim.hits += 1;
-				if claim.hit.is_some_and(|hit| !hit.takes(claim.hits)) {
-					continue;
-				}
-
-				// A breakpoint with a message says it to its client, and the
-				// world carries on
-				let Some(log) = claim.log.clone() else {
-					pause = true;
-					continue;
-				};
-				let message = self.log_message(&log);
-				let logged = Proc::from_id(proc).map(|proc| {
-					let place = ProcRef {
-						path: proc.path.clone(),
-						override_id: proc.override_id()
-					};
-					Response::Log {
-						message,
-						file: Self::file_of(&proc),
-						line: self.get_line_number(place, offset as u32)
-					}
-				});
-				if let (Some(logged), Some(to)) = (logged, self.clients.get_mut(&client.0)) {
-					if Self::send(&mut to.connection, &logged).is_err() {
-						self.remove_client(client.0);
-					}
+		let proc = unsafe { (*(*(*_ctx).proc_instance())).proc };
+		let offset = unsafe { *(*_ctx).bytecode_offset() };
+		match reason {
+			BreakpointReason::Breakpoint => {
+				if !self.breakpoint_hit((proc, offset)) {
+					self.state = None;
+					return None;
 				}
 			}
 
-			if !pause {
-				self.state = None;
-				return None;
+			// A step or a pause that stops on a breakpoint has reached it all
+			// the same: its hit is counted and its message said, and the
+			// world stops once, for the step
+			BreakpointReason::Step | BreakpointReason::Pause if crate::instruction_hooking::is_breakpoint(_ctx) => {
+				self.breakpoint_hit((proc, offset));
 			}
+
+			_ => {}
 		}
 
 		let at = unsafe {

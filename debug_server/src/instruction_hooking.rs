@@ -274,6 +274,11 @@ unsafe fn thrown(ctx: *mut raw_types::procs::ExecutionContext) -> String {
 	}
 }
 
+/// Whether the instruction about to run in a frame has a breakpoint on it
+pub(crate) fn is_breakpoint(ctx: *mut raw_types::procs::ExecutionContext) -> bool {
+	unsafe { *(*(*ctx).bytecode()).add(*(*ctx).bytecode_offset() as usize) == OPCODE_DEBUG_BREAK }
+}
+
 /// Whether the code running is one of the debugger's own helper procs, like
 /// the loop that keeps a launched world awake
 unsafe fn in_helper(ctx: *mut raw_types::procs::ExecutionContext) -> bool {

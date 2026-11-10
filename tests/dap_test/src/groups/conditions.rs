@@ -121,6 +121,25 @@ fn stops_of(world: &mut World) -> Vec<String> {
 	world.run_collecting("recurse", |world| world.argument("depth"))
 }
 
+/// Lets the world carry on from a stop in `scenario`, which had finished
+/// `finished` times when it was run, to its end, and returns the depths it
+/// stopped at on the way
+fn resume_collecting(world: &mut World, scenario: &str, finished: usize) -> Vec<String> {
+	let over = format!("dap: finished {}\n", scenario);
+	let deadline = std::time::Instant::now() + crate::client::TIMEOUT;
+	let mut seen = vec![];
+	world.resume();
+	loop {
+		if world.event_within("stopped", std::time::Duration::from_millis(20)).is_some() {
+			seen.push(world.argument("depth"));
+			world.resume();
+		} else if world.count(&over) > finished {
+			return seen;
+		}
+		assert!(std::time::Instant::now() < deadline, "{} never finished", scenario);
+	}
+}
+
 fn hit_counts(world: &mut World) {
 	assert_eq!(stops_with(world, "3", None), ["1", "0"]);
 	assert_eq!(stops_with(world, ">= 2", None), ["2", "1", "0"]);
@@ -139,6 +158,19 @@ fn hit_counts(world: &mut World) {
 	assert_eq!(stops_with(world, "2", Some("depth != 2")), ["1", "0"]);
 	assert_eq!(stops_with(world, "% 2", Some("depth < 3")), ["1"]);
 	ok("a hit count with a condition counts the hits where the condition holds");
+
+	// A step that stops on it is a hit too: depth 3's, so 2 and 0 stop
+	let (file, line) = world.marks.place("recurse_1");
+	world.set_breakpoints(&file, json!([{ "line": line, "hitCondition": "% 2" }]));
+	world.function_breakpoints(&["/proc/sc_recurse"]);
+	let finished = world.count("dap: finished recurse\n");
+	world.run("recurse");
+	world.stopped("breakpoint");
+	world.function_breakpoints(&[]);
+	world.step_on("stepIn", "/recurse", "recurse_1");
+	assert_eq!(world.argument("depth"), "3");
+	assert_eq!(resume_collecting(world, "recurse", finished), ["2", "0"]);
+	ok("a step that stops on a breakpoint counts as its hit, and doesn't stop twice");
 
 	// The count goes on until the breakpoint is set again
 	assert_eq!(stops_with(world, "== 6", None), Vec::<String>::new());
