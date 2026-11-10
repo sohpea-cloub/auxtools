@@ -798,9 +798,11 @@ fn main() {
 		"/obj/crate\n\tname = \"crate\"\n",
 		"/obj/crate\n\tname = \"box\"\n\tpixel_y = 3\n"
 	);
-	assert_eq!(changes.builtin_defaults.len(), 2, "{:?}", changes.builtin_defaults);
+	// (text, the first letter of the name, with it)
+	assert_eq!(changes.builtin_defaults.len(), 3, "{:?}", changes.builtin_defaults);
 	reload(&mut watcher, &changes);
 	assert_eq!(eval(&mut client, "builtin_report(/obj/crate)"), "\"box 255 0 3  32 neuter 0 1 \"");
+	assert_eq!(eval(&mut client, "(new /obj/crate).text"), "\"b\"");
 	assert_eq!(
 		eval(&mut client, "builtin_report(/obj/crate/big_crate)"),
 		"\"box 255 0 3  32 neuter 0 1 \""
