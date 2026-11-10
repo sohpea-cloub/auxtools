@@ -146,7 +146,10 @@ pub enum Response {
 	},
 	Locate {
 		instructions: Vec<InstructionRef>
-	}
+	},
+	/// Another client hot reloaded the world: its code has changed, and
+	/// lines may be elsewhere
+	CodeChanged
 }
 
 #[derive(Serialize, Deserialize, Debug, Hash, PartialEq, Eq, Clone)]

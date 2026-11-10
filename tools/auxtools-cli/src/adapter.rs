@@ -67,6 +67,10 @@ pub enum Input {
 		reason: String
 	},
 	Code(code::Event),
+	/// Another client hot reloaded the world
+	CodeChanged {
+		generation: u64
+	},
 	/// The world the adapter launched exited
 	GameExited(Option<i32>),
 	/// The process attached to is gone
@@ -169,6 +173,10 @@ pub struct Adapter {
 
 	/// The client's breakpoints by file, with the ids they were given
 	breakpoints: BTreeMap<String, Vec<(i64, SourceBreakpoint)>>,
+	/// The text each file's breakpoints were given for: their lines are
+	/// lines of it. `None` for a file the client hasn't saved yet, or that
+	/// can't be read.
+	breakpoint_texts: HashMap<String, Option<Vec<String>>>,
 	next_breakpoint_id: i64,
 	function_breakpoints: Vec<FunctionBreakpoint>,
 	catch_runtimes: bool,
@@ -211,6 +219,7 @@ pub fn run() {
 		last_error: Arc::new(Mutex::new(String::new())),
 		reload_started: None,
 		breakpoints: BTreeMap::new(),
+		breakpoint_texts: HashMap::new(),
 		next_breakpoint_id: 1,
 		function_breakpoints: vec![],
 		catch_runtimes: true,
@@ -252,6 +261,11 @@ impl Adapter {
 			}
 			Input::ConnectionClosed { generation, reason } => self.connection_closed(generation, &reason),
 			Input::Code(event) => self.code_event(event),
+			Input::CodeChanged { generation } => {
+				if self.debuggee.as_ref().is_some_and(|d| d.generation == generation) {
+					self.reapply_breakpoints();
+				}
+			}
 			Input::GameExited(code) => {
 				match code {
 					Some(code) => self.out.console(format!("The world exited with code {}", code)),
@@ -678,10 +692,24 @@ impl Adapter {
 		}
 	}
 
-	/// Sets every breakpoint again, telling the client where they are now
+	/// The world's code changed. Each breakpoint goes where its line is now:
+	/// it's a line of the file as it was when the client gave it, and the
+	/// file's text says where that went, whoever changed it. The client is
+	/// told where they are.
 	fn reapply_breakpoints(&mut self) {
 		let files: Vec<String> = self.breakpoints.keys().cloned().collect();
 		for file in files {
+			let now = crate::lines::read(&file);
+			if let (Some(Some(then)), Some(now)) = (self.breakpoint_texts.get(&file), &now) {
+				if then != now {
+					let map = crate::lines::LineMap::new(then, now);
+					for (_, breakpoint) in self.breakpoints.get_mut(&file).into_iter().flatten() {
+						breakpoint.line = map.line(breakpoint.line as u32).into();
+					}
+				}
+			}
+			self.breakpoint_texts.insert(file.clone(), now);
+
 			for breakpoint in self.apply_breakpoints(&file) {
 				self.out.event(dap::BreakpointEvent {
 					reason: "changed".to_owned(),
@@ -763,7 +791,11 @@ impl Adapter {
 
 	fn set_breakpoints(&mut self, args: SetBreakpointsArguments) -> Handled {
 		let path = args.source.path.ok_or("the breakpoints' source has no path")?;
-		if args.sourceModified.unwrap_or(false) {
+		// Lines of text the client hasn't saved: the world's code, and the
+		// file, are still as they were. They're right once it's saved and
+		// the world has been given the change, if it's being given changes.
+		let unsaved = args.sourceModified.unwrap_or(false);
+		if unsaved && self.code.is_none() {
 			return Err("the file has changes that haven't been saved".to_owned());
 		}
 		let mut wanted = vec![];
@@ -771,7 +803,25 @@ impl Adapter {
 			wanted.push((self.next_breakpoint_id, breakpoint));
 			self.next_breakpoint_id += 1;
 		}
+
+		if unsaved {
+			let breakpoints = wanted
+				.iter()
+				.map(|(number, breakpoint)| Breakpoint {
+					id: Some(*number),
+					verified: false,
+					message: Some("it's set when the file is saved and the world has the change".to_owned()),
+					line: Some(breakpoint.line),
+					..Default::default()
+				})
+				.collect();
+			self.breakpoints.insert(path.clone(), wanted);
+			self.breakpoint_texts.insert(path, None);
+			return json(SetBreakpointsResponse { breakpoints });
+		}
+
 		self.breakpoints.insert(path.clone(), wanted);
+		self.breakpoint_texts.insert(path.clone(), crate::lines::read(&path));
 		let breakpoints = self.apply_breakpoints(&path);
 		json(SetBreakpointsResponse { breakpoints })
 	}

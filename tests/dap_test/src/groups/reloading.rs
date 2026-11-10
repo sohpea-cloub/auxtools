@@ -37,11 +37,115 @@ fn edit(world: &mut World, file: &str, old: &str, new: &str) {
 	let before = reloads(&world.output);
 	world.marks.edit(file, old, new);
 	world.wait_until("the hot reload", |output| reloads(output) > before);
-	// The launcher has told the client where its breakpoints are now
-	world.drop_events("breakpoint");
+}
+
+/// Waits for the launcher to say where a breakpoint is now, and returns its
+/// line and whether it's set
+fn moved(world: &mut World) -> (u64, bool) {
+	let event = world.event("breakpoint");
+	assert_eq!(event["body"]["reason"], "changed", "{}", event);
+	let breakpoint = &event["body"]["breakpoint"];
+	(breakpoint["line"].as_u64().unwrap(), breakpoint["verified"].as_bool().unwrap())
+}
+
+/// Edits the client has no part in: an agent's, another editor's, a checkout
+fn behind_the_clients_back() {
+	let dir = copy_of_the_world();
+	let mut world = World::launch_in(dir.clone(), json!({ "hotReload": true }));
+	world.catch_runtimes(false);
+	world.configure();
+	world.wait_output("Hot reload: watching");
+	let at = world.marks.clone();
+
+	// Three lines more above the breakpoint, which the client still has on
+	// the old line
+	world.break_on(&["leaf_2"]);
+	let before = at.line("leaf_2");
+	edit(&mut world, "stepping.dm", "/proc/leaf(x)\n", "/proc/above()\n\treturn 1\n\n/proc/leaf(x)\n");
+	assert_eq!(moved(&mut world), (before + 3, true));
+	world.run("middle");
+	world.stop_on("breakpoint", "/leaf", "leaf_2");
+	assert_eq!(world.local("y"), "4");
+	world.resume();
+	world.stop_on("breakpoint", "/leaf", "leaf_2");
+	world.resume_through("middle");
+	ok("lines added above a breakpoint, in a file the client didn't change: it stays on its statement, and the client is told its line");
+
+	// A line more inside the proc, which is compiled again
+	edit(&mut world, "stepping.dm", "\tvar/y = x + 1 // @leaf_1\n", "\tvar/y = x + 1 // @leaf_1\n\ty += 0\n");
+	assert_eq!(moved(&mut world), (at.line("leaf_2"), true));
+	world.run("middle");
+	world.stop_on("breakpoint", "/leaf", "leaf_2");
+	world.resume();
+	world.stop_on("breakpoint", "/leaf", "leaf_2");
+	world.resume_through("middle");
+	ok("a line added above a breakpoint in its own proc: it stays on its statement");
+
+	// Its own line is written anew, as two: it's on the first of them
+	edit(
+		&mut world,
+		"stepping.dm",
+		"\treturn y * 2 // @leaf_2\n",
+		"\tvar/doubled = y * 2 // @leaf_doubled\n\treturn doubled // @leaf_2\n"
+	);
+	assert_eq!(moved(&mut world), (at.line("leaf_doubled"), true));
+	world.run("middle");
+	world.stop_on("breakpoint", "/leaf", "leaf_doubled");
+	world.resume();
+	world.stop_on("breakpoint", "/leaf", "leaf_doubled");
+	world.resume_through("middle");
+	ok("a breakpoint whose line is rewritten is on what's written in its place");
+
+	// Its line is taken away: the next line left is the proc's last
+	edit(&mut world, "stepping.dm", "\tvar/doubled = y * 2 // @leaf_doubled\n\treturn doubled // @leaf_2\n", "\treturn y * 2 // @leaf_2\n");
+	assert_eq!(moved(&mut world), (at.line("leaf_2"), true));
+	world.break_on(&[]);
+
+	// The client has edited the file and not saved it: its breakpoints are
+	// on the lines of what it shows, which the world doesn't have yet
+	let stepping = at.file("stepping.dm");
+	let future = at.line("middle_2") + 2;
+	let set = world.request(
+		"setBreakpoints",
+		json!({ "source": { "path": stepping }, "sourceModified": true, "breakpoints": [{ "line": future }] })
+	);
+	assert_eq!(set["breakpoints"][0]["verified"], false, "{}", set);
+	assert_eq!(set["breakpoints"][0]["message"], "it's set when the file is saved and the world has the change");
+	world.run_through("middle");
+	edit(&mut world, "stepping.dm", "/proc/middle(a)\n", "/proc/middle(a)\n\tvar/first = 1\n\tfirst++\n");
+	assert_eq!(moved(&mut world), (future, true));
+	assert_eq!(at.line("middle_2"), future);
+	world.run("middle");
+	world.stop_on("breakpoint", "/middle", "middle_2");
+	world.resume_through("middle");
+	world.set_breakpoints(&stepping, json!([]));
+	ok("breakpoints given for a file the client hasn't saved are set once it's saved and reloaded, on the lines it gave");
+
+	// Another launcher, attached, with a breakpoint of its own: it doesn't
+	// reload anything, and is told the code changed
+	let pid = crate::client::listed_world("dap_test_host.dmb");
+	let mut other = World::attach_in(dir.clone(), pid);
+	other.catch_runtimes(false);
+	other.break_on(&["sc_middle_2"]);
+	let before = at.line("sc_middle_2");
+	edit(&mut world, "stepping.dm", "/proc/sc_middle()\n", "/proc/before_it()\n\treturn 1\n\n/proc/sc_middle()\n");
+	assert_eq!(moved(&mut other), (before + 3, true));
+	world.run("middle");
+	world.stop_on("breakpoint", "/sc_middle", "sc_middle_2");
+	other.stop_on("breakpoint", "/sc_middle", "sc_middle_2");
+	assert_eq!(other.local("got"), "26");
+	other.resume();
+	world.finish("middle");
+	other.end();
+	ok("a session attached to a world that another reloads has its breakpoints follow their statements too");
+
+	world.end();
+	let _ = std::fs::remove_dir_all(&dir);
 }
 
 pub fn run() {
+	behind_the_clients_back();
+
 	let dir = copy_of_the_world();
 	let mut world = World::launch_in(dir.clone(), json!({ "hotReload": true }));
 	world.catch_runtimes(false);

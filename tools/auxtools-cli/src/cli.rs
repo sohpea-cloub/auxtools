@@ -270,6 +270,7 @@ impl World {
 			match response.map_err(|_| hung_up())? {
 				Response::Disconnect => return Err(hung_up()),
 				Response::Notification { message } => self.notes.push(message),
+				Response::CodeChanged => {}
 				response => return Ok(Some(response))
 			}
 		}

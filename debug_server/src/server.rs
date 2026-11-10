@@ -1345,6 +1345,7 @@ impl Server {
 
 		// Every client hears what changed
 		if result.applied && !request.is_empty() {
+			self.broadcast(Response::CodeChanged, self.current);
 			self.notify(format!(
 				"Hot reload: new code for {} procs, new settings for {}, {} new procs, {} unlinked, {} new vars, {} new var defaults, {} new init \
 				 procs, {} moved",

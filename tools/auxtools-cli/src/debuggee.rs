@@ -108,6 +108,13 @@ impl Debuggee {
 							announce_stop(&out, &last_error, reason);
 						}
 
+						// Another client reloaded its code
+						Response::CodeChanged => {
+							if debugging && inputs.send(Input::CodeChanged { generation }).is_err() {
+								break "nobody was listening".to_owned();
+							}
+						}
+
 						// Another client let it carry on
 						Response::Resumed => {
 							reader_stopped.store(false, Ordering::Relaxed);

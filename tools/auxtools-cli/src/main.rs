@@ -11,6 +11,7 @@ mod cli;
 mod code;
 mod dap;
 mod debuggee;
+mod lines;
 mod stddef;
 
 const USAGE: &str = "\
