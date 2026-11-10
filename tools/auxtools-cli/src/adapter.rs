@@ -710,7 +710,7 @@ impl Adapter {
 		// A paused world stays paused for the other clients that debug it,
 		// and carries on when this was the last
 		if let Some(debuggee) = &mut self.debuggee {
-			let _ = debuggee.send(&AuxRequest::Disconnect);
+			debuggee.leave();
 		}
 		self.debuggee = None;
 		// A world this launcher started has its output read here, and can't

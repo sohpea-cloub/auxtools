@@ -45,6 +45,10 @@ fn announce_stop(out: &Output, last_error: &Mutex<String>, reason: BreakpointRea
 /// instructions, and the world runs at least one a tick.
 const RESPONSE_TIMEOUT: Duration = Duration::from_secs(60);
 
+/// How long to wait for the server's goodbye. It answers between DM
+/// instructions, so a world that's busy takes a moment.
+const GOODBYE_TIMEOUT: Duration = Duration::from_secs(2);
+
 pub struct Debuggee {
 	writer: Shared,
 	responses: mpsc::Receiver<Response>,
@@ -144,6 +148,22 @@ impl Debuggee {
 			announce_stop(&self.out, &self.last_error, reason);
 		}
 		Ok(())
+	}
+
+	/// Says goodbye, and waits a little for the server to have let this
+	/// client go, its breakpoints with it: what the client does next (in
+	/// another session, say) then comes after
+	pub fn leave(&mut self) {
+		if self.send(&Request::Disconnect).is_err() {
+			return;
+		}
+		let deadline = std::time::Instant::now() + GOODBYE_TIMEOUT;
+		// The reader stops when the server hangs up
+		while let Ok(_) | Err(mpsc::RecvTimeoutError::Timeout) = self.responses.recv_timeout(Duration::from_millis(50)) {
+			if std::time::Instant::now() >= deadline {
+				return;
+			}
+		}
 	}
 
 	/// Sends a request that isn't answered
