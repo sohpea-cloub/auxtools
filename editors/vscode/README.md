@@ -80,6 +80,13 @@ Besides a line, a breakpoint can be on a proc by name (**Add Function Breakpoint
   message in the debug console at each hit, with the values of the expressions in
   `{braces}`: `health is {health} for {src}`. It can have a condition and a hit count too.
 
+A breakpoint added to a file with unsaved changes is on a line of what the editor shows,
+which the world doesn't have: while hot reloading, it's shown unset (hover over it for why)
+and is set when the file is saved, on the line you put it on. The breakpoints the file had
+before keep stopping where they were meanwhile. Without hot reloading the world's code
+doesn't change, so breakpoints go by the code it was built from: in a file changed since,
+they may be on other lines than they look (the debug console says so).
+
 The **Loaded Scripts** view (in Run and Debug's "..." menu) lists the files the world's
 code is from, and BYOND's `stddef.dm`. A file with no procs in it, only types, vars or
 defines, isn't there: the world knows its files by their procs.
@@ -187,6 +194,11 @@ debugging: **Run without debugging** keeps hot reloading. Proc code, new procs a
 new types and vars, var defaults and `set` statements can change; the debug console says
 what was reloaded, and what needs a rebuild instead (changed var declarations and parent
 types, for one). A world that reboots gets the changes again.
+
+Breakpoints stay on their statements when a reload moves them, whoever changed the file:
+VS Code, another editor or a checkout. VS Code tells the launcher which files have unsaved
+changes; other editors that debug through the launcher don't, and a breakpoint they add to
+an unsaved file is taken to be on a line of the file as it is on disk.
 
 ## Attaching to a running world
 

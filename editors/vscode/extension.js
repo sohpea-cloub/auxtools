@@ -12,6 +12,7 @@ const fs = require("fs");
 const path = require("path");
 const vscode = require("vscode");
 const { expressionAt } = require("./expression");
+const { UnsavedFiles } = require("./unsaved");
 
 const DEBUG_TYPE = "auxtools";
 const TASK_TYPE = "dreammaker";
@@ -257,8 +258,41 @@ function startCommand(server, noDebug) {
 	};
 }
 
+// Tells the launchers which files have unsaved edits, as that changes: a
+// breakpoint given for one is on a line of the editor's text, not the file's
+function trackUnsavedFiles(context) {
+	const unsaved = new UnsavedFiles();
+	const sessions = new Set();
+	const tell = (session, message) => {
+		// A launcher too old to know the request says so, and is left be
+		session.customRequest("auxtoolsUnsaved", message).then(undefined, () => {});
+	};
+	const update = (document) => {
+		const message = unsaved.changed(document);
+		if (message) {
+			sessions.forEach((session) => tell(session, message));
+		}
+	};
+	context.subscriptions.push(
+		vscode.workspace.onDidChangeTextDocument((event) => update(event.document)),
+		vscode.workspace.onDidSaveTextDocument(update),
+		vscode.workspace.onDidCloseTextDocument(update),
+		vscode.debug.onDidStartDebugSession((session) => {
+			if (session.type !== DEBUG_TYPE) {
+				return;
+			}
+			vscode.workspace.textDocuments.forEach(update);
+			sessions.add(session);
+			unsaved.all().forEach((message) => tell(session, message));
+		}),
+		vscode.debug.onDidTerminateDebugSession((session) => sessions.delete(session))
+	);
+	vscode.workspace.textDocuments.forEach(update);
+}
+
 function activate(context) {
 	const provider = new ConfigurationProvider(context);
+	trackUnsavedFiles(context);
 	context.subscriptions.push(
 		vscode.debug.registerDebugAdapterDescriptorFactory(DEBUG_TYPE, new AdapterFactory(context)),
 		vscode.debug.registerDebugConfigurationProvider(DEBUG_TYPE, provider),

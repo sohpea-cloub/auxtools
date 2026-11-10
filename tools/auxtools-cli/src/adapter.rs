@@ -13,7 +13,7 @@
 //! they can be set again in each world that connects.
 
 use std::{
-	collections::{BTreeMap, HashMap},
+	collections::{BTreeMap, HashMap, HashSet},
 	io::BufReader,
 	path::{Path, PathBuf},
 	sync::{mpsc, Arc, Mutex},
@@ -206,6 +206,15 @@ struct SetExpressionArguments {
 	format: Option<ValueFormat>
 }
 
+/// What `auxtoolsUnsaved` takes: whether a file has edits the client hasn't
+/// saved. Nothing in DAP says, so the VS Code extension sends this request of
+/// its own as a file's state changes.
+#[derive(Deserialize)]
+struct UnsavedArguments {
+	path: String,
+	unsaved: bool
+}
+
 /// What `setExceptionBreakpoints` takes: the filters ticked, with their
 /// conditions if they have any (dap-types knows the first only)
 #[derive(Deserialize)]
@@ -313,9 +322,16 @@ pub struct Adapter {
 	/// `root`, for the thread that passes the world's output on
 	output_root: Arc<Mutex<Option<PathBuf>>>,
 	/// The text each file's breakpoints were given for: their lines are
-	/// lines of it. `None` for a file the client hasn't saved yet, or that
-	/// can't be read.
+	/// lines of it. `None` for a file that can't be read.
 	breakpoint_texts: HashMap<String, Option<Vec<String>>>,
+	/// The files the client says have edits it hasn't saved
+	unsaved: HashSet<String>,
+	/// The files whose breakpoints are on lines of the client's unsaved
+	/// text, which the file and the world don't have yet: they're set when
+	/// it's saved
+	deferred: HashSet<String>,
+	/// The files the console has said were changed since the world was built
+	said_changed: HashSet<String>,
 	next_breakpoint_id: i64,
 	function_breakpoints: Vec<FunctionBreakpoint>,
 	/// The client's instruction breakpoints, with the ids they were given
@@ -373,6 +389,9 @@ pub fn run() {
 		output_root: Arc::new(Mutex::new(None)),
 		breakpoints: BTreeMap::new(),
 		breakpoint_texts: HashMap::new(),
+		unsaved: HashSet::new(),
+		deferred: HashSet::new(),
+		said_changed: HashSet::new(),
 		next_breakpoint_id: 1,
 		function_breakpoints: vec![],
 		instruction_breakpoints: vec![],
@@ -517,6 +536,7 @@ impl Adapter {
 			"attach" => arguments(args).and_then(|args| self.attach(args)),
 			"configurationDone" => self.configuration_done(),
 			"setBreakpoints" => arguments(args).and_then(|args| self.set_breakpoints(args)),
+			"auxtoolsUnsaved" => arguments(args).and_then(|args| self.unsaved_changed(args)),
 			"setFunctionBreakpoints" => arguments(args).and_then(|args| self.set_function_breakpoints(args)),
 			"setInstructionBreakpoints" => arguments(args).and_then(|args| self.set_instruction_breakpoints(args)),
 			"setExceptionBreakpoints" => arguments(args).and_then(|args| self.set_exception_breakpoints(args)),
@@ -1003,7 +1023,8 @@ impl Adapter {
 	fn configure(&mut self) {
 		if self.debugging {
 			let _ = self.catch_runtimes();
-			let files: Vec<String> = self.breakpoints.keys().cloned().collect();
+			// Those on lines of unsaved text wait for it to be saved
+			let files: Vec<String> = self.breakpoints.keys().filter(|file| !self.deferred.contains(*file)).cloned().collect();
 			for file in files {
 				let _ = self.apply_breakpoints(&file);
 			}
@@ -1029,7 +1050,9 @@ impl Adapter {
 	/// file's text says where that went, whoever changed it. The client is
 	/// told where they are.
 	fn reapply_breakpoints(&mut self) {
-		let files: Vec<String> = self.breakpoints.keys().cloned().collect();
+		// Those on lines of unsaved text are set when it's saved: the file's
+		// text now isn't what their lines are of
+		let files: Vec<String> = self.breakpoints.keys().filter(|file| !self.deferred.contains(*file)).cloned().collect();
 		for file in files {
 			let now = crate::lines::read(&file);
 			if let (Some(Some(then)), Some(now)) = (self.breakpoint_texts.get(&file), &now) {
@@ -1194,20 +1217,24 @@ impl Adapter {
 
 	fn set_breakpoints(&mut self, args: SetBreakpointsArguments) -> Handled {
 		let path = args.source.path.ok_or("the breakpoints' source has no path")?;
-		// Lines of text the client hasn't saved: the world's code, and the
-		// file, are still as they were. They're right once it's saved and
-		// the world has been given the change, if it's being given changes.
-		let unsaved = args.sourceModified.unwrap_or(false);
-		if unsaved && self.code.is_none() {
-			return Err("the file has changes that haven't been saved".to_owned());
-		}
+		// The file was saved since its breakpoints were last given, and they
+		// moved with the text: these are lines of it as it is now. (VS Code
+		// sends it after the save, never for unsaved text.)
+		let saved_since = args.sourceModified.unwrap_or(false);
+		let reloading = self.code.is_some();
 		let mut wanted = vec![];
 		for breakpoint in args.breakpoints.unwrap_or_default() {
 			wanted.push((self.next_breakpoint_id, breakpoint));
 			self.next_breakpoint_id += 1;
 		}
 
-		if unsaved {
+		// Lines of text the client hasn't saved: the file, and the world's
+		// code, are as they were. They're set when it's saved, and are right
+		// once the world has the change too. Only a client that says which
+		// files are unsaved (`auxtoolsUnsaved`, VS Code's extension) gets
+		// this: for others, lines are always lines of the file. Without hot
+		// reloading the world's code won't change, so they're set as they are.
+		if !saved_since && reloading && self.unsaved.contains(&path) {
 			let breakpoints = wanted
 				.iter()
 				.map(|(number, breakpoint)| Breakpoint {
@@ -1218,15 +1245,52 @@ impl Adapter {
 					..Default::default()
 				})
 				.collect();
+			// What's set in the world for the file stays until then, on the
+			// code the world runs: which of these each was isn't known. With
+			// none left, none of them are wanted.
+			if wanted.is_empty() {
+				self.unset(&path);
+			}
 			self.breakpoints.insert(path.clone(), wanted);
-			self.breakpoint_texts.insert(path, None);
+			self.breakpoint_texts.insert(path.clone(), None);
+			self.deferred.insert(path);
 			return json(SetBreakpointsResponse { breakpoints });
 		}
 
+		if saved_since && !reloading && self.said_changed.insert(path.clone()) {
+			self.out.console(format!(
+				"{} has changed since the world was built: without hot reloading, its breakpoints go by the code the world has, and may be on other lines",
+				Path::new(&path).file_name().unwrap_or_default().to_string_lossy()
+			));
+		}
+		self.deferred.remove(&path);
 		self.breakpoints.insert(path.clone(), wanted);
 		self.breakpoint_texts.insert(path.clone(), crate::lines::read(&path));
 		let breakpoints = self.apply_breakpoints(&path);
 		json(SetBreakpointsResponse { breakpoints })
+	}
+
+	/// The client says whether a file has edits it hasn't saved. Breakpoints
+	/// it gave while it had are on lines of what's saved now, and are set.
+	fn unsaved_changed(&mut self, args: UnsavedArguments) -> Handled {
+		let path = args.path;
+		if args.unsaved {
+			self.unsaved.insert(path);
+			return Ok(Value::Null);
+		}
+		self.unsaved.remove(&path);
+		if self.deferred.remove(&path) && self.breakpoints.contains_key(&path) {
+			// If the world doesn't have the change yet, they're set again
+			// when it does
+			self.breakpoint_texts.insert(path.clone(), crate::lines::read(&path));
+			for breakpoint in self.apply_breakpoints(&path) {
+				self.out.event(dap::BreakpointEvent {
+					reason: "changed".to_owned(),
+					breakpoint
+				});
+			}
+		}
+		Ok(Value::Null)
 	}
 
 	/// What the world calls a file of its code: its path from the code's

@@ -101,25 +101,96 @@ fn behind_the_clients_back() {
 	assert_eq!(moved(&mut world), (at.line("leaf_2"), true));
 	world.break_on(&[]);
 
-	// The client has edited the file and not saved it: its breakpoints are
-	// on the lines of what it shows, which the world doesn't have yet
+	// VS Code moves its breakpoints with the text while it's edited, and
+	// once it's saved sends them again with `sourceModified`: lines of the
+	// file as saved. Here they come before the world has the change, and
+	// one of them was taken away meanwhile.
 	let stepping = at.file("stepping.dm");
-	let future = at.line("middle_2") + 2;
-	let set = world.request(
+	world.break_on(&["leaf_1", "middle_2"]);
+	let middle_2 = at.line("middle_2");
+	world.drop_events("breakpoint");
+	world.request("auxtoolsUnsaved", json!({ "path": stepping, "unsaved": true }));
+	let before = reloads(&world.output);
+	at.edit("stepping.dm", "/proc/middle(a)\n", "/proc/middle(a)\n\tvar/first = 1\n\tfirst++\n");
+	world.request("auxtoolsUnsaved", json!({ "path": stepping, "unsaved": false }));
+	world.request(
 		"setBreakpoints",
-		json!({ "source": { "path": stepping }, "sourceModified": true, "breakpoints": [{ "line": future }] })
+		json!({ "source": { "path": stepping }, "sourceModified": true, "breakpoints": [{ "line": middle_2 + 2 }] })
 	);
-	assert_eq!(set["breakpoints"][0]["verified"], false, "{}", set);
-	assert_eq!(set["breakpoints"][0]["message"], "it's set when the file is saved and the world has the change");
-	world.run_through("middle");
-	edit(&mut world, "stepping.dm", "/proc/middle(a)\n", "/proc/middle(a)\n\tvar/first = 1\n\tfirst++\n");
-	assert_eq!(moved(&mut world), (future, true));
-	assert_eq!(at.line("middle_2"), future);
+	assert_eq!(reloads(&world.output), before, "the reload came before the client's breakpoints");
+	world.wait_until("the hot reload", |output| reloads(output) > before);
+	assert_eq!(moved(&mut world), (middle_2 + 2, true));
+	assert_eq!(at.line("middle_2"), middle_2 + 2);
 	world.run("middle");
 	world.stop_on("breakpoint", "/middle", "middle_2");
 	world.resume_through("middle");
+	ok("breakpoints sent with sourceModified after a save, before the world has the change: set on the lines given once it has, and the one taken away is gone");
+
+	// The same with the world having the change first: the launcher has
+	// moved them already. The client hasn't said it's saved yet.
+	world.break_on(&["middle_3"]);
+	let middle_3 = at.line("middle_3");
+	world.request("auxtoolsUnsaved", json!({ "path": stepping, "unsaved": true }));
+	edit(&mut world, "stepping.dm", "\tfirst++\n", "\tfirst++\n\tfirst++\n");
+	assert_eq!(moved(&mut world), (middle_3 + 1, true));
+	let set = world.request(
+		"setBreakpoints",
+		json!({ "source": { "path": stepping }, "sourceModified": true, "breakpoints": [{ "line": middle_3 + 1 }] })
+	);
+	assert_eq!((set["breakpoints"][0]["verified"].clone(), set["breakpoints"][0]["line"].clone()), (json!(true), json!(middle_3 + 1)), "{}", set);
+	world.request("auxtoolsUnsaved", json!({ "path": stepping, "unsaved": false }));
+	assert!(!world.has_event("breakpoint"), "the breakpoints were set again on being saved");
+	world.run("middle");
+	world.stop_on("breakpoint", "/middle", "middle_3");
+	world.resume_through("middle");
+	ok("breakpoints sent with sourceModified after the world has the change: set as given");
+
+	// Lines added above, not saved, and then a breakpoint added below them:
+	// its line is the editor's, which the file doesn't have yet
+	world.break_on(&[]);
+	world.request("auxtoolsUnsaved", json!({ "path": stepping, "unsaved": true }));
+	let buffer_line = at.line("middle_2") + 3;
+	let set = world.request("setBreakpoints", json!({ "source": { "path": stepping }, "breakpoints": [{ "line": buffer_line }] }));
+	assert_eq!(set["breakpoints"][0]["verified"], false, "{}", set);
+	assert_eq!(set["breakpoints"][0]["message"], "it's set when the file is saved and the world has the change");
+	ok("a breakpoint given for a file with unsaved edits waits for the save");
+
+	// Another file is reloaded meanwhile
+	edit(&mut world, "main.dm", "var/ticks = 0\n", "var/ticks = 0\nvar/unrelated = 1\n");
+	world.run_through("middle");
+	assert!(!world.has_event("breakpoint"), "a reload of another file set the unsaved file's breakpoints");
+	ok("a reload of another file leaves the unsaved file's breakpoints waiting");
+
+	// Saved: the client says so before the world has the change
+	let before = reloads(&world.output);
+	at.edit("stepping.dm", "\tvar/r = leaf(a) // @middle_1\n", "\tvar/r = leaf(a) // @middle_1\n\tr += 0\n\tr += 0\n\tr += 0\n");
+	world.request("auxtoolsUnsaved", json!({ "path": stepping, "unsaved": false }));
+	assert_eq!(reloads(&world.output), before, "the reload came before the save was said");
+	world.event("breakpoint");
+	world.wait_until("the hot reload", |output| reloads(output) > before);
+	assert_eq!(moved(&mut world), (buffer_line, true));
+	assert_eq!(at.line("middle_2"), buffer_line);
+	world.run("middle");
+	world.stop_on("breakpoint", "/middle", "middle_2");
+	world.resume_through("middle");
+	ok("once the file is saved and reloaded the breakpoint is on the line the editor had, not moved again");
+
+	// Again with the world having the change before it's said to be saved
 	world.set_breakpoints(&stepping, json!([]));
-	ok("breakpoints given for a file the client hasn't saved are set once it's saved and reloaded, on the lines it gave");
+	world.request("auxtoolsUnsaved", json!({ "path": stepping, "unsaved": true }));
+	let buffer_line = at.line("middle_3") + 1;
+	world.request("setBreakpoints", json!({ "source": { "path": stepping }, "breakpoints": [{ "line": buffer_line }] }));
+	edit(&mut world, "stepping.dm", "\tr += 0\n\tr += 0\n\tr += 0\n", "\tr += 0\n\tr += 0\n\tr += 0\n\tr += 0\n");
+	world.run_through("middle");
+	assert!(!world.has_event("breakpoint"), "a reload set the unsaved file's breakpoints");
+	world.request("auxtoolsUnsaved", json!({ "path": stepping, "unsaved": false }));
+	assert_eq!(moved(&mut world), (buffer_line, true));
+	assert_eq!(at.line("middle_3"), buffer_line);
+	world.run("middle");
+	world.stop_on("breakpoint", "/middle", "middle_3");
+	world.resume_through("middle");
+	world.set_breakpoints(&stepping, json!([]));
+	ok("the same when the world has the change before the file is said to be saved");
 
 	// Another launcher, attached, with a breakpoint of its own: it doesn't
 	// reload anything, and is told the code changed
@@ -143,7 +214,30 @@ fn behind_the_clients_back() {
 	let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// Without hot reloading the world's code stays as it was built
+fn saved_without_reloading() {
+	let mut world = World::launch(json!({ "hotReload": false }));
+	world.catch_runtimes(false);
+	world.configure();
+	let (file, line) = world.marks.place("leaf_1");
+	for _ in 0..2 {
+		let set = world.request(
+			"setBreakpoints",
+			json!({ "source": { "path": file }, "sourceModified": true, "breakpoints": [{ "line": line }] })
+		);
+		assert_eq!(set["breakpoints"][0]["verified"], true, "{}", set);
+	}
+	assert_eq!(world.count("has changed since the world was built"), 1, "the console didn't say it once");
+	world.run("middle");
+	world.stop_on("breakpoint", "/leaf", "leaf_1");
+	world.set_breakpoints(&file, json!([]));
+	world.resume_through("middle");
+	ok("without hot reloading, breakpoints sent with sourceModified are set as given, and the console says once that the file changed");
+	world.end();
+}
+
 pub fn run() {
+	saved_without_reloading();
 	behind_the_clients_back();
 
 	let dir = copy_of_the_world();

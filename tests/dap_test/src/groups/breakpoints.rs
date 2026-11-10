@@ -70,14 +70,9 @@ fn placing() {
 	assert_eq!(ids.len(), 3, "breakpoints share ids");
 	ok("each breakpoint has an id of its own");
 
-	let why = world.refused(
-		"setBreakpoints",
-		json!({ "source": { "path": stepping }, "sourceModified": true, "breakpoints": [{ "line": leaf_1 }] })
-	);
-	assert_eq!(why, "the file has changes that haven't been saved");
 	let why = world.refused("setBreakpoints", json!({ "source": { "name": "stepping.dm" }, "breakpoints": [{ "line": leaf_1 }] }));
 	assert_eq!(why, "the breakpoints' source has no path");
-	ok("breakpoints for a file with unsaved changes, or with no path, are refused");
+	ok("breakpoints for a source with no path are refused");
 	world.end();
 }
 
