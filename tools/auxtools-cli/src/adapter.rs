@@ -429,6 +429,7 @@ impl Adapter {
 			supportsHitConditionalBreakpoints: Some(true),
 			supportsLogPoints: Some(true),
 			supportsValueFormattingOptions: Some(true),
+			supportsEvaluateForHovers: Some(true),
 			supportsSetVariable: Some(true),
 			supportsSetExpression: Some(true),
 			supportsExceptionInfoRequest: Some(true),
@@ -1321,6 +1322,10 @@ impl Adapter {
 	}
 
 	fn evaluate(&mut self, args: EvaluateArguments) -> Handled {
+		// The mouse resting on some code shouldn't change the world
+		if args.context.as_deref() == Some("hover") && changes_things(&args.expression) {
+			return Err("a hover doesn't call procs or assign".to_owned());
+		}
 		let hex = args.format.is_some_and(|format| format.hex == Some(true));
 		match self.request(&AuxRequest::Eval {
 			frame_id: args.frameId.map(|id| id as u32),
@@ -1391,6 +1396,47 @@ impl Adapter {
 	}
 }
 
+/// Whether an expression could do more than read: it calls something, or
+/// assigns. Texts in it don't count.
+fn changes_things(expression: &str) -> bool {
+	let mut quoted = false;
+	let mut chars = expression.chars().peekable();
+	let mut last = ' ';
+	while let Some(c) = chars.next() {
+		if quoted {
+			match c {
+				'\\' => {
+					chars.next();
+				}
+				'"' => quoted = false,
+				// An expression inside the text is code again: say it might
+				'[' => return true,
+				_ => {}
+			}
+			continue;
+		}
+		let next = chars.peek().copied().unwrap_or(' ');
+		match c {
+			'"' => quoted = true,
+			'(' => return true,
+			'+' | '-' if next == c => return true,
+			// `=` on its own, or after an operator that makes an assignment
+			// of it (`+=`, `||=`), but not `==`, `!=`, `<=` or `>=`
+			'=' if next != '=' && !matches!(last, '=' | '!' | '<' | '>') => return true,
+			'=' if next != '=' && matches!(last, '<' | '>') => {
+				// `<<=` and `>>=` assign, `<=` and `>=` compare
+				let shifts = expression.contains("<<=") || expression.contains(">>=");
+				if shifts {
+					return true;
+				}
+			}
+			_ => {}
+		}
+		last = c;
+	}
+	false
+}
+
 /// A value's text as the client asked for it: a whole number in hex, if it
 /// wants those
 fn shown(value: String, hex: bool) -> String {
@@ -1454,7 +1500,42 @@ mod tests {
 
 	use auxtools_cli::server_types::{HitCondition, LogPart, RuntimeFilter};
 
-	use super::{file_name_in, named_proc, shown};
+	use super::{changes_things, file_name_in, named_proc, shown};
+
+	#[test]
+	fn a_hover_reads_and_does_nothing_else() {
+		for reads in [
+			"x",
+			"src.health",
+			"a?.b:c",
+			"x == 1",
+			"x != y && x <= 2 || y >= 3",
+			"L[2]",
+			"L[\"a = b\"]",
+			"\"text with (parens) and = signs++\"",
+			"x - -y",
+			"x + +y",
+			"a < b",
+			"/datum/thing"
+		] {
+			assert!(!changes_things(reads), "{}", reads);
+		}
+		for changes in [
+			"f()",
+			"src.bump(1)",
+			"x = 1",
+			"x += 1",
+			"x ||= y",
+			"x <<= 1",
+			"x++",
+			"--x",
+			"L[f()]",
+			"\"[f()]\"",
+			"new /datum/thing()"
+		] {
+			assert!(changes_things(changes), "{}", changes);
+		}
+	}
 
 	#[test]
 	fn whole_numbers_are_shown_in_hex_when_asked() {

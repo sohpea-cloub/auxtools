@@ -103,6 +103,10 @@ value would be. While the world runs, expressions are evaluated with no frame: g
 and global procs only. Expressions can't declare vars or loop, and can't wait: one that
 calls something that sleeps is given up on.
 
+While the world is paused, resting the mouse on a name in the code shows its value in the
+selected frame: `health`, or `target.loc.name` with the mouse on `name`. A hover only
+reads: it doesn't call procs.
+
 `#dis` in the debug console shows the bytecode of the frame's proc, `#dis /proc/name` any
 proc's.
 

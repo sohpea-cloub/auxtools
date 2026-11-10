@@ -150,6 +150,17 @@ pub fn run() {
 	assert_eq!(world.evaluate_in(&frame, "name", "watch")["type"], "text");
 	ok("a result says what kind of value it is, and what's inside it is reached through the expression");
 
+	// The mouse on some code reads it, and that's all
+	for (expression, shown) in [("n", "1"), ("src.items[2]", "\"y\""), ("by == 4 && n <= 1", "1"), ("\"(a = b)\"", "\"(a = b)\"")] {
+		assert_eq!(world.evaluate_in(&frame, expression, "hover")["result"], shown, "{}", expression);
+	}
+	for expression in ["bump(1)", "src.bump(1)", "n = 5", "n += 1", "n++", "leaf(n)", "\"[bump(1)]\""] {
+		let why = world.refused("evaluate", json!({ "expression": expression, "frameId": frame, "context": "hover" }));
+		assert_eq!(why, "a hover doesn't call procs or assign", "{}", expression);
+	}
+	assert_eq!(world.eval("n"), "1");
+	ok("a hover evaluates what reads, and refuses what would call a proc or assign");
+
 	// sc_inside called inside(), and has a local of its own
 	let caller = world.frames(0)[1]["id"].clone();
 	assert_eq!(world.evaluate_in(&caller, "in_caller", "watch")["result"], "77");
@@ -178,7 +189,7 @@ pub fn run() {
 	let mut fails = |world: &mut World, cases: &[(&str, &str)]| {
 		let frame = world.frame_id();
 		for (expression, expected) in cases {
-			for context in ["repl", "watch", "hover"] {
+			for context in ["repl", "watch"] {
 				let why = world.refused("evaluate", json!({ "expression": expression, "frameId": frame, "context": context }));
 				assert!(why.starts_with(expected), "{} in a {} said {:?}", expression, context, why);
 			}

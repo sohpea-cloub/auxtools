@@ -11,6 +11,7 @@ const childProcess = require("child_process");
 const fs = require("fs");
 const path = require("path");
 const vscode = require("vscode");
+const { expressionAt } = require("./expression");
 
 const DEBUG_TYPE = "auxtools";
 const TASK_TYPE = "dreammaker";
@@ -269,7 +270,20 @@ function activate(context) {
 		vscode.commands.registerCommand("auxtools.runDreamDaemon", startCommand("dreamdaemon", true)),
 		vscode.commands.registerCommand("auxtools.attach", attach),
 		// For `${command:auxtools.pickWorld}` in attach configurations
-		vscode.commands.registerCommand("auxtools.pickWorld", () => pickWorld(context))
+		vscode.commands.registerCommand("auxtools.pickWorld", () => pickWorld(context)),
+		// What a hover shows the value of while the world is paused
+		vscode.languages.registerEvaluatableExpressionProvider(
+			{ language: "dm" },
+			{
+				provideEvaluatableExpression(document, position) {
+					const found = expressionAt(document.lineAt(position.line).text, position.character);
+					if (!found) {
+						return undefined;
+					}
+					return new vscode.EvaluatableExpression(new vscode.Range(position.line, found.start, position.line, found.end));
+				},
+			}
+		)
 	);
 }
 

@@ -34,6 +34,7 @@ fn capabilities() {
 		"supportTerminateDebuggee",
 		"supportsConditionalBreakpoints",
 		"supportsConfigurationDoneRequest",
+		"supportsEvaluateForHovers",
 		"supportsExceptionFilterOptions",
 		"supportsExceptionInfoRequest",
 		"supportsFunctionBreakpoints",
