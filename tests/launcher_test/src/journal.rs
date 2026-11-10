@@ -228,6 +228,20 @@ pub fn reloads(pid: u64, code: &Path) {
 	let printed = run(pid, &["log", "--output", "--last", "5"], 0);
 	assert!(printed.contains(" output\n  attach test: "), "log --output said {}", printed);
 	println!("ok: log --output has what the world printed");
+
+	let printed = run(pid, &["status"], 0);
+	let lines: Vec<&str> = printed.lines().collect();
+	assert!(
+		lines.len() == 3
+			&& lines[0] == "running"
+			&& lines[1].starts_with("up ")
+			&& lines[1].contains(" UTC), world.time ")
+			&& !lines[1].contains("rebooted")
+			&& lines[2].starts_with("last hot reload applied: reloaded /value, at "),
+		"status said {}",
+		printed
+	);
+	println!("ok: status says how long the world has been up, and what came of its last hot reload");
 }
 
 /// A reboot goes in the record, whose numbers go on in the new world:
@@ -241,7 +255,8 @@ pub fn reboot(pid: u64, dir: &Path) {
 	assert!(exit == 0 && printed.contains(" the world rebooted (world 2 in this process)"), "wait --reboot gave {}: {}", exit, printed);
 	let number: u64 = printed.trim_start_matches('#').split(' ').next().unwrap().parse().unwrap();
 	assert!(number > before, "the reboot is entry {}, before {}", number, before);
-	assert_eq!(run(pid, &["status"], 0).lines().next(), Some("running"));
+	let printed = run(pid, &["status"], 0);
+	assert!(printed.starts_with("running\nup ") && printed.contains(", rebooted once\n"), "status said {}", printed);
 	println!("ok: wait --reboot waits for the world to reboot, and the new world answers");
 
 	let printed = run(pid, &["log", "--world", "--json"], 0);

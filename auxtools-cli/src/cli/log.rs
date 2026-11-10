@@ -226,6 +226,43 @@ impl World {
 	}
 }
 
+impl World {
+	/// For `status`: how long the world has been up, and its last hot reload
+	pub fn uptime(&mut self) -> Result<()> {
+		let (loaded, up, world_time, loads, last_reload) = match self.request(Request::Uptime)? {
+			Response::Uptime {
+				loaded,
+				up,
+				world_time,
+				loads,
+				last_reload
+			} => (loaded, up, world_time, loads, last_reload),
+			other => return Err(unexpected(&other))
+		};
+		let reboots = match loads {
+			0 | 1 => String::new(),
+			2 => ", rebooted once".to_owned(),
+			n => format!(", rebooted {} times", n - 1)
+		};
+		println!("up {} (since {}), world.time {}{}", duration(up), clock(loaded), number(world_time), reboots);
+		match last_reload {
+			Some(entry) => println!("last {}, at {}", describe(&entry.event).0, clock(entry.time)),
+			None => println!("no hot reload yet")
+		}
+		Ok(())
+	}
+}
+
+/// Seconds, as hours, minutes and seconds
+fn duration(seconds: f64) -> String {
+	let seconds = seconds as u64;
+	match (seconds / 3600, seconds / 60 % 60, seconds % 60) {
+		(0, 0, s) => format!("{}s", s),
+		(0, m, s) => format!("{}m {}s", m, s),
+		(h, m, s) => format!("{}h {}m {}s", h, m, s)
+	}
+}
+
 /// An entry as text: a line that starts with its number, then what there is
 /// to say about it, each line of that indented
 pub fn block(entry: &JournalEntry) -> String {
@@ -343,7 +380,7 @@ pub fn to_json(entry: &JournalEntry) -> serde_json::Value {
 mod tests {
 	use auxtools_cli::server_types::{JournalEntry, JournalEvent, JournalFrame};
 
-	use super::{block, clock, to_json};
+	use super::{block, clock, duration, to_json};
 
 	fn runtime() -> JournalEntry {
 		JournalEntry {
@@ -372,6 +409,11 @@ mod tests {
 	#[test]
 	fn the_time_is_of_the_day_in_utc() {
 		assert_eq!(clock(86_400_000 + 3_723_004), "01:02:03.004 UTC");
+	}
+
+	#[test]
+	fn a_duration_is_in_hours_minutes_and_seconds() {
+		assert_eq!((duration(5.9), duration(65.0), duration(3725.0)), ("5s".to_owned(), "1m 5s".to_owned(), "1h 2m 5s".to_owned()));
 	}
 
 	#[test]

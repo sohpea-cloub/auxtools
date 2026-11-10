@@ -186,7 +186,7 @@ fn command_line(pid: u64, code: &Path) {
 		printed
 	};
 
-	assert_eq!(run(&["status"], 0).trim(), "running");
+	assert_eq!(run(&["status"], 0).lines().next().unwrap_or_default(), "running");
 	let printed = run(&["wait", "--timeout", "1"], 2);
 	assert!(printed.contains("timed out"), "wait said {}", printed);
 
@@ -406,14 +406,14 @@ fn command_line_more(pid: u64, dir: &Path) {
 	// A wait that doesn't hold its pause: the world carries on when it's gone
 	let printed = run(&["wait", "--break", "/proc/value", "--no-hold", "--timeout", "60"], 0);
 	assert!(printed.starts_with("paused at a breakpoint\n#0 /value"), "wait --no-hold said {}", printed);
-	assert_eq!(run(&["status"], 0).trim(), "running");
+	assert_eq!(run(&["status"], 0).lines().next().unwrap_or_default(), "running");
 	println!("ok: a wait that doesn't hold its pause leaves the world running");
 
 	// Breakpoints with a message: each hit prints it, and nothing pauses
 	let printed = run(&["wait", "--break", "/proc/value", "--log", "value() at {world.time > 0}", "--timeout", "3"], 2);
 	assert!(printed.starts_with("value() at 1\n"), "wait --log said {}", printed);
 	assert!(printed.contains("timed out"), "wait --log said {}", printed);
-	assert_eq!(run(&["status"], 0).trim(), "running");
+	assert_eq!(run(&["status"], 0).lines().next().unwrap_or_default(), "running");
 	println!("ok: the command line prints a breakpoint's message at each hit, and the world runs on");
 
 	// A global, watched from a running world; then a var of the proc it
@@ -456,7 +456,7 @@ fn command_line_more(pid: u64, dir: &Path) {
 	let (code, printed) = launcher_command(&["--pid", "4000000000", "status"]);
 	assert_eq!(code, 1);
 	assert!(printed.starts_with("couldn't reach the world in process 4000000000"), "status said {}", printed);
-	assert_eq!(run(&["status"], 0).trim(), "running");
+	assert_eq!(run(&["status"], 0).lines().next().unwrap_or_default(), "running");
 	println!("ok: the command line says what it doesn't understand, and exits with 1");
 }
 

@@ -133,10 +133,13 @@ was started by another version of auxtools: this one can't attach to it.",
 			name: "status",
 			usage: "",
 			about: "Whether the world is running or paused, and if paused, why and where",
-			details: "",
+			details: "The first line is `running`, or `paused` and why; a paused world's stack follows. Then
+how long the world has been up (since it last loaded, and its world.time), and what came of
+its last hot reload.",
 			run: Run::World(|world, args| {
 				Flags::parse(args, &[], &[])?.nothing_else("status")?;
-				world.status()
+				world.status()?;
+				world.uptime()
 			})
 		},
 		Command {
