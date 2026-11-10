@@ -11,7 +11,7 @@ use crate::{
 };
 
 /// A copy of the world's code, to edit
-fn copy_of_the_world() -> PathBuf {
+pub(super) fn copy_of_the_world() -> PathBuf {
 	let dir = std::env::temp_dir().join(format!("dap_test_reloading-{}", std::process::id()));
 	let _ = std::fs::remove_dir_all(&dir);
 	std::fs::create_dir_all(&dir).unwrap();
@@ -33,7 +33,7 @@ fn reloads(output: &str) -> usize {
 }
 
 /// Changes a file, and waits for the world to have the change
-fn edit(world: &mut World, file: &str, old: &str, new: &str) {
+pub(super) fn edit(world: &mut World, file: &str, old: &str, new: &str) {
 	let before = reloads(&world.output);
 	world.marks.edit(file, old, new);
 	world.wait_until("the hot reload", |output| reloads(output) > before);

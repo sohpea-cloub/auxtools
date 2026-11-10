@@ -145,6 +145,10 @@ pub enum Request {
 	},
 	WatchUnset {
 		id: u32
+	},
+	/// The instructions of some code: a proc's, or the old code a frame runs
+	Disassemble {
+		code: CodeRef
 	}
 }
 
@@ -237,7 +241,8 @@ pub enum Response {
 	WatchEnded {
 		id: u32,
 		reason: String
-	}
+	},
+	Disassemble(Result<Disassembly, String>)
 }
 
 #[derive(Serialize, Deserialize, Debug, Hash, PartialEq, Eq, Clone)]
@@ -250,6 +255,63 @@ pub struct ProcRef {
 pub struct InstructionRef {
 	pub proc: ProcRef,
 	pub offset: u32
+}
+
+/// Some code: a proc's as it is now, or code a frame still runs that a hot
+/// reload replaced. An instruction of it is known by one number, its
+/// [`address`]: what clients that show bytecode want.
+#[derive(Serialize, Deserialize, Debug, Hash, PartialEq, Eq, Clone, Copy)]
+pub struct CodeRef {
+	/// The engine's id of the proc, which is the same in each world started
+	/// from the same .dmb
+	pub proc: u32,
+	/// 0 for the proc's code now; else the number the world gave the old
+	/// code, from 1, which lasts until the world reboots
+	pub old: u16
+}
+
+/// An instruction's address: the proc's id, which of its codes, and the
+/// offset in words, as `0xPPPPPPPPCCCCOOOO`. Each code's instructions are in
+/// order, one word to one.
+#[allow(dead_code)]
+pub const fn address(code: CodeRef, offset: u16) -> u64 {
+	(code.proc as u64) << 32 | (code.old as u64) << 16 | offset as u64
+}
+
+/// The code and offset an [`address`] is of
+#[allow(dead_code)]
+pub const fn from_address(address: u64) -> (CodeRef, u16) {
+	let code = CodeRef {
+		proc: (address >> 32) as u32,
+		old: (address >> 16) as u16
+	};
+	(code, address as u16)
+}
+
+/// The instructions of some code (`Request::Disassemble`)
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct Disassembly {
+	pub proc: ProcRef,
+	/// The file its DbgFile names
+	pub file: Option<String>,
+	/// In order. Words past the last that could be read, if there are any,
+	/// are each one with no text, and `error` says why.
+	pub instructions: Vec<BytecodeInstruction>,
+	pub error: Option<String>
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct BytecodeInstruction {
+	/// In words, from the code's start
+	pub offset: u16,
+	/// Its opcode and operands, as the code has them (without the debugger's
+	/// breakpoints)
+	pub words: Vec<u32>,
+	/// As dmasm writes it
+	pub text: String,
+	/// The line it's on, by the DbgLine before it (a line of the file as it
+	/// was, for old code)
+	pub line: Option<u32>
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
@@ -508,7 +570,10 @@ pub struct StackFrame {
 	pub file: Option<String>,
 	/// It started before a hot reload changed its proc's code, and runs the
 	/// code it started with: its line is a line of the file as it was then
-	pub old_code: bool
+	pub old_code: bool,
+	/// The code it runs, which `Request::Disassemble` gives the instructions
+	/// of: with `instruction.offset`, its instruction's [`address`]
+	pub code: CodeRef
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]

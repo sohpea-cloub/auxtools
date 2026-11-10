@@ -508,6 +508,7 @@ impl Adapter {
 			"breakpointLocations" => arguments(args).and_then(|args| self.breakpoint_locations(args)),
 			"loadedSources" => self.loaded_sources(),
 			"terminate" => self.terminate(),
+			"disassemble" => arguments(args).and_then(|args| self.disassemble(args)),
 			"disconnect" => {
 				let args: Option<DisconnectArguments> = arguments(args).ok();
 				self.disconnect(args.and_then(|args| args.terminateDebuggee));
@@ -538,6 +539,7 @@ impl Adapter {
 			supportsBreakpointLocationsRequest: Some(true),
 			supportsDataBreakpoints: Some(true),
 			supportsLoadedSourcesRequest: Some(true),
+			supportsDisassembleRequest: Some(true),
 			..Default::default()
 		})?;
 		// What dap-types has no fields for
@@ -1488,7 +1490,7 @@ impl Adapter {
 				// One that runs what its proc's code was before a hot reload
 				// is on a line of the file as it was
 				name: if frame.old_code { format!("{} (old code)", proc.path) } else { proc.path.clone() },
-				instructionPointerReference: Some(format!("{}#{}@{}", proc.path, proc.override_id, frame.instruction.offset)),
+				instructionPointerReference: Some(address_text(aux::address(frame.code, frame.instruction.offset as u16))),
 				// Has to be more than 0 for the client to show an exception
 				column: if i == 0 { 1 } else { 0 },
 				..Default::default()
@@ -1729,6 +1731,93 @@ impl Adapter {
 		}
 	}
 
+	/// Instructions around an address, as a disassembly view wants them:
+	/// exactly as many as it asks for, those before and after the code
+	/// there marked as nothing
+	fn disassemble(&mut self, args: DisassembleArguments) -> Handled {
+		let count = usize::try_from(args.instructionCount).map_err(|_| "the instruction count is negative".to_owned())?;
+		let reference = parse_address(&args.memoryReference).ok_or_else(|| format!("{:?} isn't an address", args.memoryReference))?;
+		// An address counts words, as the code does
+		let reference = reference.wrapping_add_signed(args.offset.unwrap_or(0));
+		let (code, offset) = aux::from_address(reference);
+		let disassembly = match self.request(&AuxRequest::Disassemble { code })? {
+			AuxResponse::Disassemble(Ok(disassembly)) => Some(disassembly),
+			// Past the start or the end of some code, there's none
+			AuxResponse::Disassemble(Err(_)) => None,
+			other => return Err(unexpected(other))
+		};
+
+		let empty = vec![];
+		let listed = disassembly.as_ref().map_or(&empty, |disassembly| &disassembly.instructions);
+		// Old code's lines are lines of the file as it was, which the
+		// client doesn't have to show
+		let file = disassembly
+			.as_ref()
+			.filter(|_| code.old == 0)
+			.and_then(|disassembly| disassembly.file.clone());
+		let symbol = disassembly.as_ref().map(|disassembly| {
+			let path = &disassembly.proc.path;
+			if code.old != 0 {
+				format!("{} (old code)", path)
+			} else {
+				path.clone()
+			}
+		});
+		let error = disassembly.as_ref().and_then(|disassembly| disassembly.error.clone());
+
+		let instructions: Vec<DisassembledInstruction> =
+			instruction_window(reference, code, offset, listed, args.instructionOffset.unwrap_or(0), count)
+				.into_iter()
+				.map(|place| match place {
+					Ok(index) => {
+						let instruction = &listed[index];
+						let text = match (&instruction.text, &error) {
+							(text, _) if !text.is_empty() => text.clone(),
+							(_, Some(error)) => format!("(not read: {})", error),
+							(_, None) => "(not read)".to_owned()
+						};
+						DisassembledInstruction {
+							address: address_text(aux::address(code, instruction.offset)),
+							instructionBytes: Some(instruction.words.iter().map(|word| format!("{:08X}", word)).collect::<Vec<_>>().join(" ")),
+							instruction: text,
+							symbol: symbol.clone(),
+							location: file.as_deref().filter(|_| instruction.line.is_some()).map(|file| self.file_source(file)),
+							line: instruction.line.map(i64::from),
+							..Default::default()
+						}
+					}
+					Err(address) => DisassembledInstruction {
+						address: address_text(address),
+						instruction: String::new(),
+						..Default::default()
+					}
+				})
+				.collect();
+
+		// Marked for clients that grey out what isn't code
+		let mut instructions = json(instructions)?;
+		for instruction in instructions.as_array_mut().into_iter().flatten() {
+			if instruction["instructionBytes"].is_null() {
+				instruction["presentationHint"] = "invalid".into();
+			}
+		}
+		Ok(serde_json::json!({ "instructions": instructions }))
+	}
+
+	/// A file of the world's code, as the client is shown it
+	fn file_source(&self, file: &str) -> Source {
+		let file = file.replace('\\', "/");
+		let path = match &self.root {
+			Some(root) => root.join(&file),
+			None => PathBuf::from(&file)
+		};
+		Source {
+			name: path.file_name().map(|name| name.to_string_lossy().into_owned()),
+			path: Some(path.to_string_lossy().into_owned()),
+			..Default::default()
+		}
+	}
+
 	fn source(&mut self, args: SourceArguments) -> Handled {
 		let reference = args.source.and_then(|source| source.sourceReference).unwrap_or(args.sourceReference);
 		match (reference, &self.stddef) {
@@ -1957,6 +2046,60 @@ fn hit_condition(text: Option<&str>) -> Result<Option<aux::HitCondition>, String
 	}
 }
 
+/// An instruction's address as a client is given it: hex, as long as any
+fn address_text(address: u64) -> String {
+	format!("0x{:016X}", address)
+}
+
+/// An address a client gives back: hex after `0x`, else decimal
+fn parse_address(text: &str) -> Option<u64> {
+	let text = text.trim();
+	match text.strip_prefix("0x").or_else(|| text.strip_prefix("0X")) {
+		Some(hex) => u64::from_str_radix(hex, 16).ok(),
+		None => text.parse().ok()
+	}
+}
+
+/// What's at each place in a window of `count` instructions that starts
+/// `shift` instructions on from the one at `offset` in some code (at
+/// `reference`): the index of one of its `instructions`, or for a place
+/// before or after them, the address it's given. Those go on a word apart
+/// from the code's start and end, so every address is in order.
+fn instruction_window(
+	reference: u64,
+	code: aux::CodeRef,
+	offset: u16,
+	instructions: &[aux::BytecodeInstruction],
+	shift: i64,
+	count: usize
+) -> Vec<Result<usize, u64>> {
+	let Some(last) = instructions.last() else {
+		// No code here: each place is a word on from the last
+		return (0..count as i64).map(|k| Err(reference.wrapping_add_signed(shift + k))).collect();
+	};
+	let start = aux::address(code, 0);
+	let length = i64::from(last.offset) + last.words.len() as i64;
+	let listed = instructions.len() as i64;
+	// The instruction the offset is in, or how far past the end it is
+	let at = if i64::from(offset) >= length {
+		listed + i64::from(offset) - length
+	} else {
+		instructions.partition_point(|instruction| instruction.offset <= offset) as i64 - 1
+	};
+	(0..count as i64)
+		.map(|k| {
+			let index = at + shift + k;
+			if index < 0 {
+				Err(start.wrapping_add_signed(index))
+			} else if index >= listed {
+				Err(start.wrapping_add_signed(length + index - listed))
+			} else {
+				Ok(index as usize)
+			}
+		})
+		.collect()
+}
+
 /// The proc a function breakpoint names: its path, and after a `#` which of
 /// its definitions, the first unless it says
 fn named_proc(name: &str) -> ProcRef {
@@ -2013,7 +2156,7 @@ mod tests {
 
 	use auxtools_cli::server_types::{HitCondition, LogPart, RuntimeFilter};
 
-	use super::{changes_things, completion_place, file_name_in, named_proc, runtime_place, shown};
+	use super::{changes_things, completion_place, file_name_in, instruction_window, named_proc, parse_address, runtime_place, shown};
 
 	#[test]
 	fn byond_says_where_a_runtime_error_was() {
@@ -2229,5 +2372,46 @@ mod tests {
 		let file = Path::new("other").join("living.dm");
 		assert_eq!(file_name_in(Some(&root), &file.to_string_lossy()), file.to_string_lossy());
 		assert_eq!(file_name_in(None, "living.dm"), "living.dm");
+	}
+
+	/// Code of three instructions: two words, one, three
+	fn three() -> Vec<auxtools_cli::server_types::BytecodeInstruction> {
+		[(0, 2), (2, 1), (3, 3)]
+			.into_iter()
+			.map(|(offset, length)| auxtools_cli::server_types::BytecodeInstruction {
+				offset,
+				words: vec![0; length],
+				text: "x".to_owned(),
+				line: None
+			})
+			.collect()
+	}
+
+	#[test]
+	fn an_address_is_the_proc_its_code_and_the_offset() {
+		use auxtools_cli::server_types::{address, from_address, CodeRef};
+		let code = CodeRef { proc: 0x2a, old: 3 };
+		assert_eq!(address(code, 0x10), 0x0000_002a_0003_0010);
+		assert_eq!(from_address(0x0000_002a_0003_0010), (code, 0x10));
+		assert_eq!(parse_address("0x0000002A00030010"), Some(0x0000_002a_0003_0010));
+		assert_eq!(parse_address("16"), Some(16));
+		assert_eq!(parse_address("nowhere"), None);
+	}
+
+	#[test]
+	fn a_window_has_as_many_places_as_asked_for_in_order() {
+		use auxtools_cli::server_types::{address, CodeRef};
+		let code = CodeRef { proc: 7, old: 0 };
+		let start = address(code, 0);
+		let listed = three();
+		// From the second instruction, two back and five on
+		let window = instruction_window(start + 2, code, 2, &listed, -3, 6);
+		assert_eq!(window, [Err(start - 2), Err(start - 1), Ok(0), Ok(1), Ok(2), Err(start + 6)]);
+		// From the middle of the first, which is the first
+		assert_eq!(instruction_window(start + 1, code, 1, &listed, 0, 2), [Ok(0), Ok(1)]);
+		// From past the end
+		assert_eq!(instruction_window(start + 7, code, 7, &listed, -2, 3), [Ok(2), Err(start + 6), Err(start + 7)]);
+		// Where there's no code
+		assert_eq!(instruction_window(100, code, 100, &[], -1, 3), [Err(99), Err(100), Err(101)]);
 	}
 }

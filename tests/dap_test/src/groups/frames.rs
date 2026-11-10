@@ -30,12 +30,14 @@ pub fn run() {
 	ok("a frame's source is its file, in the directory of the world's code");
 
 	let reference = frames[0]["instructionPointerReference"].as_str().unwrap();
-	let offset = reference.strip_prefix("/leaf#0@").unwrap_or_else(|| panic!("the top frame's instruction is {}", reference));
-	assert!(offset.parse::<u32>().is_ok(), "the top frame's instruction is {}", reference);
+	// Its proc, which of its codes and the offset, in one hex number (see
+	// the bytecode group)
+	let hex = reference.strip_prefix("0x").unwrap_or_else(|| panic!("the top frame's instruction is {}", reference));
+	assert!(hex.len() == 16 && u64::from_str_radix(hex, 16).is_ok(), "the top frame's instruction is {}", reference);
 	assert_eq!((&frames[0]["column"], &frames[1]["column"]), (&json!(1), &json!(0)));
 	let ids: Vec<u64> = frames.iter().map(|f| f["id"].as_u64().unwrap()).collect();
 	assert_eq!(ids, [0, 1, 2, 3]);
-	ok("a frame says which instruction it's on: its proc, the definition and the offset");
+	ok("a frame says which instruction it's on, as an address");
 
 	let page = world.request("stackTrace", json!({ "threadId": 0, "startFrame": 1, "levels": 2 }));
 	let names: Vec<&str> = page["stackFrames"].as_array().unwrap().iter().map(|f| f["name"].as_str().unwrap()).collect();

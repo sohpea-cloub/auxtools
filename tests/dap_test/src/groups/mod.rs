@@ -1,6 +1,7 @@
 //! The checks, a group to a file. Each group debugs a world or two of its own.
 
 pub mod basics;
+pub mod bytecode;
 pub mod breakpoints;
 pub mod conditions;
 pub mod expressions;

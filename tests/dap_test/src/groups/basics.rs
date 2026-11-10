@@ -177,6 +177,7 @@ fn capabilities() {
 		"supportsConditionalBreakpoints",
 		"supportsConfigurationDoneRequest",
 		"supportsDataBreakpoints",
+		"supportsDisassembleRequest",
 		"supportsEvaluateForHovers",
 		"supportsExceptionFilterOptions",
 		"supportsExceptionInfoRequest",

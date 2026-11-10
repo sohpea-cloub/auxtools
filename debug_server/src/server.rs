@@ -268,6 +268,9 @@ pub struct Server {
 	/// many procs the world had when they were counted
 	procs_by_file: Option<(u32, HashMap<String, Vec<u32>>)>,
 	moved_breakpoints: hot_reload::MovedBreakpoints<(ClientId, bool)>,
+	/// Where the old code is that frames have been seen running, each by
+	/// its number less one (`CodeRef::old`)
+	old_codes: RefCell<Vec<usize>>,
 	app: Command<'static>
 }
 
@@ -337,6 +340,7 @@ impl Server {
 			eval_given: vec![],
 			hold: None,
 			procs_by_file: None,
+			old_codes: RefCell::new(vec![]),
 			app: Self::setup_app()
 		})
 	}
@@ -452,6 +456,88 @@ impl Server {
 			return None;
 		}
 		Some(old)
+	}
+
+	/// The code a frame runs: its proc's, or the `old` code it started on
+	/// (`old_code_of`), which is given a number the first time it's seen
+	fn code_of(&self, frame: &debug::StackFrame, old: bool) -> CodeRef {
+		let mut code = CodeRef {
+			proc: frame.proc.id.0,
+			old: 0
+		};
+		if old {
+			let running = unsafe { *(*frame.context).bytecode() } as usize;
+			let mut old_codes = self.old_codes.borrow_mut();
+			let number = match old_codes.iter().position(|&old| old == running) {
+				Some(at) => at + 1,
+				None => {
+					old_codes.push(running);
+					old_codes.len()
+				}
+			};
+			code.old = u16::try_from(number).unwrap_or(u16::MAX);
+		}
+		code
+	}
+
+	/// The instructions of some code, as `Request::Disassemble` gives them
+	fn disassemble(&self, code: CodeRef) -> Result<Disassembly, String> {
+		let proc = Proc::from_id(raw_types::procs::ProcId(code.proc)).ok_or_else(|| format!("the world has no proc {:#x}", code.proc))?;
+		let bytecode = if code.old == 0 {
+			original_bytecode(&proc)
+		} else {
+			let running = self.old_codes.borrow().get(code.old as usize - 1).copied();
+			let old = running.and_then(|running| Some((running, auxtools::bytecode_at(running as *const u32)?)));
+			match old {
+				Some((running, old)) => crate::instruction_hooking::unpatched(running as *const u32, old),
+				None => return Err(format!("{} has no old code {}", proc.path, code.old))
+			}
+		};
+
+		let mut env = disassemble_env::DisassembleEnv;
+		let (nodes, error) = dmasm::disassembler::disassemble(&bytecode, &mut env);
+		// Before its first line, an instruction is on that line, as a frame is
+		let first_line = nodes.iter().find_map(|node| match node {
+			dmasm::Node::Instruction(dmasm::Instruction::DbgLine(line), _) => Some(*line),
+			_ => None
+		});
+		let mut line = first_line;
+		let mut instructions = vec![];
+		let mut read = 0;
+		for node in &nodes {
+			let dmasm::Node::Instruction(ins, debug) = node else {
+				continue;
+			};
+			if let dmasm::Instruction::DbgLine(at) = ins {
+				line = Some(*at);
+			}
+			instructions.push(BytecodeInstruction {
+				offset: debug.offset as u16,
+				words: debug.bytecode.to_vec(),
+				text: ins.to_string(),
+				line
+			});
+			read = debug.offset as usize + debug.bytecode.len();
+		}
+		// What couldn't be read is there all the same
+		for (at, word) in bytecode.iter().enumerate().skip(read) {
+			instructions.push(BytecodeInstruction {
+				offset: at as u16,
+				words: vec![*word],
+				text: String::new(),
+				line: None
+			});
+		}
+
+		Ok(Disassembly {
+			proc: ProcRef {
+				path: proc.path.clone(),
+				override_id: proc.override_id()
+			},
+			file: Self::file_of(&proc),
+			instructions,
+			error: error.map(|error| format!("{:?}", error))
+		})
 	}
 
 	/// The line a frame is on. A frame that's `asleep` is where it will wake,
@@ -1252,6 +1338,7 @@ impl Server {
 						}),
 						_ => i as u32
 					};
+					let old_code = Self::old_code_of(&stack[i]).is_some();
 					frames.push(StackFrame {
 						id,
 						instruction: InstructionRef {
@@ -1261,7 +1348,8 @@ impl Server {
 						// A sleeping stack's innermost frame is the one asleep
 						line: self.frame_line_number(&stack[i], stack_id != 0 && i == 0),
 						file: Self::file_of(&stack[i].proc),
-						old_code: Self::old_code_of(&stack[i]).is_some()
+						old_code,
+						code: self.code_of(&stack[i], old_code)
 					});
 				}
 
@@ -2098,6 +2186,11 @@ impl Server {
 					client.debugs = false;
 				}
 				self.send_or_disconnect(Response::Ack);
+			}
+
+			Request::Disassemble { code } => {
+				let disassembly = self.disassemble(code);
+				self.send_or_disconnect(Response::Disassemble(disassembly));
 			}
 
 			// The following requests are special cases and handled outside of

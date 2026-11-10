@@ -160,6 +160,17 @@ is before it.
 `#dis` in the debug console shows the bytecode of the frame's proc, `#dis /proc/name` any
 proc's.
 
+## Bytecode
+
+For work on DM's bytecode itself: while the world is paused, right-click a frame in the
+call stack and pick **Open Disassembly View**. It shows the instructions of the frame's
+proc as dmasm writes them (`DbgLine 12`, `GetVar local(0)`, `PushInt 1`, `Add`, ...),
+with each one's words in hex and the source lines between them. The frame's instruction
+is marked. An address is the proc's id, which of its codes, and the offset in words, in
+one number (`0x0000002A00000013` is offset `0x13` in proc `0x2A`). A frame that started
+before a hot reload changed its proc shows the old code it still runs (its source lines
+aren't shown: they were lines of the file as it was then).
+
 ## Hot reloading (experimental)
 
 While a world runs, saving a file swaps the procs that changed into it, with or without

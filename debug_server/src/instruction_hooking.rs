@@ -602,8 +602,12 @@ pub fn hooked_offsets(proc: &Proc) -> Vec<u32> {
 /// The proc's bytecode without any of our breakpoints patched into it.
 pub fn original_bytecode(proc: &Proc) -> Vec<u32> {
 	let (start, count) = unsafe { proc.bytecode_mut_ptr() };
-	let mut bytecode = unsafe { std::slice::from_raw_parts(start, count as usize) }.to_vec();
+	let bytecode = unsafe { std::slice::from_raw_parts(start, count as usize) }.to_vec();
+	unpatched(start, bytecode)
+}
 
+/// Bytecode read from `start`, without any of our breakpoints patched into it
+pub fn unpatched(start: *const u32, mut bytecode: Vec<u32>) -> Vec<u32> {
 	for (opcode_ptr, original) in ORIGINAL_BYTECODE.lock().unwrap().iter() {
 		// The map holds every proc's breakpoints, and most aren't in this one
 		let Some(offset) = opcode_ptr.0.checked_sub(start as usize).map(|bytes| bytes / std::mem::size_of::<u32>()) else {
