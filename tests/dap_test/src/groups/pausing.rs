@@ -74,7 +74,26 @@ pub fn run() {
 	assert_eq!(world.evaluate_in(&frame, "napped = 11", "repl")["result"], "11");
 	ok("an expression in a sleeping proc's frame, and an assignment to its local");
 
+	// It wakes a second later
+	world.request("next", json!({ "threadId": nap }));
+	world.stop_on("step", "/nap", "nap_3");
+	assert_eq!(world.local("napped"), "11");
+	// Back in the block that called it, which is all there is
+	assert_eq!(world.step("next").proc, "/sc_nap");
+	world.request("next", json!({ "threadId": 0 }));
+	world.finish("nap");
+	assert!(!world.has_event("stopped"), "a step off the end of a sleeping proc's caller stopped somewhere");
+	ok("a step in a sleeping proc stops in it when it wakes");
+
+	world.break_on(&["leaf_1"]);
+	world.run("nap");
+	world.stop_on("breakpoint", "/leaf", "leaf_1");
+	world.break_on(&[]);
+	let nap = world.threads().iter().find(|(_, name)| name == "/nap").unwrap().0;
+	world.request("stepOut", json!({ "threadId": nap }));
+	assert_eq!(world.stop().proc, "/sc_nap");
 	world.resume_through("nap");
+	ok("stepOut of a sleeping proc stops in its caller once it has woken and returned");
 
 	world.break_on(&["leaf_1"]);
 	world.run("many");

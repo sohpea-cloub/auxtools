@@ -113,8 +113,19 @@ fn get_proc_ctx(stack_id: u32) -> (*mut raw_types::procs::ExecutionContext, *mut
 			return running;
 		}
 
+		// BYOND keeps a sleeping stack the other way up: from the outermost
+		// frame, each one's "parent" is the frame it called
 		let instance = *buffer.add(front + (stack_id - 1) as usize);
-		((*instance).context, std::ptr::null_mut())
+		let mut caller = std::ptr::null_mut();
+		let mut ctx = (*instance).context;
+		loop {
+			let called = *(*ctx).parent_context();
+			if called.is_null() {
+				return (ctx, caller);
+			}
+			caller = ctx;
+			ctx = called;
+		}
 	}
 }
 
