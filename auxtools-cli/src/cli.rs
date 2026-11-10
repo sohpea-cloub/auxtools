@@ -192,19 +192,19 @@ them, so `log --runtimes --follow` watches them without pausing the world.
 		},
 		Command {
 			name: "eval",
-			usage: "EXPRESSION [--frame N]",
+			usage: "EXPRESSION | -f FILE | - [--frame N]",
 			about: "The value of a DM expression",
 			details: "In a paused world, the expression is in a frame of the stack: it can name that
 proc's vars, and `src`. In a running world it can name globals and call procs.
 When it fails, it says why on stderr and exits with 1: for a runtime error in a proc
 it called, with that proc's file and line and the procs between it and the expression.
+  -f FILE      Read the expression from FILE, where no shell can change its quotes or paths
+  -            Read the expression from stdin
   --frame N    The Nth frame of the stack, from 0, the innermost (the default)",
 			run: Run::World(|world, args| {
-				let flags = Flags::parse(args, &["--frame"], &[])?;
-				if flags.rest.is_empty() {
-					return Err("eval what?".into());
-				}
-				world.eval(&flags.rest.join(" "), flags.number("--frame")?)
+				let flags = Flags::parse(args, &["--frame", "-f"], &[])?;
+				let expression = expression(&flags.rest, flags.value("-f"), read_stdin)?;
+				world.eval(&expression, flags.number("--frame")?)
 			})
 		},
 	]),
@@ -295,7 +295,10 @@ wait --reload [--since N] [--timeout SECONDS] [--json]
   Start it before saving the change, or give --since.
 wait --reboot [--since N] [--timeout SECONDS] [--json]
   Waits for the world to reboot (or for the first load after entry N), and for the new
-  world to answer. Exit code 3 if the world ends instead.",
+  world to answer. Exit code 3 if the world ends instead.
+
+An EXPRESSION, CONDITION or MESSAGE given as @FILE is read from FILE (@@ for one that
+starts with @).",
 			run: Run::World(wait)
 		},
 		Command {
@@ -559,14 +562,60 @@ fn wait(world: &mut World, args: &[String]) -> Result<()> {
 	flags.nothing_else("wait")?;
 	world.wait(Wait {
 		breaks: flags.values("--break").map(str::to_owned).collect(),
-		changes: flags.values("--change").map(str::to_owned).collect(),
+		changes: flags.values("--change").map(given_text).collect::<Result<_>>()?,
 		frame: flags.number::<u32>("--frame")?.unwrap_or(0),
-		condition: flags.value("--if").map(str::to_owned),
+		condition: flags.value("--if").map(given_text).transpose()?,
 		runtimes: flags.has("--runtimes") || flags.has("--caught"),
 		caught: flags.has("--caught"),
 		timeout: flags.number::<f64>("--timeout")?.map(Duration::from_secs_f64),
 		hold: !flags.has("--no-hold")
 	})
+}
+
+/// An expression or a message as an option was given it: `@FILE` is what's
+/// in FILE, `@@...` is `@...`. A shell can't mangle what's in a file.
+fn given_text(value: &str) -> Result<String> {
+	match value.strip_prefix('@') {
+		Some(rest) if rest.starts_with('@') => Ok(rest.to_owned()),
+		Some(file) => read_text(file),
+		None => Ok(value.to_owned())
+	}
+}
+
+/// What's in a file, without the line end it finishes with
+fn read_text(file: &str) -> Result<String> {
+	let text = std::fs::read_to_string(file).map_err(|e| format!("couldn't read {}: {}", file, e))?;
+	Ok(text.trim_end_matches(['\r', '\n']).to_owned())
+}
+
+fn read_stdin() -> Result<String> {
+	use std::io::{IsTerminal, Read};
+	// Nobody would type it in: an agent waiting on us would wait forever
+	if io::stdin().is_terminal() {
+		return Err("`-` reads the expression from stdin, and stdin is a terminal here".into());
+	}
+	let mut text = String::new();
+	io::stdin().read_to_string(&mut text).map_err(|e| format!("couldn't read stdin: {}", e))?;
+	Ok(text.trim_end_matches(['\r', '\n']).to_owned())
+}
+
+/// `eval`'s expression: its words, what's in `-f FILE`, or stdin for `-`
+fn expression(words: &[String], file: Option<&str>, stdin: impl FnOnce() -> Result<String>) -> Result<String> {
+	let expression = match (words, file) {
+		([], None) => return Err("eval what?".into()),
+		([], Some(file)) => read_text(file)?,
+		([dash], None) if dash == "-" => stdin()?,
+		(_, None) => words.join(" "),
+		(_, Some(_)) => return Err("eval takes one expression: its words, -f FILE or -".into())
+	};
+	if expression.trim().is_empty() {
+		return Err(match file {
+			Some(file) => format!("{} has no expression in it", file),
+			None => "stdin had no expression on it".to_owned()
+		}
+		.into());
+	}
+	Ok(expression)
 }
 
 fn only_world() -> Result<u32> {
@@ -1058,7 +1107,7 @@ fn unexpected(response: &Response) -> Failure {
 
 #[cfg(test)]
 mod tests {
-	use super::{command, describe, overview, parse, Flags, COMMANDS};
+	use super::{command, describe, expression, given_text, overview, parse, Failure, Flags, COMMANDS};
 
 	fn args(args: &[&str]) -> Vec<String> {
 		args.iter().map(|arg| (*arg).to_owned()).collect()
@@ -1133,6 +1182,63 @@ mod tests {
 	fn the_last_of_a_flag_given_twice_counts() {
 		let flags = Flags::parse(&args(&["--frame", "1", "--frame", "3"]), &["--frame"], &[]).ok().unwrap();
 		assert_eq!(flags.value("--frame"), Some("3"));
+	}
+
+	/// A file of its own for a test, which goes when it's dropped
+	struct Scratch(std::path::PathBuf);
+
+	impl Scratch {
+		fn new(name: &str, text: &str) -> Self {
+			let path = std::env::temp_dir().join(format!("auxtools-cli-{}-{}", std::process::id(), name));
+			std::fs::write(&path, text).unwrap();
+			Self(path)
+		}
+
+		fn path(&self) -> &str {
+			self.0.to_str().unwrap()
+		}
+	}
+
+	impl Drop for Scratch {
+		fn drop(&mut self) {
+			let _ = std::fs::remove_file(&self.0);
+		}
+	}
+
+	#[test]
+	fn an_option_reads_its_text_from_a_file_after_an_at() {
+		let file = Scratch::new("given", "\"a b\" == /datum/x\r\n");
+		assert_eq!(given_text("x > 1").ok().unwrap(), "x > 1");
+		assert_eq!(given_text(&format!("@{}", file.path())).ok().unwrap(), "\"a b\" == /datum/x");
+		assert_eq!(given_text("@@home").ok().unwrap(), "@home");
+		let Err(Failure(1, why)) = given_text("@/no/such/file") else {
+			panic!("a file that isn't there was read");
+		};
+		assert!(why.starts_with("couldn't read /no/such/file: "), "{}", why);
+	}
+
+	#[test]
+	fn evals_expression_is_its_words_a_file_or_stdin() {
+		let none = || -> super::Result<String> { panic!("stdin was read") };
+		assert_eq!(expression(&args(&["6", "*", "7"]), None, none).ok().unwrap(), "6 * 7");
+		let file = Scratch::new("expression", "list(1, \"two\")\n\n");
+		assert_eq!(expression(&[], Some(file.path()), none).ok().unwrap(), "list(1, \"two\")");
+		assert_eq!(expression(&args(&["-"]), None, || Ok("1 + 1".to_owned())).ok().unwrap(), "1 + 1");
+		// A negative number is an expression, not stdin
+		assert_eq!(expression(&args(&["-", "1"]), None, none).ok().unwrap(), "- 1");
+		for (words, file, said) in [
+			(&[][..], None, "eval what?"),
+			(&["1"][..], Some(file.path()), "eval takes one expression: its words, -f FILE or -")
+		] {
+			let Err(Failure(1, why)) = expression(&args(words), file, none) else {
+				panic!("{:?} {:?} was an expression", words, file);
+			};
+			assert_eq!(why, said);
+		}
+		let Err(Failure(1, why)) = expression(&args(&["-"]), None, || Ok("\n".to_owned())) else {
+			panic!("nothing was an expression");
+		};
+		assert_eq!(why, "stdin had no expression on it");
 	}
 
 	#[test]

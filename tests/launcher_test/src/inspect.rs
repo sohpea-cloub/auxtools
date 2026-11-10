@@ -58,7 +58,7 @@ pub fn command_line_inspect(pid: u64, dir: &Path, code: &Path) {
 	let pid = pid.to_string();
 	let pid = pid.as_str();
 	eval_failures(pid, code);
-	let _ = dir;
+	from_files(pid, dir);
 }
 
 /// `eval` fails on stderr with exit code 1, whatever went wrong, and a
@@ -91,4 +91,38 @@ fn eval_failures(pid: &str, code: &Path) {
 	}
 	run(pid, &["continue"], 0);
 	println!("ok: every way eval fails is on stderr, with exit code 1 and nothing on stdout");
+}
+
+/// Expressions and messages from files and stdin, which no shell gets to
+/// change on the way
+fn from_files(pid: &str, dir: &Path) {
+	let file = |name: &str, text: &str| {
+		let path = dir.join(name);
+		std::fs::write(&path, text).unwrap();
+		path.to_str().unwrap().to_owned()
+	};
+	let expression = file("expression.txt", "\"[\"a b\"] /datum/x\" + \"!\"\n");
+	assert_eq!(run(pid, &["eval", "-f", &expression], 0).out.trim(), "\"a b /datum/x!\"");
+	let ran = auxtools(pid, &["eval", "-"], Some("6 * 7\n"));
+	assert_eq!((ran.code, ran.out.trim()), (0, "42"), "eval - said {}{}", ran.out, ran.err);
+	let said = fails(pid, &["eval", "-f", "no such file.txt"]);
+	assert!(said.starts_with("couldn't read no such file.txt: "), "eval -f said {}", said);
+	println!("ok: eval reads its expression from a file, or stdin");
+
+	let never = file("never.txt", "1 == 2\n");
+	let ran = run(pid, &["wait", "--break", "/proc/value", "--if", &format!("@{}", never), "--timeout", "2"], 2);
+	assert!(ran.err.contains("timed out"), "wait said {}{}", ran.out, ran.err);
+	let message = file("message.txt", "value() said \"{1 + 1}\"\n");
+	let ran = run(pid, &["wait", "--break", "/proc/value", "--log", &format!("@{}", message), "--timeout", "2"], 2);
+	assert!(ran.out.starts_with("value() said \"2\"\n"), "wait --log said {}", ran.out);
+	let watched = file("watched.txt", "rounds");
+	let ran = run(pid, &["wait", "--change", &format!("@{}", watched), "--timeout", "60"], 0);
+	assert!(ran.out.starts_with("watching rounds, now "), "wait --change said {}", ran.out);
+	run(pid, &["continue"], 0);
+	// Two @s are one, and no file
+	let said = fails(pid, &["wait", "--break", "/proc/value", "--if", &format!("@@{}", never)]);
+	assert!(said.starts_with("couldn't break at /proc/value: the condition doesn't compile"), "wait said {}", said);
+	let said = fails(pid, &["wait", "--break", "/proc/value", "--if", "@no such file.txt"]);
+	assert!(said.starts_with("couldn't read no such file.txt: "), "wait said {}", said);
+	println!("ok: wait's --if, --log and --change read their text from @FILE, and @@ is a plain @");
 }
