@@ -234,7 +234,7 @@ fn command_line(pid: u64, code: &Path) {
 	let printed = run(&["wait", "--break", "/proc/value", "--if", "1 == 2", "--timeout", "2"], 2);
 	assert!(printed.contains("timed out"), "wait said {}", printed);
 	let printed = run(&["wait", "--break", "nowhere.dm:3"], 1);
-	assert!(printed.contains("no proc in nowhere.dm"), "wait said {}", printed);
+	assert!(printed.contains("the world has no code from a file called nowhere.dm"), "wait said {}", printed);
 	println!("ok: the command line paused the world, and its waits time out and say what's wrong");
 }
 

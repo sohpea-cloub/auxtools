@@ -60,6 +60,7 @@ pub fn command_line_inspect(pid: u64, dir: &Path, code: &Path) {
 	eval_failures(pid, code);
 	from_files(pid, dir);
 	procs(pid, code);
+	where_breakpoints_bound(pid, code);
 }
 
 /// `eval` fails on stderr with exit code 1, whatever went wrong, and a
@@ -169,4 +170,45 @@ fn procs(pid: &str, code: &Path) {
 	);
 	assert_eq!(printed, expected);
 	println!("ok: dis prints a proc's instructions with their offsets, and where each line starts");
+}
+
+/// wait says where each of its breakpoints went, and fails before waiting
+/// on a place the world doesn't have
+fn where_breakpoints_bound(pid: &str, code: &Path) {
+	let declared = line_of(code, "/proc/value()");
+	let ran = run(pid, &["wait", "--break", &format!("attach_host.dm:{}", declared), "--timeout", "60"], 0);
+	assert!(ran.out.starts_with("paused at a breakpoint\n#0 /value"), "wait said {}", ran.out);
+	assert_eq!(
+		ran.err,
+		format!("breakpoint at /value  attach_host.dm:{} (line {} has no code: this is the next that has)\n", declared + 1, declared)
+	);
+	run(pid, &["continue"], 0);
+	let ran = run(pid, &["wait", "--break", "/proc/fail_in", "--break", "/datum/twice/act#1", "--timeout", "1"], 2);
+	assert_eq!(
+		ran.err,
+		format!(
+			"breakpoint at /fail_in  attach_host.dm:{}\nbreakpoint at /datum/twice/act#1  attach_host.dm:{}\ntimed out: the world didn't pause\n",
+			line_of(code, "\tvar/got = fail_deeper(n)"),
+			line_of(code, "\t. = ..()")
+		)
+	);
+	println!("ok: wait says where each breakpoint went, on the next line with code when its own has none");
+
+	let last = line_of(code, "\treturn \"second\"");
+	let nowhere = [
+		("nowhere.dm:3", "couldn't break at nowhere.dm:3: the world has no code from a file called nowhere.dm".to_owned()),
+		("attach_host.dm:9999", format!("couldn't break at attach_host.dm:9999: attach_host.dm has no code after line {}", last)),
+		("/proc/nothing_called_this", "couldn't break at /proc/nothing_called_this: the world has no proc /proc/nothing_called_this".to_owned()),
+		("/value#2", "couldn't break at /value#2: /value has one definition, #0: there's no #2".to_owned())
+	];
+	// With no time limit: it would wait for ever if it didn't fail first
+	for (place, said) in &nowhere {
+		assert_eq!(&fails(pid, &["wait", "--break", place]), said);
+	}
+	run(pid, &["pause"], 0);
+	for (place, said) in &nowhere {
+		assert_eq!(&fails(pid, &["wait", "--break", place]), said);
+	}
+	run(pid, &["continue"], 0);
+	println!("ok: wait fails at once on a file the world doesn't have, a line past its code, and a proc it doesn't have, paused or not");
 }

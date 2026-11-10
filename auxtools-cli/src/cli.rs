@@ -297,7 +297,8 @@ now: after a hot reload, the new code.",
 breakpoint, a `pause`. The world stays paused afterwards, until `continue`. To print
 something at a breakpoint without pausing, or count its hits, use `trace`.
   --break PLACE        Pause at FILE:LINE, or when /proc/path is called (/proc/path#N for
-                       its Nth override). Can be given more than once.
+                       its Nth override). Can be given more than once. Says where each
+                       went (on stderr), and fails at once on a place the world hasn't got.
   --change EXPRESSION  Pause when what EXPRESSION names gets another value: a var of an
                        object, an entry of a list, a global var, a proc's own var. Given
                        while the world is paused, EXPRESSION is of a frame there, and the
@@ -1054,6 +1055,14 @@ impl World {
 
 	fn wait(&mut self, wait: Wait) -> Result<()> {
 		let paused = self.paused()?;
+		// Each place first, so one that isn't there fails before anything
+		// else. The condition is the watches' when there are any.
+		let condition = if wait.changes.is_empty() { wait.condition.clone() } else { None };
+		for place in &wait.breaks {
+			for bound in self.set_breakpoint(place, condition.clone(), None)? {
+				eprintln!("{}", bound.describe());
+			}
+		}
 		if let (Some(reason), true) = (&paused, wait.changes.is_empty()) {
 			if wait.hold {
 				self.request(Request::HoldPause)?;
@@ -1082,11 +1091,6 @@ impl World {
 				other => return Err(unexpected(&other))
 			}
 		}
-		// The condition is the watches' when there are any
-		let condition = if wait.changes.is_empty() { wait.condition.clone() } else { None };
-		for place in &wait.breaks {
-			self.set_breakpoint(place, condition.clone(), None)?;
-		}
 		if paused.is_some() {
 			self.events.clear();
 			self.request(Request::Continue { kind: ContinueKind::Continue })?;
@@ -1107,32 +1111,22 @@ impl World {
 	}
 
 	/// At `FILE:LINE`, or the start of `/proc/path` (`#N` for an override):
-	/// where each breakpoint went (a line can be in more than one proc). With
-	/// a `log`, it says that at each hit (`Response::Log`) and doesn't pause.
+	/// where each breakpoint went (a line can be in more than one proc). A
+	/// place the world doesn't have is an error. With a `log`, it says that
+	/// at each hit (`Response::Log`) and doesn't pause.
 	fn set_breakpoint(&mut self, place: &str, condition: Option<String>, log: Option<Vec<LogPart>>) -> Result<Vec<Bound>> {
-		let instructions = if place.starts_with('/') {
-			let (path, override_id) = match place.split_once('#') {
-				Some((path, id)) => (path.to_owned(), id.parse().map_err(|_| format!("{} isn't an override number", id))?),
-				None => (place.to_owned(), 0)
-			};
-			vec![InstructionRef {
-				proc: ProcRef { path, override_id },
-				offset: 0
-			}]
+		let (instructions, asked_line) = if place.starts_with('/') {
+			// Asked first, for what's wrong with it if it isn't there
+			let proc = self.find_proc(&proc_ref(place)?).map_err(|Failure(code, why)| Failure(code, format!("couldn't break at {}: {}", place, why)))?;
+			(vec![InstructionRef { proc: proc.proc, offset: 0 }], None)
 		} else {
 			let (file, line) = place
 				.rsplit_once(':')
 				.and_then(|(file, line)| Some((file, line.parse::<u32>().ok()?)))
 				.ok_or_else(|| format!("{} is neither FILE:LINE nor /proc/path", place))?;
 			match self.request(Request::Locate { file: file.to_owned(), line })? {
-				Response::Locate { instructions } if instructions.is_empty() => {
-					return Err(format!(
-						"no proc in {} has code on line {} or after it (or no file of the world's ends with that path)",
-						file, line
-					)
-					.into());
-				}
-				Response::Locate { instructions } => instructions,
+				Response::Locate { instructions } if instructions.is_empty() => return Err(self.nowhere(file, line)?),
+				Response::Locate { instructions } => (instructions, Some(line)),
 				other => return Err(unexpected(&other))
 			}
 		};
@@ -1151,7 +1145,8 @@ impl World {
 					asked: instruction,
 					at,
 					file,
-					line
+					line,
+					asked_line
 				}),
 				Response::BreakpointSet {
 					result: BreakpointSetResult::Refused { reason }
@@ -1174,6 +1169,23 @@ impl World {
 			other => Err(unexpected(&other))
 		}
 	}
+
+	/// Why there's no code at `line` of `file`, or after it
+	fn nowhere(&mut self, file: &str, line: u32) -> Result<Failure> {
+		let lines = match self.request(Request::LinesWithCode {
+			file: file.to_owned(),
+			start: 0,
+			end: u32::MAX
+		})? {
+			Response::LinesWithCode { lines } => lines,
+			other => return Err(unexpected(&other))
+		};
+		Ok(match lines.last() {
+			None => format!("couldn't break at {}:{}: the world has no code from a file called {}", file, line, file),
+			Some(last) => format!("couldn't break at {}:{}: {} has no code after line {}", file, line, file, last)
+		}
+		.into())
+	}
 }
 
 /// A breakpoint that was set
@@ -1185,13 +1197,26 @@ struct Bound {
 	/// Where it went: its proc, as the proc names itself, and the instruction
 	at: InstructionRef,
 	file: Option<String>,
-	line: Option<u32>
+	line: Option<u32>,
+	/// The line that was asked for, for one given as FILE:LINE
+	asked_line: Option<u32>
 }
 
 impl Bound {
 	/// Its proc and line, as a frame there is shown
 	fn spot(&self) -> String {
 		spot(&self.at.proc, false, self.file.as_deref(), self.line)
+	}
+
+	/// The same, for `wait` to say where it will pause
+	fn describe(&self) -> String {
+		let mut text = format!("breakpoint at {}", self.spot());
+		if let (Some(asked), Some(line)) = (self.asked_line, self.line) {
+			if asked != line {
+				text += &format!(" (line {} has no code: this is the next that has)", asked);
+			}
+		}
+		text
 	}
 }
 
