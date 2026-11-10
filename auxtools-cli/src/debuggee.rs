@@ -237,6 +237,10 @@ impl Debuggee {
 							}
 						}
 
+						// A step of ours ended with nothing to pause in: the
+						// world runs, as the editor has shown since the step
+						Response::StepEnded => {}
+
 						// Another client let it carry on
 						Response::Resumed => {
 							if inputs.send(Input::Resumed { generation }).is_err() {

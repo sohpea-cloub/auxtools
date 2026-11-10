@@ -184,7 +184,7 @@ impl Client {
 		loop {
 			match self.messages.recv_timeout(TIMEOUT).expect("debug server stopped answering") {
 				Response::Notification { message } => println!("  [debug server] {}", message),
-				Response::Resumed | Response::CodeChanged => {}
+				Response::Resumed | Response::CodeChanged | Response::StepEnded => {}
 				Response::BreakpointHit { .. } if self.watcher => {}
 				response => return response
 			}

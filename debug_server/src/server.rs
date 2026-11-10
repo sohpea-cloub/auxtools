@@ -346,6 +346,9 @@ pub struct Server {
 	hold: Option<ClientId>,
 	/// How long that pause lasts with no client that debugs connected
 	hold_max: Option<Duration>,
+	/// The client whose step is under way, which hears if it ends with
+	/// nothing to pause in (`Response::StepEnded`)
+	stepper: Option<ClientId>,
 	/// The procs in each file (as the world's DbgFile spells them), and how
 	/// many procs the world had when they were counted
 	procs_by_file: Option<(u32, HashMap<String, Vec<u32>>)>,
@@ -421,6 +424,7 @@ impl Server {
 			spawned: HashMap::new(),
 			hold: None,
 			hold_max: None,
+			stepper: None,
 			procs_by_file: None,
 			old_codes: RefCell::new(vec![]),
 			app: Self::setup_app()
@@ -3008,6 +3012,8 @@ impl Server {
 				self.paused = None;
 				self.hold = None;
 				self.hold_max = None;
+				// Whoever steps hears if the step ends with nothing to pause in
+				self.stepper = if kind == ContinueKind::Continue { None } else { self.current };
 				return Some(kind);
 			}
 
@@ -3050,6 +3056,20 @@ impl Server {
 		self.paused = None;
 		self.journal(JournalEvent::HoldEnded { seconds }, None);
 		self.broadcast(Response::Resumed, None);
+	}
+
+	/// A step ended with the world running: the proc it was in is over, and
+	/// nothing of the world's called it. The client that asked for the step
+	/// would otherwise wait for a pause that isn't coming.
+	pub fn step_ended(&mut self) {
+		let Some(id) = self.stepper.take() else {
+			return;
+		};
+		if let Some(client) = self.clients.get_mut(&id) {
+			if !Self::deliver(client, &Response::StepEnded) {
+				self.remove_client(id);
+			}
+		}
 	}
 
 	// returns true if we need to pause

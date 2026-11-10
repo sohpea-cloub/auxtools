@@ -187,10 +187,23 @@ fn handle_breakpoint(ctx: *mut raw_types::procs::ExecutionContext, reason: Break
 			let (_, caller) = get_proc_ctx(stack_id);
 			match unsafe { mark(caller) } {
 				Some(target) => DebuggerAction::StepOut { target },
-				None => DebuggerAction::None
+				None => {
+					step_ended();
+					DebuggerAction::None
+				}
 			}
 		}
 	})
+}
+
+/// A step is over with nothing to pause in: the client that asked for it
+/// hears, as it would otherwise wait for a pause that isn't coming
+fn step_ended() {
+	unsafe {
+		if let Some(server) = &mut *DEBUG_SERVER.get() {
+			server.step_ended();
+		}
+	}
 }
 
 fn proc_instance_is_in_stack(mut ctx: *mut raw_types::procs::ExecutionContext, proc_ref: ProcInstanceRef) -> bool {
@@ -412,6 +425,8 @@ impl InstructionHook for Server {
 						if caller.is_some_and(|caller| caller.is(*(*ctx).proc_instance())) {
 							CURRENT_ACTION = handle_breakpoint(ctx, BreakpointReason::Step).unwrap_or(DebuggerAction::None);
 							did_breakpoint = true;
+						} else {
+							step_ended();
 						}
 					}
 				}
@@ -438,6 +453,8 @@ impl InstructionHook for Server {
 								if caller.is_some_and(|caller| caller.is(*(*ctx).proc_instance())) {
 									CURRENT_ACTION = handle_breakpoint(ctx, BreakpointReason::Step).unwrap_or(DebuggerAction::None);
 									did_breakpoint = true;
+								} else {
+									step_ended();
 								}
 							} else if in_stack && is_dbgline {
 								CURRENT_ACTION = DebuggerAction::BreakOnNext;
@@ -459,6 +476,8 @@ impl InstructionHook for Server {
 						if here || caller.is_some_and(|caller| caller.is(*(*ctx).proc_instance())) {
 							CURRENT_ACTION = handle_breakpoint(ctx, BreakpointReason::Step).unwrap_or(DebuggerAction::None);
 							did_breakpoint = true;
+						} else {
+							step_ended();
 						}
 					}
 				}
@@ -477,6 +496,7 @@ impl InstructionHook for Server {
 
 							if !in_stack && !is_suspended {
 								CURRENT_ACTION = DebuggerAction::None;
+								step_ended();
 							}
 						}
 					}

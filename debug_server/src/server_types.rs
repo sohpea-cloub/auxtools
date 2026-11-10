@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 /// The version of the messages here. Bump it by hand with any change a client
 /// and a world built before it wouldn't agree on: it's in the name of the
 /// world's socket, so a client only finds worlds that speak its version.
-pub const PROTOCOL_VERSION: u32 = 4;
+pub const PROTOCOL_VERSION: u32 = 5;
 
 /// The local socket the world in process `pid` listens on, when it has the
 /// debug library: `auxtools-debug-v1-1234`
@@ -392,7 +392,13 @@ pub enum Response {
 	RenderVariables(Result<Vec<(String, Rendered)>, String>),
 	/// The number of what `Request::Spawn` asked to run, which its entry in
 	/// the world's record will have, or why it won't run
-	Spawned(Result<u64, String>)
+	Spawned(Result<u64, String>),
+	/// To the client that asked for a step: it ended with the world running,
+	/// as there's nothing to pause in. The proc it was in returned (or ended
+	/// with a runtime error) and nothing of the world's called it, or it was
+	/// a step out of a proc nothing called. A step that ends in a pause is
+	/// `BreakpointHit`, as ever.
+	StepEnded
 }
 
 /// An entry in the world's record of what happened in it. The record keeps
