@@ -225,6 +225,14 @@ impl Debuggee {
 							}
 						}
 
+						// A hot reload another client reported, for a launcher
+						// attached to a world it didn't start
+						Response::Journaled(entry) => {
+							if let Some(text) = crate::adapter::reload_by_another(&entry) {
+								out.console(text);
+							}
+						}
+
 						// Another client let it carry on
 						Response::Resumed => {
 							if inputs.send(Input::Resumed { generation }).is_err() {

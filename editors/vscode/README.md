@@ -211,7 +211,8 @@ of VS Code windows at once: run **auxtools: Attach to a running world**, or use 
 configuration, and pick the world from the list. Each window has its own breakpoints; a
 pause stops the world for all of them, and any of them can let it carry on. Leaving
 doesn't end a world that was attached to, and a paused world stays paused for the windows
-still debugging it.
+still debugging it. The Debug Console shows the hot reloads whoever launched the world
+makes, applied or not and why.
 
 ```json
 {

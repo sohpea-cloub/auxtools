@@ -38,6 +38,9 @@ use crate::{
 };
 
 mod data;
+mod journal;
+
+pub use journal::reload_by_another;
 
 /// The exception filter that pauses on runtime errors nothing catches
 const RUNTIMES: &str = "runtimes";
@@ -102,6 +105,8 @@ pub enum Input {
 		file: Option<String>,
 		line: Option<u32>
 	},
+	/// Lines the world the adapter launched printed, for its record
+	WorldOutput(Vec<String>),
 	/// The world the adapter launched exited
 	GameExited(Option<i32>),
 	/// The process attached to is gone
@@ -332,6 +337,8 @@ pub struct Adapter {
 	progress: Vec<&'static str>,
 	/// `root`, for the thread that passes the world's output on
 	output_root: Arc<Mutex<Option<PathBuf>>>,
+	/// What the world printed, for its record, while it isn't connected
+	waiting_output: Vec<String>,
 	/// The text each file's breakpoints were given for: their lines are
 	/// lines of it. `None` for a file that can't be read.
 	breakpoint_texts: HashMap<String, Option<Vec<String>>>,
@@ -429,6 +436,7 @@ pub fn serve(out: Output, inputs: mpsc::Sender<Input>, receiver: &mpsc::Receiver
 		client: ClientAbilities::default(),
 		progress: vec![],
 		output_root: Arc::new(Mutex::new(None)),
+		waiting_output: vec![],
 		breakpoints: BTreeMap::new(),
 		breakpoint_texts: HashMap::new(),
 		unsaved: HashSet::new(),
@@ -486,6 +494,7 @@ impl Adapter {
 			}
 			Input::ConnectionClosed { generation, reason } => self.connection_closed(generation, &reason),
 			Input::Code(event) => self.code_event(event),
+			Input::WorldOutput(lines) => self.journal_output(lines),
 			Input::Logged { message, file, line } => {
 				// With where it's from, for the client to make a link of
 				let source = file.map(|file| {
@@ -757,29 +766,36 @@ impl Adapter {
 			debug: Some((library, self.debugging))
 		};
 		let (out, inputs, root) = (self.out.clone(), self.inputs.clone(), self.output_root.clone());
+		let batch = journal::batch_output(self.inputs.clone());
 		let game = Game::start(
 			launch,
 			// Where BYOND says a runtime error was is passed on as a place,
-			// which a client makes a link of
-			move |category, line| match runtime_place(&line) {
-				Some((file, number)) => {
-					let path = match &*root.lock().unwrap() {
-						Some(root) => root.join(file),
-						None => PathBuf::from(file)
-					};
-					out.event(OutputEvent {
-						category: Some(category.to_owned()),
-						source: Some(Source {
-							name: path.file_name().map(|name| name.to_string_lossy().into_owned()),
-							path: Some(path.to_string_lossy().into_owned()),
-							..Default::default()
-						}),
-						line: Some(number),
-						output: line,
-						..Default::default()
-					});
+			// which a client makes a link of. The world's record has it too.
+			move |category, line| {
+				// Not what the launcher says of the world itself
+				if category != "console" {
+					let _ = batch.send(line.trim_end_matches(['\r', '\n']).to_owned());
 				}
-				None => out.output(category, line)
+				match runtime_place(&line) {
+					Some((file, number)) => {
+						let path = match &*root.lock().unwrap() {
+							Some(root) => root.join(file),
+							None => PathBuf::from(file)
+						};
+						out.event(OutputEvent {
+							category: Some(category.to_owned()),
+							source: Some(Source {
+								name: path.file_name().map(|name| name.to_string_lossy().into_owned()),
+								path: Some(path.to_string_lossy().into_owned()),
+								..Default::default()
+							}),
+							line: Some(number),
+							output: line,
+							..Default::default()
+						});
+					}
+					None => out.output(category, line)
+				}
 			},
 			move |code| {
 				let _ = inputs.send(Input::GameExited(code));
@@ -933,6 +949,8 @@ impl Adapter {
 			Ok(AuxResponse::ByondVersion { version, build }) => (version, build),
 			_ => return
 		};
+		self.send_output();
+		self.follow_reloads();
 		// Here to run the world and reload it: a pause another client makes
 		// isn't this one's to end
 		if !self.debugging {
@@ -1027,30 +1045,43 @@ impl Adapter {
 				self.watching = true;
 				self.say_ready();
 			}
-			code::Event::Reload { request, summary } => {
+			code::Event::Reload { request, summary, notes } => {
 				self.reload_seen = Some(std::time::SystemTime::now());
-				let applied = self.reload(*request, &summary);
+				let applied = self.reload(*request, &summary, notes);
 				if let Some(code) = &self.code {
 					let _ = code.send(code::Command::Reloaded(applied));
 				}
 			}
+			code::Event::NotReloaded { summary, errors, warnings } => self.journal_reload(false, summary, errors, warnings),
+			code::Event::NothingChanged { warnings } => self.journal_reload(true, "nothing the world runs changed".to_owned(), vec![], warnings)
 		}
 	}
 
-	/// Swaps code into the world. Whether it was.
-	fn reload(&mut self, request: aux::HotReloadRequest, summary: &str) -> bool {
+	/// Swaps code into the world. Whether it was. What came of it goes in
+	/// the world's record, with the `notes` on the changes.
+	fn reload(&mut self, request: aux::HotReloadRequest, summary: &str, notes: Vec<String>) -> bool {
 		self.reload_started = Some(Instant::now());
 		let result = match self.request(&AuxRequest::HotReload(request)) {
 			Ok(AuxResponse::HotReload(result)) => result,
 			Ok(other) => {
-				self.out.console(format!("Hot reload: not reloaded: {}", unexpected(other)));
+				let why = unexpected(other);
+				self.out.console(format!("Hot reload: not reloaded: {}", why));
+				self.journal_reload(false, "the world didn't take it".to_owned(), vec![why], notes);
 				return false;
 			}
 			Err(e) => {
 				self.out.console(format!("Hot reload: not reloaded: {}", e));
+				self.journal_reload(false, "the world didn't take it".to_owned(), vec![e], notes);
 				return false;
 			}
 		};
+		let summary_of_outcome = if result.applied { summary.to_owned() } else { format!("the world couldn't apply it ({})", summary) };
+		self.journal_reload(
+			result.applied,
+			summary_of_outcome,
+			result.errors.clone(),
+			notes.into_iter().chain(result.warnings.iter().cloned()).collect()
+		);
 
 		let took = self.reload_started.take().map_or(0, |started| started.elapsed().as_millis());
 		if result.applied {

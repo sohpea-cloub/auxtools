@@ -272,7 +272,16 @@ breakpoint, a `pause`. The world stays paused afterwards, until `continue`.
   --log MESSAGE        Don't pause at the breakpoints: print MESSAGE at each hit, with the
                        values of the {expressions} in it
   --timeout SECONDS    Give up after this long (exit code 2)
-  --no-hold            Let the world carry on once this command has gone",
+  --no-hold            Let the world carry on once this command has gone
+
+wait --reload [--since N] [--timeout SECONDS] [--json]
+  Waits for the next hot reload to be tried (or the first after entry N of `log`), by the
+  launcher that reloads the world, and prints what came of it as `log --reloads` does.
+  Exit code 0 if it was applied, 1 if not (compile errors, changes that need a rebuild).
+  Start it before saving the change, or give --since.
+wait --reboot [--since N] [--timeout SECONDS] [--json]
+  Waits for the world to reboot (or for the first load after entry N), and for the new
+  world to answer. Exit code 3 if the world ends instead.",
 			run: Run::World(wait)
 		},
 	]),
@@ -494,6 +503,10 @@ fn execute(pid: Option<u32>, words: &[String]) -> Result<()> {
 }
 
 fn wait(world: &mut World, args: &[String]) -> Result<()> {
+	// For a hot reload, or a reboot: not a pause
+	if let Some(waited) = log::wait_on_record(world, args) {
+		return waited;
+	}
 	let flags = Flags::parse(
 		args,
 		&["--break", "--if", "--log", "--timeout", "--change", "--frame"],

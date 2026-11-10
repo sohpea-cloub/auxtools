@@ -155,3 +155,77 @@ pub fn runtimes(pid: u64, dir: &Path) {
 	follow.stop();
 	println!("ok: log --runtimes --follow prints runtime errors as they come");
 }
+
+/// Hot reloads go in the record, applied or not, reported by the launcher
+/// that reloads the world: `wait --reload` waits for one, and says whether
+/// it was applied in its exit code; an attached launcher shows them
+pub fn reloads(pid: u64, code: &Path) {
+	let source = std::fs::read_to_string(code).unwrap();
+	assert!(source.contains("\treturn 2\n"), "value() isn't as the test left it");
+	let printed = run(pid, &["wait", "--reload", "--timeout", "1"], 2);
+	assert!(printed.contains("timed out: no hot reload was tried"), "wait --reload said {}", printed);
+
+	let since = newest(pid).to_string();
+	std::fs::write(code, source.replace("\treturn 2\n", "\treturn 3\n")).unwrap();
+	let printed = run(pid, &["wait", "--reload", "--since", &since, "--timeout", "60"], 0);
+	assert!(printed.starts_with('#') && printed.contains(" hot reload applied: reloaded /value"), "wait --reload said {}", printed);
+	println!("ok: wait --reload says a hot reload was applied");
+
+	let since = newest(pid).to_string();
+	std::fs::write(code, source.replace("\treturn 2\n", "\treturn nothing_called_this\n")).unwrap();
+	let printed = run(pid, &["wait", "--reload", "--since", &since, "--timeout", "60", "--json"], 1);
+	let entry: serde_json::Value = serde_json::from_str(printed.lines().next().unwrap()).unwrap();
+	assert_eq!((&entry["kind"], &entry["applied"]), (&"reload".into(), &false.into()), "{}", printed);
+	let errors = entry["errors"].to_string();
+	assert!(errors.contains("/value") && errors.contains("nothing_called_this"), "the errors were {}", errors);
+	assert!(printed.contains("the hot reload wasn't applied"), "wait --reload said {}", printed);
+	println!("ok: wait --reload says a hot reload the world refused wasn't applied, and why ({})", errors);
+
+	// One with an error the launcher finds before the world is sent anything
+	let since = newest(pid).to_string();
+	std::fs::write(code, source.replace("\treturn 2\n", "\treturn ]\n")).unwrap();
+	let printed = run(pid, &["wait", "--reload", "--since", &since, "--timeout", "60"], 1);
+	let error = printed.lines().find(|line| line.starts_with("  error: ")).unwrap_or_else(|| panic!("wait --reload said {}", printed));
+	let place = error.trim_start_matches("  error: ").split(": ").next().unwrap();
+	assert!(
+		place.rsplit_once(':').is_some_and(|(file, line)| file.ends_with("attach_host.dm") && line.parse::<u32>().is_ok()),
+		"the error isn't at a line of the file: {}",
+		printed
+	);
+	println!("ok: wait --reload says a hot reload with a compile error wasn't applied, and where the error is ({})", error.trim());
+
+	// One attached to the world, which doesn't reload it, hears of it
+	let mut attached = crate::client::Launcher::start();
+	attached.initialize();
+	attached.request("attach", serde_json::json!({ "processId": pid, "hotReload": false }));
+	attached.event("initialized");
+	attached.request("configurationDone", serde_json::json!({}));
+
+	// The next one, waited for as it comes
+	let waiting = Background::start(pid, &["wait", "--reload", "--timeout", "60"]);
+	std::thread::sleep(Duration::from_secs(1));
+	std::fs::write(code, &source).unwrap();
+	let (exit, printed) = waiting.finish();
+	assert!(exit == 0 && printed.contains("hot reload applied: reloaded /value"), "wait --reload gave {}: {}", exit, printed);
+	attached.wait_output("Hot reload (by another launcher): reloaded /value");
+	attached.disconnect(serde_json::json!({}));
+	println!("ok: wait --reload waits for the next hot reload; a launcher attached to the world shows it");
+
+	let printed = run(pid, &["log", "--reloads", "--last", "4"], 0);
+	let headers: Vec<&str> = printed.lines().filter(|line| line.starts_with('#')).collect();
+	assert!(
+		headers.len() == 4
+			&& headers[0].contains("applied: reloaded /value")
+			&& headers[1].contains("not applied")
+			&& headers[2].contains("not applied")
+			&& headers[3].contains("applied: reloaded /value"),
+		"log --reloads said {}",
+		printed
+	);
+	assert!(printed.contains("\n  error: ") && printed.contains("nothing_called_this"), "log --reloads said {}", printed);
+	println!("ok: log --reloads lists the hot reloads, with the errors of the one that wasn't applied");
+
+	let printed = run(pid, &["log", "--output", "--last", "5"], 0);
+	assert!(printed.contains(" output\n  attach test: "), "log --output said {}", printed);
+	println!("ok: log --output has what the world printed");
+}

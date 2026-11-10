@@ -40,11 +40,21 @@ pub enum Event {
 	Ready,
 	/// The files are being watched: a change from now on is reloaded
 	Watching,
-	/// Changes to swap in, then say whether they were (`Command::Reloaded`)
+	/// Changes to swap in, then say whether they were (`Command::Reloaded`).
+	/// `notes` are what the world's record has as warnings.
 	Reload {
 		request: Box<HotReloadRequest>,
-		summary: String
-	}
+		summary: String,
+		notes: Vec<String>
+	},
+	/// Changes the world wasn't sent, and why: for the world's record
+	NotReloaded {
+		summary: String,
+		errors: Vec<String>,
+		warnings: Vec<String>
+	},
+	/// Files changed, and nothing the world runs did: for its record
+	NothingChanged { warnings: Vec<String> }
 }
 
 /// From the adapter to the code's thread
@@ -220,7 +230,7 @@ impl Code {
 			match current.reload_file(&self.root, &file) {
 				Ok(reload) => {
 					watching.edited_since_built.insert(file);
-					return match self.reload(&reload.changes) {
+					return match self.reload(&reload.changes, current) {
 						None => false,
 						Some(true) => {
 							let current = match watching.applied.as_mut() {
@@ -246,7 +256,7 @@ impl Code {
 			Ok(new) => new,
 			Err(e) => {
 				self.log(format!("couldn't read the code: {}", e));
-				return true;
+				return self.not_reloaded(e);
 			}
 		};
 		let changes = diff(watching.applied.as_ref().unwrap_or(&watching.built), &new, Some(&changed));
@@ -257,7 +267,7 @@ impl Code {
 			watching.modified.entry(file.clone()).or_insert_with(|| modified_time(&self.root, &file));
 		}
 
-		match self.reload(&changes) {
+		match self.reload(&changes, &new) {
 			None => false,
 			Some(true) => {
 				self.send(Event::Changed);
@@ -297,11 +307,11 @@ impl Code {
 			Ok(current) => current,
 			Err(e) => {
 				self.log(format!("couldn't read the code: {}", e));
-				return true;
+				return self.not_reloaded(e);
 			}
 		};
 		let changes = diff(&watching.built, &current, Some(&watching.edited_since_built));
-		match self.reload(&changes) {
+		match self.reload(&changes, &current) {
 			None => false,
 			Some(applied) => {
 				if applied {
@@ -313,15 +323,31 @@ impl Code {
 		}
 	}
 
+	/// The code couldn't be read, so nothing was reloaded: the world's record
+	/// says why. False once the adapter has gone.
+	fn not_reloaded(&self, error: String) -> bool {
+		self.send(Event::NotReloaded {
+			summary: "couldn't read the code".to_owned(),
+			errors: vec![error],
+			warnings: vec![]
+		})
+	}
+
 	/// Has the adapter swap `changes` in. Whether it did, or `None` once the
-	/// adapter has gone.
-	fn reload(&self, changes: &Changes) -> Option<bool> {
+	/// adapter has gone. `snapshot` is the code they're changes to.
+	fn reload(&self, changes: &Changes, snapshot: &Snapshot) -> Option<bool> {
 		if !changes.refused.is_empty() {
 			self.log("not reloaded, because the world can't take all of it (rebuild for these):");
-			for why in &changes.refused {
+			let refused = placed(&changes.refused, snapshot);
+			for why in &refused {
 				self.out.console(format!("    {}", why));
 			}
-			return Some(false);
+			let refused = Event::NotReloaded {
+				summary: "the world can't take all of it (rebuild for these)".to_owned(),
+				errors: refused,
+				warnings: changes.warnings.clone()
+			};
+			return self.send(refused).then_some(false);
 		}
 		for why in &changes.warnings {
 			self.out.console(format!("    note: {}", why));
@@ -330,12 +356,16 @@ impl Code {
 		let request = reload_request(changes);
 		if request.is_empty() {
 			self.log("nothing the world runs changed");
-			return Some(true);
+			return self.send(Event::NothingChanged {
+				warnings: changes.warnings.clone()
+			})
+			.then_some(true);
 		}
 
 		if !self.send(Event::Reload {
 			request: Box::new(request),
-			summary: summary(changes)
+			summary: summary(changes),
+			notes: changes.warnings.clone()
 		}) {
 			return None;
 		}
@@ -348,6 +378,39 @@ impl Code {
 			}
 		}
 	}
+}
+
+/// Errors with the places the compiler gives them, as `file:line: what`: a
+/// parse error's line is in the parse's record, and a proc that doesn't
+/// compile is in its file
+fn placed(errors: &[String], snapshot: &Snapshot) -> Vec<String> {
+	let ctx = snapshot.context();
+	let parse_errors: Vec<(String, String)> = ctx
+		.errors()
+		.iter()
+		.filter(|e| e.severity() == dreammaker::Severity::Error)
+		.map(|e| {
+			let file = ctx.file_path(e.location().file).to_string_lossy().replace('\\', "/");
+			(
+				format!("parse error: {}: {}", file, e.description()),
+				format!("{}:{}: {}", file, e.location().line, e.description())
+			)
+		})
+		.collect();
+	errors
+		.iter()
+		.map(|error| {
+			if let Some((_, placed)) = parse_errors.iter().find(|(text, _)| text == error) {
+				return placed.clone();
+			}
+			let file_line = error.split_once(": doesn't compile: line ").and_then(|(proc, rest)| {
+				let (line, what) = rest.split_once(": ")?;
+				let key = snapshot.procs().find(|key| key.to_string() == proc)?;
+				Some(format!("{}:{}: {}: doesn't compile: {}", snapshot.proc_file(key)?, line, proc, what))
+			});
+			file_line.unwrap_or_else(|| error.clone())
+		})
+		.collect()
 }
 
 /// What a reload changes, in a line

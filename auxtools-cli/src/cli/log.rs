@@ -58,6 +58,64 @@ pub fn log(world: &mut World, args: &[String]) -> Result<()> {
 	}
 }
 
+/// `wait --reload` and `wait --reboot`, which wait on the world's record
+/// rather than for it to pause. `None` if neither is asked for.
+pub fn wait_on_record(world: &mut World, args: &[String]) -> Option<Result<()>> {
+	let reload = args.iter().any(|arg| arg == "--reload");
+	let reboot = args.iter().any(|arg| arg == "--reboot");
+	if !reload && !reboot {
+		return None;
+	}
+	Some((|| {
+		let what = if reload { "--reload" } else { "--reboot" };
+		let ours = ["--reload", "--reboot", "--timeout", "--since", "--json"];
+		if let Some(other) = args.iter().find(|arg| arg.starts_with("--") && !ours.contains(&arg.as_str())) {
+			return Err(format!("{} doesn't go with {}", other, what).into());
+		}
+		if reload && reboot {
+			return Err("wait for --reload or --reboot, not both".into());
+		}
+		let flags = Flags::parse(args, &["--timeout", "--since"], &["--reload", "--reboot", "--json"])?;
+		flags.nothing_else("wait")?;
+		let until = flags.number::<f64>("--timeout")?.map(|t| Instant::now() + Duration::from_secs_f64(t));
+		let since = flags.number::<u64>("--since")?;
+		if reload {
+			wait_reload(world, since, until, flags.has("--json"))
+		} else {
+			wait_reboot(world, since, until, flags.has("--json"))
+		}
+	})())
+}
+
+/// Waits for a hot reload to be tried (the next, or the first after entry
+/// `since`), and prints what came of it: exit code 1 if it wasn't applied
+fn wait_reload(world: &mut World, since: Option<u64>, until: Option<Instant>, json: bool) -> Result<()> {
+	let mut follower = Follower::new(since.unwrap_or(u64::MAX), vec![JournalKind::Reload]);
+	let Some(entry) = follower.next(world, until)? else {
+		return Err(Failure(TIMED_OUT, "timed out: no hot reload was tried".to_owned()));
+	};
+	print(&entry, json);
+	match entry.event {
+		JournalEvent::Reload { applied: true, .. } => Ok(()),
+		_ => Err("the hot reload wasn't applied".into())
+	}
+}
+
+/// Waits for the world to reboot (or for the first load after entry
+/// `since`), and for the new world to answer
+fn wait_reboot(world: &mut World, since: Option<u64>, until: Option<Instant>, json: bool) -> Result<()> {
+	let mut follower = Follower::new(since.unwrap_or(u64::MAX), vec![JournalKind::World]);
+	loop {
+		let Some(entry) = follower.next(world, until)? else {
+			return Err(Failure(TIMED_OUT, "timed out: the world didn't reboot".to_owned()));
+		};
+		if let JournalEvent::Loaded { .. } = entry.event {
+			print(&entry, json);
+			return Ok(());
+		}
+	}
+}
+
 /// The kinds of entries the flags ask for: all of them, if none are named
 pub fn kinds(flags: &Flags) -> Vec<JournalKind> {
 	[
@@ -89,8 +147,8 @@ pub struct Follower {
 	kinds: Vec<JournalKind>,
 	/// Entries read, and not handed out yet
 	waiting: VecDeque<JournalEntry>,
-	/// Whether the world sends this connection new entries
-	following: bool
+	/// Whether this connection has asked for them
+	asked: bool
 }
 
 impl Follower {
@@ -99,7 +157,7 @@ impl Follower {
 			after,
 			kinds,
 			waiting: VecDeque::new(),
-			following: false
+			asked: false
 		}
 	}
 
@@ -111,33 +169,31 @@ impl Follower {
 				self.after = entry.number;
 				return Ok(Some(entry));
 			}
-			if !self.following {
+			if !self.asked {
 				let asked = Request::Journal {
 					after: self.after,
 					kinds: self.kinds.clone(),
 					limit: None,
 					follow: true
 				};
-				match world.request(asked) {
-					Ok(Response::Journal { entries, last, .. }) => {
-						if self.after == u64::MAX {
-							self.after = last;
-						}
-						self.waiting.extend(entries);
-						self.following = true;
-					}
-					Ok(other) => return Err(unexpected(&other)),
-					Err(Failure(HUNG_UP, _)) => world.reconnect(until)?,
-					Err(e) => return Err(e)
+				if local::send(&mut world.stream, &asked).is_err() {
+					world.reconnect(until)?;
+					continue;
 				}
-				continue;
+				self.asked = true;
 			}
 			match world.next(until) {
 				Ok(None) => return Ok(None),
+				Ok(Some(Response::Journal { entries, last, .. })) => {
+					if self.after == u64::MAX {
+						self.after = last;
+					}
+					self.waiting.extend(entries);
+				}
 				Ok(Some(Response::Journaled(entry))) if entry.number > self.after => self.waiting.push_back(entry),
 				Ok(Some(_)) => {}
 				Err(Failure(HUNG_UP, _)) => {
-					self.following = false;
+					self.asked = false;
 					world.reconnect(until)?;
 				}
 				Err(e) => return Err(e)

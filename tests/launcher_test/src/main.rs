@@ -542,6 +542,7 @@ fn attach_and_reload(server: &str, library: &Path) {
 	command_line(pid, &code);
 	command_line_more(pid, &dir);
 	journal::runtimes(pid, &dir);
+	journal::reloads(pid, &code);
 
 	// A launcher that attaches to a world that's paused hears it is
 	let (code_given, printed) = launcher_command(&["--pid", &pid.to_string(), "pause"]);
