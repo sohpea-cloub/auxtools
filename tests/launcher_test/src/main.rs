@@ -400,6 +400,10 @@ fn command_line_more(pid: u64, dir: &Path) {
 	assert_eq!(run(&["eval", "nothing_called_this"], 1).trim(), "undefined var: nothing_called_this");
 	assert_eq!(run(&["eval", "1", "/", "0"], 1).trim(), "runtime error: Division by zero");
 	println!("ok: the command line shows a frame's variables, with the globals when asked, and evaluates in a frame");
+	// A proc's body, as one argument with newlines in it
+	assert_eq!(run(&["eval", "var/n = 0\nfor(var/i in 1 to 3)\n\tn += i\nn"], 0).trim(), "6");
+	assert_eq!(run(&["eval", "var/x = 1\nx = nothing_called_this"], 1).trim(), "line 2: undefined var: nothing_called_this");
+	println!("ok: the command line evaluates a proc's body given as one argument");
 	run(&["continue"], 0);
 
 	// The world fails when it finds this file

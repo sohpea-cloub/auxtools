@@ -164,12 +164,17 @@ of `src`, then globals; a call without `src.` is `src`'s proc if it has one of t
 They can assign (`health = 100`, `GLOB.debug = TRUE`) and call procs, so a watch can
 change the world: it runs at every stop. An expression that fails says why where its
 value would be. While the world runs, expressions are evaluated with no frame: globals
-and global procs only. Expressions can't declare vars or loop, and can't wait: one that
-calls something that sleeps is given up on.
+and global procs only. `/obj/item::force` is a type's initial value, as in code.
+
+More than one expression is a proc's body, run in the frame: vars, loops, `if`, `return`,
+on several lines or one (`var/n = 0; for(var/mob/M in world) n++; n`). Its value is what
+it returns, or its last line's when that's an expression; names mean the same as in an
+expression, and it can change the frame's vars too. A body or an expression can't wait:
+one that sleeps, or calls something that does, is given up on.
 
 While the world is paused, resting the mouse on a name in the code shows its value in the
 selected frame: `health`, or `target.loc.name` with the mouse on `name`. A hover only
-reads: it doesn't call procs.
+reads: it doesn't call procs, and doesn't run bodies.
 
 The debug console completes names as you type: the frame's locals and arguments, `src`'s
 vars and procs, globals and global procs, and after a `.` the vars and procs of whatever

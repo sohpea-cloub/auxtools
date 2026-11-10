@@ -2008,14 +2008,14 @@ impl Server {
 			},
 			globals: GLOBALS
 		};
-		let expr = dmasm::compiler::compile_expr_in(command, &arg_names, Some(&scope), crate::world_byond()).map_err(|e| e.to_string())?;
-		let assembly = dmasm::assembler::assemble(&expr, &mut crate::assemble_env::AssembleEnv).map_err(Self::assemble_error)?;
+		let (code, locals) = Self::compile_eval(command, &arg_names, &scope)?;
+		let assembly = dmasm::assembler::assemble(&code, &mut crate::assemble_env::AssembleEnv).map_err(Self::assemble_error)?;
 		let proc = Proc::find("/proc/auxtools_expr_stub").ok_or("the world has no /proc/auxtools_expr_stub to evaluate expressions in")?;
 
 		proc.set_bytecode(assembly);
 
 		let ends = crate::WORLD_ENDS.load(std::sync::atomic::Ordering::Relaxed);
-		let result = proc.call(&arg_values);
+		let result = Self::call_with_locals(&proc, &locals, &arg_values)?;
 		if crate::WORLD_ENDS.load(std::sync::atomic::Ordering::Relaxed) != ends {
 			// The expression ended the world (`world.Reboot()`), and this
 			// server with it. The values were the old world's.
@@ -2089,6 +2089,47 @@ impl Server {
 		}
 	}
 
+	/// The code for what's evaluated: one expression, or a proc's body (vars,
+	/// loops, `return`; see `dmasm::compiler::is_body`), with the names of
+	/// the locals it needs
+	fn compile_eval(command: &str, arg_names: &[&str], scope: &dmasm::compiler::ExprScope) -> Result<(Vec<dmasm::Node>, Vec<String>), String> {
+		let byond = crate::world_byond();
+		if dmasm::compiler::is_body(command) {
+			let body = dmasm::compiler::compile_body_in(command, arg_names, Some(scope), byond).map_err(|e| e.to_string())?;
+			return Ok((body.nodes, body.locals));
+		}
+		match dmasm::compiler::compile_expr_in(command, arg_names, Some(scope), byond) {
+			Ok(expr) => Ok((expr, vec![])),
+			// Several lines or statements meant for a body that doesn't
+			// parse: what the body's parser says, with its line, is the
+			// error that helps
+			Err(_) if command.trim().contains(['\n', ';']) => {
+				let error = dmasm::compiler::compile_body_in(command, arg_names, Some(scope), byond).err();
+				Err(error.map_or_else(|| "the code is neither an expression nor a proc's body".to_owned(), |e| e.to_string()))
+			}
+			Err(e) => Err(e.to_string())
+		}
+	}
+
+	/// Calls the stub with as many locals as its code has, for the call: a
+	/// frame gets its locals when it starts, so one left asleep keeps them
+	fn call_with_locals(proc: &Proc, locals: &[String], args: &[&Value]) -> Result<Result<Value, Runtime>, String> {
+		if locals.is_empty() {
+			return Ok(proc.call(args));
+		}
+		use auxtools::runtime_tables::{self, ProcEntryWords};
+		let none = runtime_tables::proc_entry(proc.id).ok_or("couldn't read the stub's proc entry")?.0[ProcEntryWords::LOCALS];
+		let table = hot_reload::locals_table(locals, none)?;
+		runtime_tables::set_proc_entry_word(proc.id, ProcEntryWords::LOCALS, table);
+		let ends = crate::WORLD_ENDS.load(std::sync::atomic::Ordering::Relaxed);
+		let result = proc.call(args);
+		// (a world the code ended has procs of its own by now)
+		if crate::WORLD_ENDS.load(std::sync::atomic::Ordering::Relaxed) == ends {
+			runtime_tables::set_proc_entry_word(proc.id, ProcEntryWords::LOCALS, none);
+		}
+		Ok(result)
+	}
+
 	/// Whether a frame is still on one of the world's stacks, running or
 	/// asleep
 	fn frame_is_live(ctx: *mut raw_types::procs::ExecutionContext) -> bool {
@@ -2117,10 +2158,12 @@ impl Server {
 			return;
 		}
 
-		// What's inside the result is reached through the expression
+		// What's inside the result is reached through the expression (a
+		// body's isn't: it would run again)
+		let reached = (!dmasm::compiler::is_body(command)).then(|| format!("({})", command));
 		let response = self.eval_expr(frame_id, command).map(|result| EvalResponse {
 			value: Self::stringify(&result),
-			variables: self.value_to_variables_ref(&result, Some(format!("({})", command))),
+			variables: self.value_to_variables_ref(&result, reached),
 			kind: Self::kind(&result),
 			entries: Self::entries(&result)
 		});

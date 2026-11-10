@@ -2067,8 +2067,10 @@ impl Adapter {
 
 	fn evaluate(&mut self, args: EvaluateArguments) -> Handled {
 		// The mouse resting on some code shouldn't change the world
-		if args.context.as_deref() == Some("hover") && changes_things(&args.expression) {
-			return Err("a hover doesn't call procs or assign".to_owned());
+		if args.context.as_deref() == Some("hover") {
+			if let Some(why) = hover_refuses(&args.expression) {
+				return Err(why.to_owned());
+			}
 		}
 		let hex = args.format.is_some_and(|format| format.hex == Some(true));
 		match self.request(&AuxRequest::Eval {
@@ -2437,6 +2439,16 @@ fn completion_place(text: &str) -> Option<CompletionPlace<'_>> {
 	})
 }
 
+/// Why a hover won't evaluate some code, if it won't: it's more than one
+/// expression (a proc's body can loop forever, `goto` included, with no call
+/// or assignment in it), or it could change something
+fn hover_refuses(code: &str) -> Option<&'static str> {
+	if dmasm::compiler::is_body(code) {
+		return Some("a hover evaluates one expression, not a proc's body");
+	}
+	changes_things(code).then_some("a hover doesn't call procs or assign")
+}
+
 /// Whether an expression could do more than read: it calls something,
 /// assigns, makes or deletes something, or sends output (`<<`, and `>>`,
 /// which a hover never needs either). Texts in it don't count.
@@ -2630,7 +2642,7 @@ mod tests {
 
 	use auxtools_cli::server_types::{HitCondition, LogPart, RuntimeFilter};
 
-	use super::{changes_things, completion_place, file_name_in, instruction_window, named_proc, parse_address, runtime_place, shown};
+	use super::{changes_things, completion_place, file_name_in, hover_refuses, instruction_window, named_proc, parse_address, runtime_place, shown};
 
 	#[test]
 	fn byond_says_where_a_runtime_error_was() {
@@ -2716,6 +2728,17 @@ mod tests {
 			"L[new /datum/thing]"
 		] {
 			assert!(changes_things(changes), "{}", changes);
+		}
+	}
+
+	#[test]
+	fn a_hover_runs_no_body() {
+		// Nothing in these calls or assigns, but they're bodies
+		for body in ["again:\ngoto again", "var/x\nx", "return n", "n; n", "x\ny"] {
+			assert_eq!(hover_refuses(body), Some("a hover evaluates one expression, not a proc's body"), "{:?}", body);
+		}
+		for (code, why) in [("x", None), ("src.n;", None), ("x = 1", Some("a hover doesn't call procs or assign"))] {
+			assert_eq!(hover_refuses(code), why, "{:?}", code);
 		}
 	}
 

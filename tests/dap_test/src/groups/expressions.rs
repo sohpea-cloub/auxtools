@@ -1,6 +1,6 @@
 //! Evaluating expressions: in the debug console, as watches, in any frame
 
-use serde_json::json;
+use serde_json::{json, Value};
 
 use crate::{ok, world::World};
 
@@ -93,6 +93,117 @@ fn completions(world: &mut World) {
 	assert_eq!(global, [pair("global", "variable"), pair("global_list", "variable"), pair("global_number", "variable")]);
 	assert_eq!(offered(world, "by", None), Vec::<(String, String)>::new());
 	ok("with no frame, globals and global procs are completed");
+}
+
+/// Proc bodies in the paused frame of `inside`, and in none
+fn bodies(world: &mut World) {
+	let mut gives = |world: &mut World, cases: &[(&str, &str)]| {
+		for (body, expected) in cases {
+			assert_eq!(world.eval(body), *expected, "{}", body);
+		}
+	};
+	gives(world, &[
+		("var/n = 0; for(var/i in 1 to 3) n += i; n", "6"),
+		("var/total = 0\nfor(var/x in local_list)\n\ttotal += x\ntotal", "61"),
+		("return by * 2", "8"),
+		("if(by > 3)\n\treturn \"big\"\nreturn \"small\"", "\"big\""),
+		("var/list/L = list()\nfor(var/i in 1 to by)\n\tL += i\nL.Join(\",\")", "\"1,2,3,4\""),
+		("var/i = 0\nwhile(i < 10)\n\ti++\n\tif(i == 5) break\ni", "5"),
+		// Indented as a whole, as code copied from a proc is
+		("\t\tvar/x = by\n\t\tx * 3", "12")
+	]);
+	ok("a body: vars, loops, return, and a last line that's an expression is the result");
+
+	gives(world, &[
+		// src's var, the frame's argument, a global
+		("var/x = n + by + global_number\nx", "10"),
+		// a global proc, and src's
+		("var/r = leaf(1)\nr", "4"),
+		("var/got = bump(1)\nn = 1\ngot", "4"),
+		// the frame's own vars come before src's
+		("var/list/got = local_list\ngot.len", "3")
+	]);
+	ok("in a body a name is its own, then the frame's, src's var and a global; a call is src's proc or a global one");
+
+	// (local_list is list(11, 20, 30) by now)
+	// Changes to the frame's vars are written back; the body's own aren't
+	// anywhere afterwards. Falling off the end gives `.`, the frame's.
+	gives(world, &[("by = 9\nlocal_list[1] = 12\nvar/unused = 0", "null")]);
+	assert_eq!(world.argument("by"), "9");
+	assert_eq!(world.eval("local_list[1]"), "12");
+	gives(world, &[("by = 4; local_list[1] = 11; by", "4"), ("var/q = 3", "null")]);
+	assert_eq!(world.argument("by"), "4");
+	let frame = world.frame_id();
+	let why = world.refused("evaluate", json!({ "expression": "q", "frameId": frame, "context": "repl" }));
+	assert_eq!(why, "undefined var: q");
+	ok("a body's changes to the frame's vars are written back, and its own vars go with it");
+
+	let frame = world.frame_id();
+	let mut fails = |world: &mut World, cases: &[(&str, &str)]| {
+		for (body, expected) in cases {
+			for context in ["repl", "watch"] {
+				let why = world.refused("evaluate", json!({ "expression": body, "frameId": frame, "context": context }));
+				assert!(why.starts_with(expected), "{} in a {} said {:?}", body, context, why);
+			}
+		}
+	};
+	fails(world, &[
+		("var/x = 1\nx = nowhere", "line 2: undefined var: nowhere"),
+		("var/x = 1\nx +", "parser error: 2:"),
+		("var/x = 0\nreturn by / x", "runtime error: Division by zero"),
+		("var/x = 1\nreturn src.other.name", "runtime error: Cannot read null.name"),
+		// A body is over when it's answered too
+		("var/x = by\nsleep(1)\nreturn x", "the expression didn't finish: something it called went to sleep")
+	]);
+	assert_eq!(world.eval("by"), "4");
+	assert_eq!(world.frames(0).len(), 3);
+	ok("a body's compile errors say the line, and its runtime errors and sleeping fail as an expression's do");
+
+	// The same in a watch; a result that opens doesn't say how to reach
+	// what's in it, which would run the body again
+	let result = world.evaluate_in(&frame, "var/datum/thing/t = src\nt", "watch");
+	assert_eq!(result["result"], "S");
+	let inside = world.variables(&result["variablesReference"].clone());
+	let n = inside.iter().find(|v| v["name"] == "n").unwrap();
+	assert_eq!((&n["value"], &n["evaluateName"]), (&json!("1"), &Value::Null), "{}", n);
+	// A hover reads one expression, and runs no body: this one would never end
+	for body in ["again:\ngoto again", "var/x = n\nx", "return n"] {
+		let why = world.refused("evaluate", json!({ "expression": body, "frameId": frame, "context": "hover" }));
+		assert_eq!(why, "a hover evaluates one expression, not a proc's body", "{}", body);
+	}
+	ok("a body in a watch, whose result opens; a hover refuses bodies");
+
+	assert_eq!(world.eval_global("var/t = 0\nfor(var/i in 1 to 4) t += i\nt"), "10");
+	assert_eq!(world.eval_global("global_number = 7\nvar/was = global_number\nglobal_number = 5\nwas"), "7");
+	let why = world.refused("evaluate", json!({ "expression": "var/x = by\nx", "context": "repl" }));
+	assert_eq!(why, "line 1: undefined var: by");
+	ok("a body in no frame has the globals and nothing of the frames");
+}
+
+/// `*(&x)`, a type's var by `::`, and `initial()` of one
+fn smaller_things(world: &mut World) {
+	let mut gives = |world: &mut World, cases: &[(&str, &str)]| {
+		for (expression, expected) in cases {
+			assert_eq!(world.eval(expression), *expected, "{}", expression);
+		}
+	};
+	gives(world, &[("*(&by)", "4"), ("*(&by) = 6", "6"), ("by", "6"), ("var/p = &by\n*p = 4\n*(&by)", "4")]);
+	assert_eq!(world.argument("by"), "4");
+	ok("*(&x) reads and writes what the pointer it makes points at");
+
+	// As DreamMaker has them: a type's initial value, a static var's value
+	gives(world, &[
+		("/datum/thing::name", "\"thing\""),
+		("/datum/thing::n + 1", "2"),
+		("/datum/thing/sub::name", "\"thing\""),
+		("initial(/datum/thing::n)", "1"),
+		("src::name", "\"thing\""),
+		("initial(src::n)", "1"),
+		("/datum/thing::shared", "9"),
+		("initial(/datum/thing::shared)", "9"),
+		("var/x = /datum/thing::n\nreturn x + initial(src::n)", "2")
+	]);
+	ok("a type's var by ::, and initial() of one, in an expression and a body");
 }
 
 pub fn run() {
@@ -277,6 +388,9 @@ pub fn run() {
 	world.break_on(&[]);
 	ok("a proc with a breakpoint in it, called by an expression, doesn't stop");
 
+	bodies(&mut world);
+	smaller_things(&mut world);
+
 	// What can't be evaluated fails, and says why: a client shows that where
 	// the value would be
 	let mut fails = |world: &mut World, cases: &[(&str, &str)]| {
@@ -292,8 +406,6 @@ pub fn run() {
 		("1 +", "parser error: "),
 		("", "parser error: "),
 		("by by", "expected end"),
-		// (read as `var` divided by `q`)
-		("var/q = 3", "undefined var: var"),
 		("5 = by", "expected l-value")
 	]);
 	ok("an expression that doesn't parse fails with the parser's words");
@@ -307,7 +419,6 @@ pub fn run() {
 		("src.not_a_name_anywhere", "runtime error: undefined variable /datum/thing/sub/var/not_a_name_anywhere"),
 		("/datum/not_a_type", "there's no type /datum/not_a_type"),
 		("sleep(1)", "there's no proc /proc/sleep"),
-		("CRASH(\"no\")", "unsupported built-in proc: CRASH"),
 		("..()", "relative calls are not supported")
 	]);
 	ok("a name, a proc or a type the world doesn't have, and what expressions can't do, fail by name");
@@ -318,6 +429,8 @@ pub fn run() {
 		("local_list[9]", "runtime error: list index out of bounds"),
 		("fail_null()", "runtime error: cannot read from list"),
 		("src.shared.len", "runtime error: Cannot read 9.len"),
+		// (a statement, which is a body)
+		("CRASH(\"no\")", "runtime error: no"),
 		// An expression is over when it's answered: it can't wait
 		("sleeper(1)", "the expression didn't finish: something it called went to sleep")
 	]);

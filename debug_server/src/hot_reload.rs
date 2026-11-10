@@ -859,7 +859,7 @@ fn rename(r: Rename) -> Result<(), String> {
 /// A new frame starts each local as the global slot of its var id, which for
 /// the ids DreamMaker gives locals is null. So a local gets an id of its name
 /// with a null slot, or any id with one: the debugger names locals itself.
-fn locals_table(names: &[String], empty: u32) -> Result<u32, String> {
+pub(crate) fn locals_table(names: &[String], empty: u32) -> Result<u32, String> {
 	if names.is_empty() {
 		return Ok(empty);
 	}

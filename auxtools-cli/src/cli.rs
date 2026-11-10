@@ -220,9 +220,12 @@ them, so `log --runtimes --follow` watches them without pausing the world.
 		Command {
 			name: "eval",
 			usage: "EXPRESSION | -f FILE | - [--frame N] [--json [--depth N]]",
-			about: "The value of a DM expression",
+			about: "The value of a DM expression, or of a proc's body",
 			details: "In a paused world, the expression is in a frame of the stack: it can name that
 proc's vars, and `src`. In a running world it can name globals and call procs.
+More than one statement is a proc's body (given as one argument with newlines or `;`
+in it, or with -f or -): `var/n = 0; for(var/i in 1 to 3) n += i; n` gives what it
+returns, or its last line's value when that's an expression. It can't sleep.
 When it fails, it says why on stderr and exits with 1: for a runtime error in a proc
 it called, with that proc's file and line and the procs between it and the expression.
   -f FILE      Read the expression from FILE, where no shell can change its quotes or paths
