@@ -353,7 +353,7 @@ pub struct Server {
 	/// Where the old code is that frames have been seen running, each by
 	/// its number less one (`CodeRef::old`)
 	old_codes: RefCell<Vec<usize>>,
-	app: Command<'static>
+	app: Command
 }
 
 struct ServerThread {
@@ -361,7 +361,7 @@ struct ServerThread {
 }
 
 impl Server {
-	pub fn setup_app() -> Command<'static> {
+	pub fn setup_app() -> Command {
 		Command::new("Auxtools Debug Server")
 			.version(env!("CARGO_PKG_VERSION"))
 			.subcommand_required(true)
@@ -375,21 +375,13 @@ impl Server {
 					.alias("dis")
 					.about("Disassembles a proc and displays its bytecode in an assembly-like format")
 					.after_help("If no parameters are provided, the proc executing in the currently debugged stack frame will be disassembled")
-					.arg(
-						Arg::new("proc")
-							.help("Path of the proc to disassemble (e.g. /proc/do_stuff)")
-							.takes_value(true)
-					)
-					.arg(
-						Arg::new("id")
-							.help("Id of the proc to disassemble (for when multiple procs are defined with the same path)")
-							.takes_value(true)
-					)
+					.arg(Arg::new("proc").help("Path of the proc to disassemble (e.g. /proc/do_stuff)"))
+					.arg(Arg::new("id").help("Id of the proc to disassemble (for when multiple procs are defined with the same path)"))
 			)
 			.subcommand(
 				Command::new("guest_override")
 					.about("Override the CKey used by guest connections")
-					.arg(Arg::new("ckey").takes_value(true))
+					.arg(Arg::new("ckey"))
 			)
 			.subcommand(
 				Command::new("mem_profiler")
@@ -397,7 +389,7 @@ impl Server {
 					.subcommand(
 						Command::new("begin")
 							.about("Begins memory profiling. Output goes to the specified file path")
-							.arg(Arg::new("path").help("Where to output memory profiler results").takes_value(true))
+							.arg(Arg::new("path").help("Where to output memory profiler results"))
 					)
 					.subcommand(Command::new("end").about("Finishes current memory profiler."))
 			)
@@ -1919,9 +1911,9 @@ impl Server {
 			Ok(matches) => {
 				match matches.subcommand() {
 					Some(("disassemble", matches)) => {
-						if let Some(proc) = matches.value_of("proc") {
+						if let Some(proc) = matches.get_one::<String>("proc").map(String::as_str) {
 							// Default id to 0 in the worst way possible
-							let id = matches.value_of("id").and_then(|x| x.parse::<u32>().ok()).unwrap_or(0);
+							let id = matches.get_one::<String>("id").map(String::as_str).and_then(|x| x.parse::<u32>().ok()).unwrap_or(0);
 
 							self.handle_disassemble(proc, id)
 						} else if let Some(frame_id) = frame_id {
@@ -1937,7 +1929,7 @@ impl Server {
 						}
 					}
 
-					Some(("guest_override", matches)) => match matches.value_of("ckey") {
+					Some(("guest_override", matches)) => match matches.get_one::<String>("ckey").map(String::as_str) {
 						Some(ckey) => match crate::ckey_override::override_guest_ckey(ckey) {
 							Ok(()) => "Success".to_owned(),
 
@@ -1950,7 +1942,7 @@ impl Server {
 					},
 
 					Some(("mem_profiler", matches)) => match matches.subcommand() {
-						Some(("begin", matches)) => match matches.value_of("path") {
+						Some(("begin", matches)) => match matches.get_one::<String>("path").map(String::as_str) {
 							Some(path) => mem_profiler::begin(path)
 								.map(|_| "Memory profiler enabled".to_owned())
 								.unwrap_or_else(|e| format!("Failed: {}", e)),

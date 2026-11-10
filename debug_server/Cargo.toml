@@ -17,7 +17,7 @@ instruction_hooking = { path = "../instruction_hooking" }
 lazy_static = { workspace = true }
 serde = { version = "1", features = ["derive"] }
 bincode = "1"
-clap = "3"
+clap = "4"
 dmasm = { workspace = true }
 dreammaker = { git = "https://github.com/SpaceManiac/SpacemanDMM", tag = "suite-1.12" }
 region = "3"
