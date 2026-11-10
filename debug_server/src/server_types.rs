@@ -127,7 +127,10 @@ pub enum Request {
 		file: String,
 		start: u32,
 		end: u32
-	}
+	},
+	/// The files the world's code is from, as it was built with them: those
+	/// with a proc in them, as a file is known by its procs' DbgFile
+	Files
 }
 
 // Message from server -> client
@@ -205,6 +208,10 @@ pub enum Response {
 	/// Sorted, each once
 	LinesWithCode {
 		lines: Vec<u32>
+	},
+	/// Sorted, spelled as the world has them
+	Files {
+		files: Vec<String>
 	}
 }
 

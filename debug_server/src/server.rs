@@ -2002,6 +2002,12 @@ impl Server {
 				self.send_or_disconnect(Response::LinesWithCode { lines });
 			}
 
+			Request::Files => {
+				let mut files: Vec<String> = self.file_index().keys().cloned().collect();
+				files.sort();
+				self.send_or_disconnect(Response::Files { files });
+			}
+
 			Request::WorldInfo => {
 				let (args, cwd) = crate::launched::command_line();
 				self.send_or_disconnect(Response::WorldInfo { args, cwd });

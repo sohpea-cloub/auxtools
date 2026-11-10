@@ -80,6 +80,10 @@ Besides a line, a breakpoint can be on a proc by name (**Add Function Breakpoint
   message in the debug console at each hit, with the values of the expressions in
   `{braces}`: `health is {health} for {src}`. It can have a condition and a hit count too.
 
+The **Loaded Scripts** view (in Run and Debug's "..." menu) lists the files the world's
+code is from, and BYOND's `stddef.dm`. A file with no procs in it, only types, vars or
+defines, isn't there: the world knows its files by their procs.
+
 ## Runtime errors
 
 Under **Breakpoints** in the Run and Debug view:

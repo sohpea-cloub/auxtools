@@ -489,6 +489,7 @@ impl Adapter {
 			"exceptionInfo" => self.exception_info(),
 			"source" => arguments(args).and_then(|args| self.source(args)),
 			"breakpointLocations" => arguments(args).and_then(|args| self.breakpoint_locations(args)),
+			"loadedSources" => self.loaded_sources(),
 			"terminate" => self.terminate(),
 			"disconnect" => {
 				let args: Option<DisconnectArguments> = arguments(args).ok();
@@ -518,6 +519,7 @@ impl Adapter {
 			supportTerminateDebuggee: Some(true),
 			supportsTerminateRequest: Some(true),
 			supportsBreakpointLocationsRequest: Some(true),
+			supportsLoadedSourcesRequest: Some(true),
 			..Default::default()
 		})?;
 		// What dap-types has no fields for
@@ -1738,6 +1740,50 @@ impl Adapter {
 			}
 			other => Err(unexpected(other))
 		}
+	}
+
+	/// The files the world's code is from, sorted, then stddef.dm if the
+	/// world has it. The world knows a file by the procs in it, so a file
+	/// with no procs (only types and vars, or only defines) isn't listed.
+	/// None while there's no world, or it runs without debugging.
+	fn loaded_sources(&mut self) -> Handled {
+		if !self.debugging || self.debuggee.is_none() {
+			return Ok(serde_json::json!({ "sources": [] }));
+		}
+		let files = match self.request(&AuxRequest::Files)? {
+			AuxResponse::Files { files } => files,
+			other => return Err(unexpected(other))
+		};
+		let mut paths: Vec<PathBuf> = files
+			.into_iter()
+			// The debug library's own procs aren't in a file of the world's
+			.filter(|file| file != HELPER_FILE)
+			.map(|file| {
+				let file = file.replace('\\', "/");
+				match &self.root {
+					Some(root) => root.join(&file),
+					None => PathBuf::from(&file)
+				}
+			})
+			.collect();
+		paths.sort();
+		paths.dedup();
+		let mut sources: Vec<Source> = paths
+			.into_iter()
+			.map(|path| Source {
+				name: path.file_name().map(|name| name.to_string_lossy().into_owned()),
+				path: Some(path.to_string_lossy().into_owned()),
+				..Default::default()
+			})
+			.collect();
+		if self.stddef.is_some() {
+			sources.push(Source {
+				name: Some("stddef.dm".to_owned()),
+				sourceReference: Some(STDDEF_REFERENCE),
+				..Default::default()
+			});
+		}
+		json(serde_json::json!({ "sources": sources }))
 	}
 }
 

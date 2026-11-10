@@ -1,9 +1,12 @@
 //! What a session is before and around the debugging: what the launcher says
 //! it can do, what it refuses, a world run without debugging, and the end.
 
-use std::time::{Duration, Instant};
+use std::{
+	path::PathBuf,
+	time::{Duration, Instant}
+};
 
-use serde_json::json;
+use serde_json::{json, Value};
 
 use crate::{
 	client::{self, Launcher},
@@ -178,6 +181,7 @@ fn capabilities() {
 		"supportsExceptionInfoRequest",
 		"supportsFunctionBreakpoints",
 		"supportsHitConditionalBreakpoints",
+		"supportsLoadedSourcesRequest",
 		"supportsLogPoints",
 		"supportsSetExpression",
 		"supportsSetVariable",
@@ -243,7 +247,28 @@ fn refusals() {
 	let why = world.refused("source", json!({ "sourceReference": 7 }));
 	assert_eq!(why, "there's no such source");
 	ok("stddef.dm's text is the one source the launcher has");
+
+	loaded_sources(&mut world);
 	world.end();
+}
+
+/// `loadedSources`: the world's files, each once, then stddef.dm
+fn loaded_sources(world: &mut World) {
+	let sources = world.request("loadedSources", json!({}))["sources"].as_array().unwrap().clone();
+	let (files, references): (Vec<&Value>, Vec<&Value>) = sources.iter().partition(|source| source["path"].is_string());
+	let paths: Vec<PathBuf> = files.iter().map(|source| PathBuf::from(source["path"].as_str().unwrap())).collect();
+	let expected: Vec<PathBuf> = ["errors.dm", "main.dm", "stepping.dm", "values.dm"].iter().map(|name| world.marks.file(name)).collect();
+	assert_eq!(paths, expected, "{:?}", sources);
+	for (source, path) in files.iter().zip(&paths) {
+		assert!(path.is_absolute() && path.is_file(), "{}", path.display());
+		assert_eq!(source["name"].as_str(), path.file_name().and_then(|name| name.to_str()));
+	}
+	ok("loadedSources lists the world's files, sorted and each once, by name and an absolute path that's there");
+
+	assert_eq!(references.len(), 1, "{:?}", sources);
+	assert_eq!((&references[0]["name"], &references[0]["sourceReference"]), (&json!("stddef.dm"), &json!(1)));
+	assert_eq!(sources.last(), Some(references[0]));
+	ok("and stddef.dm last, by the reference its text is given for");
 }
 
 /// Evaluates in a world that may not be connected yet
@@ -277,7 +302,9 @@ fn without_debugging() {
 	let stepping = world.marks.file("stepping.dm");
 	let places = world.request("breakpointLocations", json!({ "source": { "path": stepping }, "line": leaf_1 }));
 	assert_eq!(places["breakpoints"], json!([]));
-	ok("a world run without debugging has no places for breakpoints, as it takes none");
+	let sources = world.request("loadedSources", json!({}));
+	assert_eq!(sources["sources"], json!([]));
+	ok("a world run without debugging has no places for breakpoints and no sources to show, as it takes no breakpoints");
 
 	let why = world.refused("pause", json!({ "threadId": 0 }));
 	assert_eq!(why, "the world runs without debugging");
