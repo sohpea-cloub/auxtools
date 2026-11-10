@@ -216,6 +216,16 @@ pub enum Request {
 	RenderVariables {
 		vars: VariablesRef,
 		depth: u32
+	},
+	/// What an expression gives with `src` an object, outside any frame, on
+	/// a running world or a paused one: a bare name is the object's var, a
+	/// bare call its proc, as in its own procs' code. `object` is what
+	/// `ref()` gives for it, `[0x2000001]`, with or without the brackets.
+	/// Answered as `Eval` is, or with a `depth`, as `Render` is.
+	EvalOn {
+		object: String,
+		expression: String,
+		depth: Option<u32>
 	}
 }
 

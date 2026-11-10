@@ -2,6 +2,15 @@
 
 var/rounds = 0
 
+// An object for the command line's eval --src
+var/datum/held/held = new
+
+/datum/held
+	var/count = 3
+
+/datum/held/proc/double(n)
+	return n * 2
+
 /world/New()
 	..()
 	spawn(1)

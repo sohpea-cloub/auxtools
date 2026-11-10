@@ -65,6 +65,7 @@ pub fn command_line_inspect(pid: u64, dir: &Path, code: &Path) {
 	where_breakpoints_bound(pid, code);
 	instruction_steps(pid, dir);
 	as_json(pid, dir);
+	on_an_object(pid);
 }
 
 /// `eval` fails on stderr with exit code 1, whatever went wrong, and a
@@ -329,4 +330,31 @@ fn as_json(pid: &str, dir: &Path) {
 	assert!(stepped["reason"] == "step" && stepped["instruction"]["text"].is_string(), "{}", stepped);
 	run(pid, &["continue"], 0);
 	println!("ok: wait, status, stack, vars, eval and next print one JSON document with --json, paused");
+}
+
+/// eval --src: an object's vars and procs by their bare names, with no frame
+fn on_an_object(pid: &str) {
+	let reference = run(pid, &["eval", "ref(held)"], 0).out.trim().trim_matches('"').to_owned();
+	assert!(reference.starts_with("[0x") && reference.ends_with(']'), "ref(held) gave {}", reference);
+	let bare = reference.trim_start_matches('[').trim_end_matches(']').to_owned();
+	for object in [&reference, &bare] {
+		assert_eq!(run(pid, &["eval", "--src", object, "count + double(2) + src.count"], 0).out, "10\n");
+	}
+	assert_eq!(json_of(pid, &["eval", "--src", &reference, "--json", "list(count, type)"]), json!([3, { "path": "/datum/held" }]));
+	// Paused, the same, and not in the paused frame
+	run(pid, &["pause"], 0);
+	assert_eq!(run(pid, &["eval", "--src", &bare, "double(count)"], 0).out, "6\n");
+	run(pid, &["continue"], 0);
+	println!("ok: eval --src names an object's vars and procs by their bare names, running or paused");
+
+	// One that's gone: the datum is deleted once nothing holds it
+	let gone = run(pid, &["eval", "ref(new /datum/held)"], 0).out.trim().trim_matches('"').to_owned();
+	assert_eq!(fails(pid, &["eval", "--src", &gone, "count"]), format!("there's no object {}: it was deleted, or never was", gone));
+	assert_eq!(
+		fails(pid, &["eval", "--src", "held", "count"]),
+		"held isn't an object's reference: that's what ref() gives, like [0x2000001]"
+	);
+	assert_eq!(fails(pid, &["eval", "--src", &bare, "--frame", "0", "count"]), "--src and --frame don't go together: --src is in no frame");
+	assert!(fails(pid, &["eval", "--src", &bare, "nothing_called_this"]).starts_with("undefined var: nothing_called_this"));
+	println!("ok: eval --src fails on an object that's gone, or a ref that isn't one");
 }

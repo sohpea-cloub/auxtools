@@ -219,7 +219,7 @@ them, so `log --runtimes --follow` watches them without pausing the world.
 		},
 		Command {
 			name: "eval",
-			usage: "EXPRESSION | -f FILE | - [--frame N] [--json [--depth N]]",
+			usage: "EXPRESSION | -f FILE | - [--frame N | --src REF] [OPTIONS]",
 			about: "The value of a DM expression, or of a proc's body",
 			details: "In a paused world, the expression is in a frame of the stack: it can name that
 proc's vars, and `src`. In a running world it can name globals and call procs.
@@ -231,6 +231,9 @@ it called, with that proc's file and line and the procs between it and the expre
   -f FILE      Read the expression from FILE, where no shell can change its quotes or paths
   -            Read the expression from stdin
   --frame N    The Nth frame of the stack, from 0, the innermost (the default)
+  --src REF    In no frame, with `src` the object whose ref() is REF ([0x2000001], or
+               0x2000001): a bare name is its var, a bare call its proc, as in its own
+               procs. Paused or not. It fails if the object isn't there (deleted).
   --json       The value as JSON: a number, text or null as itself; a list as an array of
                its entries, or an object when they're text keys with values (else an
                array of {\"key\", \"value\"}); an object (a datum, atom, client...) as
@@ -240,10 +243,14 @@ it called, with that proc's file and line and the procs between it and the expre
                while N is 1 or more, an object's vars while it's 2 or more, each a level
                lower. Past that, a list is {\"list\": true, \"len\"} and an object no vars.",
 			run: Run::World(|world, args| {
-				let flags = Flags::parse(args, &["--frame", "-f", "--depth"], &["--json"])?;
+				let flags = Flags::parse(args, &["--frame", "-f", "--depth", "--src"], &["--json"])?;
 				world.output(&flags)?;
 				let expression = expression(&flags.rest, flags.value("-f"), read_stdin)?;
-				world.eval(&expression, flags.number("--frame")?)
+				match flags.value("--src") {
+					Some(_) if flags.has("--frame") => Err("--src and --frame don't go together: --src is in no frame".into()),
+					Some(object) => world.eval_on(object, &expression),
+					None => world.eval(&expression, flags.number("--frame")?)
+				}
 			})
 		},
 	]),
@@ -1137,6 +1144,25 @@ impl World {
 			eprintln!("{}", note);
 		}
 		println!("{}", result?.value);
+		Ok(())
+	}
+
+	/// `eval --src`: with `src` an object, in no frame
+	fn eval_on(&mut self, object: &str, expression: &str) -> Result<()> {
+		self.notes.clear();
+		let response = self.request(Request::EvalOn {
+			object: object.to_owned(),
+			expression: expression.to_owned(),
+			depth: self.json
+		})?;
+		for note in std::mem::take(&mut self.notes) {
+			eprintln!("{}", note);
+		}
+		match response {
+			Response::Render(result) => println!("{}", json::value(&result?)),
+			Response::Eval(result) => println!("{}", result?.value),
+			other => return Err(unexpected(&other))
+		}
 		Ok(())
 	}
 

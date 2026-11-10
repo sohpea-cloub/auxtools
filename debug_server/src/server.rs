@@ -307,6 +307,9 @@ pub struct Server {
 	/// The world has loaded and waits for its launcher to say it can run
 	/// (`process_until_configured`)
 	waiting_to_start: bool,
+	/// The object that's `src` for the next expression evaluated in no frame
+	/// (`Request::EvalOn`)
+	eval_src: Option<Value>,
 	/// The client that asked for the world to stay paused once every client
 	/// has gone (`Request::HoldPause`)
 	hold: Option<ClientId>,
@@ -387,6 +390,7 @@ impl Server {
 			next_watch: 0,
 			eval_given: vec![],
 			waiting_to_start: false,
+			eval_src: None,
 			hold: None,
 			hold_max: None,
 			procs_by_file: None,
@@ -1906,6 +1910,7 @@ impl Server {
 
 		let result = self.compile_and_run_expr(frame_id, command);
 		self.eval_given.clear();
+		self.eval_src = None;
 		// Whatever it changed isn't the world's doing
 		self.refresh_watches();
 
@@ -1946,10 +1951,18 @@ impl Server {
 		// The world's globals, which the expression reads and writes by name
 		let globals = unsafe { Value::new(ValueTag::GlobalVars, ValueData { id: 0 }) };
 		let mut src = None;
+		let given_src = self.eval_src.take();
 
 		let (ctx, instance, mut args) = match frame_id {
-			// Global context
-			None => (std::ptr::null_mut(), std::ptr::null_mut(), vec![]),
+			// Global context, or an object's (`Request::EvalOn`)
+			None => {
+				let mut args = vec![];
+				if let Some(object) = given_src {
+					src = Some(object.clone());
+					args.push(("src".to_owned(), object, ArgType::Given));
+				}
+				(std::ptr::null_mut(), std::ptr::null_mut(), args)
+			}
 
 			Some(frame_id) => {
 				let Some(frame) = self.get_stack_frame(frame_id) else {
@@ -2172,6 +2185,46 @@ impl Server {
 			entries: Self::entries(&result)
 		});
 		self.send_or_disconnect(Response::Eval(response));
+	}
+
+	/// What `Request::EvalOn` asks for: an expression with `src` an object
+	fn handle_eval_on(&mut self, object: &str, expression: &str, depth: Option<u32>) {
+		let value = self.object_of(object).and_then(|object| {
+			self.eval_src = Some(object);
+			self.eval_expr(None, expression)
+		});
+		let response = match depth {
+			Some(depth) => Response::Render(value.map(|value| Self::render(&value, depth))),
+			// What's inside is opened by itself: the expression means
+			// nothing without its object
+			None => Response::Eval(value.map(|result| EvalResponse {
+				value: Self::stringify(&result),
+				variables: self.value_to_variables_ref(&result, None),
+				kind: Self::kind(&result),
+				entries: Self::entries(&result)
+			}))
+		};
+		self.send_or_disconnect(response);
+	}
+
+	/// The object `ref()` gave this for, `[0x2000001]` (or without the
+	/// brackets), if it's still there
+	fn object_of(&mut self, reference: &str) -> Result<Value, String> {
+		let text = reference.trim();
+		let inner = text.strip_prefix('[').and_then(|text| text.strip_suffix(']')).unwrap_or(text);
+		let id = inner
+			.strip_prefix("0x")
+			.or_else(|| inner.strip_prefix("0X"))
+			.and_then(|hex| u32::from_str_radix(hex, 16).ok())
+			.ok_or_else(|| format!("{} isn't an object's reference: that's what ref() gives, like [0x2000001]", reference))?;
+		let reference = format!("[0x{:x}]", id);
+		// The world's own lookup knows what's still there. (A `[` in a text
+		// starts an expression in it.)
+		let found = self.eval_expr(None, &format!("locate(\"\\{}\")", reference))?;
+		if found == Value::NULL {
+			return Err(format!("there's no object {}: it was deleted, or never was", reference));
+		}
+		Ok(found)
 	}
 
 	fn handle_hot_reload(&mut self, request: &HotReloadRequest) {
@@ -2416,6 +2469,7 @@ impl Server {
 
 			Request::Render { frame_id, expression, depth } => self.handle_render(frame_id, &expression, depth),
 			Request::RenderVariables { vars, depth } => self.handle_render_variables(vars, depth),
+			Request::EvalOn { object, expression, depth } => self.handle_eval_on(&object, &expression, depth),
 
 			// The following requests are special cases and handled outside of
 			// this function
@@ -2749,6 +2803,11 @@ impl Server {
 			}
 			if let Request::Render { frame_id, expression, depth } = request {
 				self.handle_render(frame_id, &expression, depth);
+				self.state.as_mut().unwrap().invalidate_stacks();
+				continue;
+			}
+			if let Request::EvalOn { object, expression, depth } = request {
+				self.handle_eval_on(&object, &expression, depth);
 				self.state.as_mut().unwrap().invalidate_stacks();
 				continue;
 			}
