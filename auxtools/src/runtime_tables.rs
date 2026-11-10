@@ -493,7 +493,7 @@ fn resolve() -> Result<Functions, String> {
 mod recipes {
 	use byond_scan::{Anchor, Extract, OperandSelect, Recipe, SignatureTreatment, VersionRange};
 
-	const CHECKED: VersionRange = VersionRange { min: 1648, max: 1688 };
+	const CHECKED: VersionRange = VersionRange { min: 1644, max: 1688 };
 
 	pub const PROCDEF_ADD: Recipe = Recipe {
 		name: "procdef_add",
@@ -689,7 +689,7 @@ mod recipes {
 
 	pub const REGISTER_TYPEPATH_OLD: Recipe = Recipe {
 		name: "register_typepath",
-		versions: VersionRange { min: 1648, max: 1686 },
+		versions: VersionRange { min: 1644, max: 1686 },
 		anchor: Anchor::Signature(
 			SignatureTreatment::NoOffset,
 			"53 83 EC 18 8B 44 24 20 3B 05 ?? ?? ?? ?? 73 ?? 69 D8 94 00 00 00 03 1D ?? ?? ?? ?? 74 ?? 80 BB 8C 00 00 00 00 74 ?? 8D 44 24 08 83 EC \

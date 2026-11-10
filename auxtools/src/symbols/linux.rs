@@ -13,6 +13,11 @@ use byond_scan::{Anchor, Extract, OperandSelect, Recipe, SignatureTreatment, Ver
 // through the debug server's instruction hook instead (see
 // `hooks::calls_bypass_detour`).
 const SUPPORTED: VersionRange = VersionRange { min: 1648, max: 1688 };
+// The patterns that also match 515 from 515.1644, which GCC compiled much as
+// it did 516
+const FROM_515_1644: VersionRange = VersionRange { min: 1644, max: 1688 };
+// What 515.1644 to 515.1647 have in place of the others
+const LATE_515: VersionRange = VersionRange { min: 1644, max: 1647 };
 
 // The first build where `remove_from_list` takes its arguments on the stack.
 // Every build before it wants the list in `eax:edx`. Read off the prologue of
@@ -27,12 +32,16 @@ const GLOBAL_VARS_SIG: &str = "89 1D ?? ?? ?? ?? 57 E8 ?? ?? ?? ?? 83 C4 10 85 F
 // The prefix tells this enqueue apart from the dequeue clones. Operands are
 // back=0, front=1, buffer=2. The two index globals sit the other way round from
 // Windows, so back is 4 bytes below front.
-const SUSPENDED_SIG: &str = "55 57 89 C7 56 53 83 EC ?? 8B 0D ?? ?? ?? ?? 80 48 04 04 8B A8 8C 00 00 00 A1 ?? ?? ?? ?? 89 4C 24 ?? 8B 35 ?? ?? ?? ??";
+// The resume time is at +0x8C of a ProcInstance from 516, +0x88 before.
+const SUSPENDED_SIG: &str = "55 57 89 C7 56 53 83 EC ?? 8B 0D ?? ?? ?? ?? 80 48 04 04 8B A8 ?? 00 00 00 A1 ?? ?? ?? ?? 89 4C 24 ?? 8B 35 ?? ?? ?? ??";
 
 // `runtime` opens with a load of the current execution context, so the same
 // mask finds both.
 const RUNTIME_SIG: &str =
 	"55 89 E5 56 53 83 EC ?? 8B 15 ?? ?? ?? ?? 85 D2 0F 84 ?? ?? ?? ?? 0F B6 42 6F 3C 01 76 ?? 31 C9 84 C0 C7 42 10 ?? ?? ?? ?? 0F 94 C3";
+
+// 515's frame flag byte is at +0x6D (`0F B6 42 6D`), 516's at +0x6F
+const RUNTIME_SIG_515: &str = "55 89 E5 56 53 83 EC 30 8B 15 ?? ?? ?? ?? 85 D2 0F 84 ?? ?? ?? ?? 0F B6 42 6D";
 
 const PROCDEF_ACCESSOR_SIG: &str = "8B 44 24 04 39 05 ?? ?? ?? ?? 76 ?? 6B C0 ?? 03 05 ?? ?? ?? ?? C3";
 const STRING_ACCESSOR_SIG: &str = "56 53 83 EC 14 8B 44 24 20 39 05 ?? ?? ?? ?? 76 ?? 8B 15 ?? ?? ?? ?? 8B 04 82";
@@ -45,21 +54,21 @@ const ALIST_SIG: &str =
 pub(crate) const RECIPES: &[Recipe] = &[
 	Recipe {
 		name: "get_proc_array_entry",
-		versions: SUPPORTED,
+		versions: FROM_515_1644,
 		anchor: Anchor::Signature(SignatureTreatment::NoOffset, PROCDEF_ACCESSOR_SIG),
 		hops: &[],
 		extract: Extract::Entry
 	},
 	Recipe {
 		name: "get_string_table_entry",
-		versions: SUPPORTED,
+		versions: FROM_515_1644,
 		anchor: Anchor::Signature(SignatureTreatment::NoOffset, STRING_ACCESSOR_SIG),
 		hops: &[],
 		extract: Extract::Entry
 	},
 	Recipe {
 		name: "get_string_id",
-		versions: SUPPORTED,
+		versions: FROM_515_1644,
 		// frameless mkstr, pinned by the comparison against 0x01
 		anchor: Anchor::Signature(
 			SignatureTreatment::NoOffset,
@@ -71,7 +80,7 @@ pub(crate) const RECIPES: &[Recipe] = &[
 	},
 	Recipe {
 		name: "call_proc_by_id",
-		versions: SUPPORTED,
+		versions: FROM_515_1644,
 		// the frame that builds a call record and drops into the interpreter. Every
 		// `mov reg,[esp+disp]` argument load has its displacement wildcarded because
 		// they all move with the frame.
@@ -85,7 +94,7 @@ pub(crate) const RECIPES: &[Recipe] = &[
 	},
 	Recipe {
 		name: "call_datum_proc_by_name",
-		versions: SUPPORTED,
+		versions: FROM_515_1644,
 		// positive `ebp` displacements are incoming arguments and stay pinned. The
 		// negative ones are locals and move with the frame.
 		anchor: Anchor::Signature(
@@ -121,7 +130,7 @@ pub(crate) const RECIPES: &[Recipe] = &[
 	},
 	Recipe {
 		name: "inc_ref_count",
-		versions: SUPPORTED,
+		versions: FROM_515_1644,
 		// `80 F9 4A` is `cmp cl, 4Ah`, the tag table bound. The `66 0F 7E C0` before
 		// it is the only thing telling this apart from dec_ref_count in the first 48
 		// bytes.
@@ -156,7 +165,7 @@ pub(crate) const RECIPES: &[Recipe] = &[
 	},
 	Recipe {
 		name: "set_assoc_element",
-		versions: SUPPORTED,
+		versions: FROM_515_1644,
 		// the prologue changes after 1659, so follow this caller. It is unique across
 		// the range, and its alignment padding is wildcarded.
 		anchor: Anchor::Signature(
@@ -168,7 +177,7 @@ pub(crate) const RECIPES: &[Recipe] = &[
 	},
 	Recipe {
 		name: "create_list",
-		versions: SUPPORTED,
+		versions: FROM_515_1644,
 		// `81 FB FF FF 00 00` is `cmp ebx, 0FFFFh`, the failure sentinel. It is what
 		// tells this apart from the `new` dispatcher, which opens the same way.
 		anchor: Anchor::Signature(
@@ -236,7 +245,7 @@ pub(crate) const RECIPES: &[Recipe] = &[
 	},
 	Recipe {
 		name: "get_misc_by_id",
-		versions: SUPPORTED,
+		versions: FROM_515_1644,
 		// the plain accessor body matches 17 times, so follow a unique caller
 		anchor: Anchor::Signature(
 			SignatureTreatment::OffsetByCall,
@@ -277,7 +286,7 @@ pub(crate) const RECIPES: &[Recipe] = &[
 	// partial init.
 	Recipe {
 		name: "variable_names",
-		versions: SUPPORTED,
+		versions: FROM_515_1644,
 		anchor: Anchor::Signature(SignatureTreatment::NoOffset, GLOBAL_VARS_SIG),
 		hops: &[],
 		extract: Extract::AbsMem(OperandSelect::NthAbsMem(2))
@@ -285,14 +294,14 @@ pub(crate) const RECIPES: &[Recipe] = &[
 	// the start of the sleeping-proc queue: back, then front
 	Recipe {
 		name: "suspended_procs",
-		versions: SUPPORTED,
+		versions: FROM_515_1644,
 		anchor: Anchor::Signature(SignatureTreatment::NoOffset, SUSPENDED_SIG),
 		hops: &[],
 		extract: Extract::AbsMem(OperandSelect::NthAbsMem(0))
 	},
 	Recipe {
 		name: "suspended_procs_buffer",
-		versions: SUPPORTED,
+		versions: FROM_515_1644,
 		anchor: Anchor::Signature(SignatureTreatment::NoOffset, SUSPENDED_SIG),
 		hops: &[],
 		extract: Extract::AbsMem(OperandSelect::NthAbsMem(2))
@@ -310,5 +319,115 @@ pub(crate) const RECIPES: &[Recipe] = &[
 		anchor: Anchor::Signature(SignatureTreatment::NoOffset, ALIST_SIG),
 		hops: &[],
 		extract: Extract::AbsMem(OperandSelect::NthAbsMem(1))
-	}
+	},
+	Recipe {
+		name: "get_variable",
+		versions: LATE_515,
+		anchor: Anchor::Signature(
+			SignatureTreatment::NoOffset,
+			"55 89 E5 57 56 53 83 EC 5C F3 0F 7E 4D 0C 8B 75 08 66 0F 6F C1 66 0F 7E C8"
+		),
+		hops: &[],
+		extract: Extract::Entry
+	},
+	Recipe {
+		name: "set_variable",
+		versions: LATE_515,
+		anchor: Anchor::Signature(
+			SignatureTreatment::NoOffset,
+			"55 89 E5 57 56 53 83 EC 7C F3 0F 7E 55 08 8B 75 10 66 0F 6F C2 66 0F 7E D0"
+		),
+		hops: &[],
+		extract: Extract::Entry
+	},
+	Recipe {
+		name: "get_assoc_element",
+		versions: LATE_515,
+		anchor: Anchor::Signature(
+			SignatureTreatment::NoOffset,
+			"55 89 E5 57 56 53 83 EC 3C F3 0F 7E 45 0C 8B 7D 08 0F 29 45 B8 66 0F 7E C0"
+		),
+		hops: &[],
+		extract: Extract::Entry
+	},
+	Recipe {
+		name: "append_to_list",
+		versions: LATE_515,
+		// the list in `eax:edx`, as on 516
+		anchor: Anchor::Signature(
+			SignatureTreatment::NoOffset,
+			"56 66 0F 6E CA 66 0F 6E C0 53 66 0F 62 C1 66 0F 6F C8 66 0F 7E C6 66 0F 73 D1 20"
+		),
+		hops: &[],
+		extract: Extract::Entry
+	},
+	Recipe {
+		name: "remove_from_list",
+		versions: LATE_515,
+		// the list in `eax:edx`, as on 516 before 1674
+		anchor: Anchor::Signature(
+			SignatureTreatment::NoOffset,
+			"55 66 0F 6E CA 66 0F 6E C0 57 66 0F 62 C1 56 66 0F 6F C8 66 0F 7E C7 53"
+		),
+		hops: &[],
+		extract: Extract::Entry
+	},
+	Recipe {
+		name: "get_length",
+		versions: LATE_515,
+		anchor: Anchor::Signature(
+			SignatureTreatment::NoOffset,
+			"55 89 E5 57 56 53 83 EC 2C F3 0F 7E 4D 0C 8B 5D 08 66 0F 7E C8 3C 39 77 ??"
+		),
+		hops: &[],
+		extract: Extract::Entry
+	},
+	Recipe {
+		name: "value_is_list",
+		versions: LATE_515,
+		// one list tag fewer than 516 (`80 FA 54`)
+		anchor: Anchor::Signature(
+			SignatureTreatment::NoOffset,
+			"55 89 E5 56 53 83 EC 20 F3 0F 7E 4D 08 8B 75 10 66 0F 7E CA 80 FA 54 0F 87 ?? ?? ?? ??"
+		),
+		hops: &[],
+		extract: Extract::Entry
+	},
+	Recipe {
+		name: "runtime",
+		versions: LATE_515,
+		anchor: Anchor::Signature(SignatureTreatment::NoOffset, RUNTIME_SIG_515),
+		hops: &[],
+		extract: Extract::Entry
+	},
+	Recipe {
+		name: "current_execution_context",
+		versions: LATE_515,
+		anchor: Anchor::Signature(SignatureTreatment::NoOffset, RUNTIME_SIG_515),
+		hops: &[],
+		extract: Extract::AbsMem(OperandSelect::NthAbsMem(0))
+	},
+	Recipe {
+		name: "to_string",
+		versions: LATE_515,
+		// the same interning switch, over 515's tags
+		anchor: Anchor::Signature(
+			SignatureTreatment::NoOffset,
+			"55 89 E5 57 56 53 83 EC 3C 0F B6 45 08 3C 23 77 ?? 84 C0 74 ?? 3C 23 77 ?? FF 24 85 ?? ?? ?? ??"
+		),
+		hops: &[],
+		extract: Extract::Entry
+	},
+	Recipe {
+		name: "dec_ref_count",
+		versions: LATE_515,
+		// 515's ByondValue_DecRef doesn't call it, so by its prologue: the
+		// 0x4A tag bound of its switch, as on 516
+		anchor: Anchor::Signature(
+			SignatureTreatment::NoOffset,
+			"55 89 E5 56 53 83 EC 20 F3 0F 7E 4D 08 66 0F 6F C1 66 0F 7E C9 66 0F 73 D0 20 66 0F 7E C3 80 F9 4A"
+		),
+		hops: &[],
+		extract: Extract::Entry
+	},
 ];

@@ -16,6 +16,9 @@ use std::{any::Any, cell::UnsafeCell, ffi::c_void};
 #[cfg(windows)]
 const DISPATCH_MASK: &str = "0F B7 47 ?? 8B 4F ?? 8B F0 8B 14 ?? 89 95 ?? ?? ?? ?? 81 FA ?? 01 00 00";
 #[cfg(unix)]
+const DISPATCH_MASK_515: &str = "0F B7 46 14 8B 56 10 8D 3C 85 00 00 00 00 66 89 85 ?? ?? ?? ?? 89 85 ?? ?? ?? ?? 8D 04 3A 8B 18 81 FB ?? 01 00 00 0F \
+                                 87 ?? ?? ?? ?? FF 24 9D ?? ?? ?? ??";
+#[cfg(unix)]
 const DISPATCH_MASK: &str = "0F B7 46 ?? 8B 56 ?? 66 89 85 ?? ?? ?? ?? 89 85 ?? ?? ?? ?? C1 E0 02 89 85 ?? ?? ?? ?? 01 D0 8B 18 81 FB ?? 01 00 00 \
                              0F 87 ?? ?? ?? ?? FF 24 9D ?? ?? ?? ??";
 
@@ -31,6 +34,18 @@ const EXECUTE_INSTRUCTION: Recipe = Recipe {
 	hops: &[],
 	extract: Extract::Entry
 };
+
+// The frame is in ESI there too
+#[cfg(unix)]
+const EXECUTE_INSTRUCTIONS: &[Recipe] = &[EXECUTE_INSTRUCTION, Recipe {
+	name: "execute_instruction",
+	versions: VersionRange { min: 1644, max: 1647 },
+	anchor: Anchor::Signature(SignatureTreatment::NoOffset, DISPATCH_MASK_515),
+	hops: &[],
+	extract: Extract::Entry
+}];
+#[cfg(windows)]
+const EXECUTE_INSTRUCTIONS: &[Recipe] = &[EXECUTE_INSTRUCTION];
 
 // stackoverflow copypasta https://old.reddit.com/r/rust/comments/kkap4e/how_to_cast_a_boxdyn_mytrait_to_an_actual_struct/
 pub trait InstructionHookToAny: 'static {
@@ -67,7 +82,7 @@ static mut CALLS_BYPASS_DETOUR: bool = false;
 
 #[init(full)]
 fn instruction_hooking_init() -> Result<(), String> {
-	let execute_instruction = find_recipe(&EXECUTE_INSTRUCTION)?;
+	let execute_instruction = find_recipe_of(EXECUTE_INSTRUCTIONS)?;
 	unsafe {
 		CALLS_BYPASS_DETOUR = auxtools::hooks::calls_bypass_detour();
 	}
