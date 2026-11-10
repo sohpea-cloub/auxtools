@@ -59,7 +59,11 @@ pub enum Request {
 		frame_id: u32
 	},
 	Variables {
-		vars: VariablesRef
+		vars: VariablesRef,
+		/// For a list: how many entries to give, and from which (from 0).
+		/// `None` for all of them.
+		start: Option<u32>,
+		count: Option<u32>
 	},
 	Continue {
 		kind: ContinueKind
@@ -387,13 +391,23 @@ pub struct VariablesRef(pub i32);
 pub struct Variable {
 	pub name: String,
 	pub value: String,
-	pub variables: Option<VariablesRef>
+	pub variables: Option<VariablesRef>,
+	/// What kind of value it is: an object's type, or `num`, `text`, `/list`
+	/// and the like
+	pub kind: Option<String>,
+	/// An expression that gives it, in the frame it was listed for
+	pub expr: Option<String>,
+	/// For a list: how many entries it has
+	pub entries: Option<u32>
 }
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]
 pub struct EvalResponse {
 	pub value: String,
-	pub variables: Option<VariablesRef>
+	pub variables: Option<VariablesRef>,
+	/// As a `Variable`'s
+	pub kind: Option<String>,
+	pub entries: Option<u32>
 }
 
 /// What a hot reload changes (see `Request::HotReload`)

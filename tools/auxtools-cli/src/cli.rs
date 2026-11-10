@@ -392,7 +392,12 @@ impl World {
 		}
 		for (name, vars) in scopes {
 			let Some(vars) = vars else { continue };
-			let Response::Variables { vars } = self.request(Request::Variables { vars })? else {
+			let listed = self.request(Request::Variables {
+				vars,
+				start: None,
+				count: None
+			})?;
+			let Response::Variables { vars } = listed else {
 				return Err(format!("the world didn't list the {}", name).into());
 			};
 			println!("{}:", name);

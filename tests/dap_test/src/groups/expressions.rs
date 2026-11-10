@@ -124,11 +124,9 @@ pub fn run() {
 	gives(&mut world, &[("global_number = 6", "6"), ("global_number", "6"), ("global_number = 5", "5")]);
 	ok("assigning to a list's element, an object's var and a global");
 
-	// The debug console gets text; a watch or a hover gets something to open
+	// In the debug console, a watch or a hover
 	let frame = world.frame_id();
-	let in_console = world.evaluate_in(&frame, "src", "repl");
-	assert_eq!((&in_console["result"], &in_console["variablesReference"]), (&json!("S"), &json!(0)));
-	for context in ["watch", "hover"] {
+	for context in ["repl", "watch", "hover"] {
 		let watched = world.evaluate_in(&frame, "src", context);
 		assert_eq!(watched["result"], "S");
 		let inside = crate::client::named(&world.variables(&watched["variablesReference"].clone()));
@@ -138,7 +136,19 @@ pub fn run() {
 		let watched = world.evaluate_in(&frame, "by", context);
 		assert_eq!((&watched["result"], &watched["variablesReference"]), (&json!("4"), &json!(0)));
 	}
-	ok("a watch's or a hover's result opens when it's an object or a list");
+	ok("a result opens when it's an object or a list, in the console, a watch or a hover");
+
+	let result = world.evaluate_in(&frame, "src", "watch");
+	assert_eq!(result["type"], "/datum/thing/sub");
+	let inside = world.variables(&result["variablesReference"].clone());
+	let n = inside.iter().find(|v| v["name"] == "n").unwrap();
+	assert_eq!(n["evaluateName"], "(src).n");
+	assert_eq!(world.evaluate_in(&frame, "(src).n + 1", "watch")["result"], "2");
+	let result = world.evaluate_in(&frame, "local_list", "watch");
+	assert_eq!((&result["type"], &result["indexedVariables"]), (&json!("/list"), &json!(3)));
+	assert_eq!(world.evaluate_in(&frame, "by", "watch")["type"], "num");
+	assert_eq!(world.evaluate_in(&frame, "name", "watch")["type"], "text");
+	ok("a result says what kind of value it is, and what's inside it is reached through the expression");
 
 	// sc_inside called inside(), and has a local of its own
 	let caller = world.frames(0)[1]["id"].clone();

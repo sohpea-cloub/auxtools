@@ -94,7 +94,11 @@ fn eval_fields(client: &mut Client, frame_id: u32, command: &str) -> (String, Ve
 		panic!("expected the result of {:?}, got {:?}", command, response);
 	};
 	let refs = eval.variables.unwrap_or_else(|| panic!("{} should be expandable", command));
-	let vars = match client.request(Request::Variables { vars: refs }) {
+	let vars = match client.request(Request::Variables {
+		vars: refs,
+		start: None,
+		count: None
+	}) {
 		Response::Variables { vars } => vars,
 		other => panic!("expected Variables, got {:?}", other)
 	};
@@ -126,7 +130,9 @@ fn values_516(client: &mut Client) {
 	};
 	assert_eq!(alist.value, "/alist {len = 3}");
 	let vars = match client.request(Request::Variables {
-		vars: alist.variables.expect("an alist should be expandable")
+		vars: alist.variables.expect("an alist should be expandable"),
+		start: None,
+		count: None
 	}) {
 		Response::Variables { vars } => vars,
 		other => panic!("expected Variables, got {:?}", other)
@@ -263,7 +269,11 @@ fn protocol(world: &World, mut client: Client) -> Client {
 		"scopes of a running world: {:?}",
 		response
 	);
-	let response = client.request(Request::Variables { vars: VariablesRef(1) });
+	let response = client.request(Request::Variables {
+		vars: VariablesRef(1),
+		start: None,
+		count: None
+	});
 	assert!(matches!(&response, Response::Variables { vars } if vars.is_empty()), "variables of a running world: {:?}", response);
 	let response = client.request(Request::StackFrames {
 		stack_id: 0,

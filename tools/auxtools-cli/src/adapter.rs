@@ -406,6 +406,7 @@ impl Adapter {
 			supportsConditionalBreakpoints: Some(true),
 			supportsHitConditionalBreakpoints: Some(true),
 			supportsLogPoints: Some(true),
+			supportsValueFormattingOptions: Some(true),
 			supportsExceptionInfoRequest: Some(true),
 			supportTerminateDebuggee: Some(true),
 			..Default::default()
@@ -1226,12 +1227,16 @@ impl Adapter {
 			AuxResponse::Scopes { arguments, locals, globals } => (arguments, locals, globals),
 			other => return Err(unexpected(other))
 		};
-		let scopes = [("Locals", locals), ("Arguments", arguments), ("Globals", globals)]
+		// The globals aren't opened until the client is asked to: a world can
+		// have thousands
+		let scopes = [("Locals", locals, Some("locals")), ("Arguments", arguments, Some("arguments")), ("Globals", globals, None)]
 			.into_iter()
-			.filter_map(|(name, vars)| {
+			.filter_map(|(name, vars, hint)| {
 				vars.map(|vars| Scope {
 					name: name.to_owned(),
+					presentationHint: hint.map(str::to_owned),
 					variablesReference: vars.0.into(),
+					expensive: hint.is_none(),
 					..Default::default()
 				})
 			})
@@ -1240,12 +1245,17 @@ impl Adapter {
 	}
 
 	fn variables(&mut self, args: VariablesArguments) -> Handled {
+		// A client takes a long list a piece at a time
+		let piece = |n: Option<i64>| n.and_then(|n| u32::try_from(n).ok());
 		let vars = match self.request(&AuxRequest::Variables {
-			vars: aux::VariablesRef(args.variablesReference as i32)
+			vars: aux::VariablesRef(args.variablesReference as i32),
+			start: piece(args.start),
+			count: piece(args.count).filter(|&count| count > 0)
 		})? {
 			AuxResponse::Variables { vars } => vars,
 			other => return Err(unexpected(other))
 		};
+		let hex = args.format.is_some_and(|format| format.hex == Some(true));
 
 		// The client needs names to be different
 		let mut seen: HashMap<String, u32> = HashMap::new();
@@ -1257,8 +1267,11 @@ impl Adapter {
 				*count += 1;
 				Variable {
 					name,
-					value: var.value,
+					value: shown(var.value, hex),
+					type_: var.kind,
+					evaluateName: var.expr,
 					variablesReference: var.variables.map_or(0, |vars| vars.0.into()),
+					indexedVariables: var.entries.map(i64::from),
 					..Default::default()
 				}
 			})
@@ -1284,14 +1297,17 @@ impl Adapter {
 	}
 
 	fn evaluate(&mut self, args: EvaluateArguments) -> Handled {
+		let hex = args.format.is_some_and(|format| format.hex == Some(true));
 		match self.request(&AuxRequest::Eval {
 			frame_id: args.frameId.map(|id| id as u32),
 			command: args.expression,
 			context: args.context
 		})? {
 			AuxResponse::Eval(Ok(result)) => json(EvaluateResponse {
-				result: result.value,
+				result: shown(result.value, hex),
+				type_: result.kind,
 				variablesReference: result.variables.map_or(0, |vars| vars.0.into()),
+				indexedVariables: result.entries.map(|entries| entries as usize),
 				..Default::default()
 			}),
 			// The client shows it where the value would be
@@ -1309,6 +1325,19 @@ impl Adapter {
 			}),
 			_ => Err("there's no such source".to_owned())
 		}
+	}
+}
+
+/// A value's text as the client asked for it: a whole number in hex, if it
+/// wants those
+fn shown(value: String, hex: bool) -> String {
+	if !hex {
+		return value;
+	}
+	match value.parse::<i64>() {
+		Ok(n) if n < 0 => format!("-0x{:X}", -n),
+		Ok(n) => format!("0x{:X}", n),
+		Err(_) => value
 	}
 }
 
@@ -1362,7 +1391,19 @@ mod tests {
 
 	use auxtools_cli::server_types::{HitCondition, LogPart, RuntimeFilter};
 
-	use super::{file_name_in, named_proc};
+	use super::{file_name_in, named_proc, shown};
+
+	#[test]
+	fn whole_numbers_are_shown_in_hex_when_asked() {
+		assert_eq!(shown("42".to_owned(), true), "0x2A");
+		assert_eq!(shown("0".to_owned(), true), "0x0");
+		assert_eq!(shown("-255".to_owned(), true), "-0xFF");
+		assert_eq!(shown("16777216".to_owned(), true), "0x1000000");
+		assert_eq!(shown("42".to_owned(), false), "42");
+		for other in ["1.5", "\"42\"", "null", "/list {len = 3}", "inf"] {
+			assert_eq!(shown(other.to_owned(), true), other);
+		}
+	}
 
 	#[test]
 	fn a_log_message_is_text_with_expressions_in_braces() {

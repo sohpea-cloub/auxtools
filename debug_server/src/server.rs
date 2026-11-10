@@ -23,13 +23,22 @@ use crate::{
 	hot_reload, mem_profiler, waker
 };
 
+/// Something a client can open, for the variables inside it. Those that are
+/// reached through an expression carry it, so what's inside can say how it's
+/// reached in turn (`a.b[2]`).
 #[derive(Clone, Hash, PartialEq, Eq)]
 enum Variables {
 	Arguments { frame: u32 },
 	Locals { frame: u32 },
-	ObjectVars(Value),
-	ListContents(Value),
-	ListPair { key: Value, value: Value }
+	/// The world's own global vars, and a row for BYOND's
+	Globals,
+	/// The constants BYOND itself declares (`NORTH`, `MOB_LAYER`, ...)
+	Builtins,
+	ObjectVars(Value, Option<String>),
+	ListContents(Value, Option<String>),
+	/// An entry of a list that has a value for its key. `list` is the
+	/// expression the list is reached by.
+	ListPair { key: Value, value: Value, list: Option<String> }
 }
 
 /// What a pause has been asked about. The stacks are read when they're first
@@ -580,7 +589,13 @@ impl Server {
 			}
 		} else {
 			match value.to_string() {
-				Ok(v) if v.is_empty() => value.raw.to_string(),
+				// What BYOND has no text for
+				Ok(v) if v.is_empty() => match value.raw.tag {
+					ValueTag::World => "world".to_owned(),
+					ValueTag::Image => "/image".to_owned(),
+					ValueTag::Appearance => "appearance".to_owned(),
+					_ => value.raw.to_string()
+				},
 				Ok(value) => value,
 				Err(Runtime { message }) => {
 					format!("{} -- stringify error: {:?}", value.raw, message)
@@ -589,30 +604,106 @@ impl Server {
 		}
 	}
 
-	fn value_to_variable(&self, name: String, value: &Value) -> Variable {
-		let stringified = Self::stringify(value);
-		let variables = self.value_to_variables_ref(value);
+	/// What kind of value it is: an object's type, or a word for what isn't
+	/// an object
+	fn kind(value: &Value) -> Option<String> {
+		use ValueTag as Tag;
+		if List::is_list(value) {
+			return Some(if List::from_value(value).is_ok_and(|list| list.is_alist()) { "/alist" } else { "/list" }.to_owned());
+		}
+		let word = match value.raw.tag {
+			Tag::Null => "null",
+			Tag::Number => "num",
+			Tag::String => "text",
+			Tag::World => "/world",
+			Tag::Resource | Tag::File => "file",
+			Tag::ProcRef => "proc",
+			Tag::Pointer => "pointer",
+			Tag::Appearance => "appearance",
+			Tag::Vector => "/vector",
+			Tag::PixLoc => "/pixloc",
+			Tag::Callee => "/callee",
+			Tag::MobTypepath |
+			Tag::ObjTypepath |
+			Tag::TurfTypepath |
+			Tag::AreaTypepath |
+			Tag::DatumTypepath |
+			Tag::SaveFileTypepath |
+			Tag::ListTypepath |
+			Tag::ClientTypepath |
+			Tag::ImageTypepath |
+			Tag::BuiltinTypepath => "path",
+			_ => return value.get(byond_string!("type")).ok().map(|path| Self::stringify(&path))
+		};
+		Some(word.to_owned())
+	}
 
-		Variable {
-			name,
-			value: stringified,
-			variables
+	/// A value written as DM code, if it's one that code can write: a key
+	/// to read a list's entry by
+	fn literal(value: &Value) -> Option<String> {
+		use ValueTag as Tag;
+		match value.raw.tag {
+			Tag::String | Tag::Number | Tag::MobTypepath | Tag::ObjTypepath | Tag::TurfTypepath | Tag::AreaTypepath | Tag::DatumTypepath => {
+				Some(Self::stringify(value))
+			}
+			_ => None
 		}
 	}
 
-	fn value_to_variables_ref(&self, value: &Value) -> Option<VariablesRef> {
-		match self.state.as_ref() {
-			Some(state) if List::is_list(value) => Some(state.get_ref(Variables::ListContents(value.clone()))),
+	/// A variable as a client is told of it. `expr` is an expression that
+	/// gives it, where there is one.
+	fn value_to_variable(&self, name: String, value: &Value, expr: Option<String>) -> Variable {
+		Variable {
+			name,
+			value: Self::stringify(value),
+			variables: self.value_to_variables_ref(value, expr.clone()),
+			kind: Self::kind(value),
+			entries: Self::entries(value),
+			expr
+		}
+	}
 
-			Some(state) if Self::is_object(value) => Some(state.get_ref(Variables::ObjectVars(value.clone()))),
+	/// How many entries a list has
+	fn entries(value: &Value) -> Option<u32> {
+		if !List::is_list(value) {
+			return None;
+		}
+		List::from_value(value).ok().map(|list| list.len())
+	}
+
+	fn value_to_variables_ref(&self, value: &Value, expr: Option<String>) -> Option<VariablesRef> {
+		match self.state.as_ref() {
+			Some(state) if List::is_list(value) => Some(state.get_ref(Variables::ListContents(value.clone(), expr))),
+
+			Some(state) if Self::is_object(value) => Some(state.get_ref(Variables::ObjectVars(value.clone(), expr))),
 
 			_ => None
 		}
 	}
 
-	fn list_to_variables(&mut self, value: &Value) -> Result<Vec<Variable>, Runtime> {
+	/// A list's entries, or `count` of them from `start` (from 0) for a
+	/// client that takes a long list a piece at a time
+	fn list_to_variables(&mut self, value: &Value, expr: Option<&str>, start: Option<u32>, count: Option<u32>) -> Result<Vec<Variable>, Runtime> {
 		let state = self.state.as_ref().unwrap();
 		let list = List::from_value(value)?;
+		let len = list.len();
+		let first = start.unwrap_or(0).min(len);
+		let last = count.map_or(len, |count| first.saturating_add(count).min(len));
+
+		// An entry with a value for its key: `key = value`, to open for the
+		// two, and reached as `list[key]`
+		let pair = |i: u32, key: Value, value: Value| Variable {
+			name: format!("[{}]", i),
+			value: format!("{} = {}", Self::stringify(&key), Self::stringify(&value)),
+			kind: Self::kind(&value),
+			entries: None,
+			expr: expr.zip(Self::literal(&key)).map(|(list, key)| format!("{}[{}]", list, key)),
+			variables: Some(state.get_ref(Variables::ListPair {
+				key,
+				value,
+				list: expr.map(str::to_owned)
+			}))
+		};
 
 		// numbers are keys in an alist, so the position walk below would read
 		// the wrong entries
@@ -621,60 +712,45 @@ impl Server {
 				.alist_pairs()?
 				.into_iter()
 				.enumerate()
-				.map(|(i, (key, value))| Variable {
-					name: format!("[{}]", i + 1),
-					value: format!("{} = {}", Self::stringify(&key), Self::stringify(&value)),
-					variables: Some(state.get_ref(Variables::ListPair { key, value }))
-				})
+				.skip(first as usize)
+				.take((last - first) as usize)
+				.map(|(i, (key, value))| pair(i as u32 + 1, key, value))
 				.collect());
 		}
 
-		let len = list.len();
-
 		let mut variables = vec![];
 
-		for i in 1..=len {
+		for i in first + 1..=last {
 			let key = list.get(i)?;
 
 			// assoc entry
 			if key.raw.tag != raw_types::values::ValueTag::Number {
 				if let Ok(value) = list.get(&key) {
 					if value.raw.tag != raw_types::values::ValueTag::Null {
-						variables.push(Variable {
-							name: format!("[{}]", i),
-							value: format!("{} = {}", Self::stringify(&key), Self::stringify(&value)),
-							variables: Some(state.get_ref(Variables::ListPair { key, value }))
-						});
-
+						variables.push(pair(i, key, value));
 						continue;
 					}
 				}
 			}
 
 			// non-assoc entry
-			variables.push(self.value_to_variable(format!("[{}]", i), &key));
+			variables.push(self.value_to_variable(format!("[{}]", i), &key, expr.map(|list| format!("{}[{}]", list, i))));
 		}
 
 		Ok(variables)
 	}
 
-	fn object_to_variables(&mut self, value: &Value) -> Result<Vec<Variable>, Runtime> {
+	fn object_to_variables(&mut self, value: &Value, expr: Option<&str>) -> Result<Vec<Variable>, Runtime> {
+		let member = |name: &str| expr.map(|object| format!("{}.{}", object, name));
+
 		if let Some(fields) = Self::primitive_fields(value) {
 			return fields
 				.iter()
-				.map(|&name| Ok(self.value_to_variable(name.to_owned(), &value.get(StringRef::new(name)?)?)))
+				.map(|&name| Ok(self.value_to_variable(name.to_owned(), &value.get(StringRef::new(name)?)?, member(name))))
 				.collect();
 		}
 
-		// Grab `value.vars`. We have a little hack for globals which use a
-		// special type.
-		let vars = List::from_value(&unsafe {
-			if value.raw.tag == ValueTag::World && value.raw.data.id == 1 {
-				Value::new(ValueTag::GlobalVars, ValueData { id: 0 })
-			} else {
-				value.get(byond_string!("vars"))?
-			}
-		})?;
+		let vars = List::from_value(&value.get(byond_string!("vars"))?)?;
 
 		let mut variables = vec![];
 		let mut top_variables = vec![]; // These fields get displayed on top of
@@ -683,7 +759,8 @@ impl Server {
 		for i in 1..=vars.len() {
 			let name = vars.get(i)?.as_string()?;
 			let value = value.get(StringRef::new(name.as_str())?)?;
-			let variable = self.value_to_variable(name, &value);
+			let expr = member(&name);
+			let variable = self.value_to_variable(name, &value, expr);
 			if variable.name == "type" {
 				top_variables.push(variable);
 			} else {
@@ -691,11 +768,62 @@ impl Server {
 			}
 		}
 
-		// top_variables.sort_by_key(|a| a.name.to_lowercase());
 		variables.sort_by_key(|a| a.name.to_lowercase());
 		top_variables.append(&mut variables);
 
 		Ok(top_variables)
+	}
+
+	/// The names of the constants BYOND declares itself, from its stddef.dm:
+	/// the lines under each `var/const`
+	fn builtin_constants() -> std::collections::HashSet<String> {
+		let mut names = std::collections::HashSet::new();
+		let mut in_consts = false;
+		for line in crate::stddef::get_stddef().unwrap_or_default().lines() {
+			if line.trim_end() == "var/const" {
+				in_consts = true;
+			} else if in_consts && line.starts_with([' ', '\t']) {
+				if let Some(name) = line.split(['=', '/']).next().map(str::trim).filter(|name| !name.is_empty()) {
+					names.insert(name.to_owned());
+				}
+			} else if !line.trim().is_empty() {
+				in_consts = false;
+			}
+		}
+		names
+	}
+
+	/// The global vars: the world's own (types' static and const vars are
+	/// among them), or the constants BYOND declares, which would bury them
+	fn globals_to_variables(&mut self, builtin: bool) -> Result<Vec<Variable>, Runtime> {
+		let names = List::from_value(&unsafe { Value::new(ValueTag::GlobalVars, ValueData { id: 0 }) })?;
+		let builtins = Self::builtin_constants();
+
+		let mut variables = vec![];
+		let mut constants = 0;
+		for i in 1..=names.len() {
+			let name = names.get(i)?.as_string()?;
+			if builtins.contains(&name) != builtin {
+				constants += 1;
+				continue;
+			}
+			let value = Value::GLOBAL.get(StringRef::new(name.as_str())?)?;
+			let expr = format!("global.{}", name);
+			variables.push(self.value_to_variable(name, &value, Some(expr)));
+		}
+		variables.sort_by_key(|a| a.name.to_lowercase());
+
+		if !builtin && constants > 0 {
+			variables.push(Variable {
+				name: "(BYOND's)".to_owned(),
+				value: format!("{} constants", constants),
+				variables: self.state.as_ref().map(|state| state.get_ref(Variables::Builtins)),
+				kind: None,
+				expr: None,
+				entries: None
+			});
+		}
+		Ok(variables)
 	}
 
 	fn get_stack(&self, stack_id: u32) -> Option<&Vec<debug::StackFrame>> {
@@ -751,52 +879,46 @@ impl Server {
 	}
 
 	fn get_args(&mut self, frame_index: u32) -> Vec<Variable> {
-		match self.get_stack_frame(frame_index) {
-			Some(frame) => {
-				let mut vars = vec![
-					self.value_to_variable("src".to_owned(), &frame.src),
-					self.value_to_variable("usr".to_owned(), &frame.usr),
-				];
+		let Some(frame) = self.get_stack_frame(frame_index) else {
+			return vec![];
+		};
+		let mut vars = vec![
+			self.value_to_variable("src".to_owned(), &frame.src, Some("src".to_owned())),
+			self.value_to_variable("usr".to_owned(), &frame.usr, Some("usr".to_owned())),
+		];
 
-				let mut unnamed_count = 0;
-				for (name, value) in &frame.args {
-					let name = match name {
-						Some(name) => String::from(name),
-						None => {
-							unnamed_count += 1;
-							format!("undefined argument #{}", unnamed_count)
-						}
-					};
-					vars.push(self.value_to_variable(name, value));
+		let mut unnamed_count = 0;
+		for (i, (name, value)) in frame.args.iter().enumerate() {
+			// One more than the proc declares is only in its args
+			let (name, expr) = match name {
+				Some(name) => (String::from(name), String::from(name)),
+				None => {
+					unnamed_count += 1;
+					(format!("undefined argument #{}", unnamed_count), format!("args[{}]", i + 1))
 				}
-
-				vars
-			}
-
-			None => {
-				self.notify(format!("tried to read arguments from invalid frame id: {}", frame_index));
-				vec![]
-			}
+			};
+			vars.push(self.value_to_variable(name, value, Some(expr)));
 		}
+
+		vars
 	}
 
 	fn get_locals(&mut self, frame_index: u32) -> Vec<Variable> {
-		match self.get_stack_frame(frame_index) {
-			Some(frame) => {
-				let mut vars = vec![self.value_to_variable(".".to_owned(), &frame.dot)];
+		let Some(frame) = self.get_stack_frame(frame_index) else {
+			return vec![];
+		};
+		let mut vars = vec![self.value_to_variable(".".to_owned(), &frame.dot, Some(".".to_owned()))];
 
-				for (name, local) in &frame.locals {
-					vars.push(self.value_to_variable(String::from(name), local));
-				}
-
-				vars
-			}
-
-			None => {
-				self.notify(format!("tried to read locals from invalid frame id: {}", frame_index));
-				vec![]
-			}
+		for (name, local) in &frame.locals {
+			// Two of one name (each in a block of its own) can't both be
+			// meant by it
+			let name = String::from(name);
+			let alone = frame.locals.iter().filter(|(other, _)| String::from(other) == name).count() == 1;
+			let expr = alone.then(|| name.clone());
+			vars.push(self.value_to_variable(name, local, expr));
 		}
+
+		vars
 	}
 
 	/// Where a breakpoint on a proc itself goes: after the records of its
@@ -1034,79 +1156,47 @@ impl Server {
 	}
 
 	fn handle_scopes(&mut self, frame_id: u32) {
-		if self.state.is_none() {
-			let response = Response::Scopes {
+		let response = match &self.state {
+			Some(state) => Response::Scopes {
+				arguments: Some(state.get_ref(Variables::Arguments { frame: frame_id })),
+				locals: Some(state.get_ref(Variables::Locals { frame: frame_id })),
+				globals: Some(state.get_ref(Variables::Globals))
+			},
+			None => Response::Scopes {
 				arguments: None,
 				locals: None,
 				globals: None
-			};
-
-			self.send_or_disconnect(response);
-			return;
-		}
-
-		let state = self.state.as_ref().unwrap();
-
-		let arguments = Variables::Arguments { frame: frame_id };
-		let locals = Variables::Locals { frame: frame_id };
-
-		let globals = Variables::ObjectVars(Value::GLOBAL);
-
-		let response = Response::Scopes {
-			arguments: Some(state.get_ref(arguments)),
-			locals: Some(state.get_ref(locals)),
-			globals: Some(state.get_ref(globals))
+			}
 		};
 
 		self.send_or_disconnect(response);
 	}
 
-	fn handle_variables(&mut self, vars: VariablesRef) {
-		let response = match &self.state {
-			Some(state) => match state.get_variables(vars) {
-				Some(vars) => match vars {
-					Variables::Arguments { frame } => Response::Variables { vars: self.get_args(frame) },
-					Variables::Locals { frame } => Response::Variables {
-						vars: self.get_locals(frame)
-					},
-					Variables::ObjectVars(value) => match self.object_to_variables(&value) {
-						Ok(vars) => Response::Variables { vars },
-
-						Err(e) => {
-							self.notify(format!("runtime occured while processing Variables request: {:?}", e));
-							Response::Variables { vars: vec![] }
-						}
-					},
-					Variables::ListContents(value) => match self.list_to_variables(&value) {
-						Ok(vars) => Response::Variables { vars },
-
-						Err(e) => {
-							self.notify(format!("runtime occured while processing Variables request: {:?}", e));
-							Response::Variables { vars: vec![] }
-						}
-					},
-
-					Variables::ListPair { key, value } => Response::Variables {
-						vars: vec![
-							self.value_to_variable("key".to_owned(), &key),
-							self.value_to_variable("value".to_owned(), &value),
-						]
-					}
-				},
-
-				None => {
-					self.notify("received unknown VariableRef in Variables request");
-					Response::Variables { vars: vec![] }
-				}
-			},
-
-			None => {
-				self.notify("recevied Variables request while not paused");
-				Response::Variables { vars: vec![] }
+	/// What's inside something a client was given to open. A reference from
+	/// before the world last carried on, or one that never was, has nothing.
+	fn handle_variables(&mut self, vars: VariablesRef, start: Option<u32>, count: Option<u32>) {
+		let listed = match self.state.as_ref().and_then(|state| state.get_variables(vars)) {
+			Some(Variables::Arguments { frame }) => Ok(self.get_args(frame)),
+			Some(Variables::Locals { frame }) => Ok(self.get_locals(frame)),
+			Some(Variables::Globals) => self.globals_to_variables(false),
+			Some(Variables::Builtins) => self.globals_to_variables(true),
+			Some(Variables::ObjectVars(value, expr)) => self.object_to_variables(&value, expr.as_deref()),
+			Some(Variables::ListContents(value, expr)) => self.list_to_variables(&value, expr.as_deref(), start, count),
+			Some(Variables::ListPair { key, value, list }) => {
+				let entry = list.zip(Self::literal(&key)).map(|(list, key)| format!("{}[{}]", list, key));
+				Ok(vec![
+					self.value_to_variable("key".to_owned(), &key, None),
+					self.value_to_variable("value".to_owned(), &value, entry),
+				])
 			}
+			None => Ok(vec![])
 		};
 
-		self.send_or_disconnect(response);
+		let vars = listed.unwrap_or_else(|e| {
+			self.notify(format!("Couldn't list variables: {}", e.message));
+			vec![]
+		});
+		self.send_or_disconnect(Response::Variables { vars });
 	}
 
 	fn handle_command(&mut self, frame_id: Option<u32>, command: &str) -> String {
@@ -1356,25 +1446,24 @@ impl Server {
 		}
 	}
 
-	fn handle_eval(&mut self, frame_id: Option<u32>, command: &str, context: Option<String>) {
+	fn handle_eval(&mut self, frame_id: Option<u32>, command: &str) {
 		if let Some(command) = command.strip_prefix('#') {
 			let response = self.handle_command(frame_id, command);
 			self.send_or_disconnect(Response::Eval(Ok(EvalResponse {
 				value: response,
-				variables: None
+				variables: None,
+				kind: None,
+				entries: None
 			})));
 			return;
 		}
 
-		let response = self.eval_expr(frame_id, command).map(|result| {
-			let variables = match context {
-				Some(str) if str == "repl" => None,
-				_ => self.value_to_variables_ref(&result)
-			};
-			EvalResponse {
-				value: Self::stringify(&result),
-				variables
-			}
+		// What's inside the result is reached through the expression
+		let response = self.eval_expr(frame_id, command).map(|result| EvalResponse {
+			value: Self::stringify(&result),
+			variables: self.value_to_variables_ref(&result, Some(format!("({})", command))),
+			kind: Self::kind(&result),
+			entries: Self::entries(&result)
 		});
 		self.send_or_disconnect(Response::Eval(response));
 	}
@@ -1487,8 +1576,8 @@ impl Server {
 			Request::BreakpointUnset { instruction } => self.handle_breakpoint_unset(instruction),
 			Request::Stacks => self.handle_stacks(),
 			Request::Scopes { frame_id } => self.handle_scopes(frame_id),
-			Request::Variables { vars } => self.handle_variables(vars),
-			Request::Eval { frame_id, command, context } => self.handle_eval(frame_id, &command, context),
+			Request::Variables { vars, start, count } => self.handle_variables(vars, start, count),
+			Request::Eval { frame_id, command, .. } => self.handle_eval(frame_id, &command),
 
 			Request::StackFrames {
 				stack_id,
@@ -1744,8 +1833,8 @@ impl Server {
 			}
 
 			// Hijack eval too so that we can refresh our state after it
-			if let Request::Eval { frame_id, command, context } = request {
-				self.handle_eval(frame_id, &command, context);
+			if let Request::Eval { frame_id, command, .. } = request {
+				self.handle_eval(frame_id, &command);
 				self.state.as_mut().unwrap().invalidate_stacks();
 				continue;
 			}

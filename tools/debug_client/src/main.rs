@@ -164,7 +164,11 @@ fn on_stop(conn: &mut Connection, options: &Options) -> Option<()> {
 		})?;
 		if let Response::Scopes { arguments, locals, .. } = conn.request(Request::Scopes { frame_id: 0 })? {
 			for vars in [arguments, locals].into_iter().flatten() {
-				conn.request(Request::Variables { vars })?;
+				conn.request(Request::Variables {
+				vars,
+				start: None,
+				count: None
+			})?;
 			}
 		}
 	}
@@ -187,7 +191,11 @@ fn on_stop(conn: &mut Connection, options: &Options) -> Option<()> {
 			context: Some(context.to_owned())
 		})?;
 		if let Response::Eval(Ok(EvalResponse { variables: Some(vars), .. })) = response {
-			conn.request(Request::Variables { vars })?;
+			conn.request(Request::Variables {
+				vars,
+				start: None,
+				count: None
+			})?;
 		}
 	}
 

@@ -8,6 +8,120 @@ use crate::{
 	world::World
 };
 
+/// What kind of value each is, and the expression that reaches it
+fn kinds_and_expressions(world: &mut World, locals: &[Value], version: u64) {
+	let of = |name: &str| locals.iter().find(|v| v["name"] == name).unwrap().clone();
+	for (name, kind) in [
+		("whole", "num"),
+		("text", "text"),
+		("nothing", "null"),
+		("path", "path"),
+		("proc_path", "proc"),
+		("file", "file"),
+		("named", "/datum/thing"),
+		("T", "/turf"),
+		("M", "/mob/player"),
+		("the_world", "/world"),
+		("plain", "/list"),
+		("mx", "/matrix"),
+		("pointer", "pointer"),
+		("deleted", "null")
+	] {
+		assert_eq!(of(name)["type"], kind, "{}", name);
+	}
+	if version >= 516 {
+		assert_eq!(of("pairs")["type"], "/alist");
+		assert_eq!(of("vec")["type"], "/vector");
+	}
+	ok("a variable says what kind of value it has: an object's type, or num, text, /list and the like");
+
+	// Each local is reached by its name, and gives what it shows
+	let frame = world.frame_id();
+	for local in locals {
+		let (name, value) = (local["name"].as_str().unwrap(), local["value"].as_str().unwrap());
+		if name.starts_with("twin") {
+			assert!(local["evaluateName"].is_null(), "two locals share a name, and {} has one to itself", name);
+			continue;
+		}
+		assert_eq!(local["evaluateName"], name);
+		assert_eq!(world.evaluate_in(&frame, name, "watch")["result"], value, "{}", name);
+	}
+	ok("a local's expression is its name, which evaluates to what it shows");
+
+	// Down through objects and lists
+	let inside = world.variables(&of("named")["variablesReference"].clone());
+	for child in &inside {
+		let expression = child["evaluateName"].as_str().unwrap();
+		assert_eq!(expression, format!("named.{}", child["name"].as_str().unwrap()));
+		assert_eq!(world.evaluate_in(&frame, expression, "watch")["result"], child["value"], "{}", expression);
+	}
+	let other = inside.iter().find(|v| v["name"] == "other").unwrap();
+	let inside = world.variables(&other["variablesReference"].clone());
+	let name = inside.iter().find(|v| v["name"] == "name").unwrap();
+	assert_eq!(name["evaluateName"], "named.other.name");
+	assert_eq!(world.evaluate_in(&frame, "named.other.name", "watch")["result"], "\"B\"");
+
+	let inside = world.variables(&of("plain")["variablesReference"].clone());
+	assert_eq!(inside[1]["evaluateName"], "plain[2]");
+	assert_eq!(world.evaluate_in(&frame, "plain[2]", "watch")["result"], "\"b\"");
+	let inside = world.variables(&of("assoc")["variablesReference"].clone());
+	assert_eq!(inside[1]["evaluateName"], "assoc[\"b\"]");
+	assert_eq!(world.evaluate_in(&frame, "assoc[\"b\"]", "watch")["result"], "A");
+	let pair = world.variables(&inside[1]["variablesReference"].clone());
+	assert!(pair[0]["evaluateName"].is_null());
+	assert_eq!(pair[1]["evaluateName"], "assoc[\"b\"]");
+	let inside = world.variables(&of("nested")["variablesReference"].clone());
+	let inner = world.variables(&inside[1]["variablesReference"].clone());
+	let innermost = world.variables(&inner[0]["variablesReference"].clone());
+	let last = world.variables(&innermost[1]["variablesReference"].clone());
+	assert_eq!(last[0]["evaluateName"], "nested[2][\"x\"][1]");
+	assert_eq!(world.evaluate_in(&frame, "nested[2][\"x\"][1]", "watch")["result"], "3");
+	ok("what's inside an object or a list has an expression that goes through it: a.b, a[2], a[\"key\"]");
+
+	let arguments = world.scope(&frame, "Arguments");
+	let arguments = world.variables(&arguments);
+	let expressions: Vec<&str> = arguments.iter().map(|v| v["evaluateName"].as_str().unwrap()).collect();
+	assert_eq!(expressions, ["src", "usr", "first", "second", "args[3]"]);
+	assert_eq!(world.evaluate_in(&frame, "args[3]", "watch")["result"], "3");
+	let globals = world.scope(&frame, "Globals");
+	let globals = world.variables(&globals);
+	let number = globals.iter().find(|v| v["name"] == "global_number").unwrap();
+	assert_eq!(number["evaluateName"], "global.global_number");
+	assert_eq!(world.evaluate_in(&frame, "global.global_number", "watch")["result"], "5");
+	ok("an argument's expression is its name, or args[n] for one the proc doesn't declare; a global's is global.name");
+}
+
+/// A long list a piece at a time, and whole numbers in hex
+fn pieces_and_hex(world: &mut World, big: &Value, locals: &Value) {
+	assert_eq!(big["indexedVariables"], 3000);
+	let piece = |world: &mut World, start: u64, count: u64| -> Vec<String> {
+		let vars = world.request(
+			"variables",
+			json!({ "variablesReference": big["variablesReference"], "filter": "indexed", "start": start, "count": count })
+		);
+		vars["variables"].as_array().unwrap().iter().map(|v| v["name"].as_str().unwrap().to_owned()).collect()
+	};
+	let first = piece(world, 0, 100);
+	assert_eq!((first.len(), first[0].as_str(), first[99].as_str()), (100, "[1]", "[100]"));
+	let last = piece(world, 2950, 100);
+	assert_eq!((last.len(), last[0].as_str(), last[49].as_str()), (50, "[2951]", "[3000]"));
+	assert_eq!(piece(world, 3000, 100).len(), 0);
+	assert_eq!(piece(world, 5000, 100).len(), 0);
+	assert_eq!(piece(world, 0, 0).len(), 3000);
+	ok("a list says how long it is, and gives its entries a piece at a time");
+
+	let vars = world.request("variables", json!({ "variablesReference": locals, "format": { "hex": true } }));
+	let vars = named(vars["variables"].as_array().unwrap());
+	assert_eq!(value_of(&vars, "whole"), "0x2A");
+	assert_eq!(value_of(&vars, "past_24_bits"), "0x1000000");
+	assert_eq!(value_of(&vars, "fraction"), "1.5");
+	assert_eq!(value_of(&vars, "nothing"), "null");
+	let frame = world.frame_id();
+	let result = world.request("evaluate", json!({ "expression": "whole + 213", "frameId": frame, "context": "watch", "format": { "hex": true } }));
+	assert_eq!(result["result"], "0xFF");
+	ok("whole numbers are shown in hex when the client asks for that");
+}
+
 /// The world's BYOND version
 fn byond_version(world: &mut World) -> u64 {
 	world.eval_global("world.byond_version").parse().unwrap()
@@ -95,6 +209,7 @@ pub fn run() {
 	assert_eq!(value_of(&mob, "loc"), "turf");
 	ok("a turf, an obj, a mob and an area, with their built-in vars and their own");
 
+	assert_eq!(local("the_world"), "world");
 	let inside = world.children(&variable("the_world"));
 	assert_eq!(value_of(&inside, "maxx"), "3");
 	assert_eq!(value_of(&inside, "byond_version"), version.to_string());
@@ -156,8 +271,10 @@ pub fn run() {
 	assert_eq!(local("error"), "boom");
 	let inside = world.children(&variable("error"));
 	assert_eq!((value_of(&inside, "file"), value_of(&inside, "line")), ("\"file.dm\"", "3"));
+	assert_eq!(local("img"), "/image");
 	assert_eq!(value_of(&world.children(&variable("img")), "type"), "/image");
-	ok("a matrix, a regex, an exception and an image");
+	assert_eq!(local("appearance"), "appearance");
+	ok("a matrix, a regex, an exception, an image and an appearance");
 
 	assert_eq!(local("save"), "dap_test.sav");
 	let inside = world.children(&variable("save"));
@@ -210,8 +327,24 @@ pub fn run() {
 	// A type's static and const vars are globals
 	assert_eq!(value_of(&globals, "shared"), "9");
 	assert_eq!(value_of(&globals, "K"), "4");
-	assert_eq!(value_of(&globals, "NORTH"), "1");
-	ok("the globals: the world's own, types' static vars, BYOND's constants");
+	ok("the globals: the world's own, and types' static and const vars");
+
+	// The hundred or so BYOND declares are apart, in the last row
+	assert!(!globals.iter().any(|(name, _)| name == "NORTH" || name == "MOB_LAYER"), "{:?}", globals);
+	let last = world.variable("Globals", "(BYOND's)");
+	assert!(last["value"].as_str().unwrap().ends_with(" constants"), "{}", last);
+	assert_eq!(globals.last().unwrap().0, "(BYOND's)");
+	let constants = world.children(&last);
+	assert_eq!(value_of(&constants, "NORTH"), "1");
+	assert_eq!(value_of(&constants, "MOB_LAYER"), "4");
+	assert!(!constants.iter().any(|(name, _)| name == "global_number"));
+	let scopes = world.request("scopes", json!({ "frameId": frame }));
+	let expensive: Vec<bool> = scopes["scopes"].as_array().unwrap().iter().map(|s| s["expensive"] == true).collect();
+	assert_eq!(expensive, [false, false, true], "only the globals are left for the client to ask for");
+	ok("BYOND's own constants are apart from the world's globals, which a client opens only when asked");
+
+	kinds_and_expressions(&mut world, &variables, version);
+	pieces_and_hex(&mut world, &variable("big"), &locals_reference);
 
 	for reference in [-5, 0, 99_999] {
 		let vars = world.request("variables", json!({ "variablesReference": reference }));
