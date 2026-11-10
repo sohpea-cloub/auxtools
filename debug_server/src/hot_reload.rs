@@ -63,6 +63,9 @@ use crate::{
 #[derive(Default)]
 pub struct Prepared {
 	new_vars: Vec<PreparedNewVar>,
+	/// The global vars among them, by name: the world's own list of globals
+	/// doesn't get them (see `added_global`)
+	new_globals: Vec<(String, u32)>,
 	removed_procs: Vec<PreparedRemoval>,
 	new_procs: Vec<PreparedNewProc>,
 	init_procs: Vec<PreparedInitProc>,
@@ -644,6 +647,12 @@ pub fn prepare(request: &HotReloadRequest, warnings: &mut Vec<String>) -> Result
 	}
 
 	prepared.new_vars = added.vars;
+	prepared.new_globals = pending
+		.globals
+		.iter()
+		.filter(|((scope, _), _)| scope.is_empty())
+		.map(|((_, name), id)| (String::from_utf8_lossy(name).into_owned(), *id))
+		.collect();
 	prepared.in_lists = added.in_lists;
 	let first_instance = added.instances.existing.as_ref().map_or(0, Vec::len) as u32;
 	prepared.instances = added
@@ -1771,6 +1780,7 @@ pub fn apply<T>(
 			Err(e) => warnings.push(format!("couldn't add a var: {}", e))
 		}
 	}
+	ADDED_GLOBALS.lock().unwrap().extend(prepared.new_globals.iter().cloned());
 
 	let procs_before = runtime_tables::proc_count();
 
@@ -2069,6 +2079,17 @@ fn adapt_debug_info(nodes: &[Node], original: &[u32]) -> Vec<Node> {
 // `edit_world_names`)
 static WAITING_WORLD_EDITS: Mutex<Vec<WorldEdit>> = Mutex::new(Vec::new());
 
+/// The global vars that reloads have added to this world, by name, with
+/// their var ids
+static ADDED_GLOBALS: Mutex<BTreeMap<String, u32>> = Mutex::new(BTreeMap::new());
+
+/// The var id of a global var a hot reload added. BYOND made its list of the
+/// world's globals (`global.vars`) when the world loaded, and these aren't
+/// on it: a debugger's expression reaches them by id.
+pub fn added_global(name: &str) -> Option<u32> {
+	ADDED_GLOBALS.lock().unwrap().get(name).copied()
+}
+
 /// The debugger's own world procs (see `launched`), which stay the most
 /// derived: a world proc a reload adds goes beneath them
 static PINNED_WORLD_PROCS: Mutex<Vec<u32>> = Mutex::new(Vec::new());
@@ -2228,6 +2249,7 @@ fn world_has_debug_info() -> bool {
 
 #[shutdown]
 fn forget_world() {
+	ADDED_GLOBALS.lock().unwrap().clear();
 	*WORLD_HAS_DEBUG_INFO.lock().unwrap() = None;
 	WAITING_WORLD_EDITS.lock().unwrap().clear();
 	PINNED_WORLD_PROCS.lock().unwrap().clear();

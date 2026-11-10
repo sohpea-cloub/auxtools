@@ -54,6 +54,21 @@ new world up again, breakpoints and all.
 Windows' DreamDaemon asks before it runs a world in trusted mode; tick "Don't ask me
 this again" to stop it asking.
 
+## Expressions
+
+Watches, breakpoint conditions and the debug console take DM expressions, evaluated in
+the frame you've selected: `health / maxHealth`, `contents.len`, `get_dist(src, usr) < 3`.
+Names mean what they would in that proc's code: its locals and arguments, then the vars
+of `src`, then globals; a call without `src.` is `src`'s proc if it has one of that name.
+They can assign (`health = 100`, `GLOB.debug = TRUE`) and call procs, so a watch can
+change the world: it runs at every stop. An expression that fails says why where its
+value would be. While the world runs, expressions are evaluated with no frame: globals
+and global procs only. Expressions can't declare vars or loop, and can't wait: one that
+calls something that sleeps is given up on.
+
+`#dis` in the debug console shows the bytecode of the frame's proc, `#dis /proc/name` any
+proc's.
+
 ## Hot reloading (experimental)
 
 While a world runs, saving a file swaps the procs that changed into it, with or without

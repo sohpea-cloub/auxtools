@@ -262,7 +262,7 @@ fn command_line_more(pid: u64, dir: &Path) {
 	assert_eq!(printed.trim(), "there's no frame 7");
 	let printed = run(&["eval", "1", "+"], 1);
 	assert!(printed.starts_with("parser error: "), "eval said {}", printed);
-	assert_eq!(run(&["eval", "nothing_called_this"], 1).trim(), "there's no var called nothing_called_this");
+	assert_eq!(run(&["eval", "nothing_called_this"], 1).trim(), "undefined var: nothing_called_this");
 	assert_eq!(run(&["eval", "1", "/", "0"], 1).trim(), "runtime error: Division by zero");
 	println!("ok: the command line shows a frame's variables, with the globals when asked, and evaluates in a frame");
 	run(&["continue"], 0);

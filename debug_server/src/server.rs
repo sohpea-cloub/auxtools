@@ -110,6 +110,10 @@ struct Client {
 /// condition, or `None` to stop every time
 pub type Breakpoints = HashMap<(raw_types::procs::ProcId, u16), BTreeMap<ClientId, Option<String>>>;
 
+/// The name an expression's code knows the world's list of globals by. It
+/// isn't one an expression can write, so it can't hide anything.
+const GLOBALS: &str = "global vars";
+
 /// How long to wait for a request
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Wait {
@@ -1109,10 +1113,16 @@ impl Server {
 			Usr,
 			Src,
 			Arg(u32),
-			Local(u32)
+			Local(u32),
+			/// The expression's to use, not the frame's to take back
+			Given
 		}
 
-		let (ctx, instance, args) = match frame_id {
+		// The world's globals, which the expression reads and writes by name
+		let globals = unsafe { Value::new(ValueTag::GlobalVars, ValueData { id: 0 }) };
+		let mut src = None;
+
+		let (ctx, instance, mut args) = match frame_id {
 			// Global context
 			None => (std::ptr::null_mut(), std::ptr::null_mut(), vec![]),
 
@@ -1121,7 +1131,18 @@ impl Server {
 					return Err(format!("there's no frame {} (the world isn't paused, or has carried on since)", frame_id));
 				};
 
+				// `args` would be the expression's own, were it not given the
+				// frame's
+				let frame_args = List::new();
+				for (_, value) in &frame.args {
+					frame_args.append(value);
+				}
+				if frame.src != Value::NULL {
+					src = Some(frame.src.clone());
+				}
+
 				let mut args = vec![
+					("args".to_owned(), Value::from(frame_args), ArgType::Given),
 					(".".to_owned(), frame.dot.clone(), ArgType::Dot),
 					("usr".to_owned(), frame.usr.clone(), ArgType::Usr),
 					("src".to_owned(), frame.src.clone(), ArgType::Src),
@@ -1141,10 +1162,28 @@ impl Server {
 			}
 		};
 
+		args.push((GLOBALS.to_owned(), globals, ArgType::Given));
 		let arg_names: Vec<&str> = args.iter().map(|(name, ..)| name.as_str()).collect();
 		let arg_values: Vec<&Value> = args.iter().map(|(_, value, _)| value).collect();
 
-		let expr = dmasm::compiler::compile_expr_for(command, &arg_names, crate::world_byond()).map_err(|e| e.to_string())?;
+		// A name that isn't the frame's own is a var of its src, then a
+		// global, as it would be in the proc's code; a call is src's proc if
+		// it has one of that name
+		let has_var = |object: &Value, name: &str| StringRef::new(name).is_ok_and(|name| object.get(name).is_ok());
+		let scope = dmasm::compiler::ExprScope {
+			has_src_var: &|name| src.as_ref().is_some_and(|src| has_var(src, name)),
+			has_src_proc: &|name| src.as_ref().is_some_and(|src| crate::assemble_env::AssembleEnv::has_proc(src, name)),
+			// One a hot reload added isn't on the world's list of them
+			global: &|name| {
+				if has_var(&Value::GLOBAL, name) {
+					Some(dmasm::compiler::ExprGlobal::Listed)
+				} else {
+					hot_reload::added_global(name).map(dmasm::compiler::ExprGlobal::Id)
+				}
+			},
+			globals: GLOBALS
+		};
+		let expr = dmasm::compiler::compile_expr_in(command, &arg_names, Some(&scope), crate::world_byond()).map_err(|e| e.to_string())?;
 		let assembly = dmasm::assembler::assemble(&expr, &mut crate::assemble_env::AssembleEnv).map_err(Self::assemble_error)?;
 		let proc = Proc::find("/proc/auxtools_expr_stub").ok_or("the world has no /proc/auxtools_expr_stub to evaluate expressions in")?;
 
@@ -1198,6 +1237,7 @@ impl Server {
 									let _ = Value::from_raw_owned(*local);
 									(*local) = value.raw;
 								}
+								ArgType::Given => continue
 							}
 						}
 

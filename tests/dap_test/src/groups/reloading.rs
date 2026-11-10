@@ -108,6 +108,13 @@ pub fn run() {
 	world.resume_through("fresh");
 	ok("a breakpoint in a proc that a reload added, and a step in it");
 
+	// BYOND's own list of the world's globals doesn't get one a reload adds
+	edit(&mut world, "main.dm", "var/ticks = 0\n", "var/ticks = 0\nvar/added_later = 12\n");
+	assert_eq!(world.eval_global("added_later"), "12");
+	assert_eq!(world.eval_global("added_later = ticks > 0 ? 13 : 0"), "13");
+	assert_eq!(world.eval_global("global.added_later + 1"), "14");
+	ok("a global var that a reload added is read and assigned in expressions");
+
 	// The proc's code changes, and then its first line too
 	let set = world.function_breakpoints(&["/proc/leaf"]);
 	assert_eq!(set[0]["verified"], true);

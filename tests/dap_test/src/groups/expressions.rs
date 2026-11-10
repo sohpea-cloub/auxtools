@@ -63,6 +63,40 @@ pub fn run() {
 	]);
 	ok("the world's procs, BYOND's own, and text with expressions in it");
 
+	// A name the frame doesn't have is src's var, as it is in the proc's code
+	gives(&mut world, &[
+		("n", "1"),
+		("name", "\"S\""),
+		("items[1]", "\"x\""),
+		("length(items)", "2"),
+		("other", "null"),
+		("type", "/datum/thing/sub"),
+		("vars[\"n\"]", "1"),
+		("n + by", "5"),
+		("\"[name] has [n]\"", "\"S has 1\"")
+	]);
+	gives(&mut world, &[("n = 50", "50"), ("src.n", "50"), ("n++", "50"), ("n", "51"), ("n -= 50", "1")]);
+	ok("a var of src by its bare name, read and assigned");
+
+	// Then a global, and a type's static and const vars are those
+	gives(&mut world, &[
+		("ticks > 0", "1"),
+		("early_global", "5"),
+		("global_number = 6", "6"),
+		("global.global_number", "6"),
+		("global_number -= 1", "5"),
+		("shared", "9"),
+		("K", "4")
+	]);
+	ok("a global by its bare name, read and assigned");
+
+	gives(&mut world, &[("bump(1)", "4"), ("n", "3"), ("n = 1", "1"), ("inside(0)", "/list {len = 3}")]);
+	ok("a proc of src called without src.");
+
+	// The frame's arguments, not the expression's own
+	gives(&mut world, &[("args[1]", "4"), ("length(args)", "1"), ("args", "/list {len = 1}")]);
+	ok("args is the frame's");
+
 	// A sub's bump() doubles its argument for the parent's, and adds one
 	gives(&mut world, &[("src.bump(1)", "4"), ("src.n", "3"), ("src.n = 1", "1")]);
 	ok("a call to an object's proc, which changes the object");
@@ -111,11 +145,16 @@ pub fn run() {
 	assert_eq!(world.evaluate_in(&caller, "in_caller", "watch")["result"], "77");
 	assert_eq!(world.evaluate_in(&caller, "in_caller = 78", "repl")["result"], "78");
 	assert_eq!(world.evaluate_in(&caller, "s.name", "watch")["result"], "\"S\"");
-	ok("an expression in a caller's frame sees the caller's locals");
+	// It's a global proc's frame: there's no src to have an n
+	let why = world.refused("evaluate", json!({ "expression": "n", "frameId": caller, "context": "watch" }));
+	assert_eq!(why, "undefined var: n");
+	ok("an expression in a caller's frame sees the caller's locals, and not the callee's src");
 
 	assert_eq!(world.eval_global("global_number"), "5");
 	assert_eq!(world.eval_global("leaf(1)"), "4");
-	ok("an expression in no frame, while paused");
+	let why = world.refused("evaluate", json!({ "expression": "by", "context": "repl" }));
+	assert_eq!(why, "undefined var: by");
+	ok("an expression in no frame, while paused, has the globals and nothing of the frames");
 
 	world.break_on(&["leaf_1"]);
 	assert_eq!(world.eval("leaf(1)"), "4");
@@ -139,13 +178,17 @@ pub fn run() {
 		("1 +", "parser error: "),
 		("", "parser error: "),
 		("by by", "expected end"),
-		("var/q = 3", "expected l-value"),
+		// (read as `var` divided by `q`)
+		("var/q = 3", "undefined var: var"),
 		("5 = by", "expected l-value")
 	]);
 	ok("an expression that doesn't parse fails with the parser's words");
 
 	fails(&mut world, &[
-		("not_a_name_anywhere", "there's no var called not_a_name_anywhere"),
+		("not_a_name_anywhere", "undefined var: not_a_name_anywhere"),
+		// A var of another type: src doesn't have it, and it's no global
+		("hp", "undefined var: hp"),
+		("hp = 3", "undefined var: hp"),
 		("not_a_proc_anywhere(1)", "there's no proc /proc/not_a_proc_anywhere"),
 		("src.not_a_name_anywhere", "runtime error: undefined variable /datum/thing/sub/var/not_a_name_anywhere"),
 		("/datum/not_a_type", "there's no type /datum/not_a_type"),

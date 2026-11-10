@@ -26,13 +26,13 @@ pub fn run() {
 	world.resume_through("middle");
 	ok("a condition on a local");
 
-	world.break_if(&[("bump_1", "src.n == 1 && global_number == 5")]);
+	world.break_if(&[("bump_1", "n == 1 && global_number == 5")]);
 	world.run("parent");
 	world.stop_on("breakpoint", "/datum/thing/bump", "bump_1");
 	world.resume_through("parent");
-	world.break_if(&[("bump_1", "src.n == 2 || global_number == 6")]);
+	world.break_if(&[("bump_1", "src.n == 2 || global.global_number == 6")]);
 	world.run_through("parent");
-	ok("a condition on a var of src and a global");
+	ok("a condition on a var of src, by its bare name and with src., and a global");
 
 	// The condition calls a proc with a breakpoint of its own in it, which
 	// doesn't stop there
@@ -83,7 +83,7 @@ pub fn run() {
 	// A name the world doesn't have is only found out when it's hit
 	world.stop_on("breakpoint", "/middle", "middle_3");
 	world.resume_through("middle");
-	assert_eq!(world.count("failed, so the world pauses there: there's no var called nowhere_at_all"), 1);
+	assert_eq!(world.count("failed, so the world pauses there: undefined var: nowhere_at_all"), 1);
 	let set = world.request(
 		"setFunctionBreakpoints",
 		json!({ "breakpoints": [{ "name": "/proc/leaf", "condition": "x x" }, { "name": "/proc/middle" }] })
