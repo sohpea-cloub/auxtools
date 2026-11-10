@@ -50,3 +50,19 @@ var/rounds = 0
 /proc/fail()
 	var/list/L = null
 	return L[1]
+
+// For the command line's eval: a runtime error two procs down from it, and
+// one a proc catches itself
+/proc/fail_in(n)
+	var/got = fail_deeper(n)
+	return got
+
+/proc/fail_deeper(n)
+	var/list/L = list()
+	return L[n]
+
+/proc/caught_inside()
+	try
+		fail()
+	catch
+		return "caught"

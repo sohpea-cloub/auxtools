@@ -23,6 +23,7 @@ mod client;
 #[path = "../../test_runner/src/paths.rs"]
 mod paths;
 mod journal;
+mod inspect;
 
 use std::{
 	io::{BufRead, BufReader, Read},
@@ -687,6 +688,7 @@ fn attach_and_reload(server: &str, library: &Path) {
 
 	command_line(pid, &code);
 	command_line_more(pid, &dir);
+	inspect::command_line_inspect(pid, &dir, &code);
 	command_line_trace(pid, &code);
 	journal::runtimes(pid, &dir);
 	journal::reloads(pid, &code);

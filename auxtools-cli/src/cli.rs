@@ -196,6 +196,8 @@ them, so `log --runtimes --follow` watches them without pausing the world.
 			about: "The value of a DM expression",
 			details: "In a paused world, the expression is in a frame of the stack: it can name that
 proc's vars, and `src`. In a running world it can name globals and call procs.
+When it fails, it says why on stderr and exits with 1: for a runtime error in a proc
+it called, with that proc's file and line and the procs between it and the expression.
   --frame N    The Nth frame of the stack, from 0, the innermost (the default)",
 			run: Run::World(|world, args| {
 				let flags = Flags::parse(args, &["--frame"], &[])?;

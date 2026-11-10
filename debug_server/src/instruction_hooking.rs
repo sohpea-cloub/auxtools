@@ -238,7 +238,11 @@ fn handle_runtime(error: &str) {
 		// TODO: Could try to make this work
 		if let Some(server) = &mut *DEBUG_SERVER.get() {
 			if server.is_in_eval() {
-				server.set_eval_error(error.into());
+				// One that a proc the expression called catches is that
+				// proc's business
+				if !in_try_above_expression(ctx) {
+					server.set_eval_error(error, ctx);
+				}
 				return;
 			}
 		}
@@ -265,6 +269,24 @@ fn handle_runtime(error: &str) {
 unsafe fn in_try(mut ctx: *mut raw_types::procs::ExecutionContext) -> bool {
 	unsafe {
 		while !ctx.is_null() {
+			if *(*ctx).throw_handler() != 0 {
+				return true;
+			}
+			ctx = *(*ctx).parent_context();
+		}
+	}
+	false
+}
+
+/// Whether a runtime error in code an expression runs is caught by that code:
+/// a frame between it and the expression has a `try`. The frames below the
+/// expression are the paused world's, whose `try` isn't around it.
+unsafe fn in_try_above_expression(mut ctx: *mut raw_types::procs::ExecutionContext) -> bool {
+	unsafe {
+		while !ctx.is_null() {
+			if crate::server::is_expression_frame(ctx) {
+				return false;
+			}
 			if *(*ctx).throw_handler() != 0 {
 				return true;
 			}

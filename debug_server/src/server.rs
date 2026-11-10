@@ -461,8 +461,47 @@ impl Server {
 		self.in_eval
 	}
 
-	pub fn set_eval_error(&mut self, err: String) {
-		self.eval_error = Some(err);
+	/// A runtime error in the code an expression runs: its message, and where
+	/// it happened when that's in a proc the expression called, with the
+	/// procs between it and the expression
+	pub fn set_eval_error(&mut self, message: &str, ctx: *mut raw_types::procs::ExecutionContext) {
+		let mut error = message.to_owned();
+		let mut frames = vec![];
+		let mut at = ctx;
+		while !at.is_null() && !is_expression_frame(at) {
+			frames.push(Self::context_place(at));
+			at = unsafe { *(*at).parent_context() };
+		}
+		// Only when the chain ends at the expression: else it isn't code the
+		// expression called (a hot reload's own, say), and what's below is
+		// the world's
+		if !at.is_null() {
+			for (i, place) in frames.iter().enumerate() {
+				error += &format!("\n  {} {}", if i == 0 { "in" } else { "called by" }, place);
+			}
+			if !frames.is_empty() {
+				error += "\n  called by the expression";
+			}
+		}
+		self.eval_error = Some(error);
+	}
+
+	/// A running frame's proc, and its file and line: `/mob/proc/x  code.dm:12`
+	fn context_place(ctx: *mut raw_types::procs::ExecutionContext) -> String {
+		let proc = Proc::from_id(unsafe { (**(*ctx).proc_instance()).proc });
+		let mut place = match &proc {
+			Some(proc) if proc.override_id() > 0 => format!("{}#{}", proc.path, proc.override_id()),
+			Some(proc) => proc.path.clone(),
+			None => "a proc the world doesn't have".to_owned()
+		};
+		// The world keeps the line it's on when it has its code's lines
+		let line = unsafe { (*ctx).filename().valid().then(|| *(*ctx).line()) };
+		match (proc.as_ref().and_then(Self::file_of), line) {
+			(Some(file), Some(line)) => place += &format!("  {}:{}", file, line),
+			(None, Some(line)) => place += &format!("  line {}", line),
+			_ => {}
+		}
+		place
 	}
 
 	fn get_line_number(&self, proc: ProcRef, offset: u32) -> Option<u32> {
@@ -2863,6 +2902,12 @@ impl Drop for Server {
 			}
 		}
 	}
+}
+
+/// Whether a frame is the one an expression the debugger evaluates runs in
+pub(crate) fn is_expression_frame(ctx: *mut raw_types::procs::ExecutionContext) -> bool {
+	let id = unsafe { (**(*ctx).proc_instance()).proc };
+	Proc::find("/proc/auxtools_expr_stub").is_some_and(|stub| stub.id == id)
 }
 
 /// Reads one request off a connection: a u32 length, then the request in
