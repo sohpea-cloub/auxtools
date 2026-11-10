@@ -712,8 +712,14 @@ impl Adapter {
 			let _ = debuggee.send(&AuxRequest::Disconnect);
 		}
 		self.debuggee = None;
+		// A world this launcher started has its output read here, and can't
+		// outlive it
+		if terminate == Some(false) && self.game.is_some() {
+			self.out
+				.console("The world was started by this session, and ends with it (attach to a world to leave it running)");
+		}
 		// A world that was attached to carries on unless asked otherwise
-		if terminate.unwrap_or(self.game.is_some()) {
+		if terminate.unwrap_or(false) || self.game.is_some() {
 			if let Some(game) = self.game.take() {
 				self.out.console(format!("Ending the world (process {})", game.pid()));
 				game.kill();

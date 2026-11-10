@@ -166,4 +166,16 @@ fn output_and_exit() {
 		list
 	);
 	ok("disconnecting ends the world the launcher started");
+
+	// Asked to leave it running, the launcher can't: it says so
+	let mut world = World::start();
+	world.try_request("disconnect", json!({ "terminateDebuggee": false }));
+	assert!(
+		world.output.contains("The world was started by this session, and ends with it"),
+		"the launcher didn't say the world would end"
+	);
+	assert!(world.launcher.child.wait().unwrap().success());
+	let list: Value = serde_json::from_str(&client::launcher_command(&["--list"]).1).unwrap();
+	assert_eq!(list.as_array().unwrap().len(), 0, "the world outlived its session: {}", list);
+	ok("a world the launcher started ends with its session even when asked not to, and the console says why");
 }
