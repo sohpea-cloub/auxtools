@@ -322,6 +322,20 @@ pub fn run() {
 	world.resume_through("fresh");
 	ok("a breakpoint in a proc that a reload added, and a step in it");
 
+	// The world counts a breakpoint's hits from when it's set: a reload of
+	// another file leaves it be
+	let (file, line) = world.marks.place("recurse_leaf");
+	world.set_breakpoints(&file, json!([{ "line": line, "hitCondition": "% 2" }]));
+	world.run_through("recurse");
+	world.drop_events("breakpoint");
+	edit(&mut world, "errors.dm", "\tvar/zero = 0\n", "\tvar/zero = 0 * 2\n");
+	assert!(!world.has_event("breakpoint"), "a reload of another file set the breakpoint again");
+	world.run("recurse");
+	world.stop_on("breakpoint", "/recurse", "recurse_leaf");
+	world.set_breakpoints(&file, json!([]));
+	world.resume_through("recurse");
+	ok("a breakpoint's hit count goes on across a reload of another file");
+
 	// BYOND's own list of the world's globals doesn't get one a reload adds
 	edit(&mut world, "main.dm", "var/ticks = 0\n", "var/ticks = 0\nvar/added_later = 12\n");
 	assert_eq!(world.eval_global("added_later"), "12");

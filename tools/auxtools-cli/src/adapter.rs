@@ -335,6 +335,10 @@ pub struct Adapter {
 	breakpoint_texts: HashMap<String, Option<Vec<String>>>,
 	/// The files the client says have edits it hasn't saved
 	unsaved: HashSet<String>,
+	/// The text of each file with breakpoints that the world was last given,
+	/// as far as the launcher knows: what was on disk at the last reload,
+	/// or when the file first had breakpoints
+	world_texts: HashMap<String, Option<Vec<String>>>,
 	/// The files whose breakpoints are on lines of the client's unsaved
 	/// text, which the file and the world don't have yet: they're set when
 	/// it's saved
@@ -405,6 +409,7 @@ pub fn run() {
 		breakpoint_texts: HashMap::new(),
 		unsaved: HashSet::new(),
 		deferred: HashSet::new(),
+		world_texts: HashMap::new(),
 		said_changed: HashSet::new(),
 		next_breakpoint_id: 1,
 		function_breakpoints: vec![],
@@ -1084,18 +1089,30 @@ impl Adapter {
 	/// file's text says where that went, whoever changed it. The client is
 	/// told where they are.
 	fn reapply_breakpoints(&mut self) {
-		// Those on lines of unsaved text are set when it's saved: the file's
-		// text now isn't what their lines are of
-		let files: Vec<String> = self.breakpoints.keys().filter(|file| !self.deferred.contains(*file)).cloned().collect();
+		let files: Vec<String> = self.breakpoints.keys().cloned().collect();
 		for file in files {
 			let now = crate::lines::read(&file);
-			if let (Some(Some(then)), Some(now)) = (self.breakpoint_texts.get(&file), &now) {
+			let had = self.world_texts.insert(file.clone(), now.clone());
+			// Those on lines of unsaved text are set when it's saved: the
+			// file's text now isn't what their lines are of
+			if self.deferred.contains(&file) {
+				continue;
+			}
+			let then = self.breakpoint_texts.get(&file).cloned().flatten();
+			if let (Some(then), Some(now)) = (&then, &now) {
 				if then != now {
 					let map = crate::lines::LineMap::new(then, now);
 					for (_, breakpoint) in self.breakpoints.get_mut(&file).into_iter().flatten() {
 						breakpoint.line = map.line(breakpoint.line as u32).into();
 					}
 				}
+			}
+			// A file that didn't change keeps its breakpoints: the world
+			// moves them with their statements if other code moved, and
+			// counts their hits on. Unless they were given for this text
+			// before the world had it.
+			if then == now && had.unwrap_or_else(|| then.clone()) == now {
+				continue;
 			}
 			self.breakpoint_texts.insert(file.clone(), now);
 
@@ -1287,6 +1304,7 @@ impl Adapter {
 			if wanted.is_empty() {
 				self.unset(&path);
 			}
+			self.world_texts.entry(path.clone()).or_insert_with(|| crate::lines::read(&path));
 			self.breakpoints.insert(path.clone(), wanted);
 			self.breakpoint_texts.insert(path.clone(), None);
 			self.deferred.insert(path);
@@ -1300,8 +1318,11 @@ impl Adapter {
 			));
 		}
 		self.deferred.remove(&path);
+		let text = crate::lines::read(&path);
+		// The first time, the world is taken to have what's on disk
+		self.world_texts.entry(path.clone()).or_insert_with(|| text.clone());
 		self.breakpoints.insert(path.clone(), wanted);
-		self.breakpoint_texts.insert(path.clone(), crate::lines::read(&path));
+		self.breakpoint_texts.insert(path.clone(), text);
 		let breakpoints = self.apply_breakpoints(&path);
 		self.told(&breakpoints);
 		json(SetBreakpointsResponse { breakpoints })
