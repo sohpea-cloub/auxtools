@@ -1440,7 +1440,10 @@ impl Server {
 		self.disconnect_all();
 	}
 
-	pub fn handle_breakpoint(&mut self, _ctx: *mut raw_types::procs::ExecutionContext, reason: BreakpointReason) -> ContinueKind {
+	/// Pauses the world, if anyone wants it paused for this, until a client
+	/// says how it should carry on. `None` when it didn't pause: whatever
+	/// the world was doing (a step, say) goes on.
+	pub fn handle_breakpoint(&mut self, _ctx: *mut raw_types::procs::ExecutionContext, reason: BreakpointReason) -> Option<ContinueKind> {
 		// Ignore all breakpoints unless someone's connected, and runtime errors
 		// unless someone wants them
 		let wanted = match reason {
@@ -1448,7 +1451,7 @@ impl Server {
 			_ => !self.clients.is_empty() || self.hold.is_some()
 		};
 		if !wanted {
-			return ContinueKind::Continue;
+			return None;
 		}
 
 		self.state = Some(State::new());
@@ -1480,7 +1483,7 @@ impl Server {
 
 				if !pause {
 					self.state = None;
-					return ContinueKind::Continue;
+					return None;
 				}
 			}
 		}
@@ -1507,7 +1510,7 @@ impl Server {
 				self.state = None;
 				self.paused = None;
 				self.hold = None;
-				return kind;
+				return Some(kind);
 			}
 
 			// Hijack eval too so that we can refresh our state after it
@@ -1524,7 +1527,7 @@ impl Server {
 		// Every client left
 		self.state = None;
 		self.paused = None;
-		ContinueKind::Continue
+		Some(ContinueKind::Continue)
 	}
 
 	// returns true if we need to pause

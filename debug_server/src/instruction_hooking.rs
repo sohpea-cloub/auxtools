@@ -112,15 +112,17 @@ fn get_proc_ctx(stack_id: u32) -> *mut raw_types::procs::ExecutionContext {
 	}
 }
 
-fn handle_breakpoint(ctx: *mut raw_types::procs::ExecutionContext, reason: BreakpointReason) -> DebuggerAction {
+/// Pauses the world, if a client wants it paused for this. `None` when it
+/// didn't pause, else what the client that let it carry on asked for.
+fn handle_breakpoint(ctx: *mut raw_types::procs::ExecutionContext, reason: BreakpointReason) -> Option<DebuggerAction> {
 	let action = unsafe {
 		match &mut *DEBUG_SERVER.get() {
-			Some(server) => server.handle_breakpoint(ctx, reason),
-			None => ContinueKind::Continue
+			Some(server) => server.handle_breakpoint(ctx, reason)?,
+			None => return None
 		}
 	};
 
-	match action {
+	Some(match action {
 		ContinueKind::Continue => DebuggerAction::None,
 		ContinueKind::StepOver { stack_id } => {
 			let ctx = get_proc_ctx(stack_id);
@@ -148,7 +150,7 @@ fn handle_breakpoint(ctx: *mut raw_types::procs::ExecutionContext, reason: Break
 				}
 			}
 		}
-	}
+	})
 }
 
 fn proc_instance_is_in_stack(mut ctx: *mut raw_types::procs::ExecutionContext, proc_ref: ProcInstanceRef) -> bool {
@@ -201,7 +203,10 @@ fn handle_runtime(error: &str) {
 			}
 		}
 
-		CURRENT_ACTION = handle_breakpoint(ctx, BreakpointReason::Runtime(error.to_string()));
+		// One nobody pauses for leaves a step in progress as it was
+		if let Some(action) = handle_breakpoint(ctx, BreakpointReason::Runtime(error.to_string())) {
+			CURRENT_ACTION = action;
+		}
 	});
 
 	if let Err(payload) = result {
@@ -262,13 +267,13 @@ impl InstructionHook for Server {
 
 				DebuggerAction::Pause => {
 					CURRENT_ACTION = DebuggerAction::None;
-					CURRENT_ACTION = handle_breakpoint(ctx, BreakpointReason::Pause);
+					CURRENT_ACTION = handle_breakpoint(ctx, BreakpointReason::Pause).unwrap_or(DebuggerAction::None);
 					did_breakpoint = true;
 				}
 
 				DebuggerAction::BreakOnNext => {
 					CURRENT_ACTION = DebuggerAction::None;
-					CURRENT_ACTION = handle_breakpoint(ctx, BreakpointReason::Step);
+					CURRENT_ACTION = handle_breakpoint(ctx, BreakpointReason::Step).unwrap_or(DebuggerAction::None);
 					did_breakpoint = true;
 				}
 
@@ -284,7 +289,7 @@ impl InstructionHook for Server {
 						// break if the context's stack is gone (returned to C)
 						if !proc_instance_is_in_stack(ctx, target) && !proc_instance_is_suspended(target) {
 							CURRENT_ACTION = DebuggerAction::None;
-							CURRENT_ACTION = handle_breakpoint(ctx, BreakpointReason::Step);
+							CURRENT_ACTION = handle_breakpoint(ctx, BreakpointReason::Step).unwrap_or(DebuggerAction::None);
 							did_breakpoint = true;
 						}
 					}
@@ -310,7 +315,7 @@ impl InstructionHook for Server {
 							// (returned to C)
 							if !in_stack && !is_suspended {
 								CURRENT_ACTION = DebuggerAction::None;
-								CURRENT_ACTION = handle_breakpoint(ctx, BreakpointReason::Step);
+								CURRENT_ACTION = handle_breakpoint(ctx, BreakpointReason::Step).unwrap_or(DebuggerAction::None);
 								did_breakpoint = true;
 							} else if in_stack && is_dbgline {
 								CURRENT_ACTION = DebuggerAction::BreakOnNext;
@@ -324,7 +329,7 @@ impl InstructionHook for Server {
 					if !is_generated_proc(ctx) {
 						if target.is(*(*ctx).proc_instance()) {
 							CURRENT_ACTION = DebuggerAction::None;
-							CURRENT_ACTION = handle_breakpoint(ctx, BreakpointReason::Step);
+							CURRENT_ACTION = handle_breakpoint(ctx, BreakpointReason::Step).unwrap_or(DebuggerAction::None);
 							did_breakpoint = true;
 						} else {
 							// If Our context disappeared, just stop the step
@@ -344,8 +349,11 @@ impl InstructionHook for Server {
 			// We don't want to break twice when stepping on to a breakpoint
 			if !did_breakpoint && !in_eval {
 				unsafe {
+					// A breakpoint that doesn't pause (its condition is false)
+					// leaves a step in progress as it was
+					let stepping = CURRENT_ACTION;
 					CURRENT_ACTION = DebuggerAction::None;
-					CURRENT_ACTION = handle_breakpoint(ctx, BreakpointReason::Breakpoint);
+					CURRENT_ACTION = handle_breakpoint(ctx, BreakpointReason::Breakpoint).unwrap_or(stepping);
 				}
 			}
 

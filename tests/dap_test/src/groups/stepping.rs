@@ -134,12 +134,23 @@ pub fn run() {
 		"flow_switch",
 		"flow_case",
 		"flow_try_start",
-		"flow_try"
+		"flow_try",
+		// quiet_failure() fails, which nobody pauses for
+		"flow_catch",
+		"flow_return"
 	];
 	let stepped: Vec<u64> = expected.iter().map(|_| world.step("next").line).collect();
 	assert_eq!(stepped, expected.map(|name| at.line(name)), "the lines stepped through");
 	world.resume_through("flow");
-	ok("next through a for loop, if and else, and a switch");
+	ok("next through a for loop, if and else, a switch, and a try whose code fails into its catch");
+
+	// leaf(3) meets a breakpoint whose condition is false
+	world.run_to("middle", "/middle", "middle_1");
+	world.break_if(&[("leaf_1", "x == 999")]);
+	world.step_on("next", "/middle", "middle_2");
+	world.break_on(&[]);
+	world.resume_through("middle");
+	ok("a step goes on past a breakpoint whose condition is false");
 
 	// A scenario's proc is called from a block the world's loop spawned, and
 	// nothing called that
