@@ -36,9 +36,14 @@ enum Variables {
 	Builtins,
 	ObjectVars(Value, Option<String>),
 	ListContents(Value, Option<String>),
-	/// An entry of a list that has a value for its key. `list` is the
-	/// expression the list is reached by.
-	ListPair { key: Value, value: Value, list: Option<String> }
+	/// An entry of the list `of` that has a value for its key. `list` is
+	/// the expression the list is reached by.
+	ListPair {
+		key: Value,
+		value: Value,
+		of: Value,
+		list: Option<String>
+	}
 }
 
 /// What a pause has been asked about. The stacks are read when they're first
@@ -701,6 +706,7 @@ impl Server {
 			variables: Some(state.get_ref(Variables::ListPair {
 				key,
 				value,
+				of: Value::from(&list),
 				list: expr.map(str::to_owned)
 			}))
 		};
@@ -1172,23 +1178,30 @@ impl Server {
 		self.send_or_disconnect(response);
 	}
 
-	/// What's inside something a client was given to open. A reference from
-	/// before the world last carried on, or one that never was, has nothing.
-	fn handle_variables(&mut self, vars: VariablesRef, start: Option<u32>, count: Option<u32>) {
-		let listed = match self.state.as_ref().and_then(|state| state.get_variables(vars)) {
-			Some(Variables::Arguments { frame }) => Ok(self.get_args(frame)),
-			Some(Variables::Locals { frame }) => Ok(self.get_locals(frame)),
-			Some(Variables::Globals) => self.globals_to_variables(false),
-			Some(Variables::Builtins) => self.globals_to_variables(true),
-			Some(Variables::ObjectVars(value, expr)) => self.object_to_variables(&value, expr.as_deref()),
-			Some(Variables::ListContents(value, expr)) => self.list_to_variables(&value, expr.as_deref(), start, count),
-			Some(Variables::ListPair { key, value, list }) => {
+	/// What's inside something a client was given to open
+	fn list_variables(&mut self, container: Variables, start: Option<u32>, count: Option<u32>) -> Result<Vec<Variable>, Runtime> {
+		match container {
+			Variables::Arguments { frame } => Ok(self.get_args(frame)),
+			Variables::Locals { frame } => Ok(self.get_locals(frame)),
+			Variables::Globals => self.globals_to_variables(false),
+			Variables::Builtins => self.globals_to_variables(true),
+			Variables::ObjectVars(value, expr) => self.object_to_variables(&value, expr.as_deref()),
+			Variables::ListContents(value, expr) => self.list_to_variables(&value, expr.as_deref(), start, count),
+			Variables::ListPair { key, value, list, .. } => {
 				let entry = list.zip(Self::literal(&key)).map(|(list, key)| format!("{}[{}]", list, key));
 				Ok(vec![
 					self.value_to_variable("key".to_owned(), &key, None),
 					self.value_to_variable("value".to_owned(), &value, entry),
 				])
 			}
+		}
+	}
+
+	/// A reference from before the world last carried on, or one that never
+	/// was, has nothing inside.
+	fn handle_variables(&mut self, vars: VariablesRef, start: Option<u32>, count: Option<u32>) {
+		let listed = match self.state.as_ref().and_then(|state| state.get_variables(vars)) {
+			Some(container) => self.list_variables(container, start, count),
 			None => Ok(vec![])
 		};
 
@@ -1197,6 +1210,138 @@ impl Server {
 			vec![]
 		});
 		self.send_or_disconnect(Response::Variables { vars });
+	}
+
+	/// The entry of a list that a client knows as `[n]`: its place, from 1
+	fn entry_number(name: &str) -> Option<u32> {
+		name.strip_prefix('[')?.strip_suffix(']')?.parse().ok().filter(|&n| n > 0)
+	}
+
+	/// Puts a value where a variable is. The world's own objections (a var
+	/// that can't be written) come back as runtime errors.
+	fn write_variable(&mut self, container: &Variables, name: &str, value: &Value) -> Result<(), String> {
+		let runtime = |e: Runtime| format!("runtime error: {}", e.message);
+		// A frame's slot takes a reference of its own, and lets go of what
+		// it had
+		unsafe fn put(slot: *mut raw_types::values::Value, value: &Value) {
+			unsafe {
+				let _ = Value::from_raw_owned(*slot);
+				let value = value.clone();
+				*slot = value.raw;
+				std::mem::forget(value);
+			}
+		}
+
+		match container {
+			Variables::Locals { frame } => {
+				let frame = self.get_stack_frame(*frame).ok_or("that frame is gone")?;
+				if name == "." {
+					unsafe { put((*frame.context).dot_mut(), value) };
+					return Ok(());
+				}
+				let mut named = frame.locals.iter().enumerate().filter(|(_, (local, _))| String::from(local) == name);
+				match (named.next(), named.next()) {
+					(Some((index, _)), None) => {
+						unsafe { put((*(*frame.context).locals()).add(index), value) };
+						Ok(())
+					}
+					(Some(_), Some(_)) => Err(format!("the proc has more than one local called {}", name)),
+					_ => Err(format!("the frame has no local called {}", name))
+				}
+			}
+
+			Variables::Arguments { frame } => {
+				let frame = self.get_stack_frame(*frame).ok_or("that frame is gone")?;
+				match name {
+					"src" => unsafe { put(&raw mut (*frame.instance).src, value) },
+					"usr" => unsafe { put(&raw mut (*frame.instance).usr, value) },
+					_ => {
+						// One the proc doesn't declare is known by its number
+						// among those
+						let unnamed: Option<usize> = name.strip_prefix("undefined argument #").and_then(|n| n.parse().ok());
+						let mut without_names = 0;
+						let index = frame.args.iter().position(|(arg, _)| match arg {
+							Some(arg) => String::from(arg) == name,
+							None => {
+								without_names += 1;
+								unnamed == Some(without_names)
+							}
+						});
+						let index = index.ok_or_else(|| format!("the frame has no argument called {}", name))?;
+						unsafe { put((*frame.instance).args().add(index), value) };
+					}
+				}
+				Ok(())
+			}
+
+			Variables::Globals => Value::GLOBAL.set(StringRef::new(name).map_err(runtime)?, value).map_err(runtime),
+			Variables::Builtins => Err("BYOND's constants can't be changed".to_owned()),
+			Variables::ObjectVars(object, _) => object.set(StringRef::new(name).map_err(runtime)?, value).map_err(runtime),
+
+			Variables::ListContents(list, _) => {
+				let list = List::from_value(list).map_err(runtime)?;
+				let number = Self::entry_number(name).filter(|&n| n <= list.len()).ok_or_else(|| format!("the list has no entry {}", name))?;
+				// An entry with a value for its key is given another value
+				if list.is_alist() {
+					let (key, _) = list.alist_pairs().map_err(runtime)?.into_iter().nth(number as usize - 1).ok_or("the list has changed")?;
+					return list.set(&key, value).map_err(runtime);
+				}
+				let key = list.get(number).map_err(runtime)?;
+				let has_value = key.raw.tag != ValueTag::Number && list.get(&key).is_ok_and(|of_key| of_key.raw.tag != ValueTag::Null);
+				if has_value {
+					list.set(&key, value).map_err(runtime)
+				} else {
+					list.set(number, value).map_err(runtime)
+				}
+			}
+
+			Variables::ListPair { key, of, .. } => match name {
+				"value" => List::from_value(of).map_err(runtime)?.set(key, value).map_err(runtime),
+				_ => Err("an entry's key can't be changed: take the entry out of the list and add another".to_owned())
+			}
+		}
+	}
+
+	/// Gives a variable the value of an expression, and returns it as it is
+	/// after that
+	fn set_variable(&mut self, vars: VariablesRef, name: &str, value: &str) -> Result<Variable, String> {
+		let container = self
+			.state
+			.as_ref()
+			.and_then(|state| state.get_variables(vars))
+			.ok_or("the world has carried on since that was listed")?;
+		let frame = match &container {
+			Variables::Arguments { frame } | Variables::Locals { frame } => *frame,
+			_ => 0
+		};
+		let value = self.eval_expr(Some(frame), value)?;
+		self.state.as_mut().unwrap().invalidate_stacks();
+
+		// A runtime error on the way is this request's, not one to pause for
+		self.in_eval = true;
+		self.eval_error = None;
+		let written = self.write_variable(&container, name, &value);
+		self.in_eval = false;
+		self.state.as_mut().unwrap().invalidate_stacks();
+		if let Some(error) = self.eval_error.take() {
+			return Err(format!("runtime error: {}", error));
+		}
+		written?;
+
+		// An entry opened for its key and value was what it was when it was
+		// opened: its value is what was just written
+		if let Variables::ListPair { key, list, .. } = &container {
+			let entry = list.clone().zip(Self::literal(key)).map(|(list, key)| format!("{}[{}]", list, key));
+			return Ok(self.value_to_variable(name.to_owned(), &value, entry));
+		}
+
+		// As the world has it now, which isn't always what it was given
+		let (start, count) = match &container {
+			Variables::ListContents(..) => (Self::entry_number(name).map(|n| n - 1), Some(1)),
+			_ => (None, None)
+		};
+		let listed = self.list_variables(container, start, count).map_err(|e| e.message)?;
+		listed.into_iter().find(|variable| variable.name == name).ok_or_else(|| format!("{} is gone", name))
 	}
 
 	fn handle_command(&mut self, frame_id: Option<u32>, command: &str) -> String {
@@ -1577,6 +1722,10 @@ impl Server {
 			Request::Stacks => self.handle_stacks(),
 			Request::Scopes { frame_id } => self.handle_scopes(frame_id),
 			Request::Variables { vars, start, count } => self.handle_variables(vars, start, count),
+			Request::SetVariable { vars, name, value } => {
+				let result = self.set_variable(vars, &name, &value);
+				self.send_or_disconnect(Response::SetVariable(result));
+			}
 			Request::Eval { frame_id, command, .. } => self.handle_eval(frame_id, &command),
 
 			Request::StackFrames {

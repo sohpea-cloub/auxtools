@@ -79,6 +79,18 @@ Each can have a condition (the pencil next to it): text the error's message has 
 or after a `!` mustn't have, with commas between several. `!libdreamluau, !rust_g` pauses
 on every error but those; `bounds, null` only on errors with either word.
 
+## Variables
+
+The Variables view shows the selected frame's locals and arguments (with `src` and
+`usr`), and the world's globals, which are listed when you open them. Objects open to
+their vars and lists to their entries, a hundred at a time for long ones. Hovering a
+variable shows what kind of value it is.
+
+**Set Value** (double-click a value) takes an expression, evaluated in that frame: a
+local, an argument, an object's var, a list's entry or a global. **Copy as Expression**
+and **Add to Watch** give the expression that reaches it (`mob.contents[3].name`).
+Numbers can be shown in hex (right-click, **Format > Hex**).
+
 ## Expressions
 
 Watches, breakpoint conditions and the debug console take DM expressions, evaluated in

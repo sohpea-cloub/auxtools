@@ -133,6 +133,26 @@ struct AttachArguments {
 	hot_reload: bool
 }
 
+/// What `setVariable` takes (dap-types has none of it)
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SetVariableArguments {
+	variables_reference: i64,
+	name: String,
+	value: String,
+	format: Option<ValueFormat>
+}
+
+/// What `setExpression` takes
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SetExpressionArguments {
+	expression: String,
+	value: String,
+	frame_id: Option<i64>,
+	format: Option<ValueFormat>
+}
+
 /// What `setExceptionBreakpoints` takes: the filters ticked, with their
 /// conditions if they have any (dap-types knows the first only)
 #[derive(Deserialize)]
@@ -384,6 +404,8 @@ impl Adapter {
 			"stepOut" => arguments::<StepOutArguments>(args).and_then(|args| self.step(|stack_id| ContinueKind::StepOut { stack_id }, args.threadId)),
 			"pause" => self.pause(),
 			"evaluate" => arguments(args).and_then(|args| self.evaluate(args)),
+			"setVariable" => arguments(args).and_then(|args| self.set_variable(args)),
+			"setExpression" => arguments(args).and_then(|args| self.set_expression(args)),
 			"exceptionInfo" => self.exception_info(),
 			"source" => arguments(args).and_then(|args| self.source(args)),
 			"disconnect" => {
@@ -407,6 +429,8 @@ impl Adapter {
 			supportsHitConditionalBreakpoints: Some(true),
 			supportsLogPoints: Some(true),
 			supportsValueFormattingOptions: Some(true),
+			supportsSetVariable: Some(true),
+			supportsSetExpression: Some(true),
 			supportsExceptionInfoRequest: Some(true),
 			supportTerminateDebuggee: Some(true),
 			..Default::default()
@@ -1311,6 +1335,45 @@ impl Adapter {
 				..Default::default()
 			}),
 			// The client shows it where the value would be
+			AuxResponse::Eval(Err(why)) => Err(why),
+			other => Err(unexpected(other))
+		}
+	}
+
+	/// Gives a variable the value of an expression
+	fn set_variable(&mut self, args: SetVariableArguments) -> Handled {
+		let hex = args.format.is_some_and(|format| format.hex == Some(true));
+		match self.request(&AuxRequest::SetVariable {
+			vars: aux::VariablesRef(args.variables_reference as i32),
+			name: args.name,
+			value: args.value
+		})? {
+			AuxResponse::SetVariable(Ok(variable)) => Ok(serde_json::json!({
+				"value": shown(variable.value, hex),
+				"type": variable.kind,
+				"variablesReference": variable.variables.map_or(0, |vars| vars.0),
+				"indexedVariables": variable.entries
+			})),
+			AuxResponse::SetVariable(Err(why)) => Err(why),
+			other => Err(unexpected(other))
+		}
+	}
+
+	/// Gives what an expression names the value of another: an assignment,
+	/// which is an expression in DM
+	fn set_expression(&mut self, args: SetExpressionArguments) -> Handled {
+		let hex = args.format.is_some_and(|format| format.hex == Some(true));
+		match self.request(&AuxRequest::Eval {
+			frame_id: args.frame_id.map(|id| id as u32),
+			command: format!("{} = ({})", args.expression, args.value),
+			context: None
+		})? {
+			AuxResponse::Eval(Ok(result)) => Ok(serde_json::json!({
+				"value": shown(result.value, hex),
+				"type": result.kind,
+				"variablesReference": result.variables.map_or(0, |vars| vars.0),
+				"indexedVariables": result.entries
+			})),
 			AuxResponse::Eval(Err(why)) => Err(why),
 			other => Err(unexpected(other))
 		}

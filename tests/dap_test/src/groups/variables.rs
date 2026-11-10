@@ -122,6 +122,127 @@ fn pieces_and_hex(world: &mut World, big: &Value, locals: &Value) {
 	ok("whole numbers are shown in hex when the client asks for that");
 }
 
+/// Gives the variable `name`, among what `inside` opens to, the value of an
+/// expression, and returns it as the launcher says it is then
+fn set(world: &mut World, inside: &Value, name: &str, value: &str) -> Value {
+	world.request("setVariable", json!({ "variablesReference": inside, "name": name, "value": value }))
+}
+
+/// Why that can't be done
+fn cannot_set(world: &mut World, inside: &Value, name: &str, value: &str) -> String {
+	world.refused("setVariable", json!({ "variablesReference": inside, "name": name, "value": value }))
+}
+
+/// Giving variables other values, in the paused frame of values()
+fn setting(world: &mut World, version: u64) {
+	let frame = world.frame_id();
+	let locals = world.scope(&frame, "Locals");
+	let arguments = world.scope(&frame, "Arguments");
+	let inside = |world: &mut World, name: &str| -> Value { world.variable("Locals", name)["variablesReference"].clone() };
+
+	let now = set(world, &locals, "whole", "50");
+	assert_eq!((&now["value"], &now["type"]), (&json!("50"), &json!("num")));
+	assert_eq!(world.local("whole"), "50");
+	assert_eq!(world.eval("whole + 1"), "51");
+	// The value is an expression, in the variable's frame
+	assert_eq!(set(world, &locals, "fraction", "whole * 2 + length(args)")["value"], "103");
+	assert_eq!(set(world, &locals, "text", "\"new [whole]\"")["value"], "\"new 50\"");
+	assert_eq!(set(world, &locals, "nothing", "named")["value"], "A");
+	assert_ne!(world.variable("Locals", "nothing")["variablesReference"], 0);
+	assert_eq!(set(world, &locals, ".", "list(1, 2)")["indexedVariables"], 2);
+	assert_eq!(world.eval("length(.)"), "2");
+	ok("a local is given the value of an expression, and the proc's return value too");
+
+	assert_eq!(set(world, &arguments, "first", "9")["value"], "9");
+	assert_eq!(set(world, &arguments, "undefined argument #1", "\"third\"")["value"], "\"third\"");
+	assert_eq!(world.eval("\"[first] [args[3]]\""), "\"9 third\"");
+	assert_eq!(set(world, &arguments, "usr", "M")["value"], "player");
+	assert_eq!(world.eval("usr.hp"), "10");
+	set(world, &arguments, "usr", "null");
+	ok("an argument is set, one the proc doesn't declare too, and usr");
+
+	let named = inside(world, "named");
+	assert_eq!(set(world, &named, "n", "7")["value"], "7");
+	assert_eq!(set(world, &named, "name", "\"renamed\"")["value"], "\"renamed\"");
+	assert_eq!(world.eval("\"[named.name] [named.n]\""), "\"renamed 7\"");
+	assert_eq!(world.local("named"), "renamed");
+	// Through the object to the one inside it
+	let children = world.variables(&named);
+	let other = children.iter().find(|v| v["name"] == "other").unwrap()["variablesReference"].clone();
+	assert_eq!(set(world, &other, "n", "named.n + 1")["value"], "8");
+	assert_eq!(world.eval("named.other.n"), "8");
+	// A built-in var takes what BYOND makes of the value
+	let mob = inside(world, "M");
+	assert_eq!(set(world, &mob, "hp", "3")["value"], "3");
+	assert_eq!(set(world, &mob, "name", "\"Bob\"")["value"], "\"Bob\"");
+	assert_eq!(world.local("M"), "Bob");
+	ok("an object's var is set, its own and a built-in one");
+
+	let plain = inside(world, "plain");
+	assert_eq!(set(world, &plain, "[2]", "\"z\"")["value"], "\"z\"");
+	assert_eq!(world.eval("plain[2]"), "\"z\"");
+	let why = cannot_set(world, &plain, "[9]", "1");
+	assert_eq!(why, "the list has no entry [9]");
+	// An entry with a value for its key gets another value
+	let assoc = inside(world, "assoc");
+	assert_eq!(set(world, &assoc, "[1]", "5")["value"], "\"a\" = 5");
+	assert_eq!(world.eval("assoc[\"a\"]"), "5");
+	let entries = world.variables(&assoc);
+	let entry = entries[1]["variablesReference"].clone();
+	assert_eq!(set(world, &entry, "value", "6")["value"], "6");
+	assert_eq!(world.eval("assoc[\"b\"]"), "6");
+	let why = cannot_set(world, &entry, "key", "\"c\"");
+	assert!(why.starts_with("an entry's key can't be changed"), "{}", why);
+	if version >= 516 {
+		let pairs = inside(world, "pairs");
+		let listed = world.variable("Locals", "pairs");
+		let entries = world.children(&listed);
+		let first = entries.iter().position(|(_, value)| value == "\"a\" = 1").unwrap();
+		assert_eq!(set(world, &pairs, &format!("[{}]", first + 1), "11")["value"], "\"a\" = 11");
+		assert_eq!(world.eval("pairs[\"a\"]"), "11");
+	}
+	ok("a list's entry is set, by its place or by its key");
+
+	let globals = world.scope(&frame, "Globals");
+	assert_eq!(set(world, &globals, "global_number", "whole")["value"], "50");
+	assert_eq!(world.eval("global_number"), "50");
+	set(world, &globals, "global_number", "5");
+	let constants = world.variable("Globals", "(BYOND's)")["variablesReference"].clone();
+	assert_eq!(cannot_set(world, &constants, "NORTH", "2"), "BYOND's constants can't be changed");
+	ok("a global is set; BYOND's constants aren't");
+
+	for (inside, name, value, why) in [
+		(&locals, "whole", "1 +", "parser error: "),
+		(&locals, "whole", "nowhere_at_all", "undefined var: nowhere_at_all"),
+		(&locals, "whole", "1 / 0", "runtime error: Division by zero"),
+		(&locals, "not_a_local", "1", "the frame has no local called not_a_local"),
+		(&locals, "twin", "1", "the proc has more than one local called twin"),
+		(&arguments, "third", "1", "the frame has no argument called third"),
+		(&named, "not_a_var", "1", "runtime error: ")
+	] {
+		let said = cannot_set(world, inside, name, value);
+		assert!(said.starts_with(why), "setting {} to {} said {:?}", name, value, said);
+	}
+	assert_eq!(world.local("whole"), "50");
+	ok("a value that can't be worked out, and a variable that isn't there, are refused with why");
+
+	// An expression that names a place, as a watch is set
+	let now = world.request("setExpression", json!({ "expression": "named.n", "value": "whole + 1", "frameId": frame }));
+	assert_eq!((&now["value"], &now["type"]), (&json!("51"), &json!("num")));
+	assert_eq!(world.eval("named.n"), "51");
+	let now = world.request("setExpression", json!({ "expression": "plain[1]", "value": "list(\"x\")", "frameId": frame }));
+	assert_eq!(now["indexedVariables"], 1);
+	assert_eq!(world.eval("plain[1][1]"), "\"x\"");
+	let why = world.refused("setExpression", json!({ "expression": "whole + 1", "value": "3", "frameId": frame }));
+	assert_eq!(why, "expected l-value");
+	ok("an expression that names a place is given a value; one that doesn't is refused");
+
+	// What was listed before the world carried on is gone
+	world.step("next");
+	assert_eq!(cannot_set(world, &locals, "whole", "1"), "the world has carried on since that was listed");
+	ok("a variable listed before the world carried on can't be set");
+}
+
 /// The world's BYOND version
 fn byond_version(world: &mut World) -> u64 {
 	world.eval_global("world.byond_version").parse().unwrap()
@@ -359,6 +480,8 @@ pub fn run() {
 	assert_eq!(world.eval("whole = 7"), "7");
 	assert_eq!(world.local("whole"), "7");
 	ok("a local's value after a step, and after an expression assigned to it");
+
+	setting(&mut world, version);
 	world.resume_through("values");
 
 	world.run_to("inside", "/datum/thing/inside", "inside_stop");

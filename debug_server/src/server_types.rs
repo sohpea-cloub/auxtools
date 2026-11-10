@@ -95,6 +95,14 @@ pub enum Request {
 		file: String,
 		line: u32
 	},
+	/// Gives a variable another value: `name` among what `vars` opens to,
+	/// and an expression for the value, evaluated in the frame the variable
+	/// is in (the paused proc's, for what isn't a frame's own)
+	SetVariable {
+		vars: VariablesRef,
+		name: String,
+		value: String
+	},
 	/// From a client that isn't debugging: it's connected for something else,
 	/// like the launcher of a world run without debugging, there to hot
 	/// reload it. A pause doesn't wait for it, as it wouldn't let the world
@@ -164,6 +172,8 @@ pub enum Response {
 	/// Another client hot reloaded the world: its code has changed, and
 	/// lines may be elsewhere
 	CodeChanged,
+	/// The variable as it is now, or why it couldn't be set
+	SetVariable(Result<Variable, String>),
 	/// A breakpoint this client set with a message was hit: the message,
 	/// and where the breakpoint is
 	Log {
