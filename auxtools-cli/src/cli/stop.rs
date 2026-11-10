@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 
 use auxtools_cli::{
 	local,
-	server_types::{Request, Response}
+	server_types::Request
 };
 
 use super::{Failure, Flags, Result, World, HUNG_UP, TIMED_OUT};
@@ -116,14 +116,9 @@ pub fn reboot(world: &mut World, args: &[String]) -> Result<()> {
 			));
 		}
 		if let Ok(mut again) = World::connect(pid) {
-			let answered = local::send(&mut again.stream, &Request::Status).is_ok()
-				&& loop {
-					match again.next(Some(until)) {
-						Ok(Some(Response::Status { .. })) => break true,
-						Ok(Some(_)) => {}
-						_ => break false
-					}
-				};
+			// Answering, and let run by its launcher: a world that has only
+			// loaded isn't back yet
+			let answered = again.started().unwrap_or(false);
 			again.leave();
 			if answered {
 				println!(

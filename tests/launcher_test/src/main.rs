@@ -1022,7 +1022,9 @@ fn launch_from_the_command_line(server: &str) {
 	let printed = run(&["stop", "--timeout", "0", "--kill"], 0);
 	assert_eq!(printed.trim(), format!("The world didn't end in 0 s, so its process ({}) was ended", pid));
 	assert!(!alive(pid), "the world is still there");
-	wait_for_text("the background launcher's log", "The world was ended", || std::fs::read_to_string(&log).unwrap_or_default());
+	// (a process that's ended on Windows exits with the code it was ended with)
+	let ended = if cfg!(windows) { "The world exited with code 1" } else { "The world was ended" };
+	wait_for_text("the background launcher's log", ended, || std::fs::read_to_string(&log).unwrap_or_default());
 	assert!(gone_within(launcher, 10), "the background launcher didn't go with the world");
 	drop(started);
 	println!("ok: stop says when the world's Del() doesn't end it, and --kill ends its process");

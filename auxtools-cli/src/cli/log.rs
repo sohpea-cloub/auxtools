@@ -110,6 +110,14 @@ fn wait_reboot(world: &mut World, since: Option<u64>, until: Option<Instant>, js
 			return Err(Failure(TIMED_OUT, "timed out: the world didn't reboot".to_owned()));
 		};
 		if let JournalEvent::Loaded { .. } = entry.event {
+			// Loaded, and then let run by its launcher: what's asked of it
+			// before that would be asked of a world that isn't going yet
+			while !world.started()? {
+				if until.is_some_and(|until| Instant::now() >= until) {
+					return Err(Failure(TIMED_OUT, "timed out: the world rebooted, but hasn't started running".to_owned()));
+				}
+				std::thread::sleep(Duration::from_millis(50));
+			}
 			print(&entry, json);
 			return Ok(());
 		}
@@ -227,6 +235,15 @@ impl World {
 }
 
 impl World {
+	/// Whether the world's own code has begun (it isn't waiting, just
+	/// loaded, for its launcher to let it run)
+	pub fn started(&mut self) -> Result<bool> {
+		match self.request(Request::Uptime)? {
+			Response::Uptime { started, .. } => Ok(started),
+			other => Err(unexpected(&other))
+		}
+	}
+
 	/// For `status`: how long the world has been up, and its last hot reload
 	pub fn uptime(&mut self) -> Result<()> {
 		let (loaded, up, world_time, loads, last_reload) = match self.request(Request::Uptime)? {
@@ -235,7 +252,8 @@ impl World {
 				up,
 				world_time,
 				loads,
-				last_reload
+				last_reload,
+				..
 			} => (loaded, up, world_time, loads, last_reload),
 			other => return Err(unexpected(&other))
 		};

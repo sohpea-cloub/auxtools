@@ -336,7 +336,11 @@ pub enum Response {
 		/// How many worlds the process has loaded: 1, then one more for each
 		/// reboot
 		loads: u32,
-		last_reload: Option<JournalEntry>
+		last_reload: Option<JournalEntry>,
+		/// The world's own code has begun: it isn't one that has just loaded
+		/// and waits for its launcher before it runs anything. What's asked
+		/// of a world before then (to end, say) is asked of nothing much.
+		started: bool
 	},
 	/// The condition of a breakpoint or a watch this client set failed with
 	/// an error where it was hit, so that hit was skipped, as are the others

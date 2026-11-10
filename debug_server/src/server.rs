@@ -304,6 +304,9 @@ pub struct Server {
 	/// Values the next expression evaluated knows by these names, besides
 	/// what its frame has
 	eval_given: Vec<(String, Value)>,
+	/// The world has loaded and waits for its launcher to say it can run
+	/// (`process_until_configured`)
+	waiting_to_start: bool,
 	/// The client that asked for the world to stay paused once every client
 	/// has gone (`Request::HoldPause`)
 	hold: Option<ClientId>,
@@ -383,6 +386,7 @@ impl Server {
 			watches: vec![],
 			next_watch: 0,
 			eval_given: vec![],
+			waiting_to_start: false,
 			hold: None,
 			hold_max: None,
 			procs_by_file: None,
@@ -2401,7 +2405,8 @@ impl Server {
 					up,
 					world_time: journal::world_time(),
 					loads,
-					last_reload
+					last_reload,
+					started: !self.waiting_to_start
 				});
 			}
 			Request::ProcInfo { proc } => {
@@ -2792,6 +2797,7 @@ impl Server {
 	/// Block while processing all received requests normally until a debug
 	/// client says it's configured, however long that takes to connect
 	pub fn process_until_configured(&mut self) {
+		self.waiting_to_start = true;
 		while let Some(request) = self.recv_request(Wait::Forever) {
 			if let Request::Configured = request {
 				self.send_or_disconnect(Response::Ack);
@@ -2800,6 +2806,7 @@ impl Server {
 
 			self.handle_request(request);
 		}
+		self.waiting_to_start = false;
 	}
 
 	/// Answers the client whose request this is
