@@ -1775,14 +1775,27 @@ pub fn apply<K: Ord + std::hash::Hash + Copy, T>(
 	moved_breakpoints: &mut MovedBreakpoints<K>,
 	warnings: &mut Vec<String>
 ) {
+	// The id each new var really got, if it got one
+	let mut got = HashMap::new();
 	for new in &prepared.new_vars {
-		match runtime_tables::add_variable(new.name, new.value.0 as u8, new.value.1) {
-			Ok(id) if id != new.id => warnings.push(format!("a new var got id {} where {} was expected", id, new.id)),
-			Ok(_) => {}
-			Err(e) => warnings.push(format!("couldn't add a var: {}", e))
-		}
+		let id = match runtime_tables::add_variable(new.name, new.value.0 as u8, new.value.1) {
+			Ok(id) => {
+				if id != new.id {
+					warnings.push(format!("a new var got id {} where {} was expected", id, new.id));
+				}
+				Some(id)
+			}
+			Err(e) => {
+				warnings.push(format!("couldn't add a var: {}", e));
+				None
+			}
+		};
+		got.insert(new.id, id);
 	}
-	ADDED_GLOBALS.lock().unwrap().extend(prepared.new_globals.iter().cloned());
+	// An expression finds a new global by the id it has, and not at all if
+	// it wasn't added. One that was there before keeps its id.
+	let globals = prepared.new_globals.iter().filter_map(|(name, id)| Some((name.clone(), got.get(id).copied().unwrap_or(Some(*id))?)));
+	ADDED_GLOBALS.lock().unwrap().extend(globals);
 
 	let procs_before = runtime_tables::proc_count();
 
