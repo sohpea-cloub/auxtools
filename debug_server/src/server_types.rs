@@ -540,7 +540,12 @@ pub enum ContinueKind {
 	Continue,
 	StepOver { stack_id: u32 },
 	StepInto { stack_id: u32 },
-	StepOut { stack_id: u32 }
+	StepOut { stack_id: u32 },
+	/// One instruction on in the stack's frame: a call it makes runs to its
+	/// end. If the frame returns, the step ends in its caller.
+	StepOverInstruction { stack_id: u32 },
+	/// The very next instruction the stack runs, in a proc it calls too
+	StepIntoInstruction { stack_id: u32 }
 }
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]

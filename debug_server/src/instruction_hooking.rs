@@ -55,7 +55,13 @@ enum DebuggerAction {
 	StepOver { target: ProcInstanceRef, caller: Option<ProcInstanceRef> },
 	StepInto { parent: ProcInstanceRef, caller: Option<ProcInstanceRef> },
 	BreakOnNext,
-	StepOut { target: ProcInstanceRef }
+	StepOut { target: ProcInstanceRef },
+	/// Stops at the next instruction `target` runs, or in its caller if it
+	/// returns first
+	StepOverInstruction { target: ProcInstanceRef, caller: Option<ProcInstanceRef> },
+	/// Stops at the next instruction `parent` runs, or one a proc it calls
+	/// runs, or in its caller if it returns first
+	StepIntoInstruction { parent: ProcInstanceRef, caller: Option<ProcInstanceRef> }
 }
 
 static mut CURRENT_ACTION: DebuggerAction = DebuggerAction::None;
@@ -158,6 +164,20 @@ fn handle_breakpoint(ctx: *mut raw_types::procs::ExecutionContext, reason: Break
 		ContinueKind::StepInto { stack_id } => {
 			let (ctx, caller) = get_proc_ctx(stack_id);
 			DebuggerAction::StepInto {
+				parent: ProcInstanceRef::new(unsafe { *(*ctx).proc_instance() }),
+				caller: unsafe { mark(caller) }
+			}
+		}
+		ContinueKind::StepOverInstruction { stack_id } => {
+			let (ctx, caller) = get_proc_ctx(stack_id);
+			DebuggerAction::StepOverInstruction {
+				target: ProcInstanceRef::new(unsafe { *(*ctx).proc_instance() }),
+				caller: unsafe { mark(caller) }
+			}
+		}
+		ContinueKind::StepIntoInstruction { stack_id } => {
+			let (ctx, caller) = get_proc_ctx(stack_id);
+			DebuggerAction::StepIntoInstruction {
 				parent: ProcInstanceRef::new(unsafe { *(*ctx).proc_instance() }),
 				caller: unsafe { mark(caller) }
 			}
@@ -395,6 +415,23 @@ impl InstructionHook for Server {
 							} else if in_stack && is_dbgline {
 								CURRENT_ACTION = DebuggerAction::BreakOnNext;
 							}
+						}
+					}
+				}
+
+				// A step of one instruction: the next one the frame runs, or
+				// for a step in, one that a proc it calls runs. If the frame
+				// returns, the step ends in its caller (see StepOver). While
+				// it's asleep, whatever else runs is passed over.
+				DebuggerAction::StepOverInstruction { target: frame, caller } | DebuggerAction::StepIntoInstruction { parent: frame, caller } => {
+					let into = matches!(action, DebuggerAction::StepIntoInstruction { .. });
+					let here = frame.is(*(*ctx).proc_instance()) || (into && proc_instance_is_in_stack(ctx, frame));
+					let over = !here && !proc_instance_is_in_stack(ctx, frame) && !proc_instance_is_suspended(frame);
+					if here || over {
+						CURRENT_ACTION = DebuggerAction::None;
+						if here || caller.is_some_and(|caller| caller.is(*(*ctx).proc_instance())) {
+							CURRENT_ACTION = handle_breakpoint(ctx, BreakpointReason::Step).unwrap_or(DebuggerAction::None);
+							did_breakpoint = true;
 						}
 					}
 				}

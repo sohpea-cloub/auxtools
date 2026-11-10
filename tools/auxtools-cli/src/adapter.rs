@@ -224,6 +224,21 @@ struct ExceptionFilterOption {
 	condition: Option<String>
 }
 
+/// What `next` and `stepIn` take (dap-types has no granularity)
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct StepArguments {
+	thread_id: i64,
+	/// `instruction`, or `statement` or `line`, which are both a line here
+	granularity: Option<String>
+}
+
+impl StepArguments {
+	fn by_instruction(&self) -> bool {
+		self.granularity.as_deref() == Some("instruction")
+	}
+}
+
 /// What `setInstructionBreakpoints` takes
 #[derive(Deserialize)]
 struct InstructionBreakpointsArguments {
@@ -516,8 +531,32 @@ impl Adapter {
 					allThreadsContinued: Some(true)
 				})
 			}),
-			"next" => arguments::<NextArguments>(args).and_then(|args| self.step(|stack_id| ContinueKind::StepOver { stack_id }, args.threadId)),
-			"stepIn" => arguments::<StepInArguments>(args).and_then(|args| self.step(|stack_id| ContinueKind::StepInto { stack_id }, args.threadId)),
+			"next" => arguments::<StepArguments>(args).and_then(|args| {
+				let by_instruction = args.by_instruction();
+				self.step(
+					|stack_id| {
+						if by_instruction {
+							ContinueKind::StepOverInstruction { stack_id }
+						} else {
+							ContinueKind::StepOver { stack_id }
+						}
+					},
+					args.thread_id
+				)
+			}),
+			"stepIn" => arguments::<StepArguments>(args).and_then(|args| {
+				let by_instruction = args.by_instruction();
+				self.step(
+					|stack_id| {
+						if by_instruction {
+							ContinueKind::StepIntoInstruction { stack_id }
+						} else {
+							ContinueKind::StepInto { stack_id }
+						}
+					},
+					args.thread_id
+				)
+			}),
 			"stepOut" => arguments::<StepOutArguments>(args).and_then(|args| self.step(|stack_id| ContinueKind::StepOut { stack_id }, args.threadId)),
 			"pause" => self.pause(),
 			"evaluate" => arguments(args).and_then(|args| self.evaluate(args)),
@@ -564,6 +603,7 @@ impl Adapter {
 			..Default::default()
 		})?;
 		capabilities["supportsInstructionBreakpoints"] = true.into();
+		capabilities["supportsSteppingGranularity"] = true.into();
 		// What dap-types has no fields for
 		let condition = "Text the error's message has to have, like \"bounds, null\" for either, or mustn't, like \"!libdreamluau\"";
 		capabilities["supportsExceptionFilterOptions"] = true.into();

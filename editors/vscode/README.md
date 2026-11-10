@@ -175,6 +175,11 @@ A breakpoint can go on any instruction: click to the left of its address. It has
 the start of an instruction, and in a proc's code as it is now, not in old code. It can
 have a condition and a hit count, and stays set across reboots of the world.
 
+With the Disassembly view focused, **Step Over** and **Step Into** go one instruction at a
+time: Step Over to the frame's next instruction (a call it makes runs to its end), Step
+Into to the very next instruction run, in the proc called if it's a call. **Step Out** is
+as ever.
+
 ## Hot reloading (experimental)
 
 While a world runs, saving a file swaps the procs that changed into it, with or without

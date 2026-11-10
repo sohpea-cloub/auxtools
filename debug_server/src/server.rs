@@ -2458,7 +2458,9 @@ impl Server {
 					ContinueKind::Continue => ContinueKind::Continue,
 					ContinueKind::StepOver { stack_id } => ContinueKind::StepOver { stack_id: position(stack_id) },
 					ContinueKind::StepInto { stack_id } => ContinueKind::StepInto { stack_id: position(stack_id) },
-					ContinueKind::StepOut { stack_id } => ContinueKind::StepOut { stack_id: position(stack_id) }
+					ContinueKind::StepOut { stack_id } => ContinueKind::StepOut { stack_id: position(stack_id) },
+					ContinueKind::StepOverInstruction { stack_id } => ContinueKind::StepOverInstruction { stack_id: position(stack_id) },
+					ContinueKind::StepIntoInstruction { stack_id } => ContinueKind::StepIntoInstruction { stack_id: position(stack_id) }
 				};
 				self.send_or_disconnect(Response::Ack);
 				self.broadcast(Response::Resumed, self.current);

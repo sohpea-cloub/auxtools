@@ -58,6 +58,15 @@ fn find(listing: &[Value], text: &str) -> u64 {
 	address(&found.unwrap_or_else(|| panic!("no {} in {:?}", text, texts(listing)))["address"])
 }
 
+/// A step of `granularity`, and where it stopped: the proc and the address
+fn step_by(world: &mut World, command: &str, granularity: &str) -> (String, u64) {
+	let thread = world.thread;
+	world.request(command, json!({ "threadId": thread, "granularity": granularity }));
+	let stop = world.stop();
+	assert_eq!(stop.reason, "step");
+	(stop.proc, frame_address(world))
+}
+
 /// The paused frame's instruction
 fn frame_address(world: &mut World) -> u64 {
 	let frame = world.top_frame();
@@ -126,6 +135,7 @@ pub fn run() {
 	world.resume_through("middle");
 
 	instruction_breakpoints(&mut world, &leaf);
+	instruction_steps(&mut world);
 	world.end();
 	old_code();
 }
@@ -250,4 +260,73 @@ fn old_code() {
 
 	world.resume_through("middle");
 	world.end();
+}
+
+fn instruction_steps(world: &mut World) {
+	let at = world.marks.clone();
+
+	world.run_to("middle", "/leaf", "leaf_1");
+	let mut here = frame_address(world);
+	let leaf = listing(world, here);
+	for _ in 0..3 {
+		let next = leaf.iter().position(|i| address(&i["address"]) == here).unwrap() + 1;
+		let (proc, now) = step_by(world, "next", "instruction");
+		assert_eq!((proc.as_str(), now), ("/leaf", address(&leaf[next]["address"])), "{:?}", texts(&leaf));
+		here = now;
+	}
+	ok("next by instruction moves the frame to the following instruction");
+
+	world.step_on("next", "/leaf", "leaf_2");
+	ok("a step by line after steps by instruction goes on to the next line");
+	world.resume_through("middle");
+
+	// `var/r = leaf(a)`: each step is the next of middle()'s instructions,
+	// the call to leaf() among them, until the next line
+	world.run_to("middle", "/middle", "middle_1");
+	let mut here = frame_address(world);
+	let middle = listing(world, here);
+	let mut steps = 0;
+	loop {
+		let next = middle.iter().position(|i| address(&i["address"]) == here).unwrap() + 1;
+		let (proc, now) = step_by(world, "next", "instruction");
+		assert_eq!((proc.as_str(), now), ("/middle", address(&middle[next]["address"])), "{:?}", texts(&middle));
+		here = now;
+		steps += 1;
+		if middle[next]["instruction"] == format!("DbgLine {}", at.line("middle_2")) {
+			break;
+		}
+	}
+	assert!(steps > 2);
+	assert_eq!(world.local("r"), "8");
+	ok("next by instruction stays in the frame across a call it makes");
+	world.resume_through("middle");
+
+	// The same again, into leaf() at the call
+	world.run_to("middle", "/middle", "middle_1");
+	let mut last = frame_address(world);
+	let entered = loop {
+		let (proc, now) = step_by(world, "stepIn", "instruction");
+		if proc == "/leaf" {
+			break now;
+		}
+		assert_eq!(proc, "/middle");
+		assert!(now > last);
+		last = now;
+	};
+	assert_eq!(entered & 0xFFFF, 0, "leaf() wasn't entered at its first instruction");
+	assert_eq!(world.argument("x"), "3");
+	ok("stepIn by instruction goes into the proc called, at its first instruction");
+
+	let first = listing(world, entered)[0]["instructionBytes"].as_str().unwrap().split(' ').count() as u64;
+	let (proc, now) = step_by(world, "stepIn", "instruction");
+	assert_eq!((proc.as_str(), now), ("/leaf", entered + first));
+	world.step_on("stepOut", "/middle", "middle_1");
+	world.step_on("next", "/middle", "middle_2");
+	// Steps by statement are steps by line
+	let thread = world.thread;
+	world.request("next", json!({ "threadId": thread, "granularity": "statement" }));
+	let stop = world.stop();
+	assert_eq!((stop.reason.as_str(), stop.proc.as_str(), stop.line), ("step", "/middle", at.line("middle_3")));
+	world.resume_through("middle");
+	ok("stepIn by instruction goes on in the callee; stepOut is as before, and a step by statement is by line");
 }

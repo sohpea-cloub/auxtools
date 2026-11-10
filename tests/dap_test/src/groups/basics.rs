@@ -188,6 +188,7 @@ fn capabilities() {
 		"supportsLogPoints",
 		"supportsSetExpression",
 		"supportsSetVariable",
+		"supportsSteppingGranularity",
 		"supportsTerminateRequest",
 		"supportsValueFormattingOptions"
 	]);
