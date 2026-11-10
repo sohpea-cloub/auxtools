@@ -437,11 +437,13 @@ enum WorldEdit {
 	Remove { id: u32, keys: Vec<u32> }
 }
 
-/// Where reloads moved breakpoints, by the offset the debug-client set them at,
-/// so it can still remove them by that offset. An entry goes once the client
-/// sets a breakpoint at the new offset itself, which is how it learns where a
-/// breakpoint went.
-pub type MovedBreakpoints = HashMap<(raw_types::procs::ProcId, u32), u32>;
+/// Where reloads moved breakpoints, by the offset a debug-client set them at
+/// and the client (as the breakpoints' claims name it), so that client can
+/// still remove one by that offset. Only clients that had the breakpoint when
+/// it moved have an entry. An entry goes once its client sets or removes the
+/// breakpoint where it is now, which is how it learns where it went, or
+/// leaves.
+pub type MovedBreakpoints<K> = HashMap<(raw_types::procs::ProcId, u32, K), u32>;
 
 fn describe(proc: &ProcRef) -> String {
 	if proc.override_id == 0 {
@@ -1767,10 +1769,10 @@ fn prepare_var_default(default: &HotReloadVarDefault, type_vars: &mut TypeVars) 
 /// on the same lines (where the lines moved, on the lines they moved to).
 /// `breakpoints` are what's known about each breakpoint, by where it is: they
 /// move with it.
-pub fn apply<T>(
+pub fn apply<K: Ord + std::hash::Hash + Copy, T>(
 	prepared: Prepared,
-	breakpoints: &mut HashMap<(raw_types::procs::ProcId, u16), T>,
-	moved_breakpoints: &mut MovedBreakpoints,
+	breakpoints: &mut HashMap<(raw_types::procs::ProcId, u16), BTreeMap<K, T>>,
+	moved_breakpoints: &mut MovedBreakpoints<K>,
 	warnings: &mut Vec<String>
 ) {
 	for new in &prepared.new_vars {
@@ -1960,10 +1962,10 @@ pub fn apply<T>(
 	}
 }
 
-fn apply_code<T>(
+fn apply_code<K: Ord + std::hash::Hash + Copy, T>(
 	p: PreparedCode,
-	breakpoints: &mut HashMap<(raw_types::procs::ProcId, u16), T>,
-	moved_breakpoints: &mut MovedBreakpoints,
+	breakpoints: &mut HashMap<(raw_types::procs::ProcId, u16), BTreeMap<K, T>>,
+	moved_breakpoints: &mut MovedBreakpoints<K>,
 	warnings: &mut Vec<String>
 ) {
 	let (old_ptr, _) = unsafe { p.proc.bytecode_mut_ptr() };
@@ -1976,7 +1978,7 @@ fn apply_code<T>(
 		auxtools::debug::set_local_names(old_ptr, names);
 	}
 
-	let hooked: Vec<(u32, u32, Option<T>)> = hooked_offsets(&p.proc)
+	let hooked: Vec<(u32, u32, Option<BTreeMap<K, T>>)> = hooked_offsets(&p.proc)
 		.into_iter()
 		.filter_map(|offset| {
 			let line = line_at(&old_bytecode, offset)?;
@@ -2009,15 +2011,20 @@ fn apply_code<T>(
 			None => line
 		};
 
-		// The debug-client knows this breakpoint by the offset it set it at,
-		// or one an earlier reload moved it from
-		let known_as: Vec<(raw_types::procs::ProcId, u32)> = moved_breakpoints
+		// Each client that has this breakpoint knows it by the offset it set
+		// it at: here, or one an earlier reload moved it from
+		let mut known_as: Vec<(raw_types::procs::ProcId, u32, K)> = moved_breakpoints
 			.iter()
-			.filter(|((proc, _), at)| *proc == p.proc.id && **at == old_offset)
+			.filter(|((proc, ..), at)| *proc == p.proc.id && **at == old_offset)
 			.map(|(key, _)| *key)
 			.collect();
 		for key in &known_as {
 			moved_breakpoints.remove(key);
+		}
+		for client in known.iter().flat_map(BTreeMap::keys) {
+			if !known_as.iter().any(|(.., other)| other == client) {
+				known_as.push((p.proc.id, old_offset, *client));
+			}
 		}
 
 		let Some(offset) = offset_of_line(&p.bytecode, line) else {
@@ -2036,7 +2043,7 @@ fn apply_code<T>(
 		if let Some(known) = known {
 			breakpoints.insert((p.proc.id, offset as u16), known);
 		}
-		for key in known_as.into_iter().chain([(p.proc.id, old_offset)]) {
+		for key in known_as {
 			if key.1 != offset {
 				moved_breakpoints.insert(key, offset);
 			}

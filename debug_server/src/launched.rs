@@ -12,7 +12,7 @@
 //! the only way the debug server runs.
 
 use std::{
-	collections::HashMap,
+	collections::{BTreeMap, HashMap},
 	sync::{
 		atomic::{AtomicBool, Ordering},
 		OnceLock
@@ -142,7 +142,7 @@ fn prepare() -> Result<(), String> {
 
 	let mut warnings = vec![];
 	let prepared = hot_reload::prepare(&request, &mut warnings).map_err(|errors| errors.join("; "))?;
-	hot_reload::apply(prepared, &mut HashMap::<_, ()>::new(), &mut HashMap::new(), &mut warnings);
+	hot_reload::apply(prepared, &mut HashMap::<_, BTreeMap<(), ()>>::new(), &mut HashMap::new(), &mut warnings);
 	for warning in warnings {
 		eprintln!("auxtools: {}", warning);
 	}

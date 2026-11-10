@@ -231,7 +231,7 @@ pub struct Server {
 	/// The procs in each file (as the world's DbgFile spells them), and how
 	/// many procs the world had when they were counted
 	procs_by_file: Option<(u32, HashMap<String, Vec<u32>>)>,
-	moved_breakpoints: hot_reload::MovedBreakpoints,
+	moved_breakpoints: hot_reload::MovedBreakpoints<(ClientId, bool)>,
 	app: Command<'static>
 }
 
@@ -1089,10 +1089,12 @@ impl Server {
 					log
 				});
 
-				// The client has found out where a reload moved a breakpoint to
-				if !self.breakpoints.values().any(|claims| claims.keys().any(|(other, _)| *other != client)) {
-					self.moved_breakpoints.retain(|(id, _), at| *id != proc.id || *at != instruction.offset);
-				}
+				// The client has found out where a reload moved a breakpoint
+				// to, and its offset is this breakpoint's to it now, not one
+				// a reload moved away from it
+				let offset = instruction.offset;
+				self.moved_breakpoints
+					.retain(|&(id, from, who), &mut at| id != proc.id || who != (client, on_proc) || (at != offset && from != offset));
 
 				// As the proc itself names it, whatever the client called it
 				instruction.proc = ProcRef {
@@ -1156,15 +1158,18 @@ impl Server {
 		// It might be one a reload moved, known to the client by where it was
 		let on_proc = instruction.offset == 0;
 		let asked = Self::breakpoint_offset(&proc, instruction.offset);
-		let offset = self.moved_breakpoints.get(&(proc.id, asked)).copied().unwrap_or(asked);
+		let who = (client, on_proc);
+		let offset = self.moved_breakpoints.get(&(proc.id, asked, who)).copied().unwrap_or(asked);
+
+		// The client doesn't know it by any other place now
+		self.moved_breakpoints.retain(|(id, _, other), at| *id != proc.id || *at != offset || *other != who);
 
 		let key = (proc.id, offset as u16);
 		let claims = self.breakpoints.entry(key).or_default();
-		let had = claims.remove(&(client, on_proc)).is_some();
+		let had = claims.remove(&who).is_some();
 		let success = if claims.is_empty() {
 			// Nobody else wants it
 			self.breakpoints.remove(&key);
-			self.moved_breakpoints.remove(&(proc.id, asked));
 			unhook_instruction(&proc, offset).is_ok()
 		} else {
 			had
@@ -2386,6 +2391,7 @@ impl Server {
 				unclaimed.push(*key);
 			}
 		}
+		self.moved_breakpoints.retain(|(.., (client, _)), _| *client != id);
 		for (proc, offset) in unclaimed {
 			self.breakpoints.remove(&(proc, offset));
 			if let Some(proc) = Proc::from_id(proc) {

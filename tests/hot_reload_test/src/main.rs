@@ -402,6 +402,71 @@ fn main() {
 	wait_for(&mut client, "breakpoint_armed", "0");
 	println!("ok: a moved breakpoint can be removed by its old offset");
 
+	// Two debuggers have a breakpoint on one line, and new code above it in
+	// its proc moves it. Each knows it by its old offset until it sets it
+	// anew: one that has, and then sets and takes away a breakpoint at the
+	// old offset, means the new code that's there.
+	let breakpoint = |client: &mut Client, offset: u32, set: bool| {
+		let instruction = InstructionRef {
+			proc: ProcRef {
+				path: "/breakpoint_target".to_owned(),
+				override_id: 0
+			},
+			offset
+		};
+		match client.request(if set {
+			Request::BreakpointSet {
+				instruction,
+				condition: None,
+				hit: None,
+				log: None
+			}
+		} else {
+			Request::BreakpointUnset { instruction }
+		}) {
+			Response::BreakpointSet {
+				result: BreakpointSetResult::Success { .. }
+			}
+			| Response::BreakpointUnset { success: true } => {}
+			other => panic!("couldn't {} the breakpoint at {}: {:?}", if set { "set" } else { "take away" }, offset, other)
+		}
+	};
+	// A line of new code in place of a blank one keeps the breakpoint's
+	// line where it is, and puts that line's code further on: the new
+	// line's code is where the breakpoint was.
+	let changes = source.edit("reload.dm", "\tvar/x = 1\n\tx += 1", "\tvar/x = 1\n\n\tx += 1");
+	reload(&mut watcher, &changes);
+	let mut other = world.connect();
+	let line = source.line_of("reload.dm", "\tx += 1");
+	let old_offset = offset_of(&mut client, "/breakpoint_target", line);
+	breakpoint(&mut client, old_offset, true);
+	breakpoint(&mut other, old_offset, true);
+	let changes = source.edit("reload.dm", "\tvar/x = 1\n\n\tx += 1", "\tvar/x = 1\n\tx *= 1\n\tx += 1");
+	let result = reload(&mut watcher, &changes);
+	assert!(result.warnings.is_empty(), "{:?}", result.warnings);
+	let new_offset = offset_of(&mut client, "/breakpoint_target", line);
+	assert_eq!(offset_of(&mut client, "/breakpoint_target", line - 1), old_offset, "the new line isn't where the old one was");
+	assert_ne!(new_offset, old_offset);
+	// As the launcher does after a reload, then one at the old offset
+	breakpoint(&mut client, old_offset, false);
+	breakpoint(&mut client, new_offset, true);
+	breakpoint(&mut client, old_offset, true);
+	breakpoint(&mut client, old_offset, false);
+	eval(&mut client, "arm_breakpoint()");
+	assert_eq!(client.expect_pause(), BreakpointReason::Breakpoint);
+	assert_eq!(other.expect_pause(), BreakpointReason::Breakpoint);
+	assert_eq!(paused_line(&mut client), ("/breakpoint_target".to_owned(), Some(line)));
+	client.resume();
+	// The other one still knows it by its old offset
+	breakpoint(&mut other, old_offset, false);
+	other.leave();
+	breakpoint(&mut client, new_offset, false);
+	eval(&mut client, "arm_breakpoint()");
+	wait_for(&mut client, "breakpoint_armed", "0");
+	let changes = source.edit("reload.dm", "\tvar/x = 1\n\tx *= 1\n\tx += 1", "\tvar/x = 1\n\tx += 1");
+	reload(&mut watcher, &changes);
+	println!("ok: a moved breakpoint is known by its old offset only to the clients that had it");
+
 	// A runtime in new code reports the new code's line
 	let changes = source.edit(
 		"reload.dm",
