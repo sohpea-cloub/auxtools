@@ -33,6 +33,12 @@ var/reboot_requested = FALSE
 /datum/limits/proc/max_doubled()
 	return MAX * 2
 
+// A global const, read alone and folded
+var/const/LIMIT_ALL = 10
+
+/proc/limit_all()
+	return list(LIMIT_ALL, LIMIT_ALL + 1)
+
 var/datum/limits/kept_limits = new
 
 // A var declared with another type later

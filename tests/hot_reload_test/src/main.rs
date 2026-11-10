@@ -821,7 +821,24 @@ fn main() {
 	assert_eq!(changes.consts, ["MAX"]);
 	reload(&mut watcher, &changes);
 	assert_eq!(eval(&mut client, "kept_limits.max_doubled()"), "14");
+	// read alone it's its global, which has the new value
+	assert_eq!(eval(&mut client, "kept_limits.MAX"), "7");
 	println!("ok: a type's const");
+
+	// A new const on a type: a global, with its value
+	let changes = source.edit("main.dm", "\tvar/const/MAX = 7\n", "\tvar/const/MAX = 7\n\tvar/const/MIN = 2\n");
+	assert!(changes.refused.is_empty(), "{:?}", changes.refused);
+	reload(&mut watcher, &changes);
+	assert_eq!(eval(&mut client, "kept_limits.MIN"), "2");
+	println!("ok: a new const on a type");
+
+	// A global const's new value, read alone and folded
+	assert_eq!(eval(&mut client, "json_encode(limit_all())"), "\"[10,11]\"");
+	let changes = source.edit("main.dm", "var/const/LIMIT_ALL = 10\n", "var/const/LIMIT_ALL = 20\n");
+	assert!(changes.warnings.is_empty(), "{:?}", changes.warnings);
+	reload(&mut watcher, &changes);
+	assert_eq!(eval(&mut client, "json_encode(limit_all())"), "\"[20,21]\"");
+	println!("ok: a global const's new value");
 
 	// A var declared with another type: only the code that uses it cares
 	let changes = source.edit("main.dm", "/datum/limits/var/list/things = null\n", "/datum/limits/var/things = null\n");

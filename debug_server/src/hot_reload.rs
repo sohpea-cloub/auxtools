@@ -1679,6 +1679,20 @@ fn prepare_redeclared(
 	const STATIC: u32 = 1;
 	let fail = |e: String| format!("{}/var/{}: {}", var.type_path, var.var, e);
 
+	// A global const's new value, set now: the one var of that name
+	if var.type_path.is_empty() {
+		let ids = variable_ids(var.var.as_bytes());
+		let [id] = ids[..] else {
+			return Err(fail(format!("couldn't tell which of the world's {} vars called that it is", ids.len())));
+		};
+		if let Some(init) = &var.init {
+			added.run_once.push((id, format!("/var/{}", var.var), (**init).clone()));
+		} else if let Some(value) = &var.value {
+			global_values.push((id, const_value(value).map_err(fail)?));
+		}
+		return Ok(());
+	}
+
 	let type_id = find_type(&var.type_path).map_err(fail)?;
 	let name = StringRef::new(&var.var)
 		.map_err(|_| fail("couldn't make its name".to_owned()))?
