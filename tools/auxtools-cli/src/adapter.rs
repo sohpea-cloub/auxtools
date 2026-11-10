@@ -339,10 +339,18 @@ pub struct Adapter {
 	/// as far as the launcher knows: what was on disk at the last reload,
 	/// or when the file first had breakpoints
 	world_texts: HashMap<String, Option<Vec<String>>>,
+	/// When the world last had the code the files had: a file changed since
+	/// is one the world is yet to be given
+	world_as_of: Option<std::time::SystemTime>,
 	/// The files whose breakpoints are on lines of the client's unsaved
 	/// text, which the file and the world don't have yet: they're set when
 	/// it's saved
 	deferred: HashSet<String>,
+	/// The files whose breakpoints are on lines of the file as saved, which
+	/// the world is yet to be given: they're set when the reload lands
+	waiting: HashSet<String>,
+	/// When the changes of the reload that's being applied were read
+	reload_seen: Option<std::time::SystemTime>,
 	/// The files the console has said were changed since the world was built
 	said_changed: HashSet<String>,
 	next_breakpoint_id: i64,
@@ -409,7 +417,10 @@ pub fn run() {
 		breakpoint_texts: HashMap::new(),
 		unsaved: HashSet::new(),
 		deferred: HashSet::new(),
+		waiting: HashSet::new(),
+		reload_seen: None,
 		world_texts: HashMap::new(),
+		world_as_of: None,
 		said_changed: HashSet::new(),
 		next_breakpoint_id: 1,
 		function_breakpoints: vec![],
@@ -982,6 +993,9 @@ impl Adapter {
 		}
 		match event {
 			code::Event::Changed => {
+				// What the files had when the change was read is what the
+				// world has now
+				self.world_as_of = self.reload_seen.take().or_else(|| Some(std::time::SystemTime::now()));
 				// Reloaded code moves lines: the breakpoints go where the
 				// client has them now
 				if self.code_read && !self.waiting_for_code && self.debuggee.is_some() && self.debugging {
@@ -1005,6 +1019,7 @@ impl Adapter {
 				}
 			}
 			code::Event::Reload { request, summary } => {
+				self.reload_seen = Some(std::time::SystemTime::now());
 				let applied = self.reload(*request, &summary);
 				if let Some(code) = &self.code {
 					let _ = code.send(code::Command::Reloaded(applied));
@@ -1110,10 +1125,11 @@ impl Adapter {
 			// A file that didn't change keeps its breakpoints: the world
 			// moves them with their statements if other code moved, and
 			// counts their hits on. Unless they were given for this text
-			// before the world had it.
-			if then == now && had.unwrap_or_else(|| then.clone()) == now {
+			// before the world had it, and have waited for this.
+			if then == now && had.as_ref() == Some(&now) && !self.waiting.contains(&file) {
 				continue;
 			}
+			self.waiting.remove(&file);
 			self.breakpoint_texts.insert(file.clone(), now);
 
 			let breakpoints = self.apply_breakpoints(&file);
@@ -1314,6 +1330,23 @@ impl Adapter {
 		}
 		self.deferred.remove(&path);
 		let text = crate::lines::read(&path);
+		// The file was saved a moment ago, and the world is yet to be given
+		// the change (it's on its way): the lines are of code the world
+		// doesn't have. Set now, they'd be on other statements, and the
+		// client would be told lines it then takes for theirs. They wait
+		// for the reload, which sets them.
+		if self.world_is_behind(&path, &text) {
+			let breakpoints = Self::waiting_for_the_world(&wanted);
+			self.told(&breakpoints);
+			if wanted.is_empty() {
+				self.unset(&path);
+			}
+			self.breakpoints.insert(path.clone(), wanted);
+			self.breakpoint_texts.insert(path.clone(), text);
+			self.waiting.insert(path);
+			return json(SetBreakpointsResponse { breakpoints });
+		}
+		self.waiting.remove(&path);
 		// The first time, the world is taken to have what's on disk
 		self.world_texts.entry(path.clone()).or_insert_with(|| text.clone());
 		self.breakpoints.insert(path.clone(), wanted);
@@ -1321,6 +1354,37 @@ impl Adapter {
 		let breakpoints = self.apply_breakpoints(&path);
 		self.told(&breakpoints);
 		json(SetBreakpointsResponse { breakpoints })
+	}
+
+	/// Whether the world is yet to be given what a file has now: the file
+	/// isn't as it was when the world last had it, or, for a file not looked
+	/// at before, it changed since the world's code was last brought up to
+	/// date. Only a world that's being reloaded is ever given anything.
+	fn world_is_behind(&self, path: &str, text: &Option<Vec<String>>) -> bool {
+		if self.code.is_none() || !self.code_read {
+			return false;
+		}
+		match self.world_texts.get(path) {
+			Some(world) => world != text,
+			None => {
+				let modified = std::fs::metadata(path).and_then(|file| file.modified()).ok();
+				matches!((modified, self.world_as_of), (Some(modified), Some(as_of)) if modified > as_of)
+			}
+		}
+	}
+
+	/// What a client is told of breakpoints that wait for a reload
+	fn waiting_for_the_world(wanted: &[(i64, SourceBreakpoint)]) -> Vec<Breakpoint> {
+		wanted
+			.iter()
+			.map(|(number, breakpoint)| Breakpoint {
+				id: Some(*number),
+				verified: false,
+				message: Some("it's set when the world has the file's change".to_owned()),
+				line: Some(breakpoint.line),
+				..Default::default()
+			})
+			.collect()
 	}
 
 	/// Remembers what the client is told of these breakpoints in a response
@@ -1360,9 +1424,17 @@ impl Adapter {
 		}
 		self.unsaved.remove(&path);
 		if self.deferred.remove(&path) && self.breakpoints.contains_key(&path) {
-			// If the world doesn't have the change yet, they're set again
-			// when it does
-			self.breakpoint_texts.insert(path.clone(), crate::lines::read(&path));
+			let text = crate::lines::read(&path);
+			let behind = self.world_is_behind(&path, &text);
+			self.breakpoint_texts.insert(path.clone(), text);
+			// If the world doesn't have the change yet, they're set when
+			// it does
+			if behind {
+				self.waiting.insert(path.clone());
+				let breakpoints = Self::waiting_for_the_world(self.breakpoints.get(&path).map_or(&[], Vec::as_slice));
+				self.tell(breakpoints, false);
+				return Ok(Value::Null);
+			}
 			let breakpoints = self.apply_breakpoints(&path);
 			self.tell(breakpoints, true);
 		}

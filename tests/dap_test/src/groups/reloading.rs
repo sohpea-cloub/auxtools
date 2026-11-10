@@ -113,11 +113,19 @@ fn behind_the_clients_back() {
 	let before = reloads(&world.output);
 	at.edit("stepping.dm", "/proc/middle(a)\n", "/proc/middle(a)\n\tvar/first = 1\n\tfirst++\n");
 	world.request("auxtoolsUnsaved", json!({ "path": stepping, "unsaved": false }));
-	world.request(
+	let set = world.request(
 		"setBreakpoints",
 		json!({ "source": { "path": stepping }, "sourceModified": true, "breakpoints": [{ "line": middle_2 + 2 }] })
 	);
 	assert_eq!(reloads(&world.output), before, "the reload came before the client's breakpoints");
+	// The world's code is still the old one, where that line is another
+	// statement: a client told where that is would take it for its own
+	assert_eq!(
+		(&set["breakpoints"][0]["verified"], &set["breakpoints"][0]["line"], &set["breakpoints"][0]["message"]),
+		(&json!(false), &json!(middle_2 + 2), &json!("it's set when the world has the file's change")),
+		"{}",
+		set
+	);
 	world.wait_until("the hot reload", |output| reloads(output) > before);
 	assert_eq!(moved(&mut world), (middle_2 + 2, true));
 	assert_eq!(at.line("middle_2"), middle_2 + 2);
@@ -166,7 +174,14 @@ fn behind_the_clients_back() {
 	at.edit("stepping.dm", "\tvar/r = leaf(a) // @middle_1\n", "\tvar/r = leaf(a) // @middle_1\n\tr += 0\n\tr += 0\n\tr += 0\n");
 	world.request("auxtoolsUnsaved", json!({ "path": stepping, "unsaved": false }));
 	assert_eq!(reloads(&world.output), before, "the reload came before the save was said");
-	world.event("breakpoint");
+	// It still waits, for the world now, on the line it was given
+	let waiting = world.event("breakpoint");
+	assert_eq!(
+		(&waiting["body"]["breakpoint"]["verified"], &waiting["body"]["breakpoint"]["line"]),
+		(&json!(false), &json!(buffer_line)),
+		"{}",
+		waiting
+	);
 	world.wait_until("the hot reload", |output| reloads(output) > before);
 	assert_eq!(moved(&mut world), (buffer_line, true));
 	assert_eq!(at.line("middle_2"), buffer_line);
