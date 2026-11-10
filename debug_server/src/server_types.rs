@@ -197,6 +197,11 @@ pub enum Request {
 	/// Answered with `Ack`.
 	HoldMax {
 		seconds: Option<f64>
+	},
+	/// Where a proc is, and what hot reloads did to it. `proc.path` can be
+	/// written with `/proc/` or `/verb/` in it, or without.
+	ProcInfo {
+		proc: ProcRef
 	}
 }
 
@@ -325,7 +330,9 @@ pub enum Response {
 	/// at any moment.
 	ConditionFailed {
 		message: String
-	}
+	},
+	/// What the world knows of a proc, or why it knows nothing
+	ProcInfo(Result<ProcInfo, String>)
 }
 
 /// An entry in the world's record of what happened in it. The record keeps
@@ -468,6 +475,35 @@ pub struct BytecodeInstruction {
 	/// The line it's on, by the DbgLine before it (a line of the file as it
 	/// was, for old code)
 	pub line: Option<u32>
+}
+
+/// A proc, as `Request::ProcInfo` finds it
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct ProcInfo {
+	/// Its path as the world spells it, and which definition of it it is
+	pub proc: ProcRef,
+	/// Its code now, for `Request::Disassemble`
+	pub code: CodeRef,
+	/// The file its DbgFile names
+	pub file: Option<String>,
+	/// The first line it has code on
+	pub line: Option<u32>,
+	/// How many definitions its path has: `#0` (the first) to one less than
+	/// this
+	pub definitions: u32,
+	/// What hot reloads have done to it since the world started, if anything
+	pub reloaded: Option<Reloaded>
+}
+
+/// What hot reloads did to a proc: the most they did, of these
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Reloaded {
+	/// Its code is as it was, on other lines
+	Lines,
+	/// It has new code
+	Code,
+	/// A hot reload added it: the world was built without it
+	Added
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]

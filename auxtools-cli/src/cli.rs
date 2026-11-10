@@ -208,6 +208,30 @@ it called, with that proc's file and line and the procs between it and the expre
 			})
 		},
 	]),
+	("Looking at its code", &[
+		Command {
+			name: "proc",
+			usage: "/PATH[#N]",
+			about: "Where a proc is, how many definitions it has, and whether a hot reload changed it",
+			details: "/PATH is the proc's path, with or without its `proc/`: `/mob/proc/attack` or
+`/mob/attack`. #N is its Nth definition, from 0, the first (the default).",
+			run: Run::World(|world, args| {
+				let flags = Flags::parse(args, &[], &[])?;
+				world.proc_info(&one_proc("proc", &flags.rest)?)
+			})
+		},
+		Command {
+			name: "dis",
+			usage: "/PATH[#N]",
+			about: "A proc's bytecode: each instruction's offset and text, and the lines they're on",
+			details: "/PATH[#N] is as for `auxtools proc`. The bytecode is the proc's code as it runs
+now: after a hot reload, the new code.",
+			run: Run::World(|world, args| {
+				let flags = Flags::parse(args, &[], &[])?;
+				world.disassemble(&one_proc("dis", &flags.rest)?)
+			})
+		},
+	]),
 	("Running it", &[
 		Command {
 			name: "pause",
@@ -618,6 +642,40 @@ fn expression(words: &[String], file: Option<&str>, stdin: impl FnOnce() -> Resu
 	Ok(expression)
 }
 
+/// A proc as it's written on the command line: `/path`, or `/path#N` for its
+/// Nth definition
+fn proc_ref(text: &str) -> Result<ProcRef> {
+	if !text.starts_with('/') {
+		return Err(format!("{} isn't a proc's path: it starts with /", text).into());
+	}
+	let (path, override_id) = match text.split_once('#') {
+		Some((path, id)) => (path, id.parse().map_err(|_| format!("{} isn't a definition's number", id))?),
+		None => (text, 0)
+	};
+	Ok(ProcRef {
+		path: path.to_owned(),
+		override_id
+	})
+}
+
+/// The one proc a command is about
+fn one_proc(command: &str, words: &[String]) -> Result<ProcRef> {
+	match words {
+		[proc] => proc_ref(proc),
+		[] => Err(format!("{} which proc?", command).into()),
+		_ => Err(format!("{} takes one proc", command).into())
+	}
+}
+
+/// A proc's name as the stack shows it: its path, and `#N` for a definition
+/// after the first
+fn proc_name(proc: &ProcRef) -> String {
+	match proc.override_id {
+		0 => proc.path.clone(),
+		n => format!("{}#{}", proc.path, n)
+	}
+}
+
 fn only_world() -> Result<u32> {
 	let worlds = local::worlds();
 	let shown = |worlds: &[&local::World]| {
@@ -883,6 +941,66 @@ impl World {
 		Ok(())
 	}
 
+	/// What the world knows of a proc
+	fn find_proc(&mut self, proc: &ProcRef) -> Result<ProcInfo> {
+		match self.request(Request::ProcInfo { proc: proc.clone() })? {
+			Response::ProcInfo(info) => Ok(info?),
+			other => Err(unexpected(&other))
+		}
+	}
+
+	fn proc_info(&mut self, proc: &ProcRef) -> Result<()> {
+		let info = self.find_proc(proc)?;
+		let mut place = proc_name(&info.proc);
+		match (&info.file, info.line) {
+			(Some(file), Some(line)) => place += &format!("  {}:{}", file, line),
+			(Some(file), None) => place += &format!("  {}", file),
+			(None, Some(line)) => place += &format!("  line {}", line),
+			(None, None) => {}
+		}
+		println!("{}", place);
+		println!("definitions: {} (#0 to #{})", info.definitions, info.definitions.saturating_sub(1));
+		let reloaded = match info.reloaded {
+			None => "not since the world started",
+			Some(Reloaded::Lines) => "its code is as it was, on other lines",
+			Some(Reloaded::Code) => "new code",
+			Some(Reloaded::Added) => "added it"
+		};
+		println!("hot reload: {}", reloaded);
+		Ok(())
+	}
+
+	/// The instructions of some code, as the world reads them
+	fn instructions(&mut self, code: CodeRef) -> Result<Disassembly> {
+		match self.request(Request::Disassemble { code })? {
+			Response::Disassemble(disassembly) => Ok(disassembly?),
+			other => Err(unexpected(&other))
+		}
+	}
+
+	fn disassemble(&mut self, proc: &ProcRef) -> Result<()> {
+		let info = self.find_proc(proc)?;
+		let disassembly = self.instructions(info.code)?;
+		match &disassembly.file {
+			Some(file) => println!("{}  {}", proc_name(&disassembly.proc), file),
+			None => println!("{}", proc_name(&disassembly.proc))
+		}
+		let mut line = None;
+		for instruction in &disassembly.instructions {
+			if instruction.line != line && instruction.line.is_some() {
+				line = instruction.line;
+				println!("line {}:", line.unwrap());
+			}
+			let text = match (&instruction.text, &disassembly.error) {
+				(text, _) if !text.is_empty() => text.clone(),
+				(_, Some(error)) => format!("(not read: {})", error),
+				(_, None) => "(not read)".to_owned()
+			};
+			println!("{:>6}  {}", instruction.offset, text);
+		}
+		Ok(())
+	}
+
 	/// Waits for a pause, and keeps it held after we leave
 	fn await_pause(&mut self, until: Option<Instant>, hold: bool) -> Result<Option<BreakpointReason>> {
 		let reason = loop {
@@ -1107,7 +1225,7 @@ fn unexpected(response: &Response) -> Failure {
 
 #[cfg(test)]
 mod tests {
-	use super::{command, describe, expression, given_text, overview, parse, Failure, Flags, COMMANDS};
+	use super::{command, describe, expression, given_text, one_proc, overview, parse, proc_ref, Failure, Flags, COMMANDS};
 
 	fn args(args: &[&str]) -> Vec<String> {
 		args.iter().map(|arg| (*arg).to_owned()).collect()
@@ -1135,7 +1253,7 @@ mod tests {
 				names.push(listed.name);
 			}
 		}
-		for name in ["dap", "list", "version", "help", "status", "wait", "trace", "eval", "launch", "stop", "reboot"] {
+		for name in ["dap", "list", "version", "help", "status", "wait", "trace", "eval", "launch", "stop", "reboot", "proc", "dis"] {
 			assert!(command(name).is_some(), "{}", name);
 		}
 		for gone in ["--list", "--build", "--version", "run", ""] {
@@ -1239,6 +1357,18 @@ mod tests {
 			panic!("nothing was an expression");
 		};
 		assert_eq!(why, "stdin had no expression on it");
+	}
+
+	#[test]
+	fn a_proc_is_its_path_and_which_definition() {
+		let proc = proc_ref("/mob/proc/attack#2").ok().unwrap();
+		assert_eq!((proc.path.as_str(), proc.override_id), ("/mob/proc/attack", 2));
+		let proc = proc_ref("/value").ok().unwrap();
+		assert_eq!((proc.path.as_str(), proc.override_id), ("/value", 0));
+		for wrong in ["value", "/value#", "/value#two", "#1"] {
+			assert!(proc_ref(wrong).is_err(), "{}", wrong);
+		}
+		assert!(one_proc("dis", &args(&["/a", "/b"])).is_err() && one_proc("dis", &[]).is_err());
 	}
 
 	#[test]

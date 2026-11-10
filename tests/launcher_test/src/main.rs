@@ -247,8 +247,8 @@ fn command_line_shape() {
 	assert!(alone.starts_with("auxtools: debug BYOND worlds"), "auxtools said {}", alone);
 	assert!(alone.contains("Usage: auxtools [--pid PID] COMMAND [OPTIONS]"), "auxtools said {}", alone);
 	for command in [
-		"launch", "stop", "reboot", "list", "status", "stack", "vars", "eval", "pause", "continue", "next", "step", "out", "wait", "trace", "dap", "help",
-		"version"
+		"launch", "stop", "reboot", "list", "status", "stack", "vars", "eval", "pause", "continue", "next", "step", "out", "wait", "trace", "proc", "dis",
+		"dap", "help", "version"
 	] {
 		assert!(alone.lines().any(|line| line.starts_with(&format!("  {} ", command))), "{} isn't in the help:\n{}", command, alone);
 	}

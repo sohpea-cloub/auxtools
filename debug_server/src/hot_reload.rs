@@ -56,7 +56,7 @@ use dmasm::{
 use crate::{
 	assemble_env::AssembleEnv,
 	instruction_hooking::{hook_instruction, hooked_offsets, original_bytecode, unhook_instruction},
-	server_types::{HotReloadInitProc, HotReloadNewProc, HotReloadProc, HotReloadRequest, HotReloadVarDefault, ProcRef}
+	server_types::{HotReloadInitProc, HotReloadNewProc, HotReloadProc, HotReloadRequest, HotReloadVarDefault, ProcRef, Reloaded}
 };
 
 /// A reload, checked and assembled, ready to apply.
@@ -1843,6 +1843,7 @@ pub fn apply<K: Ord + std::hash::Hash + Copy, T>(
 
 	for new in &prepared.new_procs {
 		let id = new.id;
+		mark_reloaded(id, Reloaded::Added);
 		if let Some(on_type) = &new.on_type {
 			let procs = runtime_tables::type_field(on_type.type_id, on_type.field).unwrap_or(NONE);
 			let mut list = runtime_tables::misc_words(procs).unwrap_or_default();
@@ -1983,6 +1984,7 @@ fn apply_code<K: Ord + std::hash::Hash + Copy, T>(
 ) {
 	let (old_ptr, _) = unsafe { p.proc.bytecode_mut_ptr() };
 	let old_bytecode = original_bytecode(&p.proc);
+	mark_reloaded(p.proc.id.0, if p.lines.is_some() { Reloaded::Lines } else { Reloaded::Code });
 
 	// Frames still running the old code have the old locals. The proc's table
 	// might not name them after this.
@@ -2113,6 +2115,21 @@ pub fn added_global(name: &str) -> Option<u32> {
 /// The names of the global vars hot reloads have added
 pub fn added_globals() -> Vec<String> {
 	ADDED_GLOBALS.lock().unwrap().keys().cloned().collect()
+}
+
+/// What reloads have done to procs in this world, by the procs' ids
+static RELOADED: Mutex<BTreeMap<u32, Reloaded>> = Mutex::new(BTreeMap::new());
+
+/// What hot reloads have done to a proc since the world started
+pub fn reloaded(id: u32) -> Option<Reloaded> {
+	RELOADED.lock().unwrap().get(&id).copied()
+}
+
+/// Remembers a reload did this to a proc, unless one did more before
+fn mark_reloaded(id: u32, how: Reloaded) {
+	let mut reloaded = RELOADED.lock().unwrap();
+	let was = reloaded.entry(id).or_insert(how);
+	*was = (*was).max(how);
 }
 
 /// The debugger's own world procs (see `launched`), which stay the most
@@ -2275,6 +2292,7 @@ fn world_has_debug_info() -> bool {
 #[shutdown]
 fn forget_world() {
 	ADDED_GLOBALS.lock().unwrap().clear();
+	RELOADED.lock().unwrap().clear();
 	*WORLD_HAS_DEBUG_INFO.lock().unwrap() = None;
 	WAITING_WORLD_EDITS.lock().unwrap().clear();
 	PINNED_WORLD_PROCS.lock().unwrap().clear();

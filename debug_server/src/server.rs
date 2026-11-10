@@ -624,6 +624,37 @@ impl Server {
 		})
 	}
 
+	/// Where a proc is, how many definitions its path has, and what hot
+	/// reloads did to it (`Request::ProcInfo`)
+	fn proc_info(wanted: &ProcRef) -> Result<ProcInfo, String> {
+		let definitions = (0..).take_while(|&n| Proc::find_override(wanted.path.as_str(), n).is_some()).count() as u32;
+		let proc = match Proc::find_override(wanted.path.as_str(), wanted.override_id) {
+			Some(proc) => proc,
+			None if definitions == 0 => return Err(format!("the world has no proc {}", wanted.path)),
+			None if definitions == 1 => return Err(format!("{} has one definition, #0: there's no #{}", wanted.path, wanted.override_id)),
+			None => {
+				return Err(format!(
+					"{} has {} definitions, #0 to #{}: there's no #{}",
+					wanted.path,
+					definitions,
+					definitions - 1,
+					wanted.override_id
+				))
+			}
+		};
+		Ok(ProcInfo {
+			proc: ProcRef {
+				path: proc.path.clone(),
+				override_id: proc.override_id()
+			},
+			code: CodeRef { proc: proc.id.0, old: 0 },
+			file: Self::file_of(&proc),
+			line: Self::lines_of(&proc).into_iter().next(),
+			definitions,
+			reloaded: hot_reload::reloaded(proc.id.0)
+		})
+	}
+
 	/// The line a frame is on. A frame that's `asleep` is where it will wake,
 	/// after the instruction it sleeps in: when that's the start of the next
 	/// line, it's still on the one before.
@@ -2328,6 +2359,10 @@ impl Server {
 					loads,
 					last_reload
 				});
+			}
+			Request::ProcInfo { proc } => {
+				let info = Self::proc_info(&proc);
+				self.send_or_disconnect(Response::ProcInfo(info));
 			}
 
 			// The following requests are special cases and handled outside of

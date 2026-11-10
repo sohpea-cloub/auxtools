@@ -59,6 +59,7 @@ pub fn command_line_inspect(pid: u64, dir: &Path, code: &Path) {
 	let pid = pid.as_str();
 	eval_failures(pid, code);
 	from_files(pid, dir);
+	procs(pid, code);
 }
 
 /// `eval` fails on stderr with exit code 1, whatever went wrong, and a
@@ -125,4 +126,47 @@ fn from_files(pid: &str, dir: &Path) {
 	let said = fails(pid, &["wait", "--break", "/proc/value", "--if", "@no such file.txt"]);
 	assert!(said.starts_with("couldn't read no such file.txt: "), "wait said {}", said);
 	println!("ok: wait's --if, --log and --change read their text from @FILE, and @@ is a plain @");
+}
+
+/// Where a proc is, and its bytecode
+fn procs(pid: &str, code: &Path) {
+	// value() was hot reloaded before this
+	let printed = run(pid, &["proc", "/proc/value"], 0).out;
+	assert_eq!(
+		printed,
+		format!("/value  attach_host.dm:{}\ndefinitions: 1 (#0 to #0)\nhot reload: new code\n", line_of(code, "\treturn 2"))
+	);
+	let printed = run(pid, &["proc", "/fail_in"], 0).out;
+	assert!(printed.ends_with("\nhot reload: not since the world started\n"), "proc said {}", printed);
+	let printed = run(pid, &["proc", "/datum/twice/act#1"], 0).out;
+	assert_eq!(
+		printed,
+		format!(
+			"/datum/twice/act#1  attach_host.dm:{}\ndefinitions: 2 (#0 to #1)\nhot reload: not since the world started\n",
+			line_of(code, "\t. = ..()")
+		)
+	);
+	let printed = run(pid, &["proc", "/datum/twice/proc/act"], 0).out;
+	assert!(printed.starts_with(&format!("/datum/twice/act  attach_host.dm:{}\n", line_of(code, "\treturn \"first\""))), "proc said {}", printed);
+	for (args, said) in [
+		(&["proc", "/proc/nothing_called_this"][..], "the world has no proc /proc/nothing_called_this"),
+		(&["proc", "/value#3"][..], "/value has one definition, #0: there's no #3"),
+		(&["proc", "/datum/twice/act#2"][..], "/datum/twice/act has 2 definitions, #0 to #1: there's no #2"),
+		(&["proc", "value"][..], "value isn't a proc's path: it starts with /"),
+		(&["proc", "/value#x"][..], "x isn't a definition's number"),
+		(&["proc"][..], "proc which proc?"),
+		(&["dis", "/proc/nothing_called_this"][..], "the world has no proc /proc/nothing_called_this")
+	] {
+		assert_eq!(fails(pid, args), said, "`{}`", args.join(" "));
+	}
+	println!("ok: proc says where a proc is, how many definitions it has, and whether a hot reload changed it");
+
+	let printed = run(pid, &["dis", "/datum/twice/act#1"], 0).out;
+	let (first, second) = (line_of(code, "\t. = ..()"), line_of(code, "\treturn \"second\""));
+	let expected = format!(
+		"/datum/twice/act#1  attach_host.dm\nline {first}:\n     0  DbgFile \"attach_host.dm\"\n     2  DbgLine {first}\n     4  CallParent\n     5  SetVar \
+		 dot\nline {second}:\n     7  DbgLine {second}\n     9  PushVal \"second\"\n    12  Ret\n    13  End\n"
+	);
+	assert_eq!(printed, expected);
+	println!("ok: dis prints a proc's instructions with their offsets, and where each line starts");
 }

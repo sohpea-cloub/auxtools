@@ -66,3 +66,11 @@ var/rounds = 0
 		fail()
 	catch
 		return "caught"
+
+// A proc with two definitions, for the command line's proc and dis
+/datum/twice/proc/act()
+	return "first"
+
+/datum/twice/act()
+	. = ..()
+	return "second"
