@@ -38,6 +38,7 @@ const GROUPS: &[(&str, fn())] = &[
 	("breakpoints", groups::breakpoints::run),
 	("functions", groups::functions::run),
 	("conditions", groups::conditions::run),
+	("logpoints", groups::logpoints::run),
 	("stepping", groups::stepping::run),
 	("pausing", groups::pausing::run),
 	("frames", groups::frames::run),

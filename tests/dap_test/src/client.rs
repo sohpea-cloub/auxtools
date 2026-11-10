@@ -97,6 +97,8 @@ pub struct Launcher {
 	pub output: String,
 	/// The same by category (`stdout`, `stderr`, `console`)
 	pub categories: Vec<(String, String)>,
+	/// The output events as they came, whole
+	pub outputs: Vec<Value>,
 	/// Whether to print what's passed on
 	pub echo: bool
 }
@@ -144,6 +146,7 @@ impl Launcher {
 			events: VecDeque::new(),
 			output: String::new(),
 			categories: vec![],
+			outputs: vec![],
 			echo: true
 		}
 	}
@@ -159,6 +162,7 @@ impl Launcher {
 				print!("  | {}", output);
 			}
 			self.output.push_str(&output);
+			self.outputs.push(message["body"].clone());
 			self.categories
 				.push((message["body"]["category"].as_str().unwrap_or_default().to_owned(), output));
 		}

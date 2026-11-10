@@ -135,7 +135,9 @@ pub struct Claim {
 	/// Which of its hits to stop at: `None` for all of them
 	hit: Option<HitCondition>,
 	/// How many times it's been hit since it was set
-	hits: u32
+	hits: u32,
+	/// A message for the client at the hits it wants, in place of a stop
+	log: Option<Vec<LogPart>>
 }
 
 /// The breakpoints, by where they are, and the clients that set each
@@ -828,7 +830,7 @@ impl Server {
 		}
 	}
 
-	fn handle_breakpoint_set(&mut self, mut instruction: InstructionRef, condition: Option<String>, hit: Option<HitCondition>) {
+	fn handle_breakpoint_set(&mut self, mut instruction: InstructionRef, condition: Option<String>, hit: Option<HitCondition>, log: Option<Vec<LogPart>>) {
 		let (Some(proc), Some(client)) = (
 			auxtools::Proc::find_override(instruction.proc.path.clone(), instruction.proc.override_id),
 			self.current
@@ -842,8 +844,21 @@ impl Server {
 		let line = self.get_line_number(instruction.proc.clone(), instruction.offset);
 
 		// A condition that doesn't compile would pause at every hit, to say so
-		// each time: better said once, now
-		if let Some(reason) = condition.as_deref().and_then(|condition| Self::condition_error(&proc, condition)) {
+		// each time: better said once, now. The same goes for a message's
+		// expressions.
+		let log_error = || {
+			log.iter().flatten().find_map(|part| match part {
+				LogPart::Expr(expression) => {
+					Self::expression_error(&proc, expression).map(|e| format!("the message's {{{}}} doesn't compile: {}", expression, e))
+				}
+				LogPart::Text(_) => None
+			})
+		};
+		let condition_error = condition
+			.as_deref()
+			.and_then(|condition| Self::expression_error(&proc, condition))
+			.map(|e| format!("the condition doesn't compile: {}", e));
+		if let Some(reason) = condition_error.or_else(log_error) {
 			self.send_or_disconnect(Response::BreakpointSet {
 				result: BreakpointSetResult::Refused { reason }
 			});
@@ -856,7 +871,12 @@ impl Server {
 				// condition this time means the old one is gone. Its hits are
 				// counted from now.
 				let key = (proc.id, instruction.offset as u16);
-				self.breakpoints.entry(key).or_default().insert(client, Claim { condition, hit, hits: 0 });
+				self.breakpoints.entry(key).or_default().insert(client, Claim {
+					condition,
+					hit,
+					hits: 0,
+					log
+				});
 
 				// The client has found out where a reload moved a breakpoint to
 				if !self.breakpoints.values().any(|claims| claims.len() > 1) {
@@ -876,16 +896,36 @@ impl Server {
 		}
 	}
 
-	/// What's wrong with a breakpoint's condition, if it doesn't compile. The
-	/// names it can use are checked when it's hit, in the frame it's hit in.
-	fn condition_error(proc: &Proc, condition: &str) -> Option<String> {
+	/// What's wrong with an expression of a breakpoint in a proc (its
+	/// condition, one in its message), if it doesn't compile. The names it can
+	/// use are checked when it's hit, in the frame it's hit in.
+	fn expression_error(proc: &Proc, condition: &str) -> Option<String> {
 		let mut names = vec![".".to_owned(), "usr".to_owned(), "src".to_owned()];
 		names.extend(proc.parameter_names().iter().map(String::from));
 		names.extend(proc.local_names().iter().map(String::from));
 		let names: Vec<&str> = names.iter().map(String::as_str).collect();
 		dmasm::compiler::compile_expr_for(condition, &names, crate::world_byond())
 			.err()
-			.map(|e| format!("the condition doesn't compile: {}", e))
+			.map(|e| e.to_string())
+	}
+
+	/// A breakpoint's message, with its expressions' values in the frame
+	/// that hit it. A text's value is the text itself, not quoted.
+	fn log_message(&mut self, parts: &[LogPart]) -> String {
+		let mut message = String::new();
+		for part in parts {
+			match part {
+				LogPart::Text(text) => message.push_str(text),
+				LogPart::Expr(expression) => {
+					match self.eval_expr(Some(0), expression) {
+						Ok(value) => message.push_str(&value.as_string().unwrap_or_else(|_| Self::stringify(&value))),
+						Err(error) => message.push_str(&format!("{{{}: {}}}", expression, error))
+					}
+					self.state.as_mut().unwrap().invalidate_stacks();
+				}
+			}
+		}
+		message
 	}
 
 	fn handle_breakpoint_unset(&mut self, instruction: InstructionRef) {
@@ -1438,7 +1478,12 @@ impl Server {
 					client.caught = caught;
 				}
 			}
-			Request::BreakpointSet { instruction, condition, hit } => self.handle_breakpoint_set(instruction, condition, hit),
+			Request::BreakpointSet {
+				instruction,
+				condition,
+				hit,
+				log
+			} => self.handle_breakpoint_set(instruction, condition, hit, log),
 			Request::BreakpointUnset { instruction } => self.handle_breakpoint_unset(instruction),
 			Request::Stacks => self.handle_stacks(),
 			Request::Scopes { frame_id } => self.handle_scopes(frame_id),
@@ -1639,8 +1684,32 @@ impl Server {
 					continue;
 				};
 				claim.hits += 1;
-				if claim.hit.is_none_or(|hit| hit.takes(claim.hits)) {
+				if claim.hit.is_some_and(|hit| !hit.takes(claim.hits)) {
+					continue;
+				}
+
+				// A breakpoint with a message says it to its client, and the
+				// world carries on
+				let Some(log) = claim.log.clone() else {
 					pause = true;
+					continue;
+				};
+				let message = self.log_message(&log);
+				let logged = Proc::from_id(proc).map(|proc| {
+					let place = ProcRef {
+						path: proc.path.clone(),
+						override_id: proc.override_id()
+					};
+					Response::Log {
+						message,
+						file: Self::file_of(&proc),
+						line: self.get_line_number(place, offset as u32)
+					}
+				});
+				if let (Some(logged), Some(to)) = (logged, self.clients.get_mut(&client)) {
+					if Self::send(&mut to.connection, &logged).is_err() {
+						self.remove_client(client);
+					}
 				}
 			}
 

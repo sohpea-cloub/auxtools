@@ -285,6 +285,13 @@ fn command_line_more(pid: u64, dir: &Path) {
 	assert_eq!(run(&["status"], 0).trim(), "running");
 	println!("ok: a wait that doesn't hold its pause leaves the world running");
 
+	// Breakpoints with a message: each hit prints it, and nothing pauses
+	let printed = run(&["wait", "--break", "/proc/value", "--log", "value() at {world.time > 0}", "--timeout", "3"], 2);
+	assert!(printed.starts_with("value() at 1\n"), "wait --log said {}", printed);
+	assert!(printed.contains("timed out"), "wait --log said {}", printed);
+	assert_eq!(run(&["status"], 0).trim(), "running");
+	println!("ok: the command line prints a breakpoint's message at each hit, and the world runs on");
+
 	for (args, said) in [
 		(&["frobnicate"][..], "there's no command frobnicate"),
 		(&["stack", "--sideways"][..], "there's no --sideways here"),

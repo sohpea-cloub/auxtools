@@ -30,12 +30,14 @@ auxtools [--pid PID] COMMAND              one command to a running world, which
   continue                                lets it carry on
   next | step | out                       steps over, into or out of a call
   wait [--break FILE:LINE | --break /proc/path[#N]]... [--if COND]
-       [--runtimes] [--caught] [--timeout SECS] [--no-hold]
+       [--log MESSAGE] [--runtimes] [--caught] [--timeout SECS] [--no-hold]
                                           waits for it to pause, at one of these
                                           breakpoints, a runtime error (one that
                                           nothing catches, or with --caught any),
                                           or for any other client. Prints why and
-                                          where.
+                                          where. With --log the breakpoints don't
+                                          pause: each hit prints MESSAGE, with the
+                                          values of the {expressions} in it.
 Exit codes: 0 done (for `wait`, it paused), 1 failed, 2 `wait` timed out,
 3 the world went away (it ended or rebooted).";
 
@@ -177,13 +179,14 @@ fn execute(pid: Option<u32>, command: &[String]) -> Result<()> {
 		"step" => world.resume(ContinueKind::StepInto { stack_id: 0 }),
 		"out" => world.resume(ContinueKind::StepOut { stack_id: 0 }),
 		"wait" => {
-			let flags = Flags::parse(args, &["--break", "--if", "--timeout"], &["--runtimes", "--caught", "--no-hold"])?;
+			let flags = Flags::parse(args, &["--break", "--if", "--log", "--timeout"], &["--runtimes", "--caught", "--no-hold"])?;
 			if !flags.rest.is_empty() {
 				return Err(format!("wait doesn't take {}", flags.rest.join(" ")).into());
 			}
 			world.wait(Wait {
 				breaks: flags.values("--break").map(str::to_owned).collect(),
 				condition: flags.value("--if").map(str::to_owned),
+				log: flags.value("--log").map(LogPart::parse),
 				runtimes: flags.has("--runtimes") || flags.has("--caught"),
 				caught: flags.has("--caught"),
 				timeout: flags.number::<f64>("--timeout")?.map(Duration::from_secs_f64),
@@ -220,6 +223,8 @@ fn only_world() -> Result<u32> {
 struct Wait {
 	breaks: Vec<String>,
 	condition: Option<String>,
+	/// A message the breakpoints print at each hit, in place of pausing
+	log: Option<Vec<LogPart>>,
 	runtimes: bool,
 	/// Those inside a `try` too
 	caught: bool,
@@ -276,6 +281,8 @@ impl World {
 				Response::Disconnect => return Err(hung_up()),
 				Response::Notification { message } => self.notes.push(message),
 				Response::CodeChanged => {}
+				// A breakpoint's message, as it comes
+				Response::Log { message, .. } => println!("{}", message),
 				response => return Ok(Some(response))
 			}
 		}
@@ -482,7 +489,7 @@ impl World {
 			return self.print_pause(&reason);
 		}
 		for place in &wait.breaks {
-			self.set_breakpoint(place, wait.condition.clone())?;
+			self.set_breakpoint(place, wait.condition.clone(), wait.log.clone())?;
 		}
 		if wait.runtimes {
 			// It has no answer
@@ -500,7 +507,7 @@ impl World {
 	}
 
 	/// At `FILE:LINE`, or the start of `/proc/path` (`#N` for an override)
-	fn set_breakpoint(&mut self, place: &str, condition: Option<String>) -> Result<()> {
+	fn set_breakpoint(&mut self, place: &str, condition: Option<String>, log: Option<Vec<LogPart>>) -> Result<()> {
 		let instructions = if place.starts_with('/') {
 			let (path, override_id) = match place.split_once('#') {
 				Some((path, id)) => (path.to_owned(), id.parse().map_err(|_| format!("{} isn't an override number", id))?),
@@ -531,7 +538,8 @@ impl World {
 			match self.request(Request::BreakpointSet {
 				instruction,
 				condition: condition.clone(),
-				hit: None
+				hit: None,
+				log: log.clone()
 			})? {
 				Response::BreakpointSet {
 					result: BreakpointSetResult::Success { .. }

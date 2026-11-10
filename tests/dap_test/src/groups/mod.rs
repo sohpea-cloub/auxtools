@@ -6,6 +6,7 @@ pub mod conditions;
 pub mod expressions;
 pub mod frames;
 pub mod functions;
+pub mod logpoints;
 pub mod pausing;
 pub mod reboots;
 pub mod reloading;

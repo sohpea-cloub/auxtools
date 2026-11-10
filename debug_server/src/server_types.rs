@@ -30,7 +30,10 @@ pub enum Request {
 		condition: Option<String>,
 		/// Which of its hits to stop at, counted from when it's set (those
 		/// where its condition holds, if it has one). `None` for all.
-		hit: Option<HitCondition>
+		hit: Option<HitCondition>,
+		/// A message to send this client at those hits, in place of
+		/// stopping the world (`Response::Log`)
+		log: Option<Vec<LogPart>>
 	},
 	BreakpointUnset {
 		instruction: InstructionRef
@@ -156,7 +159,14 @@ pub enum Response {
 	},
 	/// Another client hot reloaded the world: its code has changed, and
 	/// lines may be elsewhere
-	CodeChanged
+	CodeChanged,
+	/// A breakpoint this client set with a message was hit: the message,
+	/// and where the breakpoint is
+	Log {
+		message: String,
+		file: Option<String>,
+		line: Option<u32>
+	}
 }
 
 #[derive(Serialize, Deserialize, Debug, Hash, PartialEq, Eq, Clone)]
@@ -179,6 +189,69 @@ pub enum BreakpointReason {
 	/// A runtime error, or a `throw`: its message, and whether it's inside
 	/// a `try` that will catch it
 	Runtime { message: String, caught: bool }
+}
+
+/// A piece of a breakpoint's log message
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub enum LogPart {
+	Text(String),
+	/// An expression, evaluated in the frame of the hit: its value goes in
+	/// its place
+	Expr(String)
+}
+
+#[allow(dead_code)]
+impl LogPart {
+	/// As a client writes a message: text, with expressions in `{braces}`.
+	/// Braces inside an expression are its own when they pair up or are in
+	/// a text; one that's never closed is text.
+	pub fn parse(message: &str) -> Vec<Self> {
+		let mut parts = vec![];
+		let mut text = String::new();
+		let mut rest = message;
+		while let Some(open) = rest.find('{') {
+			let Some(length) = Self::expression_length(&rest[open + 1..]) else {
+				break;
+			};
+			text.push_str(&rest[..open]);
+			if !text.is_empty() {
+				parts.push(Self::Text(std::mem::take(&mut text)));
+			}
+			parts.push(Self::Expr(rest[open + 1..open + 1 + length].trim().to_owned()));
+			rest = &rest[open + 1 + length + 1..];
+		}
+		text.push_str(rest);
+		if !text.is_empty() {
+			parts.push(Self::Text(text));
+		}
+		parts
+	}
+
+	/// How far it is to the `}` that closes an expression starting here
+	fn expression_length(text: &str) -> Option<usize> {
+		let mut depth = 0;
+		let mut quoted = false;
+		let mut escaped = false;
+		for (at, c) in text.char_indices() {
+			if quoted {
+				match c {
+					_ if escaped => escaped = false,
+					'\\' => escaped = true,
+					'"' => quoted = false,
+					_ => {}
+				}
+				continue;
+			}
+			match c {
+				'"' => quoted = true,
+				'{' => depth += 1,
+				'}' if depth == 0 => return Some(at),
+				'}' => depth -= 1,
+				_ => {}
+			}
+		}
+		None
+	}
 }
 
 /// Which hits of a breakpoint stop the world, by their number, from 1

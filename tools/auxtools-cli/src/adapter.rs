@@ -73,6 +73,12 @@ pub enum Input {
 	CodeChanged {
 		generation: u64
 	},
+	/// A breakpoint with a message was hit
+	Logged {
+		message: String,
+		file: Option<String>,
+		line: Option<u32>
+	},
 	/// The world the adapter launched exited
 	GameExited(Option<i32>),
 	/// The process attached to is gone
@@ -285,6 +291,28 @@ impl Adapter {
 			}
 			Input::ConnectionClosed { generation, reason } => self.connection_closed(generation, &reason),
 			Input::Code(event) => self.code_event(event),
+			Input::Logged { message, file, line } => {
+				// With where it's from, for the client to make a link of
+				let source = file.map(|file| {
+					let file = file.replace('\\', "/");
+					let path = match &self.root {
+						Some(root) => root.join(&file),
+						None => PathBuf::from(&file)
+					};
+					Source {
+						name: path.file_name().map(|name| name.to_string_lossy().into_owned()),
+						path: Some(path.to_string_lossy().into_owned()),
+						..Default::default()
+					}
+				});
+				self.out.event(OutputEvent {
+					output: message + "\n",
+					category: Some("console".to_owned()),
+					line: source.as_ref().and(line).map(i64::from),
+					source,
+					..Default::default()
+				});
+			}
 			Input::CodeChanged { generation } => {
 				if self.debuggee.as_ref().is_some_and(|d| d.generation == generation) {
 					self.reapply_breakpoints();
@@ -377,6 +405,7 @@ impl Adapter {
 			supportsFunctionBreakpoints: Some(true),
 			supportsConditionalBreakpoints: Some(true),
 			supportsHitConditionalBreakpoints: Some(true),
+			supportsLogPoints: Some(true),
 			supportsExceptionInfoRequest: Some(true),
 			supportTerminateDebuggee: Some(true),
 			..Default::default()
@@ -872,14 +901,16 @@ impl Adapter {
 	/// Sets a file's breakpoints in the world, in place of the ones it had
 	fn apply_breakpoints(&mut self, path: &str) -> Vec<Breakpoint> {
 		self.unset(path);
-		let wanted: Vec<(i64, i64, Option<String>, Option<String>)> = self.breakpoints[path]
+		let wanted: Vec<(i64, i64, Option<String>, Option<String>, Option<String>)> = self.breakpoints[path]
 			.iter()
-			.map(|(number, b)| (*number, b.line, b.condition.clone(), b.hitCondition.clone()))
+			.map(|(number, b)| (*number, b.line, b.condition.clone(), b.hitCondition.clone(), b.logMessage.clone()))
 			.collect();
 
 		let mut breakpoints = vec![];
 		let mut set = vec![];
-		for (number, line, condition, hit) in wanted {
+		for (number, line, condition, hit, log) in wanted {
+			// A breakpoint with a message says it, and doesn't stop
+			let log = log.filter(|message| !message.is_empty()).map(|message| aux::LogPart::parse(&message));
 			let unverified = |message: &str| Breakpoint {
 				id: Some(number),
 				verified: false,
@@ -926,7 +957,7 @@ impl Adapter {
 
 			let mut result = None;
 			for instruction in instructions {
-				match self.set_breakpoint(&instruction, condition.clone(), hit) {
+				match self.set_breakpoint(&instruction, condition.clone(), hit, log.clone()) {
 					Ok(Some(set_line)) => {
 						result.get_or_insert(Ok(set_line));
 					}
@@ -957,12 +988,14 @@ impl Adapter {
 		&mut self,
 		instruction: &InstructionRef,
 		condition: Option<String>,
-		hit: Option<aux::HitCondition>
+		hit: Option<aux::HitCondition>,
+		log: Option<Vec<aux::LogPart>>
 	) -> Result<Option<Option<u32>>, String> {
 		match self.request(&AuxRequest::BreakpointSet {
 			instruction: instruction.clone(),
 			condition,
-			hit
+			hit,
+			log
 		})? {
 			AuxResponse::BreakpointSet {
 				result: aux::BreakpointSetResult::Success { line }
@@ -1015,7 +1048,7 @@ impl Adapter {
 				proc: named_proc(&name),
 				offset: 0
 			};
-			let set_as_asked = hit_condition(hit.as_deref()).and_then(|hit| self.set_breakpoint(&instruction, condition, hit));
+			let set_as_asked = hit_condition(hit.as_deref()).and_then(|hit| self.set_breakpoint(&instruction, condition, hit, None));
 			breakpoints.push(match set_as_asked {
 				Ok(Some(line)) => Breakpoint {
 					verified: true,
@@ -1327,9 +1360,39 @@ fn default_library() -> Result<PathBuf, String> {
 mod tests {
 	use std::path::Path;
 
-	use auxtools_cli::server_types::{HitCondition, RuntimeFilter};
+	use auxtools_cli::server_types::{HitCondition, LogPart, RuntimeFilter};
 
 	use super::{file_name_in, named_proc};
+
+	#[test]
+	fn a_log_message_is_text_with_expressions_in_braces() {
+		let text = |text: &str| LogPart::Text(text.to_owned());
+		let expr = |text: &str| LogPart::Expr(text.to_owned());
+		assert_eq!(LogPart::parse("plain"), [text("plain")]);
+		assert_eq!(LogPart::parse(""), []);
+		assert_eq!(LogPart::parse("{x}"), [expr("x")]);
+		assert_eq!(LogPart::parse("x is {x}, y is { y + 1 }!"), [text("x is "), expr("x"), text(", y is "), expr("y + 1"), text("!")]);
+		assert_eq!(LogPart::parse("{a}{b}"), [expr("a"), expr("b")]);
+	}
+
+	#[test]
+	fn braces_in_an_expression_are_its_own() {
+		let text = |text: &str| LogPart::Text(text.to_owned());
+		let expr = |text: &str| LogPart::Expr(text.to_owned());
+		assert_eq!(LogPart::parse("{alist(\"a\" = 1)}"), [expr("alist(\"a\" = 1)")]);
+		assert_eq!(LogPart::parse("{\"}\"} after"), [expr("\"}\""), text(" after")]);
+		assert_eq!(LogPart::parse("{\"a \\\" } b\"}"), [expr("\"a \\\" } b\"")]);
+		assert_eq!(LogPart::parse("{a {b} c}"), [expr("a {b} c")]);
+	}
+
+	#[test]
+	fn a_brace_that_is_never_closed_is_text() {
+		let text = |text: &str| LogPart::Text(text.to_owned());
+		let expr = |text: &str| LogPart::Expr(text.to_owned());
+		assert_eq!(LogPart::parse("{x"), [text("{x")]);
+		assert_eq!(LogPart::parse("{x} and {y"), [expr("x"), text(" and {y")]);
+		assert_eq!(LogPart::parse("} {"), [text("} {")]);
+	}
 
 	#[test]
 	fn a_hit_count_is_a_number_or_one_after_a_sign() {

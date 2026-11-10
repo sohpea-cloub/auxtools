@@ -63,6 +63,9 @@ Besides a line, a breakpoint can be on a proc by name (**Add Function Breakpoint
 - a **hit count**: `5` stops from the fifth hit on, `== 5` only then, `% 5` every fifth,
   and `>`, `>=`, `<`, `<=` work too. With a condition, only the hits where it's true are
   counted. The count starts again when the breakpoint is changed.
+- a **log message** (**Add Logpoint**): instead of stopping, the breakpoint prints its
+  message in the debug console at each hit, with the values of the expressions in
+  `{braces}`: `health is {health} for {src}`. It can have a condition and a hit count too.
 
 ## Runtime errors
 
