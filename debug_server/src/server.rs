@@ -220,7 +220,11 @@ pub struct Claim {
 	/// How many times it's been hit since it was set
 	hits: u32,
 	/// A message for the client at the hits it wants, in place of a stop
-	log: Option<Vec<LogPart>>
+	log: Option<Vec<LogPart>>,
+	/// How many hits were skipped because the condition failed with an error
+	skipped: u32,
+	/// The client has been told the condition fails, which it's told once
+	told: bool
 }
 
 /// The breakpoints, by where they are, and the clients that set each. A
@@ -1228,13 +1232,18 @@ impl Server {
 			Ok(()) => {
 				// The client re-sends breakpoints it already set, and no
 				// condition this time means the old one is gone. Its hits are
-				// counted from now.
+				// counted from now. One set again with the same condition
+				// has been told already if that fails.
 				let key = (proc.id, instruction.offset as u16);
-				self.breakpoints.entry(key).or_default().insert((client, placed), Claim {
+				let claims = self.breakpoints.entry(key).or_default();
+				let told = claims.get(&(client, placed)).is_some_and(|old| old.told && old.condition == condition);
+				claims.insert((client, placed), Claim {
 					condition,
 					hit,
 					hits: 0,
-					log
+					log,
+					skipped: 0,
+					told
 				});
 
 				// The client has found out where a reload moved a breakpoint
@@ -1299,7 +1308,7 @@ impl Server {
 			auxtools::Proc::find_override(instruction.proc.path, instruction.proc.override_id),
 			self.current
 		) else {
-			self.send_or_disconnect(Response::BreakpointUnset { success: false });
+			self.send_or_disconnect(Response::BreakpointUnset { success: false, skipped: 0 });
 			return;
 		};
 
@@ -1314,15 +1323,16 @@ impl Server {
 
 		let key = (proc.id, offset as u16);
 		let claims = self.breakpoints.entry(key).or_default();
-		let had = claims.remove(&who).is_some();
+		let had = claims.remove(&who);
+		let skipped = had.as_ref().map_or(0, |claim| claim.skipped);
 		let success = if claims.is_empty() {
 			// Nobody else wants it
 			self.breakpoints.remove(&key);
 			unhook_instruction(&proc, offset).is_ok()
 		} else {
-			had
+			had.is_some()
 		};
-		self.send_or_disconnect(Response::BreakpointUnset { success });
+		self.send_or_disconnect(Response::BreakpointUnset { success, skipped });
 	}
 
 	fn handle_stacks(&mut self, sleeping: Option<u32>) {
@@ -2376,21 +2386,21 @@ impl Server {
 				continue;
 			};
 			if let Some(condition) = condition {
-				// One that can't be worked out pauses: better a stop too
-				// many than one missed
-				let passed = match self.eval_expr(Some(0), &condition) {
-					Ok(result) => result.is_truthy(),
-					Err(error) => {
-						self.notify(format!("A breakpoint's condition ({}) failed, so the world pauses there: {}", condition, error));
-						true
-					}
-				};
+				// One that can't be worked out isn't a hit: a stop there
+				// would say it held. Its client is told the first time, not
+				// at every hit.
+				let passed = self.eval_expr(Some(0), &condition).map(|result| result.is_truthy());
 
 				// We might have just executed some code so invalidate the
 				// stacks we already fetched
 				self.state.as_mut().unwrap().invalidate_stacks();
-				if !passed {
-					continue;
+				match passed {
+					Ok(true) => {}
+					Ok(false) => continue,
+					Err(error) => {
+						self.condition_failed(key, client, &condition, &error);
+						continue;
+					}
 				}
 			}
 
@@ -2428,6 +2438,48 @@ impl Server {
 			}
 		}
 		pause
+	}
+
+	/// A breakpoint's condition failed with `error` at a hit, which is
+	/// skipped. The client that set it hears of it the first time.
+	fn condition_failed(&mut self, key: (raw_types::procs::ProcId, u16), client: (ClientId, Placed), condition: &str, error: &str) {
+		let Some(claim) = self.breakpoints.get_mut(&key).and_then(|claims| claims.get_mut(&client)) else {
+			return;
+		};
+		claim.skipped += 1;
+		if std::mem::replace(&mut claim.told, true) {
+			return;
+		}
+		let place = match Proc::from_id(key.0) {
+			Some(proc) => {
+				let line = self.get_line_number(
+					ProcRef {
+						path: proc.path.clone(),
+						override_id: proc.override_id()
+					},
+					key.1 as u32
+				);
+				match (Self::file_of(&proc), line) {
+					(Some(file), Some(line)) => format!(" at {}:{}", file, line),
+					_ => format!(" in {}", proc.path)
+				}
+			}
+			None => String::new()
+		};
+		let message = format!(
+			"The condition ({}) of the breakpoint{} failed, so the hits where it fails are skipped (said only this once): {}",
+			condition, place, error
+		);
+		self.tell(client.0, Response::ConditionFailed { message });
+	}
+
+	/// Sends one client something, at any moment
+	fn tell(&mut self, client: ClientId, response: Response) {
+		if let Some(to) = self.clients.get_mut(&client) {
+			if Self::send(&mut to.connection, &response).is_err() {
+				self.remove_client(client);
+			}
+		}
 	}
 
 	/// Pauses the world, if anyone wants it paused for this, until a client

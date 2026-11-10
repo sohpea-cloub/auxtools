@@ -416,6 +416,17 @@ fn command_line_more(pid: u64, dir: &Path) {
 	assert_eq!(run(&["status"], 0).lines().next().unwrap_or_default(), "running");
 	println!("ok: the command line prints a breakpoint's message at each hit, and the world runs on");
 
+	// A condition that fails with an error at each hit doesn't pause, and is
+	// said once
+	let printed = run(&["wait", "--break", "/proc/value", "--if", "rounds.len > 0", "--timeout", "2"], 2);
+	assert_eq!(printed.matches("said only this once").count(), 1, "wait --if said {}", printed);
+	assert!(
+		printed.contains("failed, so the hits where it fails are skipped (said only this once): runtime error: Cannot read ") && printed.contains("timed out"),
+		"wait --if said {}",
+		printed
+	);
+	println!("ok: a wait whose condition fails doesn't pause there, and says why once");
+
 	// A global, watched from a running world; then a var of the proc it
 	// paused in, until that changes
 	let printed = run(&["wait", "--change", "rounds", "--timeout", "60"], 0);

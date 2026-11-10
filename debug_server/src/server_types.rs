@@ -211,7 +211,10 @@ pub enum Response {
 		result: BreakpointSetResult
 	},
 	BreakpointUnset {
-		success: bool
+		success: bool,
+		/// How many of its hits were skipped because its condition failed
+		/// with an error
+		skipped: u32
 	},
 	Offset {
 		offset: Option<u32>
@@ -311,6 +314,13 @@ pub enum Response {
 		/// reboot
 		loads: u32,
 		last_reload: Option<JournalEntry>
+	},
+	/// The condition of a breakpoint or a watch this client set failed with
+	/// an error where it was hit, so that hit was skipped, as are the others
+	/// where it fails. Said once for each breakpoint or watch, the first time,
+	/// at any moment.
+	ConditionFailed {
+		message: String
 	}
 }
 

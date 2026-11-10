@@ -210,6 +210,16 @@ pub fn run() {
 	world.resume_through("watch");
 	ok("a global is watched from a running world, and a watch's condition is about the change: `value` is what's there now, `old` what was");
 
+	// A condition that fails with an error isn't a change to pause for, and
+	// the console says so once: watched_number goes to 3, then 6
+	world.eval_global("watched_number = 1");
+	watch(&mut world, &[(&anywhere["dataId"], "value.len > 0", "")]);
+	world.run_through("watch");
+	let said = "[auxtools] The condition (value.len > 0) of the watch on watched_number failed, so the changes where it fails are skipped (said only this once): runtime error: Cannot read 3.len";
+	assert_eq!(world.count(said), 1, "the console didn't say {:?} once", said);
+	assert_eq!(world.count("(said only this once)"), 1, "it was said again");
+	ok("a watch's condition that fails with an error doesn't pause, and the console says why once");
+
 	// Stepping over the call that makes the change
 	world.eval_global("watched_number = 1");
 	watch(&mut world, &[(&anywhere["dataId"], "", "")]);

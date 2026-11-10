@@ -30,7 +30,9 @@ pub(super) struct Watched {
 	last: Value,
 	condition: Option<String>,
 	hit: Option<HitCondition>,
-	hits: u32
+	hits: u32,
+	/// The client has been told the condition fails, which it's told once
+	told: bool
 }
 
 enum Place {
@@ -178,18 +180,28 @@ impl Server {
 			let (name, condition) = (watch.name.clone(), watch.condition.clone());
 			if let Some(condition) = condition {
 				self.eval_given = vec![(CONDITION_NEW.to_owned(), now.clone()), (CONDITION_OLD.to_owned(), before.clone())];
-				let passed = match self.eval_expr(Some(0), &condition) {
-					Ok(result) => result.is_truthy(),
-					Err(error) => {
-						self.notify(format!("The condition of the watch on {} ({}) failed, so the world pauses: {}", name, condition, error));
-						true
-					}
-				};
+				let passed = self.eval_expr(Some(0), &condition).map(|result| result.is_truthy());
 				if let Some(state) = self.state.as_mut() {
 					state.invalidate_stacks();
 				}
-				if !passed {
-					continue;
+				match passed {
+					Ok(true) => {}
+					Ok(false) => continue,
+					// As for a breakpoint's: not a hit, and said once
+					Err(error) => {
+						let Some(watch) = self.watches.iter_mut().find(|watch| watch.id == id) else {
+							continue;
+						};
+						if !std::mem::replace(&mut watch.told, true) {
+							let client = watch.client;
+							let message = format!(
+								"The condition ({}) of the watch on {} failed, so the changes where it fails are skipped (said only this once): {}",
+								condition, name, error
+							);
+							self.tell(client, Response::ConditionFailed { message });
+						}
+						continue;
+					}
 				}
 			}
 			// The condition's code could have taken the watch away
@@ -433,7 +445,8 @@ impl Server {
 			last: now,
 			condition,
 			hit,
-			hits: 0
+			hits: 0,
+			told: false
 		});
 		Ok(watch)
 	}

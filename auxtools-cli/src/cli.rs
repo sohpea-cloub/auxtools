@@ -642,6 +642,9 @@ impl World {
 				Response::Disconnect => return Err(hung_up()),
 				Response::Notification { message } => self.notes.push(message),
 				Response::CodeChanged => {}
+				// Said once for each breakpoint whose condition fails, as it
+				// comes: those hits are skipped
+				Response::ConditionFailed { message } => eprintln!("{}", message),
 				// A breakpoint's message, as it comes
 				Response::Log { message, .. } => println!("{}", message),
 				Response::WatchEnded { reason, .. } => println!("a watch is over: {}", reason),

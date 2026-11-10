@@ -53,23 +53,35 @@ pub fn run() {
 	world.eval_global("global_number = 5");
 	ok("a condition's side effects happen once a hit");
 
-	// The condition can't be worked out: better a stop too many than one
-	// missed
+	// A condition that fails with an error isn't a hit: a stop there would
+	// say it held. The console says so once, however many hits fail.
+	let failed = "failed, so the hits where it fails are skipped (said only this once): ";
 	world.break_if(&[("leaf_1", "x.len > 3")]);
+	// x is 3, then 8, each time
+	for _ in 0..3 {
+		world.run_through("middle");
+	}
+	let (_, line) = world.marks.place("leaf_1");
+	let said = "[auxtools] The condition (x.len > 3) of the breakpoint at ";
+	assert_eq!(world.count(said), 1, "the console didn't say {:?} once", said);
+	let place = format!("stepping.dm:{} {}runtime error: Cannot read 3.len", line, failed);
+	assert_eq!(world.count(&place), 1, "the console didn't say {:?} once", place);
+	// (The world's own output has each runtime error)
+	assert_eq!(world.count("(said only this once)"), 1, "it was said again");
+	ok("a condition that fails with a runtime error skips the hit, and the console says why once, however many hits fail");
+
+	// Where it holds, it stops; where it fails, it doesn't, said once more
+	// for this breakpoint (another condition is another breakpoint)
+	world.break_if(&[("leaf_1", "x == 8 || x.len")]);
 	world.run("middle");
 	world.stop_on("breakpoint", "/leaf", "leaf_1");
-	world.resume();
+	assert_eq!(world.argument("x"), "8");
+	world.resume_through("middle");
+	world.run("middle");
 	world.stop_on("breakpoint", "/leaf", "leaf_1");
 	world.resume_through("middle");
-	// x is 3, then 8
-	for x in [3, 8] {
-		let said = format!(
-			"[auxtools] A breakpoint's condition (x.len > 3) failed, so the world pauses there: runtime error: Cannot read {}.len",
-			x
-		);
-		assert_eq!(world.count(&said), 1, "the console didn't say {:?}", said);
-	}
-	ok("a condition that runtimes stops the world, and the console says why");
+	assert_eq!(world.count(failed), 2);
+	ok("a condition that fails at some hits stops at those where it holds");
 
 	// One that doesn't compile isn't set, the others in the file are
 	let set = world.try_break_if(&[("leaf_1", "x =="), ("leaf_2", "y == 4"), ("middle_3", "nowhere_at_all == 1")]);
@@ -79,11 +91,10 @@ pub fn run() {
 	assert_eq!((&set[1]["verified"], &set[2]["verified"]), (&json!(true), &json!(true)));
 	world.run("middle");
 	world.stop_on("breakpoint", "/leaf", "leaf_2");
-	world.resume();
-	// A name the world doesn't have is only found out when it's hit
-	world.stop_on("breakpoint", "/middle", "middle_3");
+	// A name the world doesn't have is only found out when it's hit, and
+	// it's skipped like any condition that fails
 	world.resume_through("middle");
-	assert_eq!(world.count("failed, so the world pauses there: undefined var: nowhere_at_all"), 1);
+	assert_eq!(world.count(&format!("{}undefined var: nowhere_at_all", failed)), 1);
 	let set = world.request(
 		"setFunctionBreakpoints",
 		json!({ "breakpoints": [{ "name": "/proc/leaf", "condition": "x x" }, { "name": "/proc/middle" }] })

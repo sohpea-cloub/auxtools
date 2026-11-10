@@ -74,7 +74,11 @@ the first 100 are listed, or as many as `sleepingThreads` says.
 Besides a line, a breakpoint can be on a proc by name (**Add Function Breakpoint**:
 `/mob/proc/Login`, or `/mob/Login#1` for its second definition), and can have:
 
-- a **condition**, an expression that has to be true for it to stop;
+- a **condition**, an expression that has to be true for it to stop. One that fails
+  with a runtime error at a hit (`x.health < 5` where `x` is sometimes null) doesn't
+  stop there: the debug console says so, with the error, the first time only, and the
+  hits where it fails are skipped. One that doesn't compile isn't set (hover over it
+  for why);
 - a **hit count**: `5` stops from the fifth hit on, `== 5` only then, `% 5` every fifth,
   and `>`, `>=`, `<`, `<=` work too. With a condition, only the hits where it's true are
   counted. The count starts again when the breakpoint is changed, when a hot reload
@@ -82,7 +86,9 @@ Besides a line, a breakpoint can be on a proc by name (**Add Function Breakpoint
   on through reloads.
 - a **log message** (**Add Logpoint**): instead of stopping, the breakpoint prints its
   message in the debug console at each hit, with the values of the expressions in
-  `{braces}`: `health is {health} for {src}`. It can have a condition and a hit count too.
+  `{braces}`: `health is {health} for {src}`. An expression that fails says why in its
+  place: `{x.len: runtime error: Cannot read null.len}`. It can have a condition and a
+  hit count too.
 
 A breakpoint added to a file with unsaved changes is on a line of what the editor shows,
 which the world doesn't have: while hot reloading, it's shown unset (hover over it for why)
@@ -111,8 +117,9 @@ being given another list, not for what's put in it: watch an entry for that. `sr
 `usr` and expressions that aren't a place (`a + b`) can't be watched.
 
 A data breakpoint can have a condition, which is about the change: `value` is what's
-there now and `old` what was (`value < old`, `value == null`). It can have a hit count
-too. It ends by itself when its object is deleted or its proc returns, and after the
+there now and `old` what was (`value < old`, `value == null`). As for a breakpoint, a
+change where it fails with an error doesn't pause, and the console says so once. It can
+have a hit count too. It ends by itself when its object is deleted or its proc returns, and after the
 world reboots only global vars are still watched; the **Breakpoints** view shows which
 are no longer set, and why.
 

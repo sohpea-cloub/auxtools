@@ -397,7 +397,7 @@ fn main() {
 			offset: old_offset
 		}
 	});
-	assert!(matches!(response, Response::BreakpointUnset { success: true }), "{:?}", response);
+	assert!(matches!(response, Response::BreakpointUnset { success: true, .. }), "{:?}", response);
 	eval(&mut client, "arm_breakpoint()");
 	wait_for(&mut client, "breakpoint_armed", "0");
 	println!("ok: a moved breakpoint can be removed by its old offset");
@@ -427,7 +427,7 @@ fn main() {
 			Response::BreakpointSet {
 				result: BreakpointSetResult::Success { .. }
 			}
-			| Response::BreakpointUnset { success: true } => {}
+			| Response::BreakpointUnset { success: true, .. } => {}
 			other => panic!("couldn't {} the breakpoint at {}: {:?}", if set { "set" } else { "take away" }, offset, other)
 		}
 	};

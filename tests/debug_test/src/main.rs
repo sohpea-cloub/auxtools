@@ -353,7 +353,7 @@ fn protocol(world: &World, mut client: Client) -> Client {
 		response
 	);
 	let response = client.request(Request::BreakpointUnset { instruction: start_of(BREAKPOINT_TARGET) });
-	assert!(matches!(response, Response::BreakpointUnset { success: true }), "{:?}", response);
+	assert!(matches!(response, Response::BreakpointUnset { success: true, .. }), "{:?}", response);
 	let response = client.request(Request::InstructionBreakpointSet {
 		instruction: inside,
 		condition: None,
@@ -379,7 +379,7 @@ fn protocol(world: &World, mut client: Client) -> Client {
 	assert_eq!(second.expect_pause(), BreakpointReason::Breakpoint);
 	let unset = |client: &mut Client, proc: &str| {
 		let response = client.request(Request::BreakpointUnset { instruction: start_of(proc) });
-		assert!(matches!(response, Response::BreakpointUnset { success: true }), "couldn't unset {}: {:?}", proc, response);
+		assert!(matches!(response, Response::BreakpointUnset { success: true, .. }), "couldn't unset {}: {:?}", proc, response);
 	};
 	unset(&mut client, BREAKPOINT_TARGET);
 	client.resume();
@@ -500,7 +500,7 @@ fn main() {
 		instruction: start_of("/proc/does_not_exist")
 	});
 	assert!(
-		matches!(response, Response::BreakpointUnset { success: false }),
+		matches!(response, Response::BreakpointUnset { success: false, .. }),
 		"unsetting a breakpoint on a missing proc got {:?}",
 		response
 	);
@@ -527,7 +527,7 @@ fn main() {
 	for proc in [BREAKPOINT_TARGET, TICK_MARKER] {
 		let response = client.request(Request::BreakpointUnset { instruction: start_of(proc) });
 		assert!(
-			matches!(response, Response::BreakpointUnset { success: true }),
+			matches!(response, Response::BreakpointUnset { success: true, .. }),
 			"couldn't unset {}: {:?}",
 			proc,
 			response
