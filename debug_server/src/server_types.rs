@@ -11,7 +11,14 @@ pub const PROTOCOL_VERSION: u32 = 3;
 /// debug library: `auxtools-debug-v1-1234`
 #[allow(dead_code)]
 pub fn world_socket_name(pid: u32) -> String {
-	format!("auxtools-debug-v{}-{}", PROTOCOL_VERSION, pid)
+	world_socket_name_for(PROTOCOL_VERSION, pid)
+}
+
+/// The same for a debug library that speaks another version of the
+/// protocol, which is how one is told from this
+#[allow(dead_code)]
+pub fn world_socket_name_for(protocol: u32, pid: u32) -> String {
+	format!("auxtools-debug-v{}-{}", protocol, pid)
 }
 
 // Message from client -> server

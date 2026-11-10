@@ -97,6 +97,9 @@ fn main() {
 	assert!(res.success(), "dreammaker build failed");
 	let _ = std::fs::remove_file(host_file("rebooted"));
 
+	command_line_shape();
+	another_version();
+
 	let mut launcher = Launcher::start();
 	launcher.initialize();
 
@@ -225,6 +228,112 @@ fn command_line(pid: u64, code: &Path) {
 	let printed = run(&["wait", "--break", "nowhere.dm:3"], 1);
 	assert!(printed.contains("no proc in nowhere.dm"), "wait said {}", printed);
 	println!("ok: the command line paused the world, and its waits time out and say what's wrong");
+}
+
+/// What the command line is, before any world: a word for each command, and
+/// help that says what each does
+fn command_line_shape() {
+	// Alone, it says how it's used, and doesn't wait to be spoken to
+	let (code, alone) = launcher_command(&[]);
+	assert_eq!(code, 0, "{}", alone);
+	assert!(alone.starts_with("auxtools: debug BYOND worlds"), "auxtools said {}", alone);
+	assert!(alone.contains("Usage: auxtools [--pid PID] COMMAND [OPTIONS]"), "auxtools said {}", alone);
+	for command in ["list", "status", "stack", "vars", "eval", "pause", "continue", "next", "step", "out", "wait", "dap", "help", "version"] {
+		assert!(alone.lines().any(|line| line.starts_with(&format!("  {} ", command))), "{} isn't in the help:\n{}", command, alone);
+	}
+	for args in [&["help"][..], &["--help"][..], &["-h"][..]] {
+		let (code, printed) = launcher_command(args);
+		assert_eq!((code, printed == alone), (0, true), "`auxtools {}` said {}", args.join(" "), printed);
+	}
+	println!("ok: auxtools alone, and help, list every command with what it does, and exit");
+
+	let (code, of_wait) = launcher_command(&["help", "wait"]);
+	assert_eq!(code, 0);
+	assert!(
+		of_wait.starts_with("Usage: auxtools [--pid PID] wait [--break PLACE]...") && of_wait.contains("  --timeout SECONDS "),
+		"help wait said {}",
+		of_wait
+	);
+	assert_eq!(launcher_command(&["wait", "--help"]), (0, of_wait));
+	let (code, printed) = launcher_command(&["help", "frobnicate"]);
+	assert_eq!((code, printed.trim()), (1, "there's no command frobnicate: `auxtools help` lists them"));
+	println!("ok: help COMMAND, and COMMAND --help, show a command's options");
+
+	let (code, version) = launcher_command(&["version"]);
+	assert_eq!(code, 0);
+	assert!(version.starts_with("auxtools ") && protocol(&version) > 0, "version said {}", version);
+	assert_eq!(launcher_command(&["--version"]), (0, version));
+	println!("ok: version and --version say the launcher's version and its protocol's");
+
+	let (code, list) = launcher_command(&["list"]);
+	assert_eq!(code, 0, "{}", list);
+	assert!(serde_json::from_str::<serde_json::Value>(&list).is_ok_and(|worlds| worlds.is_array()), "list said {}", list);
+	for gone in ["--list", "--build"] {
+		let (code, printed) = launcher_command(&[gone]);
+		assert_eq!(code, 1, "`auxtools {}` said {}", gone, printed);
+	}
+	println!("ok: list is a command, and the old flags are gone");
+}
+
+/// The protocol version in what `auxtools version` prints
+fn protocol(version: &str) -> u32 {
+	version
+		.trim()
+		.rsplit_once("(protocol ")
+		.and_then(|(_, number)| number.strip_suffix(')'))
+		.and_then(|number| number.parse().ok())
+		.unwrap_or_else(|| panic!("version said {}", version))
+}
+
+/// A world whose debug library speaks another version of the protocol: it's
+/// listed as one that can't be attached to, and attaching says why. The
+/// stand-in is a BYOND server with no debug library, and this test listening
+/// where the library of the version before ours would.
+fn another_version() {
+	use interprocess::local_socket::{prelude::*, GenericNamespaced, ListenerOptions};
+
+	let mut plain = Command::new(paths::find_dreamdaemon())
+		.with_byond_paths()
+		.arg(host_file("launcher_test_host.dmb"))
+		.args(test_args().unwrap_or_else(|| vec!["-trusted".to_owned()]))
+		.stdout(std::process::Stdio::null())
+		.stderr(std::process::Stdio::null())
+		.spawn()
+		.unwrap();
+	let pid = plain.id();
+	let ours = protocol(&launcher_command(&["version"]).1);
+	let theirs = ours - 1;
+	let name = format!("auxtools-debug-v{}-{}", theirs, pid);
+	let listener = ListenerOptions::new().name(name.to_ns_name::<GenericNamespaced>().unwrap()).create_sync().unwrap();
+	// Whoever connects is let in, and told nothing
+	std::thread::spawn(move || {
+		for client in listener.incoming() {
+			drop(client);
+		}
+	});
+
+	let (code, list) = launcher_command(&["list"]);
+	assert_eq!(code, 0, "{}", list);
+	let worlds: serde_json::Value = serde_json::from_str(&list).unwrap();
+	let listed = worlds
+		.as_array()
+		.unwrap()
+		.iter()
+		.find(|world| world["pid"] == pid)
+		.unwrap_or_else(|| panic!("the other version's world isn't listed: {}", list));
+	assert_eq!((&listed["protocol"], &listed["compatible"]), (&json!(theirs), &json!(false)), "{}", listed);
+
+	let pid_text = pid.to_string();
+	let (code, printed) = launcher_command(&["--pid", &pid_text, "status"]);
+	assert_eq!(code, 1, "{}", printed);
+	assert!(
+		printed.contains(&format!("its debug library speaks protocol {}, and this auxtools speaks {}", theirs, ours)),
+		"attaching to another version's world said {}",
+		printed
+	);
+	let _ = plain.kill();
+	let _ = plain.wait();
+	println!("ok: a world whose debug library speaks another protocol version is listed as incompatible, and attaching to it says why");
 }
 
 /// The rest of the command line: the other steps, the stacks, a frame's

@@ -16,43 +16,8 @@ use auxtools_cli::{
 	server_types::*
 };
 
-pub const USAGE: &str = "\
-auxtools [--pid PID] COMMAND              one command to a running world, which
-                                          stays paused after the ones that pause
-                                          it, until `continue`. Without --pid,
-                                          the only world running the debug
-                                          library.
-  status                                  paused or running, and where
-  stack [--all]                           the paused stack, or every stack
-  vars [--frame N] [--globals]            a frame's arguments and locals
-  eval EXPR [--frame N]                   an expression, in a frame when paused
-  pause                                   pauses it where it is
-  continue                                lets it carry on
-  next | step | out                       steps over, into or out of a call
-  wait [--break FILE:LINE | --break /proc/path[#N]]... [--if COND]
-       [--change EXPR]... [--frame N]
-       [--log MESSAGE] [--runtimes] [--caught] [--timeout SECS] [--no-hold]
-                                          waits for it to pause, at one of these
-                                          breakpoints, a runtime error (one that
-                                          nothing catches, or with --caught any),
-                                          or for any other client. Prints why and
-                                          where. With --log the breakpoints don't
-                                          pause: each hit prints MESSAGE, with the
-                                          values of the {expressions} in it.
-                                          --change pauses when what EXPR names
-                                          (a var of an object, an entry of a
-                                          list, a global, a proc's own var)
-                                          gets another value, and says which.
-                                          Given while the world is paused, EXPR
-                                          is of a frame there, and the world
-                                          carries on until it changes. --if is
-                                          then about the change: `value` is the
-                                          new value, `old` the one before.
-Exit codes: 0 done (for `wait`, it paused), 1 failed, 2 `wait` timed out,
-3 the world went away (it ended or rebooted).";
-
 /// What went wrong, and the exit code it gives
-struct Failure(i32, String);
+pub struct Failure(pub i32, pub String);
 
 impl From<io::Error> for Failure {
 	fn from(e: io::Error) -> Self {
@@ -72,10 +37,276 @@ impl From<&str> for Failure {
 	}
 }
 
-type Result<T> = std::result::Result<T, Failure>;
+pub type Result<T> = std::result::Result<T, Failure>;
 
 const HUNG_UP: i32 = 3;
 const TIMED_OUT: i32 = 2;
+
+/// A command: `auxtools NAME ...`
+pub struct Command {
+	pub name: &'static str,
+	/// Its arguments, as the help shows them after its name
+	pub usage: &'static str,
+	/// What it does, in a line
+	pub about: &'static str,
+	/// The rest, for `auxtools help NAME`: its options, a line each
+	pub details: &'static str,
+	pub run: Run
+}
+
+pub enum Run {
+	/// Needs no world, or finds its own
+	Alone(fn(&[String]) -> Result<()>),
+	/// One command to a running world: connect, do it, leave
+	World(fn(&mut World, &[String]) -> Result<()>)
+}
+
+/// The commands, in the groups the help shows them in. A new one is a
+/// function, in a file of its own under `cli/` if it's more than a few lines,
+/// and a line here.
+pub const COMMANDS: &[(&str, &[Command])] = &[
+	("Worlds", &[
+		Command {
+			name: "list",
+			usage: "",
+			about: "The worlds running the debug library, as JSON",
+			details: "Each has its process id (`pid`), its program, the .dmb it runs, and the version of
+the protocol its debug library speaks (`protocol`). One whose `compatible` is false
+was started by another version of auxtools: this one can't attach to it.",
+			run: Run::Alone(list)
+		},
+		Command {
+			name: "status",
+			usage: "",
+			about: "Whether the world is running or paused, and if paused, why and where",
+			details: "",
+			run: Run::World(|world, args| {
+				Flags::parse(args, &[], &[])?.nothing_else("status")?;
+				world.status()
+			})
+		},
+	]),
+	("Looking at a paused world", &[
+		Command {
+			name: "stack",
+			usage: "[--all]",
+			about: "The procs the world is paused in, innermost first",
+			details: "  --all    The sleeping procs' stacks too, each with the id it keeps",
+			run: Run::World(|world, args| {
+				let flags = Flags::parse(args, &[], &["--all"])?;
+				flags.nothing_else("stack")?;
+				world.stack(flags.has("--all"))
+			})
+		},
+		Command {
+			name: "vars",
+			usage: "[--frame N] [--globals]",
+			about: "A frame's arguments and local vars",
+			details: "  --frame N    The Nth frame of the stack, from 0, the innermost (the default)
+  --globals    The world's global vars too",
+			run: Run::World(|world, args| {
+				let flags = Flags::parse(args, &["--frame"], &["--globals"])?;
+				flags.nothing_else("vars")?;
+				world.vars(flags.number("--frame")?.unwrap_or(0), flags.has("--globals"))
+			})
+		},
+		Command {
+			name: "eval",
+			usage: "EXPRESSION [--frame N]",
+			about: "The value of a DM expression",
+			details: "In a paused world, the expression is in a frame of the stack: it can name that
+proc's vars, and `src`. In a running world it can name globals and call procs.
+  --frame N    The Nth frame of the stack, from 0, the innermost (the default)",
+			run: Run::World(|world, args| {
+				let flags = Flags::parse(args, &["--frame"], &[])?;
+				if flags.rest.is_empty() {
+					return Err("eval what?".into());
+				}
+				world.eval(&flags.rest.join(" "), flags.number("--frame")?)
+			})
+		},
+	]),
+	("Running it", &[
+		Command {
+			name: "pause",
+			usage: "",
+			about: "Pauses the world where it is",
+			details: "The world stays paused after this command has gone, until `continue`.",
+			run: Run::World(|world, args| {
+				Flags::parse(args, &[], &[])?.nothing_else("pause")?;
+				world.pause()
+			})
+		},
+		Command {
+			name: "continue",
+			usage: "",
+			about: "Lets a paused world carry on",
+			details: "",
+			run: Run::World(|world, args| {
+				Flags::parse(args, &[], &[])?.nothing_else("continue")?;
+				world.resume(ContinueKind::Continue)
+			})
+		},
+		Command {
+			name: "next",
+			usage: "",
+			about: "Runs to the next line, over any procs this one calls",
+			details: "",
+			run: Run::World(|world, args| {
+				Flags::parse(args, &[], &[])?.nothing_else("next")?;
+				world.resume(ContinueKind::StepOver { stack_id: 0 })
+			})
+		},
+		Command {
+			name: "step",
+			usage: "",
+			about: "Runs to the next line, going into a proc this one calls",
+			details: "",
+			run: Run::World(|world, args| {
+				Flags::parse(args, &[], &[])?.nothing_else("step")?;
+				world.resume(ContinueKind::StepInto { stack_id: 0 })
+			})
+		},
+		Command {
+			name: "out",
+			usage: "",
+			about: "Runs until this proc returns to the one that called it",
+			details: "",
+			run: Run::World(|world, args| {
+				Flags::parse(args, &[], &[])?.nothing_else("out")?;
+				world.resume(ContinueKind::StepOut { stack_id: 0 })
+			})
+		},
+		Command {
+			name: "wait",
+			usage: "[--break PLACE]... [--change EXPRESSION]... [--runtimes] [OPTIONS]",
+			about: "Waits for the world to pause, and says why and where",
+			details: "With nothing to pause it for, it waits for whatever pauses it: another client's
+breakpoint, a `pause`. The world stays paused afterwards, until `continue`.
+  --break PLACE        Pause at FILE:LINE, or when /proc/path is called (/proc/path#N for
+                       its Nth override). Can be given more than once.
+  --change EXPRESSION  Pause when what EXPRESSION names gets another value: a var of an
+                       object, an entry of a list, a global var, a proc's own var. Given
+                       while the world is paused, EXPRESSION is of a frame there, and the
+                       world carries on until it changes.
+  --frame N            The frame --change's EXPRESSION is of (0, the innermost)
+  --if CONDITION       Only pause when CONDITION, a DM expression, is true there. For
+                       --change, `value` is the new value and `old` the one before.
+  --runtimes           Pause on a runtime error that nothing catches
+  --caught             Pause on runtime errors inside a `try` as well
+  --log MESSAGE        Don't pause at the breakpoints: print MESSAGE at each hit, with the
+                       values of the {expressions} in it
+  --timeout SECONDS    Give up after this long (exit code 2)
+  --no-hold            Let the world carry on once this command has gone",
+			run: Run::World(wait)
+		},
+	]),
+	("For editors", &[
+		Command {
+			name: "dap",
+			usage: "",
+			about: "The debug adapter: talks the Debug Adapter Protocol on stdin and stdout",
+			details: "What an editor's extension starts. It launches worlds, attaches to them, and hot
+reloads their code as files are saved.",
+			run: Run::Alone(|_| {
+				crate::adapter::run();
+				Ok(())
+			})
+		},
+	]),
+	("About auxtools", &[
+		Command {
+			name: "help",
+			usage: "[COMMAND]",
+			about: "This, or a command's options",
+			details: "",
+			run: Run::Alone(help)
+		},
+		Command {
+			name: "version",
+			usage: "",
+			about: "The version of auxtools, and of the protocol it speaks to worlds",
+			details: "",
+			run: Run::Alone(|_| {
+				println!("{}", version());
+				Ok(())
+			})
+		},
+	])
+];
+
+fn version() -> String {
+	format!("auxtools {} (protocol {})", env!("CARGO_PKG_VERSION"), PROTOCOL_VERSION)
+}
+
+fn command(name: &str) -> Option<&'static Command> {
+	COMMANDS.iter().flat_map(|(_, commands)| commands.iter()).find(|command| command.name == name)
+}
+
+/// Every command, a line each
+pub fn overview() -> String {
+	let mut text = String::from(
+		"auxtools: debug BYOND worlds, from the command line and from editors
+
+Usage: auxtools [--pid PID] COMMAND [OPTIONS]
+
+A command is for the one world that's running the debug library. With more than one,
+--pid says which (`auxtools list` shows them).
+"
+	);
+	let width = COMMANDS.iter().flat_map(|(_, commands)| commands.iter()).map(|command| command.name.len()).max().unwrap_or(0);
+	for (group, commands) in COMMANDS {
+		text += &format!("\n{}:\n", group);
+		for command in *commands {
+			text += &format!("  {:width$}  {}\n", command.name, command.about);
+		}
+	}
+	text += "
+`auxtools help COMMAND` shows a command's options.
+
+Exit codes: 0 done (for `wait`, the world paused), 1 failed, 2 `wait` timed out, 3 the
+world went away (it ended or rebooted).
+";
+	text
+}
+
+/// One command, with its options
+fn describe(command: &Command) -> String {
+	let mut text = format!("Usage: auxtools [--pid PID] {}", command.name);
+	if !command.usage.is_empty() {
+		text += &format!(" {}", command.usage);
+	}
+	text += &format!("\n\n{}.\n", command.about);
+	if !command.details.is_empty() {
+		text += &format!("\n{}\n", command.details);
+	}
+	text
+}
+
+fn help(args: &[String]) -> Result<()> {
+	match args {
+		[] => print!("{}", overview()),
+		[name] => match command(name) {
+			Some(command) => print!("{}", describe(command)),
+			None => return Err(unknown(name))
+		},
+		_ => return Err("help takes one command's name".into())
+	}
+	Ok(())
+}
+
+fn unknown(name: &str) -> Failure {
+	Failure(1, format!("there's no command {}: `auxtools help` lists them", name))
+}
+
+fn list(args: &[String]) -> Result<()> {
+	Flags::parse(args, &[], &[])?.nothing_else("list")?;
+	println!(
+		"{}",
+		serde_json::to_string_pretty(&local::worlds()).map_err(|e| e.to_string())?
+	);
+	Ok(())
+}
 
 /// Runs `args` (everything after the program's name), and exits with its code
 pub fn run(args: &[String]) -> ! {
@@ -105,14 +336,6 @@ fn parse(args: &[String]) -> Result<(Option<u32>, Vec<String>)> {
 	}
 }
 
-/// The commands, without the world
-pub fn is_command(name: &str) -> bool {
-	matches!(
-		name,
-		"--pid" | "status" | "stack" | "vars" | "eval" | "pause" | "continue" | "next" | "step" | "out" | "wait"
-	)
-}
-
 /// Its flags: `--name value` pairs and bare `--name`s, and what's left
 struct Flags {
 	given: Vec<(String, Option<String>)>,
@@ -130,12 +353,21 @@ impl Flags {
 			} else if bare.contains(&arg.as_str()) {
 				flags.given.push((arg.clone(), None));
 			} else if arg.starts_with("--") {
-				return Err(format!("there's no {} here\n\n{}", arg, USAGE).into());
+				return Err(format!("there's no {} here: `--help` after the command shows its options", arg).into());
 			} else {
 				flags.rest.push(arg.clone());
 			}
 		}
 		Ok(flags)
+	}
+
+	/// Refuses words the command has no use for
+	fn nothing_else(&self, command: &str) -> Result<()> {
+		if self.rest.is_empty() {
+			Ok(())
+		} else {
+			Err(format!("{} doesn't take {}", command, self.rest.join(" ")).into())
+		}
 	}
 
 	fn has(&self, name: &str) -> bool {
@@ -157,82 +389,79 @@ impl Flags {
 	}
 }
 
-fn execute(pid: Option<u32>, command: &[String]) -> Result<()> {
-	let Some((name, args)) = command.split_first() else {
-		return Err(USAGE.into());
+fn execute(pid: Option<u32>, words: &[String]) -> Result<()> {
+	let (name, args) = match words.split_first() {
+		// Asked how it's used, in any of the usual ways
+		None => return help(&[]),
+		Some((name, rest)) if matches!(name.as_str(), "--help" | "-h") => return help(rest),
+		Some((name, _)) if matches!(name.as_str(), "--version" | "-V") => ("version", &[][..]),
+		Some((name, args)) => (name.as_str(), args)
 	};
-	let pid = match pid {
-		Some(pid) => pid,
-		None => only_world()?
-	};
-	let mut world = World::connect(pid)?;
-	let result = match name.as_str() {
-		"status" => world.status(),
-		"stack" => {
-			let flags = Flags::parse(args, &[], &["--all"])?;
-			world.stack(flags.has("--all"))
+	let command = command(name).ok_or_else(|| unknown(name))?;
+	if args.iter().any(|arg| arg == "--help" || arg == "-h") {
+		print!("{}", describe(command));
+		return Ok(());
+	}
+	match command.run {
+		Run::Alone(run) => run(args),
+		Run::World(run) => {
+			let pid = match pid {
+				Some(pid) => pid,
+				None => only_world()?
+			};
+			let mut world = World::connect(pid)?;
+			let result = run(&mut world, args);
+			world.leave();
+			result
 		}
-		"vars" => {
-			let flags = Flags::parse(args, &["--frame"], &["--globals"])?;
-			world.vars(flags.number("--frame")?.unwrap_or(0), flags.has("--globals"))
-		}
-		"eval" => {
-			let flags = Flags::parse(args, &["--frame"], &[])?;
-			if flags.rest.is_empty() {
-				return Err("eval what?".into());
-			}
-			world.eval(&flags.rest.join(" "), flags.number("--frame")?)
-		}
-		"pause" => world.pause(),
-		"continue" => world.resume(ContinueKind::Continue),
-		"next" => world.resume(ContinueKind::StepOver { stack_id: 0 }),
-		"step" => world.resume(ContinueKind::StepInto { stack_id: 0 }),
-		"out" => world.resume(ContinueKind::StepOut { stack_id: 0 }),
-		"wait" => {
-			let flags = Flags::parse(
-				args,
-				&["--break", "--if", "--log", "--timeout", "--change", "--frame"],
-				&["--runtimes", "--caught", "--no-hold"]
-			)?;
-			if !flags.rest.is_empty() {
-				return Err(format!("wait doesn't take {}", flags.rest.join(" ")).into());
-			}
-			world.wait(Wait {
-				breaks: flags.values("--break").map(str::to_owned).collect(),
-				changes: flags.values("--change").map(str::to_owned).collect(),
-				frame: flags.number::<u32>("--frame")?.unwrap_or(0),
-				condition: flags.value("--if").map(str::to_owned),
-				log: flags.value("--log").map(LogPart::parse),
-				runtimes: flags.has("--runtimes") || flags.has("--caught"),
-				caught: flags.has("--caught"),
-				timeout: flags.number::<f64>("--timeout")?.map(Duration::from_secs_f64),
-				hold: !flags.has("--no-hold")
-			})
-		}
-		_ => Err(format!("there's no command {}\n\n{}", name, USAGE).into())
-	};
-	world.leave();
-	result
+	}
+}
+
+fn wait(world: &mut World, args: &[String]) -> Result<()> {
+	let flags = Flags::parse(
+		args,
+		&["--break", "--if", "--log", "--timeout", "--change", "--frame"],
+		&["--runtimes", "--caught", "--no-hold"]
+	)?;
+	flags.nothing_else("wait")?;
+	world.wait(Wait {
+		breaks: flags.values("--break").map(str::to_owned).collect(),
+		changes: flags.values("--change").map(str::to_owned).collect(),
+		frame: flags.number::<u32>("--frame")?.unwrap_or(0),
+		condition: flags.value("--if").map(str::to_owned),
+		log: flags.value("--log").map(LogPart::parse),
+		runtimes: flags.has("--runtimes") || flags.has("--caught"),
+		caught: flags.has("--caught"),
+		timeout: flags.number::<f64>("--timeout")?.map(Duration::from_secs_f64),
+		hold: !flags.has("--no-hold")
+	})
 }
 
 fn only_world() -> Result<u32> {
 	let worlds = local::worlds();
-	match worlds.as_slice() {
+	let shown = |worlds: &[&local::World]| {
+		worlds
+			.iter()
+			.map(|w| format!("  {} {}", w.pid, w.dmb.as_ref().map_or(w.program.clone(), |dmb| dmb.display().to_string())))
+			.collect::<Vec<_>>()
+			.join("\n")
+	};
+	let ours: Vec<&local::World> = worlds.iter().filter(|world| world.compatible).collect();
+	let others: Vec<&local::World> = worlds.iter().filter(|world| !world.compatible).collect();
+	match ours.as_slice() {
 		[world] => Ok(world.pid),
-		[] => Err("no world is running the debug library".into()),
-		_ => Err(format!(
-			"more than one world is running the debug library, so say which with --pid:\n{}",
-			worlds
+		[] if others.is_empty() => Err("no world is running the debug library".into()),
+		[] => Err(format!(
+			"no world is running this auxtools' debug library (protocol {}). Started by another version:\n{}",
+			PROTOCOL_VERSION,
+			others
 				.iter()
-				.map(|w| format!(
-					"  {} {}",
-					w.pid,
-					w.dmb.as_ref().map_or(w.program.clone(), |dmb| dmb.display().to_string())
-				))
+				.map(|w| format!("  {} {} (protocol {})", w.pid, w.program, w.protocol))
 				.collect::<Vec<_>>()
 				.join("\n")
 		)
-		.into())
+		.into()),
+		_ => Err(format!("more than one world is running the debug library, so say which with --pid:\n{}", shown(&ours)).into())
 	}
 }
 
@@ -252,7 +481,7 @@ struct Wait {
 	hold: bool
 }
 
-struct World {
+pub struct World {
 	stream: Shared,
 	received: Receiver<io::Result<Response>>,
 	/// Pauses and resumes that came between a request and its response
@@ -645,7 +874,7 @@ fn unexpected(response: &Response) -> Failure {
 
 #[cfg(test)]
 mod tests {
-	use super::{is_command, parse, Flags};
+	use super::{command, describe, overview, parse, Flags, COMMANDS};
 
 	fn args(args: &[&str]) -> Vec<String> {
 		args.iter().map(|arg| (*arg).to_owned()).collect()
@@ -661,12 +890,35 @@ mod tests {
 	}
 
 	#[test]
-	fn commands_are_told_from_the_adapter_s_own_arguments() {
-		for command in ["--pid", "status", "stack", "vars", "eval", "pause", "continue", "next", "step", "out", "wait"] {
-			assert!(is_command(command), "{}", command);
+	fn every_command_is_a_word_in_the_help() {
+		let help = overview();
+		let mut names = vec![];
+		for (_, commands) in COMMANDS {
+			for listed in *commands {
+				assert!(!listed.name.starts_with('-') && !listed.name.contains(' '), "{}", listed.name);
+				assert!(help.contains(&format!("  {} ", listed.name)), "{} isn't in the help", listed.name);
+				assert!(!listed.about.is_empty() && !listed.about.ends_with('.'), "{}: {:?}", listed.name, listed.about);
+				assert!(describe(listed).starts_with(&format!("Usage: auxtools [--pid PID] {}", listed.name)));
+				names.push(listed.name);
+			}
 		}
-		for other in ["--list", "--version", "--build", "run", ""] {
-			assert!(!is_command(other), "{}", other);
+		for name in ["dap", "list", "version", "help", "status", "wait", "eval"] {
+			assert!(command(name).is_some(), "{}", name);
+		}
+		for gone in ["--list", "--build", "--version", "run", ""] {
+			assert!(command(gone).is_none(), "{}", gone);
+		}
+		names.sort_unstable();
+		names.dedup();
+		assert_eq!(names.len(), COMMANDS.iter().map(|(_, commands)| commands.len()).sum::<usize>(), "a name is there twice");
+	}
+
+	#[test]
+	fn no_line_of_the_help_is_wider_than_a_terminal() {
+		for text in std::iter::once(overview()).chain(COMMANDS.iter().flat_map(|(_, commands)| commands.iter()).map(describe)) {
+			for line in text.lines() {
+				assert!(line.chars().count() <= 100, "{} characters: {}", line.chars().count(), line);
+			}
 		}
 	}
 

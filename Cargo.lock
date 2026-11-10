@@ -1576,6 +1576,7 @@ name = "launcher_test"
 version = "0.1.0"
 dependencies = [
  "debug_server",
+ "interprocess",
  "serde_json",
 ]
 

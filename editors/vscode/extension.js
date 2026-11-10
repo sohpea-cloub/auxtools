@@ -84,7 +84,7 @@ function listWorlds(context) {
 	const launcher = launcherPath(context);
 	ensureExecutable(launcher);
 	return new Promise((resolve, reject) => {
-		childProcess.execFile(launcher, ["--list"], { timeout: 30000 }, (error, stdout) => {
+		childProcess.execFile(launcher, ["list"], { timeout: 30000 }, (error, stdout) => {
 			if (error) {
 				reject(error);
 				return;
@@ -189,7 +189,7 @@ class AdapterFactory {
 			return undefined;
 		}
 		ensureExecutable(launcher);
-		return new vscode.DebugAdapterExecutable(launcher, []);
+		return new vscode.DebugAdapterExecutable(launcher, ["dap"]);
 	}
 }
 

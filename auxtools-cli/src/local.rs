@@ -17,21 +17,44 @@ use interprocess::{
 	ConnectWaitMode
 };
 
-use crate::server_types::{world_socket_name, Request, Response};
+use crate::server_types::{world_socket_name, world_socket_name_for, Request, Response, PROTOCOL_VERSION};
 
 /// The name a world's process listens on
 pub fn world_name(pid: u32) -> String {
 	world_socket_name(pid)
 }
 
-/// Connects to the world in process `pid`, if it's listening
-pub fn connect(pid: u32) -> io::Result<Stream> {
+fn connect_to(name: String) -> io::Result<Stream> {
 	// A named pipe can be there with no instance free, and waiting for one
 	// can last forever when the world puts it away
 	ConnectOptions::new()
-		.name(world_name(pid).to_ns_name::<GenericNamespaced>()?)
+		.name(name.to_ns_name::<GenericNamespaced>()?)
 		.wait_mode(ConnectWaitMode::Timeout(Duration::from_secs(1)))
 		.connect_sync()
+}
+
+/// Connects to the world in process `pid`, if it's listening. One that
+/// listens for another version of the protocol is an error that says so.
+pub fn connect(pid: u32) -> io::Result<Stream> {
+	connect_to(world_name(pid)).map_err(|e| match other_protocol(pid) {
+		Some(theirs) => io::Error::other(format!(
+			"its debug library speaks protocol {}, and this auxtools speaks {}: use the auxtools that goes with it (the one that started the world), or start the world with this one",
+			theirs, PROTOCOL_VERSION
+		)),
+		None => e
+	})
+}
+
+/// How far past this version to look for a newer debug library
+const NEWER_PROTOCOLS: u32 = 16;
+
+/// The protocol version the debug library in process `pid` listens for, when
+/// it isn't this one. Nothing is said to it: what it would make of our
+/// messages isn't known.
+pub fn other_protocol(pid: u32) -> Option<u32> {
+	(1..=PROTOCOL_VERSION + NEWER_PROTOCOLS)
+		.filter(|version| *version != PROTOCOL_VERSION)
+		.find(|version| connect_to(world_socket_name_for(*version, pid)).is_ok())
 }
 
 /// A connection read on one thread and written on another, which it allows
@@ -93,17 +116,38 @@ pub struct World {
 	/// The world it runs, from its command line
 	pub dmb: Option<PathBuf>,
 	pub args: Vec<String>,
-	pub cwd: String
+	pub cwd: String,
+	/// The version of the protocol its debug library speaks
+	pub protocol: u32,
+	/// Whether that's this auxtools': one that isn't can't be attached to,
+	/// and nothing but its process is known of it
+	pub compatible: bool
 }
 
 /// The worlds running the debug library, found by asking each BYOND server
-/// process
+/// process. Those whose library speaks another version of the protocol are
+/// listed too, as far as they can be without talking to them.
 pub fn worlds() -> Vec<World> {
-	server_processes().into_iter().filter_map(|(pid, program)| probe(pid, program)).collect()
+	server_processes()
+		.into_iter()
+		.filter_map(|(pid, program)| {
+			probe(pid, program.clone()).or_else(|| {
+				other_protocol(pid).map(|protocol| World {
+					pid,
+					program,
+					dmb: None,
+					args: vec![],
+					cwd: String::new(),
+					protocol,
+					compatible: false
+				})
+			})
+		})
+		.collect()
 }
 
 fn probe(pid: u32, program: String) -> Option<World> {
-	let stream = connect(pid).ok()?;
+	let stream = connect_to(world_name(pid)).ok()?;
 	let (sender, receiver) = std::sync::mpsc::channel();
 	// A world busy with something else answers between DM instructions, and
 	// one that has hung doesn't
@@ -128,7 +172,9 @@ fn probe(pid: u32, program: String) -> Option<World> {
 		program,
 		dmb: world_dmb(&args, &cwd),
 		args,
-		cwd
+		cwd,
+		protocol: PROTOCOL_VERSION,
+		compatible: true
 	})
 }
 

@@ -58,7 +58,7 @@ pub fn launcher_command(args: &[&str]) -> (i32, String) {
 /// is under the directory the tests run in, or in one this process made
 /// (they have its id in their names). Another run on the machine has its own.
 pub fn listed_worlds() -> Vec<Value> {
-	let list = Command::new(launcher_path()).arg("--list").output().unwrap();
+	let list = Command::new(launcher_path()).arg("list").output().unwrap();
 	let worlds: Value = serde_json::from_slice(&list.stdout).unwrap();
 	let plain = |path: &str| path.replace('\\', "/").to_lowercase();
 	let here = plain(&std::env::current_dir().unwrap().to_string_lossy());
@@ -130,6 +130,7 @@ pub struct Launcher {
 impl Launcher {
 	pub fn start() -> Self {
 		let mut child = Command::new(launcher_path())
+			.arg("dap")
 			.stdin(Stdio::piped())
 			.stdout(Stdio::piped())
 			.spawn()
