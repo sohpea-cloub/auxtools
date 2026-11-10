@@ -269,11 +269,15 @@ pub enum Response {
 	/// The variable as it is now, or why it couldn't be set
 	SetVariable(Result<Variable, String>),
 	/// A breakpoint this client set with a message was hit: the message,
-	/// and where the breakpoint is
+	/// where the breakpoint is, and the frame that called the proc it's in
+	/// (`None` for a proc nothing called: one the world started, or one
+	/// that carries on after a `sleep` or `spawn`)
 	Log {
 		message: String,
 		file: Option<String>,
-		line: Option<u32>
+		line: Option<u32>,
+		proc: ProcRef,
+		caller: Option<StackFrame>
 	},
 	/// Sorted, each once
 	LinesWithCode {
@@ -738,7 +742,9 @@ pub enum BreakpointSetResult {
 	Success {
 		line: Option<u32>,
 		/// Where it is, as a stop there has it (`Stop::at`)
-		at: InstructionRef
+		at: InstructionRef,
+		/// The file its proc is in, as its DbgFile names it
+		file: Option<String>
 	},
 	/// There's no such proc, or no instruction there
 	Failed,

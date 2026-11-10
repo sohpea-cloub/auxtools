@@ -246,7 +246,8 @@ fn command_line_shape() {
 	assert!(alone.starts_with("auxtools: debug BYOND worlds"), "auxtools said {}", alone);
 	assert!(alone.contains("Usage: auxtools [--pid PID] COMMAND [OPTIONS]"), "auxtools said {}", alone);
 	for command in [
-		"launch", "stop", "reboot", "list", "status", "stack", "vars", "eval", "pause", "continue", "next", "step", "out", "wait", "dap", "help", "version"
+		"launch", "stop", "reboot", "list", "status", "stack", "vars", "eval", "pause", "continue", "next", "step", "out", "wait", "trace", "dap", "help",
+		"version"
 	] {
 		assert!(alone.lines().any(|line| line.starts_with(&format!("  {} ", command))), "{} isn't in the help:\n{}", command, alone);
 	}
@@ -263,7 +264,15 @@ fn command_line_shape() {
 		"help wait said {}",
 		of_wait
 	);
+	assert!(!of_wait.contains("--log") && of_wait.contains("use `trace`"), "help wait said {}", of_wait);
 	assert_eq!(launcher_command(&["wait", "--help"]), (0, of_wait));
+	let (code, of_trace) = launcher_command(&["help", "trace"]);
+	assert_eq!(code, 0);
+	assert!(
+		of_trace.starts_with("Usage: auxtools [--pid PID] trace PLACE...") && of_trace.contains("  --by caller "),
+		"help trace said {}",
+		of_trace
+	);
 	let (code, printed) = launcher_command(&["help", "frobnicate"]);
 	assert_eq!((code, printed.trim()), (1, "there's no command frobnicate: `auxtools help` lists them"));
 	println!("ok: help COMMAND, and COMMAND --help, show a command's options");
@@ -409,13 +418,6 @@ fn command_line_more(pid: u64, dir: &Path) {
 	assert_eq!(run(&["status"], 0).lines().next().unwrap_or_default(), "running");
 	println!("ok: a wait that doesn't hold its pause leaves the world running");
 
-	// Breakpoints with a message: each hit prints it, and nothing pauses
-	let printed = run(&["wait", "--break", "/proc/value", "--log", "value() at {world.time > 0}", "--timeout", "3"], 2);
-	assert!(printed.starts_with("value() at 1\n"), "wait --log said {}", printed);
-	assert!(printed.contains("timed out"), "wait --log said {}", printed);
-	assert_eq!(run(&["status"], 0).lines().next().unwrap_or_default(), "running");
-	println!("ok: the command line prints a breakpoint's message at each hit, and the world runs on");
-
 	// A condition that fails with an error at each hit doesn't pause, and is
 	// said once
 	let printed = run(&["wait", "--break", "/proc/value", "--if", "rounds.len > 0", "--timeout", "2"], 2);
@@ -454,6 +456,7 @@ fn command_line_more(pid: u64, dir: &Path) {
 		(&["eval"][..], "eval what?"),
 		(&["wait", "--break", "somewhere"][..], "somewhere is neither FILE:LINE nor /proc/path"),
 		(&["wait", "now"][..], "wait doesn't take now"),
+		(&["wait", "--break", "/proc/value", "--log", "hit"][..], "there's no --log here"),
 		(
 			&["wait", "--break", "/proc/value", "--if", "1 =="][..],
 			"couldn't break at /proc/value: the condition doesn't compile: parser error: "
@@ -469,6 +472,138 @@ fn command_line_more(pid: u64, dir: &Path) {
 	assert!(printed.starts_with("couldn't reach the world in process 4000000000"), "status said {}", printed);
 	assert_eq!(run(&["status"], 0).lines().next().unwrap_or_default(), "running");
 	println!("ok: the command line says what it doesn't understand, and exits with 1");
+}
+
+/// `trace`: breakpoints that print or count their hits and never pause
+fn command_line_trace(pid: u64, code: &Path) {
+	let pid = pid.to_string();
+	let run = |args: &[&str], code: i32| {
+		let args: Vec<&str> = ["--pid", pid.as_str()].iter().chain(args).copied().collect();
+		let (got, printed) = launcher_command(&args);
+		assert_eq!(got, code, "`{}` gave {}, not {}: {}", args.join(" "), got, code, printed);
+		printed
+	};
+	// Hot reloaded to return 2 by now
+	let value = line_of(code, "\treturn 2");
+	let called = line_of(code, "\t\tworld.log << \"attach test: [value()]\"");
+	let every = line_of(code, "\ttick(1)");
+	let other = line_of(code, "\t\ttick(2)");
+
+	// A line a hit, saying where and what called it
+	let printed = run(&["trace", "/proc/value", "--count", "3"], 0);
+	let lines: Vec<&str> = printed.lines().collect();
+	let hit = format!("/value  attach_host.dm:{}, called by /run_until_stopped  attach_host.dm:{}", value, called);
+	assert_eq!(lines, [format!("tracing /value  attach_host.dm:{}", value), hit.clone(), hit.clone(), hit], "trace said {}", printed);
+	assert_eq!(run(&["status"], 0).trim(), "running");
+	println!("ok: trace says where its breakpoint went, then where each hit was and what called it, and ends after --count hits");
+
+	let printed = run(&["trace", &format!("attach_host.dm:{}", value), "--log", "rounds then: {rounds > 0}", "--count", "2"], 0);
+	assert_eq!(printed.lines().skip(1).collect::<Vec<_>>(), ["rounds then: 1", "rounds then: 1"], "trace --log said {}", printed);
+	println!("ok: trace --log prints its message at each hit, with the values of its expressions");
+
+	// tick(1) is called every round, tick(2) every other
+	let started = Instant::now();
+	let printed = run(&["trace", "/proc/tick", "--by", "caller", "--for", "3"], 0);
+	assert!(started.elapsed() >= Duration::from_secs(3), "trace --for 3 ended early");
+	let lines: Vec<&str> = printed.lines().collect();
+	let count = |line: &str| line.split_whitespace().next().unwrap().parse::<u32>().unwrap();
+	assert!(
+		lines.len() == 4
+			&& lines[1].ends_with(&format!("  /tally  attach_host.dm:{}", every))
+			&& lines[2].ends_with(&format!("  /tally  attach_host.dm:{}", other))
+			&& count(lines[1]) >= count(lines[2])
+			&& count(lines[2]) >= 2
+			&& lines[3] == format!("{} hits in all", count(lines[1]) + count(lines[2])),
+		"trace --by caller said {}",
+		printed
+	);
+	let printed = run(&["trace", "/proc/tick", "--by", "n", "--count", "6"], 0);
+	let lines: Vec<&str> = printed.lines().collect();
+	assert!(
+		lines.len() == 4 && lines[1].ends_with("  1") && lines[2].ends_with("  2") && count(lines[1]) == 6 - count(lines[2]) && lines[3] == "6 hits in all",
+		"trace --by n said {}",
+		printed
+	);
+	println!("ok: trace --by counts the hits by caller, or by a value, most first, until its time or count is up");
+
+	// A condition that fails is said once, and the hits it skipped counted
+	let printed = run(&["trace", "/proc/tick", "--if", "n.len > 0", "--for", "2"], 0);
+	assert_eq!(printed.matches("said only this once").count(), 1, "trace --if said {}", printed);
+	assert!(
+		printed.contains("failed, so the hits where it fails are skipped (said only this once): runtime error: Cannot read ")
+			&& printed.contains(" hits were skipped: the condition failed with an error there")
+			&& !printed.contains("called by"),
+		"trace --if said {}",
+		printed
+	);
+	println!("ok: a trace whose condition fails at its hits skips them, says why once, and how many it skipped");
+
+	let printed = run(&["trace", "/proc/value", "--json", "--count", "1"], 0);
+	let events: Vec<serde_json::Value> = printed.lines().map(|line| serde_json::from_str(line).unwrap()).collect();
+	assert!(
+		events.len() == 3
+			&& events[0]["event"] == "bound"
+			&& events[0]["line"] == value
+			&& events[1]["event"] == "hit"
+			&& events[1]["caller"]["proc"] == "/run_until_stopped"
+			&& events[1]["caller"]["line"] == called
+			&& events[2]["event"] == "summary"
+			&& events[2]["hits"] == 1
+			&& events[2]["ended"] == "count",
+		"trace --json said {}",
+		printed
+	);
+	println!("ok: trace --json prints a JSON object a line");
+
+	// Read from by something that stops reading: it ends quietly
+	let mut tracing = Command::new(client::launcher_path())
+		.args(["--pid", &pid, "trace", "/proc/value"])
+		.stdout(Stdio::piped())
+		.stderr(Stdio::piped())
+		.spawn()
+		.unwrap();
+	let mut lines = BufReader::new(tracing.stdout.take().unwrap()).lines();
+	assert!(lines.next().unwrap().unwrap().starts_with("tracing "));
+	assert!(lines.next().unwrap().unwrap().starts_with("/value "));
+	drop(lines);
+	let traced = tracing.wait_with_output().unwrap();
+	let err = String::from_utf8_lossy(&traced.stderr);
+	assert!(err.is_empty() && traced.status.code().unwrap_or(0) == 0, "a trace into a closed pipe said {} ({})", err, traced.status);
+	println!("ok: a trace whose output is closed (`| head`) ends quietly");
+
+	#[cfg(unix)]
+	{
+		let tracing = Command::new(client::launcher_path())
+			.args(["--pid", &pid, "trace", "/proc/tick", "--by", "n"])
+			.stdout(Stdio::piped())
+			.stderr(Stdio::piped())
+			.spawn()
+			.unwrap();
+		std::thread::sleep(Duration::from_secs(2));
+		Command::new("kill").args(["-INT", &tracing.id().to_string()]).status().unwrap();
+		let traced = tracing.wait_with_output().unwrap();
+		let out = String::from_utf8_lossy(&traced.stdout);
+		assert!(traced.status.success() && out.contains(" hits in all\n") && out.contains("  1\n"), "an interrupted trace said {}", out);
+		println!("ok: an interrupted trace says what it counted, and exits with 0");
+	}
+
+	for (args, said) in [
+		(&["trace"][..], "trace where?"),
+		(&["trace", "nowhere.dm:3"][..], "no proc in nowhere.dm"),
+		(&["trace", "/proc/value", "/proc/nothing_called_this"][..], "couldn't break at /proc/nothing_called_this: there's no such proc"),
+		(&["trace", "/proc/value", "--if", "1 =="][..], "couldn't break at /proc/value: the condition doesn't compile: "),
+		(&["trace", "/proc/value", "--by", "n", "--log", "x"][..], "--by counts the hits instead of printing a line at each"),
+		(&["trace", "/proc/value", "--for", "-1"][..], "--for -1 isn't a time in seconds"),
+		(&["trace", "/proc/value", "--count", "0"][..], "--count 0 would end before it started")
+	] {
+		let printed = run(args, 1);
+		assert!(printed.contains(said), "`{}` said {}", args.join(" "), printed);
+	}
+	// The breakpoint set before the place that failed went with it
+	assert_eq!(run(&["status"], 0).trim(), "running");
+	let printed = run(&["trace", "/proc/value", "--count", "1"], 0);
+	assert_eq!(printed.lines().count(), 2, "trace said {}", printed);
+	println!("ok: trace fails at once on a place it can't break at, and says what it doesn't understand");
 }
 
 /// The line of `file` that `text` starts
@@ -552,6 +687,7 @@ fn attach_and_reload(server: &str, library: &Path) {
 
 	command_line(pid, &code);
 	command_line_more(pid, &dir);
+	command_line_trace(pid, &code);
 	journal::runtimes(pid, &dir);
 	journal::reloads(pid, &code);
 	journal::hold_max(pid);
@@ -574,7 +710,22 @@ fn attach_and_reload(server: &str, library: &Path) {
 	println!("ok: the world carries on after the command line let it");
 
 	let waiting = journal::wait_for_reboot(pid);
+	// A trace with no end of its own ends with the world, and says what it
+	// counted
+	let tracing = Command::new(client::launcher_path())
+		.args(["--pid", &pid.to_string(), "trace", "/proc/value", "--by", "caller"])
+		.stdout(Stdio::piped())
+		.stderr(Stdio::piped())
+		.spawn()
+		.unwrap();
+	let seen = runner.output.matches("attach test: 2").count();
+	runner.wait_count("attach test: 2", seen + 2);
 	std::fs::write(dir.join("stop"), "yes").unwrap();
+	let traced = tracing.wait_with_output().unwrap();
+	let (out, err) = (String::from_utf8_lossy(&traced.stdout), String::from_utf8_lossy(&traced.stderr));
+	assert_eq!(traced.status.code(), Some(3), "the trace said {}{}", out, err);
+	assert!(out.contains(" hits in all\n") && err.starts_with("the world hung up"), "the trace said {}{}", out, err);
+	println!("ok: a trace ends with the world, exit code 3, and says what it counted");
 	runner.event("terminated");
 	journal::world_went_away(waiting);
 	assert!(runner.output.contains("attach test: done"), "the world didn't finish");

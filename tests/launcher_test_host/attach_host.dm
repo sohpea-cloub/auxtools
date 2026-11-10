@@ -18,6 +18,7 @@ var/rounds = 0
 	var/said = 0
 	while (!fexists("stop"))
 		world.log << "attach test: [value()]"
+		tally()
 		rounds++
 		said++
 		// A runtime error when the test asks for one
@@ -35,6 +36,16 @@ var/rounds = 0
 
 /proc/value()
 	return 1
+
+// Calls tick() from two places: every round, and every other round, for
+// counting hits by caller
+/proc/tally()
+	tick(1)
+	if (rounds % 2 == 0)
+		tick(2)
+
+/proc/tick(n)
+	return n
 
 /proc/fail()
 	var/list/L = null

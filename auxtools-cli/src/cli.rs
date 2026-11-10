@@ -21,6 +21,7 @@ use auxtools_cli::{
 
 mod launch;
 mod stop;
+mod trace;
 
 /// What went wrong, and the exit code it gives
 pub struct Failure(pub i32, pub String);
@@ -267,7 +268,8 @@ proc's vars, and `src`. In a running world it can name globals and call procs.
 			usage: "[--break PLACE]... [--change EXPRESSION]... [--runtimes] [OPTIONS]",
 			about: "Waits for the world to pause, and says why and where",
 			details: "With nothing to pause it for, it waits for whatever pauses it: another client's
-breakpoint, a `pause`. The world stays paused afterwards, until `continue`.
+breakpoint, a `pause`. The world stays paused afterwards, until `continue`. To print
+something at a breakpoint without pausing, or count its hits, use `trace`.
   --break PLACE        Pause at FILE:LINE, or when /proc/path is called (/proc/path#N for
                        its Nth override). Can be given more than once.
   --change EXPRESSION  Pause when what EXPRESSION names gets another value: a var of an
@@ -279,8 +281,6 @@ breakpoint, a `pause`. The world stays paused afterwards, until `continue`.
                        --change, `value` is the new value and `old` the one before.
   --runtimes           Pause on a runtime error that nothing catches
   --caught             Pause on runtime errors inside a `try` as well
-  --log MESSAGE        Don't pause at the breakpoints: print MESSAGE at each hit, with the
-                       values of the {expressions} in it
   --timeout SECONDS    Give up after this long (exit code 2)
   --no-hold            Let the world carry on once this command has gone
   --hold-max SECONDS   As for `pause`: let it carry on by itself this long after this
@@ -295,6 +295,28 @@ wait --reboot [--since N] [--timeout SECONDS] [--json]
   Waits for the world to reboot (or for the first load after entry N), and for the new
   world to answer. Exit code 3 if the world ends instead.",
 			run: Run::World(wait)
+		},
+		Command {
+			name: "trace",
+			usage: "PLACE... [--log MESSAGE] [--by EXPRESSION|caller] [OPTIONS]",
+			about: "Prints a line at each hit of breakpoints that never pause, or counts the hits",
+			details: "A PLACE is FILE:LINE, or /proc/path for when the proc is called (/proc/path#N for its
+Nth override). It says where each breakpoint went, then a line per hit: which proc and
+line it was, and what called it. The world doesn't pause for them, and they go when
+trace ends: after --for or --count, or when it's interrupted (Ctrl-C), with exit code 0;
+or when the world goes away, with 3.
+  --log MESSAGE         Print MESSAGE at each hit instead, with the values of the
+                        {expressions} in it, worked out there
+  --if CONDITION        Only the hits where CONDITION, a DM expression, is true. A hit
+                        where it fails with an error is skipped: said once, and counted.
+  --by EXPRESSION       Nothing per hit: at the end, how many hits there were for each
+                        value of EXPRESSION, most first, and in all. A hit where it fails
+                        counts under the error, in {braces}.
+  --by caller           The same, for each proc and line that called it
+  --for SECONDS         Stop after this long
+  --count N             Stop after N hits
+  --json                A JSON object a line: `bound`, `hit` and `summary` events",
+			run: Run::World(trace::trace)
 		},
 	]),
 	("For editors", &[
@@ -529,7 +551,7 @@ fn wait(world: &mut World, args: &[String]) -> Result<()> {
 	}
 	let flags = Flags::parse(
 		args,
-		&["--break", "--if", "--log", "--timeout", "--change", "--frame"],
+		&["--break", "--if", "--timeout", "--change", "--frame"],
 		&["--runtimes", "--caught", "--no-hold"]
 	)?;
 	flags.nothing_else("wait")?;
@@ -538,7 +560,6 @@ fn wait(world: &mut World, args: &[String]) -> Result<()> {
 		changes: flags.values("--change").map(str::to_owned).collect(),
 		frame: flags.number::<u32>("--frame")?.unwrap_or(0),
 		condition: flags.value("--if").map(str::to_owned),
-		log: flags.value("--log").map(LogPart::parse),
 		runtimes: flags.has("--runtimes") || flags.has("--caught"),
 		caught: flags.has("--caught"),
 		timeout: flags.number::<f64>("--timeout")?.map(Duration::from_secs_f64),
@@ -581,8 +602,6 @@ struct Wait {
 	/// The frame they're of, when the world is paused
 	frame: u32,
 	condition: Option<String>,
-	/// A message the breakpoints print at each hit, in place of pausing
-	log: Option<Vec<LogPart>>,
 	runtimes: bool,
 	/// Those inside a `try` too
 	caught: bool,
@@ -598,7 +617,9 @@ pub struct World {
 	/// Pauses and resumes that came between a request and its response
 	events: Vec<Response>,
 	/// What the world said in notifications, like why an expression failed
-	notes: Vec<String>
+	notes: Vec<String>,
+	/// What it said of breakpoints' conditions that failed, once each
+	failed_conditions: Vec<String>
 }
 
 impl World {
@@ -618,7 +639,8 @@ impl World {
 			stream,
 			received,
 			events: vec![],
-			notes: vec![]
+			notes: vec![],
+			failed_conditions: vec![]
 		})
 	}
 
@@ -644,9 +666,10 @@ impl World {
 				Response::CodeChanged => {}
 				// Said once for each breakpoint whose condition fails, as it
 				// comes: those hits are skipped
-				Response::ConditionFailed { message } => eprintln!("{}", message),
-				// A breakpoint's message, as it comes
-				Response::Log { message, .. } => println!("{}", message),
+				Response::ConditionFailed { message } => {
+					eprintln!("{}", message);
+					self.failed_conditions.push(message);
+				}
 				Response::WatchEnded { reason, .. } => println!("a watch is over: {}", reason),
 				response => return Ok(Some(response))
 			}
@@ -657,7 +680,7 @@ impl World {
 		local::send(&mut self.stream, &request).map_err(|_| hung_up())?;
 		loop {
 			match self.next(None)?.expect("no time limit") {
-				event @ (Response::BreakpointHit { .. } | Response::Resumed) => self.events.push(event),
+				event @ (Response::BreakpointHit { .. } | Response::Resumed | Response::Log { .. }) => self.events.push(event),
 				response => return Ok(response)
 			}
 		}
@@ -893,7 +916,7 @@ impl World {
 		// The condition is the watches' when there are any
 		let condition = if wait.changes.is_empty() { wait.condition.clone() } else { None };
 		for place in &wait.breaks {
-			self.set_breakpoint(place, condition.clone(), wait.log.clone())?;
+			self.set_breakpoint(place, condition.clone(), None)?;
 		}
 		if paused.is_some() {
 			self.events.clear();
@@ -914,8 +937,10 @@ impl World {
 		}
 	}
 
-	/// At `FILE:LINE`, or the start of `/proc/path` (`#N` for an override)
-	fn set_breakpoint(&mut self, place: &str, condition: Option<String>, log: Option<Vec<LogPart>>) -> Result<()> {
+	/// At `FILE:LINE`, or the start of `/proc/path` (`#N` for an override):
+	/// where each breakpoint went (a line can be in more than one proc). With
+	/// a `log`, it says that at each hit (`Response::Log`) and doesn't pause.
+	fn set_breakpoint(&mut self, place: &str, condition: Option<String>, log: Option<Vec<LogPart>>) -> Result<Vec<Bound>> {
 		let instructions = if place.starts_with('/') {
 			let (path, override_id) = match place.split_once('#') {
 				Some((path, id)) => (path.to_owned(), id.parse().map_err(|_| format!("{} isn't an override number", id))?),
@@ -942,16 +967,23 @@ impl World {
 				other => return Err(unexpected(&other))
 			}
 		};
+		let mut bound = vec![];
 		for instruction in instructions {
 			match self.request(Request::BreakpointSet {
-				instruction,
+				instruction: instruction.clone(),
 				condition: condition.clone(),
 				hit: None,
 				log: log.clone()
 			})? {
 				Response::BreakpointSet {
-					result: BreakpointSetResult::Success { .. }
-				} => {}
+					result: BreakpointSetResult::Success { line, at, file }
+				} => bound.push(Bound {
+					place: place.to_owned(),
+					asked: instruction,
+					at,
+					file,
+					line
+				}),
 				Response::BreakpointSet {
 					result: BreakpointSetResult::Refused { reason }
 				} => return Err(format!("couldn't break at {}: {}", place, reason).into()),
@@ -959,18 +991,53 @@ impl World {
 				other => return Err(unexpected(&other))
 			}
 		}
-		Ok(())
+		Ok(bound)
+	}
+
+	/// Takes a breakpoint away: how many of its hits were skipped because its
+	/// condition failed
+	fn unset_breakpoint(&mut self, bound: &Bound) -> Result<u32> {
+		// By what it was set with, which is how the world knows it
+		match self.request(Request::BreakpointUnset {
+			instruction: bound.asked.clone()
+		})? {
+			Response::BreakpointUnset { skipped, .. } => Ok(skipped),
+			other => Err(unexpected(&other))
+		}
+	}
+}
+
+/// A breakpoint that was set
+struct Bound {
+	/// The place it was asked for, as it was given
+	place: String,
+	/// What it was set with
+	asked: InstructionRef,
+	/// Where it went: its proc, as the proc names itself, and the instruction
+	at: InstructionRef,
+	file: Option<String>,
+	line: Option<u32>
+}
+
+impl Bound {
+	/// Its proc and line, as a frame there is shown
+	fn spot(&self) -> String {
+		spot(&self.at.proc, false, self.file.as_deref(), self.line)
 	}
 }
 
 fn place(frame: &StackFrame) -> String {
-	let proc = &frame.instruction.proc;
+	spot(&frame.instruction.proc, frame.old_code, frame.file.as_deref(), frame.line)
+}
+
+/// A proc and where in it
+fn spot(proc: &ProcRef, old_code: bool, file: Option<&str>, line: Option<u32>) -> String {
 	let name = match proc.override_id {
 		0 => proc.path.clone(),
 		n => format!("{}#{}", proc.path, n)
 	};
-	let name = if frame.old_code { format!("{} (old code)", name) } else { name };
-	match (&frame.file, frame.line) {
+	let name = if old_code { format!("{} (old code)", name) } else { name };
+	match (file, line) {
 		(Some(file), Some(line)) => format!("{}  {}:{}", name, file, line),
 		(None, Some(line)) => format!("{}  line {}", name, line),
 		// At its start, before its first line
@@ -1017,7 +1084,7 @@ mod tests {
 				names.push(listed.name);
 			}
 		}
-		for name in ["dap", "list", "version", "help", "status", "wait", "eval", "launch", "stop", "reboot"] {
+		for name in ["dap", "list", "version", "help", "status", "wait", "trace", "eval", "launch", "stop", "reboot"] {
 			assert!(command(name).is_some(), "{}", name);
 		}
 		for gone in ["--list", "--build", "--version", "run", ""] {

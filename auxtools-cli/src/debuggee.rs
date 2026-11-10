@@ -209,7 +209,7 @@ impl Debuggee {
 						}
 
 						// A breakpoint with a message
-						Response::Log { message, file, line } => {
+						Response::Log { message, file, line, .. } => {
 							if inputs.send(Input::Logged { message, file, line }).is_err() {
 								break "nobody was listening".to_owned();
 							}

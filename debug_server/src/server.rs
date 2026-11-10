@@ -604,6 +604,25 @@ impl Server {
 		)
 	}
 
+	/// A frame as a client is shown it, known to it by `id`
+	fn frame_info(&self, frame: &debug::StackFrame, id: u32, asleep: bool) -> StackFrame {
+		let old_code = Self::old_code_of(frame).is_some();
+		StackFrame {
+			id,
+			instruction: InstructionRef {
+				proc: ProcRef {
+					path: frame.proc.path.to_owned(),
+					override_id: frame.proc.override_id()
+				},
+				offset: frame.offset as u32
+			},
+			line: self.frame_line_number(frame, asleep),
+			file: Self::file_of(&frame.proc),
+			old_code,
+			code: self.code_of(frame, old_code)
+		}
+	}
+
 	/// The file a proc is in, if its code starts with DbgFile
 	fn file_of(proc: &Proc) -> Option<String> {
 		let dbg_file = dmasm::Opcode::DbgFile.word();
@@ -1259,7 +1278,11 @@ impl Server {
 					override_id: proc.override_id()
 				};
 				self.send_or_disconnect(Response::BreakpointSet {
-					result: BreakpointSetResult::Success { line, at: instruction }
+					result: BreakpointSetResult::Success {
+						line,
+						at: instruction,
+						file: Self::file_of(&proc)
+					}
 				});
 			}
 
@@ -1387,11 +1410,6 @@ impl Server {
 						break;
 					}
 
-					let proc_ref = ProcRef {
-						path: stack[i].proc.path.to_owned(),
-						override_id: stack[i].proc.override_id()
-					};
-
 					let id = match &self.state {
 						Some(state) if stack_id != 0 => state.sleeping_frame_id(SleepingFrame {
 							thread,
@@ -1400,19 +1418,8 @@ impl Server {
 						}),
 						_ => i as u32
 					};
-					let old_code = Self::old_code_of(&stack[i]).is_some();
-					frames.push(StackFrame {
-						id,
-						instruction: InstructionRef {
-							proc: proc_ref.clone(),
-							offset: stack[i].offset as u32
-						},
-						// A sleeping stack's innermost frame is the one asleep
-						line: self.frame_line_number(&stack[i], stack_id != 0 && i == 0),
-						file: Self::file_of(&stack[i].proc),
-						old_code,
-						code: self.code_of(&stack[i], old_code)
-					});
+					// A sleeping stack's innermost frame is the one asleep
+					frames.push(self.frame_info(&stack[i], id, stack_id != 0 && i == 0));
 				}
 
 				Response::StackFrames {
@@ -2420,6 +2427,7 @@ impl Server {
 				continue;
 			};
 			let message = self.log_message(&log);
+			let caller = self.state.as_ref().and_then(|state| state.active().get(1)).map(|frame| self.frame_info(frame, 1, false));
 			let logged = Proc::from_id(proc).map(|proc| {
 				let place = ProcRef {
 					path: proc.path.clone(),
@@ -2428,7 +2436,9 @@ impl Server {
 				Response::Log {
 					message,
 					file: Self::file_of(&proc),
-					line: self.get_line_number(place, offset as u32)
+					line: self.get_line_number(place.clone(), offset as u32),
+					proc: place,
+					caller
 				}
 			});
 			if let (Some(logged), Some(to)) = (logged, self.clients.get_mut(&client.0)) {

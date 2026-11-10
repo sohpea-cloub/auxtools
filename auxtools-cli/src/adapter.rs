@@ -1611,7 +1611,7 @@ impl Adapter {
 	fn breakpoint_set(&mut self, request: &AuxRequest) -> Result<Option<(Option<u32>, InstructionRef)>, String> {
 		match self.request(request)? {
 			AuxResponse::BreakpointSet {
-				result: aux::BreakpointSetResult::Success { line, at }
+				result: aux::BreakpointSetResult::Success { line, at, .. }
 			} => Ok(Some((line, at))),
 			AuxResponse::BreakpointSet {
 				result: aux::BreakpointSetResult::Failed
