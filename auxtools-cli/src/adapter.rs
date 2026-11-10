@@ -56,7 +56,6 @@ const HELPER_FILE: &str = "auxtools_launcher.dm";
 /// Where the key for function breakpoints' records is
 const FUNCTION_BREAKPOINTS: &str = "<functions>";
 /// The things that take a while, by the ids the client is shown them under
-const BUILDING: &str = "building";
 const STARTING: &str = "starting";
 const READING: &str = "reading";
 const RESTARTING: &str = "restarting";
@@ -128,11 +127,8 @@ struct LaunchArguments {
 	server: Option<Server>,
 	/// Where BYOND is, if it isn't where it's usually installed
 	byond_path: Option<PathBuf>,
-	/// Build the .dme first
-	#[serde(default)]
-	build: bool,
-	/// DreamMaker's `-D` defines, `NAME` or `NAME=VALUE`, for building and
-	/// reading the code
+	/// The `-D` defines the .dmb was built with, `NAME` or `NAME=VALUE`, for
+	/// reading its code as DreamMaker did
 	#[serde(default)]
 	defines: Vec<String>,
 	/// Swap changed code into the world as files are saved
@@ -714,14 +710,6 @@ impl Adapter {
 			return Err(format!("there's no {} in {}", server.program(), bin.display()));
 		}
 
-		if args.build {
-			let dme = dme.as_ref().ok_or("there's no .dme to build")?;
-			let out = self.out.clone();
-			self.progress_start(BUILDING, format!("Building {}", dme.file_name().unwrap_or_default().to_string_lossy()));
-			let built = byond::build_with(&bin, dme, &args.defines, move |line| out.console(line));
-			self.progress_end(BUILDING);
-			built?;
-		}
 		if !dmb.is_file() {
 			return Err(format!("there's no {}", dmb.display()));
 		}

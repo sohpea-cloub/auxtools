@@ -117,38 +117,6 @@
 				}
 			}
 		},
-		"taskDefinitions": [
-			{
-				"type": "dreammaker",
-				"required": [
-					"dme"
-				],
-				"properties": {
-					"dme": {
-						"type": "string",
-						"description": "The .dme to build"
-					}
-				}
-			}
-		],
-		"problemMatchers": [
-			{
-				"name": "dreammaker",
-				"owner": "dreammaker",
-				"source": "DreamMaker",
-				"fileLocation": [
-					"autoDetect",
-					"${workspaceFolder}"
-				],
-				"pattern": {
-					"regexp": "^(.+?):(\\d+):(error|warning): (.*)$",
-					"file": 1,
-					"line": 2,
-					"severity": 3,
-					"message": 4
-				}
-			}
-		],
 		"debuggers": [
 			{
 				"type": "auxtools",
@@ -182,17 +150,12 @@
 								],
 								"description": "The BYOND program that runs the world. DreamSeeker on Windows, DreamDaemon on Linux, unless set."
 							},
-							"build": {
-								"type": "boolean",
-								"description": "Build the .dme with DreamMaker first",
-								"default": false
-							},
 							"defines": {
 								"type": "array",
 								"items": {
 									"type": "string"
 								},
-								"description": "DreamMaker's -D defines, NAME or NAME=VALUE, for building and reading the code",
+								"description": "The -D defines the .dmb was built with, NAME or NAME=VALUE: hot reloading reads the code as DreamMaker did",
 								"default": []
 							},
 							"hotReload": {

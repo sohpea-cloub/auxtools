@@ -38,8 +38,7 @@ Launch options:
 | `dmb` | The world to run. |
 | `dme` | The world's `.dme`, if it isn't the one next to the `.dmb`. Its directory is where the world's files are, and hot reloading reads it. |
 | `server` | `dreamseeker`, `dreamdaemon`, or `dd` (Windows' DreamDaemon without a window, whose output shows in the debug console). |
-| `build` | Build the `.dme` with DreamMaker first (off unless set). |
-| `defines` | DreamMaker's `-D` defines (`NAME` or `NAME=VALUE`), for building and reading the code. |
+| `defines` | The `-D` defines the `.dmb` was built with (`NAME` or `NAME=VALUE`), so that hot reloading reads the code as DreamMaker did. |
 | `hotReload` | Swap changed code into the running world as files are saved (on unless set to `false`). |
 | `sleepingThreads` | How many sleeping procs the call stack view lists when the world is paused (100 unless set). |
 | `byondPath` | Where BYOND is installed, if it isn't found. |
@@ -223,11 +222,6 @@ still debugging it.
 Attach options: `processId` (the world's process; unset, you pick), `dme` (if it isn't
 next to the `.dmb` the world runs), `defines`, `hotReload` (off unless set, since
 whoever launched the world may be reloading it already), and `sleepingThreads`.
-
-## Building
-
-**Tasks: Run Build Task** offers "build NAME.dme" for each `.dme`, with DreamMaker's
-errors in the Problems panel (for a `.dme` at the workspace's root).
 
 ## Settings
 

@@ -1,7 +1,6 @@
 // The auxtools debugger for VS Code. The debugging is all the launcher's
 // (`auxtools-cli`): this tells VS Code where it is, fills in launch and
-// attach configurations, and adds commands and a build task for DreamMaker
-// worlds.
+// attach configurations, and adds commands for starting worlds.
 //
 // Plain JavaScript with no dependencies: VS Code provides the `vscode` module.
 
@@ -15,7 +14,6 @@ const { expressionAt } = require("./expression");
 const { UnsavedFiles } = require("./unsaved");
 
 const DEBUG_TYPE = "auxtools";
-const TASK_TYPE = "dreammaker";
 
 function settings() {
 	return vscode.workspace.getConfiguration("auxtools");
@@ -29,12 +27,6 @@ function launcherPath(context) {
 	}
 	const exe = process.platform === "win32" ? "auxtools.exe" : "auxtools";
 	return path.join(context.extensionPath, "bin", process.platform, exe);
-}
-
-// The launcher's arguments for building `dme`
-function buildArgs(dme) {
-	const byondPath = settings().get("byondPath");
-	return byondPath ? ["--build", dme, byondPath] : ["--build", dme];
 }
 
 // A packaged extension's files can lose their executable bit on Linux
@@ -201,40 +193,6 @@ class AdapterFactory {
 	}
 }
 
-class BuildTaskProvider {
-	constructor(context) {
-		this.context = context;
-	}
-
-	async provideTasks() {
-		const found = await findFiles(".dme");
-		return found.map((uri) => this.task({ type: TASK_TYPE, dme: uri.fsPath }, vscode.workspace.getWorkspaceFolder(uri)));
-	}
-
-	resolveTask(task) {
-		if (!task.definition.dme) {
-			return undefined;
-		}
-		return this.task(task.definition, task.scope);
-	}
-
-	task(definition, folder) {
-		ensureExecutable(launcherPath(this.context));
-		const task = new vscode.Task(
-			definition,
-			folder || vscode.TaskScope.Workspace,
-			`build ${path.basename(definition.dme)}`,
-			TASK_TYPE,
-			new vscode.ProcessExecution(launcherPath(this.context), buildArgs(definition.dme), {
-				cwd: path.dirname(definition.dme),
-			}),
-			"$dreammaker"
-		);
-		task.group = vscode.TaskGroup.Build;
-		return task;
-	}
-}
-
 // Attaches to a running world, picked from a list
 async function attach() {
 	await vscode.debug.startDebugging(undefined, {
@@ -297,7 +255,6 @@ function activate(context) {
 		vscode.debug.registerDebugAdapterDescriptorFactory(DEBUG_TYPE, new AdapterFactory(context)),
 		vscode.debug.registerDebugConfigurationProvider(DEBUG_TYPE, provider),
 		vscode.debug.registerDebugConfigurationProvider(DEBUG_TYPE, provider, vscode.DebugConfigurationProviderTriggerKind.Dynamic),
-		vscode.tasks.registerTaskProvider(TASK_TYPE, new BuildTaskProvider(context)),
 		vscode.commands.registerCommand("auxtools.debugDreamSeeker", startCommand("dreamseeker", false)),
 		vscode.commands.registerCommand("auxtools.debugDreamDaemon", startCommand("dreamdaemon", false)),
 		vscode.commands.registerCommand("auxtools.runDreamSeeker", startCommand("dreamseeker", true)),

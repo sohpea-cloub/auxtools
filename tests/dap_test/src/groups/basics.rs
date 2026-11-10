@@ -104,18 +104,18 @@ fn progress(world: &mut World) -> Vec<(String, String)> {
 fn told_along_the_way() {
 	let pair = |event: &str, id: &str| (event.to_owned(), id.to_owned());
 
-	// A client that shows progress, building the world first
-	let mut world = World::launch_as(json!({ "supportsProgressReporting": true }), host_file(""), json!({ "build": true, "hotReload": true }));
+	// A client that shows progress
+	let mut world = World::launch_as(json!({ "supportsProgressReporting": true }), host_file(""), json!({ "hotReload": true }));
 	world.catch_runtimes(false);
 	world.configure();
 	world.wait_output("Hot reload: watching");
 	let events = progress(&mut world);
-	for id in ["building", "starting", "reading"] {
+	for id in ["starting", "reading"] {
 		let (start, end) = (events.iter().position(|e| *e == pair("progressStart", id)), events.iter().position(|e| *e == pair("progressEnd", id)));
 		assert!(start.is_some() && start < end, "{} wasn't shown from start to end: {:?}", id, events);
 	}
-	assert_eq!(events.len(), 6, "{:?}", events);
-	ok("a client that shows progress is told while the world is built, while it starts and while its code is read");
+	assert_eq!(events.len(), 4, "{:?}", events);
+	ok("a client that shows progress is told while the world starts and while its code is read");
 
 	let process = world.event("process");
 	let pid = client::listed_world("dap_test_host.dmb");

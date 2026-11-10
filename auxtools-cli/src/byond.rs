@@ -1,11 +1,6 @@
-//! Finding BYOND's programs, and building a .dme with DreamMaker.
+//! Finding BYOND's programs.
 
-use std::{
-	io::{BufRead, BufReader},
-	path::{Path, PathBuf},
-	process::{Command, Stdio},
-	sync::Arc
-};
+use std::path::{Path, PathBuf};
 
 /// Which BYOND program hosts the world
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Deserialize)]
@@ -144,49 +139,5 @@ mod registry {
 		}
 		let len = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
 		Some(PathBuf::from(std::ffi::OsString::from_wide(&buf[..len])))
-	}
-}
-
-/// Builds `dme` with `defines` (`NAME` or `NAME=VALUE`), handing each line
-/// DreamMaker prints to `print`
-pub fn build_with(bin: &Path, dme: &Path, defines: &[String], print: impl Fn(String) + Send + Sync + 'static) -> Result<(), String> {
-	let mut command = Command::new(bin.join(compiler()));
-	command.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
-	command.args(defines.iter().map(|define| format!("-D{}", define)));
-	// From the .dme's directory, which DreamMaker names files relative to
-	match (dme.parent().filter(|dir| !dir.as_os_str().is_empty()), dme.file_name()) {
-		(Some(dir), Some(name)) => command.current_dir(dir).arg(name),
-		_ => command.arg(dme)
-	};
-	#[cfg(unix)]
-	command.env("LD_LIBRARY_PATH", bin);
-
-	print(format!("Building {}", dme.display()));
-	let mut child = command
-		.spawn()
-		.map_err(|e| format!("couldn't run {}: {}", bin.join(compiler()).display(), e))?;
-	let print = Arc::new(print);
-	let stderr = child.stderr.take().map(|stderr| {
-		let print = print.clone();
-		std::thread::spawn(move || {
-			for line in BufReader::new(stderr).lines().map_while(Result::ok) {
-				print(line);
-			}
-		})
-	});
-	if let Some(stdout) = child.stdout.take() {
-		for line in BufReader::new(stdout).lines().map_while(Result::ok) {
-			print(line);
-		}
-	}
-	if let Some(stderr) = stderr {
-		let _ = stderr.join();
-	}
-
-	let status = child.wait().map_err(|e| e.to_string())?;
-	if status.success() {
-		Ok(())
-	} else {
-		Err(format!("{} didn't build", dme.display()))
 	}
 }
