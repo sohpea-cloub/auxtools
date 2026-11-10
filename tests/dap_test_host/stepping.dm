@@ -149,9 +149,11 @@ var/stop_busy = FALSE
 		passes++ // @busy_loop
 	return passes
 
-// Fifty procs asleep at once
+// Fifty procs asleep at once, or as many as the test asks for
+var/many = 50
+
 /proc/sc_many()
-	for (var/i in 1 to 50)
+	for (var/i in 1 to many)
 		spawn(0)
 			sleep(600) // @many_sleep
 	sleep(1)

@@ -33,7 +33,7 @@ use serde_json::Value;
 use crate::{
 	code,
 	dap::{self, Output},
-	debuggee::{Debuggee, LastError},
+	debuggee::{Debuggee, LastError, SetBreakpoint, SetBreakpoints},
 	stddef::{strip_declaration, Stddef}
 };
 
@@ -127,7 +127,9 @@ struct LaunchArguments {
 	#[serde(default)]
 	env: HashMap<String, String>,
 	/// The debug library, if not the one next to the launcher
-	debug_library: Option<PathBuf>
+	debug_library: Option<PathBuf>,
+	/// How many sleeping procs the thread list has
+	sleeping_threads: Option<u32>
 }
 
 #[derive(Deserialize)]
@@ -141,7 +143,9 @@ struct AttachArguments {
 	defines: Vec<String>,
 	/// Off by default: whoever launched the world might be reloading it too
 	#[serde(default)]
-	hot_reload: bool
+	hot_reload: bool,
+	/// How many sleeping procs the thread list has
+	sleeping_threads: Option<u32>
 }
 
 /// What the client says of itself in `initialize`, of what matters here
@@ -270,7 +274,11 @@ pub struct Adapter {
 	uncaught: Option<aux::RuntimeFilter>,
 	caught: Option<aux::RuntimeFilter>,
 	/// What's set in the world now, by file (or `FUNCTION_BREAKPOINTS`)
-	set: HashMap<String, Vec<InstructionRef>>
+	set: SetBreakpoints,
+	/// How many sleeping procs the thread list has
+	sleeping_threads: u32,
+	/// The client has been told the thread list doesn't have them all
+	said_more_sleep: bool
 }
 
 /// Runs the adapter on stdin and stdout until the client leaves
@@ -317,7 +325,9 @@ pub fn run() {
 		function_breakpoints: vec![],
 		uncaught: Some(aux::RuntimeFilter::default()),
 		caught: None,
-		set: HashMap::new()
+		set: SetBreakpoints::default(),
+		sleeping_threads: aux::DEFAULT_SLEEPING_STACKS,
+		said_more_sleep: false
 	};
 
 	while let Ok(input) = receiver.recv() {
@@ -561,6 +571,7 @@ impl Adapter {
 		};
 
 		self.debugging = !args.no_debug;
+		self.sleeping_threads = args.sleeping_threads.unwrap_or(aux::DEFAULT_SLEEPING_STACKS);
 		self.code_settings = Some(CodeSettings {
 			dme: dme.filter(|dme| dme.is_file()),
 			defines: args.defines,
@@ -646,6 +657,7 @@ impl Adapter {
 			)
 		})?;
 
+		self.sleeping_threads = args.sleeping_threads.unwrap_or(aux::DEFAULT_SLEEPING_STACKS);
 		self.code_settings = Some(CodeSettings {
 			dme: args.dme,
 			defines: args.defines,
@@ -738,7 +750,8 @@ impl Adapter {
 			self.debugging,
 			self.out.clone(),
 			self.inputs.clone(),
-			self.last_error.clone()
+			self.last_error.clone(),
+			self.set.clone()
 		);
 		match debuggee {
 			Ok(debuggee) => self.debuggee = Some(debuggee),
@@ -747,7 +760,7 @@ impl Adapter {
 				return;
 			}
 		}
-		self.set.clear();
+		self.set.lock().unwrap().clear();
 
 		// It hangs up straight away if it's on its way to a reboot
 		let byond = match self.request(&AuxRequest::ByondVersion) {
@@ -953,7 +966,7 @@ impl Adapter {
 		}
 		self.debuggee = None;
 		self.waiting_for_code = false;
-		self.set.clear();
+		self.set.lock().unwrap().clear();
 
 		// A world that's ending shuts its debugger down on the way
 		if self.pid.is_some() && !self.ending {
@@ -1183,16 +1196,22 @@ impl Adapter {
 
 			let mut result = None;
 			for instruction in instructions {
+				let mut at = None;
 				match self.set_breakpoint(&instruction, condition.clone(), hit, log.clone()) {
-					Ok(Some(set_line)) => {
+					Ok(Some((set_line, set_at))) => {
 						result.get_or_insert(Ok(set_line));
+						at = Some(set_at);
 					}
 					Ok(None) => {}
 					Err(e) => {
 						result.get_or_insert(Err(e));
 					}
 				}
-				set.push(instruction);
+				set.push(SetBreakpoint {
+					asked: instruction,
+					at,
+					id: number
+				});
 			}
 			breakpoints.push(match result {
 				Some(Ok(set_line)) => Breakpoint {
@@ -1205,7 +1224,7 @@ impl Adapter {
 				None => unverified("the world couldn't set it")
 			});
 		}
-		self.set.insert(path.to_owned(), set);
+		self.set.lock().unwrap().insert(path.to_owned(), set);
 		breakpoints
 	}
 
@@ -1216,7 +1235,7 @@ impl Adapter {
 		condition: Option<String>,
 		hit: Option<aux::HitCondition>,
 		log: Option<Vec<aux::LogPart>>
-	) -> Result<Option<Option<u32>>, String> {
+	) -> Result<Option<(Option<u32>, InstructionRef)>, String> {
 		match self.request(&AuxRequest::BreakpointSet {
 			instruction: instruction.clone(),
 			condition,
@@ -1224,8 +1243,8 @@ impl Adapter {
 			log
 		})? {
 			AuxResponse::BreakpointSet {
-				result: aux::BreakpointSetResult::Success { line }
-			} => Ok(Some(line)),
+				result: aux::BreakpointSetResult::Success { line, at }
+			} => Ok(Some((line, at))),
 			AuxResponse::BreakpointSet {
 				result: aux::BreakpointSetResult::Failed
 			} => Ok(None),
@@ -1238,8 +1257,11 @@ impl Adapter {
 
 	/// Takes away the breakpoints set under `key`
 	fn unset(&mut self, key: &str) {
-		for instruction in self.set.remove(key).unwrap_or_default() {
-			let _ = self.request(&AuxRequest::BreakpointUnset { instruction });
+		let set = self.set.lock().unwrap().remove(key).unwrap_or_default();
+		for breakpoint in set {
+			let _ = self.request(&AuxRequest::BreakpointUnset {
+				instruction: breakpoint.asked
+			});
 		}
 	}
 
@@ -1275,26 +1297,39 @@ impl Adapter {
 				offset: 0
 			};
 			let set_as_asked = hit_condition(hit.as_deref()).and_then(|hit| self.set_breakpoint(&instruction, condition, hit, None));
+			let id = self.next_breakpoint_id;
+			self.next_breakpoint_id += 1;
+			let mut at = None;
 			breakpoints.push(match set_as_asked {
-				Ok(Some(line)) => Breakpoint {
-					verified: true,
-					line: line.map(i64::from),
-					..Default::default()
-				},
+				Ok(Some((line, set_at))) => {
+					at = Some(set_at);
+					Breakpoint {
+						id: Some(id),
+						verified: true,
+						line: line.map(i64::from),
+						..Default::default()
+					}
+				}
 				Ok(None) => Breakpoint {
+					id: Some(id),
 					verified: false,
 					message: Some(format!("there's no {}", name)),
 					..Default::default()
 				},
 				Err(e) => Breakpoint {
+					id: Some(id),
 					verified: false,
 					message: Some(e),
 					..Default::default()
 				}
 			});
-			set.push(instruction);
+			set.push(SetBreakpoint {
+				asked: instruction,
+				at,
+				id
+			});
 		}
-		self.set.insert(FUNCTION_BREAKPOINTS.to_owned(), set);
+		self.set.lock().unwrap().insert(FUNCTION_BREAKPOINTS.to_owned(), set);
 		breakpoints
 	}
 
@@ -1355,17 +1390,36 @@ impl Adapter {
 	fn threads(&mut self) -> Handled {
 		let mut threads = vec![];
 		if self.debuggee.is_some() {
-			match self.request(&AuxRequest::Stacks)? {
-				AuxResponse::Stacks { stacks } => {
-					threads.extend(
-						stacks
-							.into_iter()
-							.filter(|stack| strip_declaration(&stack.name) != KEEPALIVE)
-							.map(|stack| Thread {
-								id: stack.id.into(),
-								name: stack.name
-							})
-					);
+			// One more than the list has: the debug library's own is left out
+			let limit = self.sleeping_threads as usize;
+			let wanted = self.sleeping_threads.saturating_add(1);
+			match self.request(&AuxRequest::Stacks { sleeping: Some(wanted) })? {
+				AuxResponse::Stacks { stacks, sleeping } => {
+					let mut asleep = sleeping as usize;
+					let mut listed = 0;
+					for stack in stacks {
+						if strip_declaration(&stack.name) == KEEPALIVE {
+							asleep -= 1;
+							continue;
+						}
+						if stack.sleeping {
+							if listed == limit {
+								continue;
+							}
+							listed += 1;
+						}
+						threads.push(Thread {
+							id: stack.id.into(),
+							name: thread_name(&stack)
+						});
+					}
+					if asleep > listed && !self.said_more_sleep {
+						self.said_more_sleep = true;
+						self.out.console(format!(
+							"{} procs are asleep: the list of threads has the first {} (\"sleepingThreads\" in the launch configuration sets how many)",
+							asleep, listed
+						));
+					}
 				}
 				other => return Err(unexpected(other))
 			}
@@ -1819,6 +1873,20 @@ fn file_name_in(root: Option<&Path>, path: &str) -> String {
 		Some(relative) => relative.to_string_lossy().replace('\\', "/"),
 		None => path.to_string_lossy().into_owned()
 	}
+}
+
+/// What a stack is called in the list of threads: the proc it's in, where,
+/// and whether it's asleep
+fn thread_name(stack: &aux::Stack) -> String {
+	let mut name = stack.name.clone();
+	if let (Some(file), Some(line)) = (&stack.file, stack.line) {
+		let file = file.rsplit(['/', '\\']).next().unwrap_or(file);
+		name += &format!("  {}:{}", file, line);
+	}
+	if stack.sleeping {
+		name += ", sleeping";
+	}
+	name
 }
 
 fn unexpected(response: AuxResponse) -> String {

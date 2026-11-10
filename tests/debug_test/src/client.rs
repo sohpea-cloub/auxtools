@@ -199,7 +199,7 @@ impl Client {
 	/// Waits for the world to pause and says why it did.
 	pub fn expect_pause(&mut self) -> BreakpointReason {
 		match self.recv() {
-			Response::BreakpointHit { reason } => reason,
+			Response::BreakpointHit(stop) => stop.reason,
 			other => panic!("expected the world to pause, got {:?}", other)
 		}
 	}

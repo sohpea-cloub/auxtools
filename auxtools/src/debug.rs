@@ -148,11 +148,17 @@ impl CallStacks {
 	/// The stacks of the procs that are asleep, each innermost frame first.
 	/// A world can have thousands.
 	pub fn suspended() -> Vec<Vec<StackFrame>> {
+		Self::suspended_first(usize::MAX)
+	}
+
+	/// The stacks of the first `limit` procs that are asleep, in BYOND's
+	/// order
+	pub fn suspended_first(limit: usize) -> Vec<Vec<StackFrame>> {
 		let mut suspended = vec![];
 
 		unsafe {
 			let buffer = (*funcs::SUSPENDED_PROCS_BUFFER).buffer;
-			for x in funcs::suspended_range() {
+			for x in funcs::suspended_range().take(limit) {
 				let instance = *buffer.add(x);
 				let context = (*instance).context;
 				suspended.push(CallStacks::from_context(context, CallStackKind::Suspended));
@@ -160,6 +166,15 @@ impl CallStacks {
 		}
 
 		suspended
+	}
+
+	/// The procs that are asleep: for each, the instance of the proc its
+	/// stack starts with (its outermost frame's). Cheap, however many.
+	pub fn suspended_instances() -> Vec<*mut procs::ProcInstance> {
+		unsafe {
+			let buffer = (*funcs::SUSPENDED_PROCS_BUFFER).buffer;
+			funcs::suspended_range().map(|x| *buffer.add(x)).collect()
+		}
 	}
 
 	fn from_context(mut context: *mut procs::ExecutionContext, kind: CallStackKind) -> Vec<StackFrame> {

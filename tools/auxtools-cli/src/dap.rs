@@ -145,6 +145,26 @@ impl Event for ProcessEvent {
 	const EVENT: &'static str = "process";
 }
 
+/// The world paused. dap_types' has no `hitBreakpointIds`.
+#[derive(serde::Serialize, Default)]
+#[allow(non_snake_case)]
+pub struct StoppedEvent {
+	pub reason: String,
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub description: Option<String>,
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub text: Option<String>,
+	pub threadId: i64,
+	pub allThreadsStopped: bool,
+	/// The breakpoints it stopped for, as `setBreakpoints` numbered them
+	#[serde(skip_serializing_if = "Vec::is_empty")]
+	pub hitBreakpointIds: Vec<i64>
+}
+
+impl Event for StoppedEvent {
+	const EVENT: &'static str = "stopped";
+}
+
 /// What the client has of these `areas` (`stacks`, `variables`) is out of
 /// date, and is to be asked for again
 #[derive(serde::Serialize)]

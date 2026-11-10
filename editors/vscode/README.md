@@ -41,6 +41,7 @@ Launch options:
 | `build` | Build the `.dme` with DreamMaker first (off unless set). |
 | `defines` | DreamMaker's `-D` defines (`NAME` or `NAME=VALUE`), for building and reading the code. |
 | `hotReload` | Swap changed code into the running world as files are saved (on unless set to `false`). |
+| `sleepingThreads` | How many sleeping procs the call stack view lists when the world is paused (100 unless set). |
 | `byondPath` | Where BYOND is installed, if it isn't found. |
 | `args` | What follows the `.dmb` on the command line, in place of `-trusted` (and `-close` for Windows' DreamDaemon). |
 | `env` | Environment variables for the world. |
@@ -57,6 +58,14 @@ or **Disconnect**, ends it there and then.
 
 Windows' DreamDaemon asks before it runs a world in trusted mode; tick "Don't ask me
 this again" to stop it asking.
+
+## Sleeping procs
+
+When the world is paused, the call stack view lists the proc that was running and, under
+it, the procs that are asleep (in `sleep()`, or waiting for something), each with the
+line it sleeps on. A sleeping proc's frames, variables and expressions work like the
+running one's, and a step in one stops when it wakes. A world can have thousands asleep:
+the first 100 are listed, or as many as `sleepingThreads` says.
 
 ## Breakpoints
 
@@ -148,8 +157,8 @@ still debugging it.
 ```
 
 Attach options: `processId` (the world's process; unset, you pick), `dme` (if it isn't
-next to the `.dmb` the world runs), `defines`, and `hotReload` (off unless set, since
-whoever launched the world may be reloading it already).
+next to the `.dmb` the world runs), `defines`, `hotReload` (off unless set, since
+whoever launched the world may be reloading it already), and `sleepingThreads`.
 
 ## Building
 

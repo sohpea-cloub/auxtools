@@ -200,6 +200,12 @@
 								"description": "Swap changed code into the running world as files are saved, with or without debugging",
 								"default": true
 							},
+							"sleepingThreads": {
+								"type": "integer",
+								"minimum": 0,
+								"description": "How many sleeping procs the call stack view lists when the world is paused, after the proc that was running",
+								"default": 100
+							},
 							"byondPath": {
 								"type": "string",
 								"description": "Where BYOND is installed, if not the auxtools.byondPath setting or the usual places"
@@ -250,6 +256,12 @@
 								"type": "boolean",
 								"description": "Swap changed code into the world as files are saved. Off unless set: whoever launched the world may be reloading it already.",
 								"default": false
+							},
+							"sleepingThreads": {
+								"type": "integer",
+								"minimum": 0,
+								"description": "How many sleeping procs the call stack view lists when the world is paused, after the proc that was running",
+								"default": 100
 							}
 						}
 					}

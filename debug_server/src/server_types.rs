@@ -49,7 +49,12 @@ pub enum Request {
 		proc: ProcRef,
 		line: u32
 	},
-	Stacks,
+	/// The world's stacks: the running proc's, and those of the first
+	/// `sleeping` procs that are asleep (`None` for
+	/// [`DEFAULT_SLEEPING_STACKS`])
+	Stacks {
+		sleeping: Option<u32>
+	},
 	StackFrames {
 		stack_id: u32,
 		start_frame: Option<u32>,
@@ -135,7 +140,9 @@ pub enum Response {
 		offset: Option<u32>
 	},
 	Stacks {
-		stacks: Vec<Stack>
+		stacks: Vec<Stack>,
+		/// How many procs are asleep, listed or not
+		sleeping: u32
 	},
 	StackFrames {
 		frames: Vec<StackFrame>,
@@ -156,9 +163,7 @@ pub enum Response {
 	Notification {
 		message: String
 	},
-	BreakpointHit {
-		reason: BreakpointReason
-	},
+	BreakpointHit(Stop),
 
 	ByondVersion {
 		version: u32,
@@ -172,7 +177,7 @@ pub enum Response {
 	/// Another client let the world carry on from a pause
 	Resumed,
 	Status {
-		paused: Option<BreakpointReason>
+		paused: Option<Stop>
 	},
 	Locate {
 		instructions: Vec<InstructionRef>
@@ -385,8 +390,31 @@ pub enum ContinueKind {
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]
 pub struct Stack {
+	/// The same from one stop to the next, for as long as the proc the stack
+	/// starts with goes on. 0 is never one: in a request, it means the
+	/// running proc's stack.
 	pub id: u32,
-	pub name: String
+	/// The proc it's in: its innermost frame's
+	pub name: String,
+	/// Where that frame is
+	pub file: Option<String>,
+	pub line: Option<u32>,
+	/// Asleep, not the proc that's running
+	pub sleeping: bool
+}
+
+/// How many sleeping procs' stacks `Request::Stacks` lists unless told
+pub const DEFAULT_SLEEPING_STACKS: u32 = 100;
+
+/// The world, paused
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct Stop {
+	pub reason: BreakpointReason,
+	/// The stack of the proc that was running (a [`Stack`]'s id)
+	pub thread: u32,
+	/// The instruction it's about to run: a breakpoint's
+	/// (`BreakpointSetResult::Success::at`), if it stopped for one
+	pub at: InstructionRef
 }
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]
@@ -404,7 +432,11 @@ pub struct StackFrame {
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub enum BreakpointSetResult {
-	Success { line: Option<u32> },
+	Success {
+		line: Option<u32>,
+		/// Where it is, as a stop there has it (`Stop::at`)
+		at: InstructionRef
+	},
 	/// There's no such proc, or no instruction there
 	Failed,
 	/// It can't be set as it was asked for: its condition doesn't compile

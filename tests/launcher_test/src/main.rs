@@ -249,7 +249,13 @@ fn command_line_more(pid: u64, dir: &Path) {
 	let printed = run(&["stack"], 0);
 	assert!(printed.starts_with("#0 /run_until_stopped") && !printed.contains("stack 0"), "stack said {}", printed);
 	let printed = run(&["stack", "--all"], 0);
-	assert!(printed.starts_with("stack 0: /run_until_stopped\n#0 /run_until_stopped"), "stack --all said {}", printed);
+	// The running proc's first, then the sleeping ones, each with the id it keeps
+	let first = printed.split_once(": ").map(|(_, rest)| rest).unwrap_or_default();
+	assert!(
+		printed.starts_with("stack ") && first.starts_with("/run_until_stopped\n#0 /run_until_stopped") && printed.contains(" (sleeping)\n#0 "),
+		"stack --all said {}",
+		printed
+	);
 	println!("ok: the command line shows the paused stack, or every stack");
 
 	let printed = run(&["vars"], 0);

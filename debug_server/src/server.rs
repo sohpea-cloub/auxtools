@@ -1,6 +1,6 @@
 use std::{
-	cell::{OnceCell, RefCell},
-	collections::{BTreeMap, HashMap},
+	cell::{Cell, OnceCell, RefCell},
+	collections::{BTreeMap, HashMap, HashSet},
 	error::Error,
 	io::{Read, Write},
 	sync::{mpsc, Mutex},
@@ -54,6 +54,9 @@ enum Variables {
 struct State {
 	active: OnceCell<Vec<debug::StackFrame>>,
 	suspended: OnceCell<Vec<Vec<debug::StackFrame>>>,
+	/// How many of the sleeping procs' stacks are read: as many as a client
+	/// has asked to see
+	sleeping: usize,
 	variables: RefCell<Vec<Variables>>,
 	variables_to_refs: RefCell<HashMap<Variables, VariablesRef>>
 }
@@ -63,6 +66,7 @@ impl State {
 		Self {
 			active: OnceCell::new(),
 			suspended: OnceCell::new(),
+			sleeping: DEFAULT_SLEEPING_STACKS as usize,
 			variables: RefCell::new(vec![]),
 			variables_to_refs: RefCell::new(HashMap::new())
 		}
@@ -80,9 +84,18 @@ impl State {
 		self.active.get_or_init(debug::CallStacks::active)
 	}
 
-	/// The sleeping procs' stacks
+	/// The sleeping procs' stacks, the first `sleeping` of them
 	fn suspended(&self) -> &Vec<Vec<debug::StackFrame>> {
-		self.suspended.get_or_init(debug::CallStacks::suspended)
+		self.suspended.get_or_init(|| debug::CallStacks::suspended_first(self.sleeping))
+	}
+
+	/// Has `suspended` read at least `sleeping` stacks. The ones it had
+	/// stay where they were, so frames keep their ids.
+	fn read_sleeping(&mut self, sleeping: usize) {
+		if sleeping > self.sleeping {
+			self.sleeping = sleeping;
+			self.suspended = OnceCell::new();
+		}
 	}
 
 	fn get_ref(&self, vars: Variables) -> VariablesRef {
@@ -197,8 +210,13 @@ pub struct Server {
 	in_eval: bool,
 	eval_error: Option<String>,
 	breakpoints: Breakpoints,
-	/// Why the world is paused, while it is
-	paused: Option<BreakpointReason>,
+	/// Why and where the world is paused, while it is
+	paused: Option<Stop>,
+	/// The ids of the world's stacks (`Stack::id`), by the proc instance
+	/// each starts with: BYOND keeps that for as long as the proc goes on,
+	/// asleep or running, so a stack is known again at the next stop
+	threads: RefCell<HashMap<usize, u32>>,
+	next_thread: Cell<u32>,
 	/// The client that asked for the world to stay paused once every client
 	/// has gone (`Request::HoldPause`)
 	hold: Option<ClientId>,
@@ -270,6 +288,8 @@ impl Server {
 			breakpoints: HashMap::new(),
 			moved_breakpoints: HashMap::new(),
 			paused: None,
+			threads: RefCell::new(HashMap::new()),
+			next_thread: Cell::new(1),
 			hold: None,
 			procs_by_file: None,
 			app: Self::setup_app()
@@ -832,30 +852,70 @@ impl Server {
 		Ok(variables)
 	}
 
-	fn get_stack(&self, stack_id: u32) -> Option<&Vec<debug::StackFrame>> {
-		let stack_id = stack_id as usize;
+	/// What names a stack from one stop to the next: the proc instance of
+	/// its outermost frame
+	fn thread_key(stack: &[debug::StackFrame]) -> usize {
+		stack.last().map_or(0, |frame| frame.instance as usize)
+	}
+
+	/// The id of a stack, which it gets the first time it's asked for
+	fn thread_of(&self, stack: &[debug::StackFrame]) -> u32 {
+		*self.threads.borrow_mut().entry(Self::thread_key(stack)).or_insert_with(|| {
+			let id = self.next_thread.get();
+			self.next_thread.set(id + 1);
+			id
+		})
+	}
+
+	/// Forgets the ids of stacks that are over. BYOND uses a proc
+	/// instance's memory again for another.
+	fn forget_ended_threads(&self) {
+		let Some(state) = &self.state else {
+			return;
+		};
+		let mut live: HashSet<usize> = debug::CallStacks::suspended_instances().into_iter().map(|instance| instance as usize).collect();
+		live.insert(Self::thread_key(state.active()));
+		self.threads.borrow_mut().retain(|key, _| live.contains(key));
+	}
+
+	/// Where the stack a client calls `thread` is: 0 for the running proc's
+	/// (which a client can call 0 too), then the sleeping ones as BYOND has
+	/// them
+	fn stack_position(&self, thread: u32) -> Option<usize> {
+		let state = self.state.as_ref()?;
+		if thread == 0 {
+			return Some(0);
+		}
+		let threads = self.threads.borrow();
+		let is = |stack: &[debug::StackFrame]| threads.get(&Self::thread_key(stack)) == Some(&thread);
+		if is(state.active()) {
+			return Some(0);
+		}
+		state.suspended().iter().position(|stack| is(stack)).map(|at| at + 1)
+	}
+
+	fn get_stack(&self, position: usize) -> Option<&Vec<debug::StackFrame>> {
 		let state = self.state.as_ref()?;
 
-		if stack_id == 0 {
+		if position == 0 {
 			return Some(state.active());
 		}
 
-		state.suspended().get(stack_id - 1)
+		state.suspended().get(position - 1)
 	}
 
-	fn get_stack_base_frame_id(&self, stack_id: u32) -> u32 {
-		let stack_id = stack_id as usize;
+	fn get_stack_base_frame_id(&self, position: usize) -> u32 {
 		let Some(state) = &self.state else {
 			return 0;
 		};
 
-		if stack_id == 0 {
+		if position == 0 {
 			return 0;
 		}
 
 		let mut current_base = state.active().len();
 
-		for frame in &state.suspended()[..stack_id - 1] {
+		for frame in &state.suspended()[..position - 1] {
 			current_base += frame.len();
 		}
 
@@ -1011,8 +1071,13 @@ impl Server {
 					self.moved_breakpoints.retain(|(id, _), at| *id != proc.id || *at != instruction.offset);
 				}
 
+				// As the proc itself names it, whatever the client called it
+				instruction.proc = ProcRef {
+					path: proc.path.clone(),
+					override_id: proc.override_id()
+				};
 				self.send_or_disconnect(Response::BreakpointSet {
-					result: BreakpointSetResult::Success { line }
+					result: BreakpointSetResult::Success { line, at: instruction }
 				});
 			}
 
@@ -1083,34 +1148,46 @@ impl Server {
 		self.send_or_disconnect(Response::BreakpointUnset { success });
 	}
 
-	fn handle_stacks(&mut self) {
+	fn handle_stacks(&mut self, sleeping: Option<u32>) {
+		let sleeping = sleeping.unwrap_or(DEFAULT_SLEEPING_STACKS) as usize;
+		if let Some(state) = &mut self.state {
+			state.read_sleeping(sleeping);
+		}
+		self.forget_ended_threads();
+
+		let mut asleep = 0;
 		let stacks = match &self.state {
 			Some(state) => {
-				let mut ret = vec![];
-				ret.push(Stack {
-					id: 0,
-					name: state.active()[0].proc.path.clone()
-				});
-
-				for (idx, stack) in state.suspended().iter().enumerate() {
-					ret.push(Stack {
-						id: (idx + 1) as u32,
-						name: stack[0].proc.path.clone()
-					});
-				}
-
-				ret
+				asleep = debug::CallStacks::suspended_instances().len();
+				let listed = std::iter::once(state.active()).chain(state.suspended().iter().take(sleeping));
+				listed
+					.enumerate()
+					.filter(|(_, stack)| !stack.is_empty())
+					.map(|(position, stack)| Stack {
+						id: self.thread_of(stack),
+						name: stack[0].proc.path.clone(),
+						file: Self::file_of(&stack[0].proc),
+						// A sleeping stack's innermost frame is the one asleep
+						line: self.frame_line_number(&stack[0], position != 0),
+						sleeping: position != 0
+					})
+					.collect()
 			}
 
 			None => vec![]
 		};
 
-		self.send_or_disconnect(Response::Stacks { stacks });
+		self.send_or_disconnect(Response::Stacks {
+			stacks,
+			sleeping: asleep as u32
+		});
 	}
 
-	fn handle_stack_frames(&mut self, stack_id: u32, start_frame: Option<u32>, count: Option<u32>) {
-		let response = match self.get_stack(stack_id) {
+	fn handle_stack_frames(&mut self, thread: u32, start_frame: Option<u32>, count: Option<u32>) {
+		let position = self.stack_position(thread);
+		let response = match position.and_then(|position| self.get_stack(position)) {
 			Some(stack) => {
+				let stack_id = position.unwrap_or(0);
 				let frame_base = self.get_stack_base_frame_id(stack_id);
 				let start_frame = start_frame.unwrap_or(0);
 				let end_frame = start_frame + count.unwrap_or(stack.len() as u32);
@@ -1150,7 +1227,9 @@ impl Server {
 			}
 
 			None => {
-				self.notify("received StackFrames request when not paused");
+				if self.state.is_none() {
+					self.notify("received StackFrames request when not paused");
+				}
 				Response::StackFrames {
 					frames: vec![],
 					total_count: 0
@@ -1840,7 +1919,7 @@ impl Server {
 				log
 			} => self.handle_breakpoint_set(instruction, condition, hit, log),
 			Request::BreakpointUnset { instruction } => self.handle_breakpoint_unset(instruction),
-			Request::Stacks => self.handle_stacks(),
+			Request::Stacks { sleeping } => self.handle_stacks(sleeping),
 			Request::Scopes { frame_id } => self.handle_scopes(frame_id),
 			Request::Variables { vars, start, count } => self.handle_variables(vars, start, count),
 			Request::Complete { frame_id, base, prefix } => {
@@ -2082,8 +2161,23 @@ impl Server {
 			}
 		}
 
-		self.paused = Some(reason.clone());
-		self.broadcast(Response::BreakpointHit { reason }, None);
+		let at = unsafe {
+			let proc = Proc::from_id((*(*(*_ctx).proc_instance())).proc);
+			InstructionRef {
+				proc: ProcRef {
+					path: proc.as_ref().map(|proc| proc.path.clone()).unwrap_or_default(),
+					override_id: proc.as_ref().map_or(0, Proc::override_id)
+				},
+				offset: u32::from(*(*_ctx).bytecode_offset())
+			}
+		};
+		let stop = Stop {
+			reason,
+			thread: self.thread_of(self.state.as_ref().unwrap().active()),
+			at
+		};
+		self.paused = Some(stop.clone());
+		self.broadcast(Response::BreakpointHit(stop), None);
 
 		loop {
 			// Held, it waits for clients to come back
@@ -2098,6 +2192,14 @@ impl Server {
 			// Hijack and handle any Continue requests. The other clients are
 			// told the world carries on.
 			if let Request::Continue { kind } = request {
+				// A step is in a stack, which the client names by its id
+				let position = |thread: u32| self.stack_position(thread).unwrap_or(0) as u32;
+				let kind = match kind {
+					ContinueKind::Continue => ContinueKind::Continue,
+					ContinueKind::StepOver { stack_id } => ContinueKind::StepOver { stack_id: position(stack_id) },
+					ContinueKind::StepInto { stack_id } => ContinueKind::StepInto { stack_id: position(stack_id) },
+					ContinueKind::StepOut { stack_id } => ContinueKind::StepOut { stack_id: position(stack_id) }
+				};
 				self.send_or_disconnect(Response::Ack);
 				self.broadcast(Response::Resumed, self.current);
 				self.state = None;

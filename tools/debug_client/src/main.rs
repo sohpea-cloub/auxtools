@@ -156,7 +156,7 @@ impl Connection {
 
 fn on_stop(conn: &mut Connection, options: &Options) -> Option<()> {
 	if options.inspect {
-		conn.request(Request::Stacks)?;
+		conn.request(Request::Stacks { sleeping: None })?;
 		conn.request(Request::StackFrames {
 			stack_id: 0,
 			start_frame: Some(0),

@@ -76,8 +76,8 @@ fn eval(client: &mut Client, frame_id: Option<u32>, command: &str) -> String {
 
 /// The proc the world is paused in.
 fn paused_in(client: &mut Client) -> String {
-	match client.request(Request::Stacks) {
-		Response::Stacks { stacks } => stacks.into_iter().next().expect("paused with no stacks").name,
+	match client.request(Request::Stacks { sleeping: None }) {
+		Response::Stacks { stacks, .. } => stacks.into_iter().next().expect("paused with no stacks").name,
 		other => panic!("expected Stacks, got {:?}", other)
 	}
 }
@@ -176,7 +176,7 @@ fn host_line(text: &str) -> u32 {
 
 fn status(client: &mut Client) -> Option<BreakpointReason> {
 	match client.request(Request::Status) {
-		Response::Status { paused } => paused,
+		Response::Status { paused } => paused.map(|stop| stop.reason),
 		other => panic!("expected Status, got {:?}", other)
 	}
 }

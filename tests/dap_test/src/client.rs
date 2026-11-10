@@ -83,7 +83,11 @@ pub fn kill_process(pid: u64) {
 pub struct Stop {
 	pub reason: String,
 	pub proc: String,
-	pub line: u64
+	pub line: u64,
+	/// The thread it stopped in
+	pub thread: u64,
+	/// The breakpoints it stopped for, by their ids
+	pub hit: Vec<u64>
 }
 
 pub struct Launcher {
@@ -100,7 +104,10 @@ pub struct Launcher {
 	/// The output events as they came, whole
 	pub outputs: Vec<Value>,
 	/// Whether to print what's passed on
-	pub echo: bool
+	pub echo: bool,
+	/// The thread the world last stopped in, which is the one a client
+	/// then steps (0 before any stop: the running proc's, whichever it is)
+	pub thread: u64
 }
 
 impl Launcher {
@@ -147,7 +154,8 @@ impl Launcher {
 			output: String::new(),
 			categories: vec![],
 			outputs: vec![],
-			echo: true
+			echo: true,
+			thread: 0
 		}
 	}
 
@@ -155,6 +163,9 @@ impl Launcher {
 	/// gone
 	fn poll_message(&mut self, deadline: Instant) -> Option<Value> {
 		let message = self.messages.recv_timeout(deadline.saturating_duration_since(Instant::now())).ok()?;
+		if message["type"] == "event" && message["event"] == "stopped" {
+			self.thread = message["body"]["threadId"].as_u64().expect("a stop in no thread");
+		}
 		if message["type"] == "event" && message["event"] == "output" {
 			// Windows' programs end their lines with a carriage return too
 			let output = message["body"]["output"].as_str().unwrap_or_default().replace("\r\n", "\n");
@@ -264,10 +275,13 @@ impl Launcher {
 	pub fn stop(&mut self) -> Stop {
 		let event = self.event("stopped");
 		let frame = self.top_frame();
+		let ids = |list: &Value| -> Vec<u64> { list.as_array().map(|ids| ids.iter().filter_map(Value::as_u64).collect()).unwrap_or_default() };
 		Stop {
 			reason: event["body"]["reason"].as_str().unwrap_or_default().to_owned(),
 			proc: frame["name"].as_str().unwrap_or_default().to_owned(),
-			line: frame["line"].as_u64().unwrap_or(0)
+			line: frame["line"].as_u64().unwrap_or(0),
+			thread: event["body"]["threadId"].as_u64().unwrap(),
+			hit: ids(&event["body"]["hitBreakpointIds"])
 		}
 	}
 
@@ -294,7 +308,16 @@ impl Launcher {
 			"the debugger's own loop is a thread: {:?}",
 			names
 		);
-		let trace = self.request("stackTrace", json!({ "threadId": 0 }));
+		// As a client does: the frames of the thread the stop named, which
+		// is one of those listed
+		let thread = self.thread;
+		assert!(
+			thread == 0 || threads["threads"].as_array().unwrap().iter().any(|t| t["id"] == thread),
+			"the world stopped in thread {}, which isn't listed: {}",
+			thread,
+			threads
+		);
+		let trace = self.request("stackTrace", json!({ "threadId": thread }));
 		trace["stackFrames"][0].clone()
 	}
 
@@ -368,12 +391,13 @@ impl Launcher {
 	}
 
 	pub fn resume(&mut self) {
-		self.request("continue", json!({ "threadId": 0 }));
+		self.request("continue", json!({ "threadId": self.thread }));
 	}
 
-	/// `next`, `stepIn` or `stepOut`, and where it stopped
+	/// `next`, `stepIn` or `stepOut` in the thread that stopped, and where
+	/// it stopped
 	pub fn step(&mut self, command: &str) -> Stop {
-		self.request(command, json!({ "threadId": 0 }));
+		self.request(command, json!({ "threadId": self.thread }));
 		self.stop()
 	}
 

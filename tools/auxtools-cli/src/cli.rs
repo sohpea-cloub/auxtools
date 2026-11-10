@@ -301,7 +301,7 @@ impl World {
 	/// Why it's paused, if it is
 	fn paused(&mut self) -> Result<Option<BreakpointReason>> {
 		match self.request(Request::Status)? {
-			Response::Status { paused } => Ok(paused),
+			Response::Status { paused } => Ok(paused.map(|stop| stop.reason)),
 			other => Err(unexpected(&other))
 		}
 	}
@@ -353,13 +353,16 @@ impl World {
 
 	fn stack(&mut self, all: bool) -> Result<()> {
 		self.need_pause()?;
-		let stacks = match self.request(Request::Stacks)? {
-			Response::Stacks { stacks } => stacks,
+		// Every sleeping proc, when they're asked for
+		let stacks = match self.request(Request::Stacks {
+			sleeping: Some(if all { u32::MAX } else { 0 })
+		})? {
+			Response::Stacks { stacks, .. } => stacks,
 			other => return Err(unexpected(&other))
 		};
-		for stack in stacks.iter().filter(|s| all || s.id == 0) {
+		for stack in stacks.iter().filter(|s| all || !s.sleeping) {
 			if all {
-				println!("stack {}: {}", stack.id, stack.name);
+				println!("stack {}: {}{}", stack.id, stack.name, if stack.sleeping { " (sleeping)" } else { "" });
 			}
 			self.print_stack(stack.id, None)?;
 		}
@@ -438,10 +441,10 @@ impl World {
 	fn await_pause(&mut self, until: Option<Instant>, hold: bool) -> Result<Option<BreakpointReason>> {
 		let reason = loop {
 			if let Some(i) = self.events.iter().position(|e| matches!(e, Response::BreakpointHit { .. })) {
-				let Response::BreakpointHit { reason } = self.events.remove(i) else {
+				let Response::BreakpointHit(stop) = self.events.remove(i) else {
 					unreachable!()
 				};
-				break reason;
+				break stop.reason;
 			}
 			match self.next(until)? {
 				None => return Ok(None),

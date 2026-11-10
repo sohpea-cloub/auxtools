@@ -4,20 +4,24 @@
 //! the world pausing, for this client or another, and carrying on.
 
 use std::{
+	collections::HashMap,
 	sync::{
-		atomic::{AtomicBool, Ordering},
+		atomic::{AtomicBool, AtomicU32, Ordering},
 		mpsc, Arc, Mutex
 	},
 	time::Duration
 };
 
-use dap_types::{ContinuedEvent, StoppedEvent};
+use dap_types::{ContinuedEvent, StoppedEvent as Reasons};
 use auxtools_cli::{
 	local::{self, Shared, Stream},
-	server_types::{BreakpointReason, Request, Response}
+	server_types::{BreakpointReason, InstructionRef, Request, Response, Stop}
 };
 
-use crate::{adapter::Input, dap::Output};
+use crate::{
+	adapter::Input,
+	dap::{self, Output}
+};
 
 /// The runtime error the world last stopped on
 #[derive(Default, Clone)]
@@ -37,13 +41,39 @@ pub const fn error_kind(caught: bool) -> &'static str {
 }
 
 /// Tells the client the world stopped, and why
-fn announce_stop(out: &Output, last_error: &Mutex<LastError>, reason: BreakpointReason) {
+/// A breakpoint the launcher set in the world
+#[derive(Clone)]
+pub struct SetBreakpoint {
+	/// What to take it away with
+	pub asked: InstructionRef,
+	/// Where the world says it is, if it took it
+	pub at: Option<InstructionRef>,
+	/// What the client knows it as
+	pub id: i64
+}
+
+/// The breakpoints set in the world now, by file (or `FUNCTION_BREAKPOINTS`)
+pub type SetBreakpoints = Arc<Mutex<HashMap<String, Vec<SetBreakpoint>>>>;
+
+fn announce_stop(out: &Output, last_error: &Mutex<LastError>, set: &SetBreakpoints, stop: Stop) {
 	let mut description = None;
 	let mut text = None;
-	let reason = match reason {
-		BreakpointReason::Step => StoppedEvent::REASON_STEP,
-		BreakpointReason::Pause => StoppedEvent::REASON_PAUSE,
-		BreakpointReason::Breakpoint => StoppedEvent::REASON_BREAKPOINT,
+	let mut hit = vec![];
+	let reason = match stop.reason {
+		BreakpointReason::Step => Reasons::REASON_STEP,
+		BreakpointReason::Pause => Reasons::REASON_PAUSE,
+		BreakpointReason::Breakpoint => {
+			hit = set
+				.lock()
+				.unwrap()
+				.values()
+				.flatten()
+				.filter(|breakpoint| breakpoint.at.as_ref() == Some(&stop.at))
+				.map(|breakpoint| breakpoint.id)
+				.collect();
+			hit.sort_unstable();
+			Reasons::REASON_BREAKPOINT
+		}
 		BreakpointReason::Runtime { message, caught } => {
 			*last_error.lock().unwrap() = LastError {
 				message: message.clone(),
@@ -51,16 +81,16 @@ fn announce_stop(out: &Output, last_error: &Mutex<LastError>, reason: Breakpoint
 			};
 			description = Some(message);
 			text = Some(error_kind(caught).to_owned());
-			StoppedEvent::REASON_EXCEPTION
+			Reasons::REASON_EXCEPTION
 		}
 	};
-	out.event(StoppedEvent {
+	out.event(dap::StoppedEvent {
 		reason: reason.to_owned(),
 		description,
 		text,
-		threadId: Some(0),
-		allThreadsStopped: Some(true),
-		..Default::default()
+		threadId: stop.thread.into(),
+		allThreadsStopped: true,
+		hitBreakpointIds: hit
 	});
 }
 
@@ -79,6 +109,9 @@ pub struct Debuggee {
 	stopped: Arc<AtomicBool>,
 	out: Arc<Output>,
 	last_error: Arc<Mutex<LastError>>,
+	set: SetBreakpoints,
+	/// The stack the world last stopped in
+	thread: Arc<AtomicU32>,
 	/// Tells this connection's events from an earlier one's
 	pub generation: u64
 }
@@ -93,7 +126,8 @@ impl Debuggee {
 		debugging: bool,
 		out: Arc<Output>,
 		inputs: mpsc::Sender<Input>,
-		last_error: Arc<Mutex<LastError>>
+		last_error: Arc<Mutex<LastError>>,
+		set: SetBreakpoints
 	) -> Result<Self, String> {
 		let writer = Shared::new(stream);
 		let mut reader = writer.clone();
@@ -102,13 +136,18 @@ impl Debuggee {
 		let (responses_sender, responses) = mpsc::channel();
 		let stopped = Arc::new(AtomicBool::new(false));
 		let reader_stopped = stopped.clone();
+		let debuggee_set = set.clone();
+		// The stack the world last stopped in
+		let thread = Arc::new(AtomicU32::new(0));
+		let reader_thread = thread.clone();
 
 		let continued = move |out: &Output| {
 			out.event(ContinuedEvent {
-				threadId: 0,
+				threadId: reader_thread.load(Ordering::Relaxed).into(),
 				allThreadsContinued: Some(true)
 			});
 		};
+		let stop_thread = thread.clone();
 
 		std::thread::Builder::new()
 			.name("debuggee reader".to_owned())
@@ -126,9 +165,10 @@ impl Debuggee {
 
 						Response::BreakpointHit { .. } | Response::Resumed if !debugging => {}
 
-						Response::BreakpointHit { reason } => {
+						Response::BreakpointHit(stop) => {
 							reader_stopped.store(true, Ordering::Relaxed);
-							announce_stop(&out, &last_error, reason);
+							stop_thread.store(stop.thread, Ordering::Relaxed);
+							announce_stop(&out, &last_error, &set, stop);
 						}
 
 						// A breakpoint with a message
@@ -171,6 +211,8 @@ impl Debuggee {
 			stopped,
 			out: debuggee_out,
 			last_error: debuggee_last_error,
+			set: debuggee_set,
+			thread,
 			generation
 		})
 	}
@@ -178,11 +220,12 @@ impl Debuggee {
 	/// Tells the client if the world was already paused when this connected,
 	/// which the server said only to the clients there then
 	pub fn catch_up_on_pause(&mut self) -> Result<(), String> {
-		let Response::Status { paused: Some(reason) } = self.request(&Request::Status)? else {
+		let Response::Status { paused: Some(stop) } = self.request(&Request::Status)? else {
 			return Ok(());
 		};
 		if !self.stopped.swap(true, Ordering::Relaxed) {
-			announce_stop(&self.out, &self.last_error, reason);
+			self.thread.store(stop.thread, Ordering::Relaxed);
+			announce_stop(&self.out, &self.last_error, &self.set, stop);
 		}
 		Ok(())
 	}
