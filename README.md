@@ -43,13 +43,18 @@ auxtools stop
 
 ## Supported BYOND versions
 
-516.1659 through 516.1688 on Windows, and 516.1664 through 516.1688 on Linux. Those are the builds the patterns that find BYOND's functions were checked against. A newer build is still tried, and fails at init with the name of whatever stopped matching. An older build, or another major version, is refused at init with an error that names the build.
+515.1637 through 515.1647, and 516.1648 through 516.1688, on Windows and Linux. Those are the builds the patterns that find BYOND's functions were checked against. A newer build is still tried, and fails at init with the name of whatever stopped matching. An older build, or another major version, is refused at init with an error that names the build.
 
 The patterns are run by [byond-scan](https://github.com/Absolucy/byond-scan) and live in `auxtools/src/symbols/`. They are copies of the ones in the byond-re repo's `byond_catalog`, which checks each against every local build, so a change to one has to land in both.
 
-What was run on Linux (516.1687): the `auxtest` suite, and `debug_test`, which sets breakpoints, evaluates expressions and follows a world reboot through a stand-in for the launcher. The code coverage tool's report was checked on Windows and Linux 1687 against a world with a known set of lines. Stepping and breakpoints with a real debugger attached were not tested on either platform.
+The debugger, hot reloading and the command line are tested on five of those builds: 515.1637, 515.1647, 516.1659, 516.1685 and 516.1688. Four suites run on each, on Linux and on Windows (under Wine, in `dd.exe`), and all of them pass on all five on both:
 
-The launcher's test (`tests/launcher_test`: breakpoints, a runtime error, a reboot and the world's exit, in a world with no auxtools procs; then a world run without debugging, found with `list`, attached to by two launchers at once and hot reloaded by the one that started it, then paused and looked at with the command line) was run on Linux 516.1688, and under Wine on Windows 516.1688 with `dd.exe` (its first part also with `dreamseeker.exe` and `dreamdaemon.exe`). Its checks of worlds started by `auxtools launch` (in the foreground and with `--detach`), rebooted and stopped from the command line have run on Linux 516.1688 only. The VS Code extension was not run in VS Code. `tests/dap_test` debugs a world of its own through the launcher, a group of checks at a time (`dap_test stepping`): breakpoints on lines and procs, conditions, stepping, pausing and sleeping procs, stack frames, variables of every kind, expressions, runtime errors, several sessions at once, reboots, and all of it while the code is hot reloaded.
+- `tests/debug_test` talks to the debug server as a stand-in for the launcher: breakpoints, expressions, a world reboot.
+- `tests/hot_reload_test` reloads a world's code a change at a time.
+- `tests/launcher_test` drives the launcher the way an editor does, in a world with no auxtools procs: breakpoints, a runtime error, a reboot and the world's exit. Then a world run without debugging is found with `list`, attached to by two launchers at once and hot reloaded by the one that started it. Then the command line: every command against that world, as text and as JSON, with its errors and exit codes, and worlds started, rebooted and stopped with `auxtools launch`, `reboot` and `stop`, in the foreground and with `--detach`.
+- `tests/dap_test` debugs a world of its own through the launcher, a group of checks at a time (`dap_test stepping`): breakpoints on lines and procs, conditions, stepping, pausing and sleeping procs, stack frames, variables of every kind, expressions, runtime errors, several sessions at once, reboots, and all of it while the code is hot reloaded.
+
+The VS Code extension is run in a real VS Code on Linux (516.1688) by a harness that isn't in this repository: launching with and without debugging, breakpoints, logpoints, the disassembly view, data breakpoints, edits above a breakpoint, and Stop. It hasn't been run by a test on Windows. DreamSeeker and the windowed DreamDaemon aren't part of these runs: only the first part of `launcher_test` has been run in them, before the command line was added. The `auxtest` suite and the code coverage tool's report were last checked on 516.1687.
 
 ## Dependencies
 
