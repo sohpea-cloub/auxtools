@@ -30,6 +30,7 @@ auxtools [--pid PID] COMMAND              one command to a running world, which
   continue                                lets it carry on
   next | step | out                       steps over, into or out of a call
   wait [--break FILE:LINE | --break /proc/path[#N]]... [--if COND]
+       [--change EXPR]... [--frame N]
        [--log MESSAGE] [--runtimes] [--caught] [--timeout SECS] [--no-hold]
                                           waits for it to pause, at one of these
                                           breakpoints, a runtime error (one that
@@ -38,6 +39,15 @@ auxtools [--pid PID] COMMAND              one command to a running world, which
                                           where. With --log the breakpoints don't
                                           pause: each hit prints MESSAGE, with the
                                           values of the {expressions} in it.
+                                          --change pauses when what EXPR names
+                                          (a var of an object, an entry of a
+                                          list, a global, a proc's own var)
+                                          gets another value, and says which.
+                                          Given while the world is paused, EXPR
+                                          is of a frame there, and the world
+                                          carries on until it changes. --if is
+                                          then about the change: `value` is the
+                                          new value, `old` the one before.
 Exit codes: 0 done (for `wait`, it paused), 1 failed, 2 `wait` timed out,
 3 the world went away (it ended or rebooted).";
 
@@ -179,12 +189,18 @@ fn execute(pid: Option<u32>, command: &[String]) -> Result<()> {
 		"step" => world.resume(ContinueKind::StepInto { stack_id: 0 }),
 		"out" => world.resume(ContinueKind::StepOut { stack_id: 0 }),
 		"wait" => {
-			let flags = Flags::parse(args, &["--break", "--if", "--log", "--timeout"], &["--runtimes", "--caught", "--no-hold"])?;
+			let flags = Flags::parse(
+				args,
+				&["--break", "--if", "--log", "--timeout", "--change", "--frame"],
+				&["--runtimes", "--caught", "--no-hold"]
+			)?;
 			if !flags.rest.is_empty() {
 				return Err(format!("wait doesn't take {}", flags.rest.join(" ")).into());
 			}
 			world.wait(Wait {
 				breaks: flags.values("--break").map(str::to_owned).collect(),
+				changes: flags.values("--change").map(str::to_owned).collect(),
+				frame: flags.number::<u32>("--frame")?.unwrap_or(0),
 				condition: flags.value("--if").map(str::to_owned),
 				log: flags.value("--log").map(LogPart::parse),
 				runtimes: flags.has("--runtimes") || flags.has("--caught"),
@@ -222,6 +238,10 @@ fn only_world() -> Result<u32> {
 
 struct Wait {
 	breaks: Vec<String>,
+	/// Expressions for places to watch for a change
+	changes: Vec<String>,
+	/// The frame they're of, when the world is paused
+	frame: u32,
 	condition: Option<String>,
 	/// A message the breakpoints print at each hit, in place of pausing
 	log: Option<Vec<LogPart>>,
@@ -283,6 +303,7 @@ impl World {
 				Response::CodeChanged => {}
 				// A breakpoint's message, as it comes
 				Response::Log { message, .. } => println!("{}", message),
+				Response::WatchEnded { reason, .. } => println!("a watch is over: {}", reason),
 				response => return Ok(Some(response))
 			}
 		}
@@ -331,7 +352,14 @@ impl World {
 			BreakpointReason::Step => "after a step".to_owned(),
 			BreakpointReason::Pause => "where it was asked to".to_owned(),
 			BreakpointReason::Runtime { message, caught: false } => format!("on a runtime error: {}", message),
-			BreakpointReason::Runtime { message, caught: true } => format!("on a caught runtime error: {}", message)
+			BreakpointReason::Runtime { message, caught: true } => format!("on a caught runtime error: {}", message),
+			BreakpointReason::Data { changes } => {
+				let changes: Vec<String> = changes
+					.iter()
+					.map(|change| format!("{} changed from {} to {}", change.name, change.old, change.new))
+					.collect();
+				format!("after a change: {}", changes.join("; "))
+			}
 		};
 		println!("paused {}", why);
 		self.print_stack(0, Some(20))
@@ -489,15 +517,43 @@ impl World {
 	}
 
 	fn wait(&mut self, wait: Wait) -> Result<()> {
-		if let Some(reason) = self.paused()? {
+		let paused = self.paused()?;
+		if let (Some(reason), true) = (&paused, wait.changes.is_empty()) {
 			if wait.hold {
 				self.request(Request::HoldPause)?;
 			}
 			println!("already paused");
-			return self.print_pause(&reason);
+			return self.print_pause(reason);
 		}
+		// What's watched from a pause is of a frame there, and the wait is
+		// for the world to carry on and change it
+		let frame_id = match &paused {
+			Some(_) => Some(self.frame_id(wait.frame)?),
+			None => None
+		};
+		for expression in &wait.changes {
+			let watch = Request::WatchSet {
+				place: WatchPlace::Expression {
+					frame_id,
+					expression: expression.clone()
+				},
+				condition: wait.condition.clone(),
+				hit: None
+			};
+			match self.request(watch)? {
+				Response::WatchSet(Ok(watch)) => println!("watching {}, now {}", watch.name, watch.value),
+				Response::WatchSet(Err(why)) => return Err(format!("couldn't watch {}: {}", expression, why).into()),
+				other => return Err(unexpected(&other))
+			}
+		}
+		// The condition is the watches' when there are any
+		let condition = if wait.changes.is_empty() { wait.condition.clone() } else { None };
 		for place in &wait.breaks {
-			self.set_breakpoint(place, wait.condition.clone(), wait.log.clone())?;
+			self.set_breakpoint(place, condition.clone(), wait.log.clone())?;
+		}
+		if paused.is_some() {
+			self.events.clear();
+			self.request(Request::Continue { kind: ContinueKind::Continue })?;
 		}
 		if wait.runtimes {
 			// It has no answer

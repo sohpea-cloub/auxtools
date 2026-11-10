@@ -34,6 +34,7 @@ extern "C" {
 	pub static mut get_proc_array_entry_byond: *const c_void;
 	pub static mut get_string_id_byond: *const c_void;
 	pub static mut get_variable_byond: *const c_void;
+	pub static mut read_pointer_byond: *const c_void;
 	pub static mut set_variable_byond: *const c_void;
 	pub static mut get_string_table_entry_byond: *const c_void;
 	pub static mut inc_ref_count_byond: *const c_void;
@@ -80,6 +81,7 @@ extern "C" {
 	pub fn get_proc_array_entry(out: *mut *mut procs::ProcEntry, id: procs::ProcId) -> u8;
 	pub fn get_string_id(out: *mut strings::StringId, string: *const c_char) -> u8;
 	pub fn get_variable(out: *mut values::Value, datum: values::Value, index: strings::StringId) -> u8;
+	pub fn read_pointer(out: *mut values::Value, pointer: *const values::Value) -> u8;
 	pub fn set_variable(datum: values::Value, index: strings::StringId, value: values::Value) -> u8;
 	pub fn get_string_table_entry(out: *mut *mut strings::StringEntry, index: strings::StringId) -> u8;
 	pub fn inc_ref_count(value: values::Value) -> u8;

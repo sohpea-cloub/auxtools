@@ -23,6 +23,8 @@ use crate::{
 	hot_reload, mem_profiler, waker
 };
 
+mod watches;
+
 /// Something a client can open, for the variables inside it. Those that are
 /// reached through an expression carry it, so what's inside can say how it's
 /// reached in turn (`a.b[2]`).
@@ -43,7 +45,9 @@ enum Variables {
 		value: Value,
 		of: Value,
 		list: Option<String>
-	}
+	},
+	/// What a pointer names, and the expression the pointer is reached by
+	Pointee(Value, Option<String>)
 }
 
 /// What a pause has been asked about. The stacks are read when they're first
@@ -215,6 +219,12 @@ pub struct Server {
 	breakpoints: Breakpoints,
 	/// Why and where the world is paused, while it is
 	paused: Option<Stop>,
+	/// The places clients watch for a change
+	watches: Vec<watches::Watched>,
+	next_watch: u32,
+	/// Values the next expression evaluated knows by these names, besides
+	/// what its frame has
+	eval_given: Vec<(String, Value)>,
 	/// The client that asked for the world to stay paused once every client
 	/// has gone (`Request::HoldPause`)
 	hold: Option<ClientId>,
@@ -286,6 +296,9 @@ impl Server {
 			breakpoints: HashMap::new(),
 			moved_breakpoints: HashMap::new(),
 			paused: None,
+			watches: vec![],
+			next_watch: 0,
+			eval_given: vec![],
 			hold: None,
 			procs_by_file: None,
 			app: Self::setup_app()
@@ -634,6 +647,8 @@ impl Server {
 				// What BYOND has no text for
 				Ok(v) if v.is_empty() => match value.raw.tag {
 					ValueTag::World => "world".to_owned(),
+					// Of a proc that has ended
+					ValueTag::Pointer => "a pointer to a var that's gone".to_owned(),
 					ValueTag::Image => "/image".to_owned(),
 					ValueTag::Appearance => "appearance".to_owned(),
 					_ => value.raw.to_string()
@@ -718,6 +733,11 @@ impl Server {
 			Some(state) if List::is_list(value) => Some(state.get_ref(Variables::ListContents(value.clone(), expr))),
 
 			Some(state) if Self::is_object(value) => Some(state.get_ref(Variables::ObjectVars(value.clone(), expr))),
+
+			// A pointer opens to what it names
+			Some(state) if value.raw.tag == ValueTag::Pointer && auxtools::pointer::read_raw(value).is_some() => {
+				Some(state.get_ref(Variables::Pointee(value.clone(), expr)))
+			}
 
 			_ => None
 		}
@@ -1275,6 +1295,10 @@ impl Server {
 					self.value_to_variable("value".to_owned(), &value, entry),
 				])
 			}
+			Variables::Pointee(pointer, expr) => Ok(match auxtools::pointer::read(&pointer) {
+				Some(named) => vec![self.value_to_variable("*".to_owned(), &named, expr.map(|pointer| format!("*{}", pointer)))],
+				None => vec![]
+			})
 		}
 	}
 
@@ -1500,7 +1524,9 @@ impl Server {
 			Variables::ListPair { key, of, .. } => match name {
 				"value" => List::from_value(of).map_err(runtime)?.set(key, value).map_err(runtime),
 				_ => Err("an entry's key can't be changed: take the entry out of the list and add another".to_owned())
-			}
+			},
+
+			Variables::Pointee(..) => Err("what a pointer names is set where it is: the var itself".to_owned())
 		}
 	}
 
@@ -1524,6 +1550,7 @@ impl Server {
 		self.eval_error = None;
 		let written = self.write_variable(&container, name, &value);
 		self.in_eval = false;
+		self.refresh_watches();
 		self.state.as_mut().unwrap().invalidate_stacks();
 		if let Some(error) = self.eval_error.take() {
 			return Err(format!("runtime error: {}", error));
@@ -1619,6 +1646,9 @@ impl Server {
 		self.eval_error = None;
 
 		let result = self.compile_and_run_expr(frame_id, command);
+		self.eval_given.clear();
+		// Whatever it changed isn't the world's doing
+		self.refresh_watches();
 
 		self.in_eval = false;
 
@@ -1699,6 +1729,10 @@ impl Server {
 		};
 
 		args.push((GLOBALS.to_owned(), globals, ArgType::Given));
+		// First, so that these are what their names mean
+		for (name, value) in std::mem::take(&mut self.eval_given).into_iter().rev() {
+			args.insert(0, (name, value, ArgType::Given));
+		}
 		let arg_names: Vec<&str> = args.iter().map(|(name, ..)| name.as_str()).collect();
 		let arg_values: Vec<&Value> = args.iter().map(|(_, value, _)| value).collect();
 
@@ -1976,6 +2010,21 @@ impl Server {
 			Request::LinesWithCode { file, start, end } => {
 				let lines = self.lines_with_code(&file, start, end);
 				self.send_or_disconnect(Response::LinesWithCode { lines });
+			}
+
+			Request::WatchInfo { place } => {
+				let info = self.watch_info(&place);
+				self.send_or_disconnect(Response::WatchInfo(info));
+			}
+
+			Request::WatchSet { place, condition, hit } => {
+				let set = self.watch_set(&place, condition, hit);
+				self.send_or_disconnect(Response::WatchSet(set));
+			}
+
+			Request::WatchUnset { id } => {
+				self.watch_unset(id);
+				self.send_or_disconnect(Response::Ack);
 			}
 
 			Request::Files => {
@@ -2311,6 +2360,8 @@ impl Server {
 		if self.hold == Some(id) && self.paused.is_none() {
 			self.hold = None;
 		}
+
+		self.forget_watches_of(id);
 
 		let mut unclaimed = vec![];
 		for (key, claims) in &mut self.breakpoints {

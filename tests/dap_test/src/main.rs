@@ -43,6 +43,7 @@ const GROUPS: &[(&str, fn())] = &[
 	("pausing", groups::pausing::run),
 	("frames", groups::frames::run),
 	("variables", groups::variables::run),
+	("watches", groups::watches::run),
 	("expressions", groups::expressions::run),
 	("runtimes", groups::runtimes::run),
 	("sessions", groups::sessions::run),

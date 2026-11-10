@@ -130,7 +130,22 @@ pub enum Request {
 	},
 	/// The files the world's code is from, as it was built with them: those
 	/// with a proc in them, as a file is known by its procs' DbgFile
-	Files
+	Files,
+	/// What a watch on a place would watch, without watching it
+	WatchInfo {
+		place: WatchPlace
+	},
+	/// Has the world pause when what's at a place changes. A condition is
+	/// worked out in the frame the world would pause in, where `value` is
+	/// what's at the place now and `old` what was.
+	WatchSet {
+		place: WatchPlace,
+		condition: Option<String>,
+		hit: Option<HitCondition>
+	},
+	WatchUnset {
+		id: u32
+	}
 }
 
 // Message from server -> client
@@ -212,6 +227,16 @@ pub enum Response {
 	/// Sorted, spelled as the world has them
 	Files {
 		files: Vec<String>
+	},
+	/// What the place is called, or why it can't be watched
+	WatchInfo(Result<String, String>),
+	WatchSet(Result<Watch, String>),
+	/// A watch is over, without having been taken away: its place is gone
+	/// (a proc that returned, an object that was deleted). Sent to the
+	/// client that set it, at any moment.
+	WatchEnded {
+		id: u32,
+		reason: String
 	}
 }
 
@@ -234,7 +259,42 @@ pub enum BreakpointReason {
 	Pause,
 	/// A runtime error, or a `throw`: its message, and whether it's inside
 	/// a `try` that will catch it
-	Runtime { message: String, caught: bool }
+	Runtime { message: String, caught: bool },
+	/// What's at watched places changed (`Request::WatchSet`), in the
+	/// instruction before the one the world stopped at, or under it: in
+	/// something the engine did
+	Data { changes: Vec<DataChange> }
+}
+
+/// A place to watch for a change
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub enum WatchPlace {
+	/// A variable as `Response::Variables` listed it: `name` in `vars`
+	Variable { vars: VariablesRef, name: String },
+	/// What an expression names, in a frame or in none: a proc's own var by
+	/// its name alone, else anything `&(expression)` makes a pointer to
+	Expression { frame_id: Option<u32>, expression: String }
+}
+
+/// A watch that was set
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct Watch {
+	/// No two watches in a world have the same, whoever set them
+	pub id: u32,
+	/// What the place is called
+	pub name: String,
+	/// What's there now
+	pub value: String
+}
+
+/// What a watch saw
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct DataChange {
+	/// The watch's (`Watch::id`)
+	pub id: u32,
+	pub name: String,
+	pub old: String,
+	pub new: String
 }
 
 /// A name that could be typed next

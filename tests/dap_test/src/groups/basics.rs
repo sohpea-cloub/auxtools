@@ -176,6 +176,7 @@ fn capabilities() {
 		"supportsCompletionsRequest",
 		"supportsConditionalBreakpoints",
 		"supportsConfigurationDoneRequest",
+		"supportsDataBreakpoints",
 		"supportsEvaluateForHovers",
 		"supportsExceptionFilterOptions",
 		"supportsExceptionInfoRequest",
@@ -257,7 +258,7 @@ fn loaded_sources(world: &mut World) {
 	let sources = world.request("loadedSources", json!({}))["sources"].as_array().unwrap().clone();
 	let (files, references): (Vec<&Value>, Vec<&Value>) = sources.iter().partition(|source| source["path"].is_string());
 	let paths: Vec<PathBuf> = files.iter().map(|source| PathBuf::from(source["path"].as_str().unwrap())).collect();
-	let expected: Vec<PathBuf> = ["errors.dm", "main.dm", "stepping.dm", "values.dm"].iter().map(|name| world.marks.file(name)).collect();
+	let expected: Vec<PathBuf> = ["errors.dm", "main.dm", "stepping.dm", "values.dm", "watching.dm"].iter().map(|name| world.marks.file(name)).collect();
 	assert_eq!(paths, expected, "{:?}", sources);
 	for (source, path) in files.iter().zip(&paths) {
 		assert!(path.is_absolute() && path.is_file(), "{}", path.display());
@@ -308,8 +309,10 @@ fn without_debugging() {
 
 	let why = world.refused("pause", json!({ "threadId": 0 }));
 	assert_eq!(why, "the world runs without debugging");
+	let watched = world.request("dataBreakpointInfo", json!({ "name": "global_number" }));
+	assert_eq!((&watched["dataId"], &watched["description"]), (&json!(null), &json!("the world runs without debugging")));
 	world.run_through("middle");
-	ok("a world run without debugging isn't paused: the client would never hear it had been");
+	ok("a world run without debugging isn't paused or watched: the client would never hear it had been");
 	world.end();
 }
 

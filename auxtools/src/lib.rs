@@ -10,6 +10,7 @@ mod bytecode_manager;
 pub mod debug;
 pub mod hooks;
 pub mod instruction_hook;
+pub mod pointer;
 mod init;
 mod list;
 mod proc;

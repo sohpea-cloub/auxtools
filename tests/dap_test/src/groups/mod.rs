@@ -14,3 +14,4 @@ pub mod runtimes;
 pub mod sessions;
 pub mod stepping;
 pub mod variables;
+pub mod watches;

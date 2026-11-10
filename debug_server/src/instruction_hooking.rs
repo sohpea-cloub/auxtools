@@ -315,6 +315,19 @@ impl InstructionHook for Server {
 		// paused for another reason
 		let mut did_breakpoint = false;
 
+		// A watched place that changed in the instruction before this one
+		if !in_eval && server.has_watches() {
+			if let Some(changes) = server.watched_changes(ctx) {
+				unsafe {
+					// A step in progress stays as it was if nobody pauses
+					if let Some(action) = handle_breakpoint(ctx, BreakpointReason::Data { changes }) {
+						CURRENT_ACTION = action;
+						did_breakpoint = true;
+					}
+				}
+			}
+		}
+
 		unsafe {
 			let action = if in_eval { DebuggerAction::None } else { CURRENT_ACTION };
 

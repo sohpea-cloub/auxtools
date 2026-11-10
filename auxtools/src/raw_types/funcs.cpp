@@ -76,6 +76,8 @@ extern "C"
 	DEFINE_byond(get_proc_array_entry, void *, (uint32_t));
 	DEFINE_byond_REGPARM3(get_string_id, uint32_t, (const char *, uint8_t, uint8_t, uint8_t));
 	DEFINE_byond(get_variable, Value, (Value, uint32_t));
+	// byondapi's own export, cdecl everywhere
+	DEFINE_byond(read_pointer, bool, (const Value *, Value *));
 	DEFINE_byond(set_variable, void, (Value, uint32_t, Value));
 	DEFINE_byond(get_string_table_entry, void *, (uint32_t));
 	DEFINE_byond(inc_ref_count, void, (Value));
@@ -235,6 +237,23 @@ extern "C" uint8_t get_variable(Value *out, Value datum, uint32_t string_id)
 		clean(datum);
 		*out = get_variable_byond(datum, string_id);
 		return 1;
+	}
+	BYOND_CATCH
+	{
+		return 0;
+	}
+}
+
+// What a pointer (`&x`) names. On some builds reading through a pointer to a
+// var of a deleted object is a runtime error rather than a refusal, which
+// would otherwise be the running proc's.
+extern "C" uint8_t read_pointer(Value *out, const Value *pointer)
+{
+	RuntimeContext ctx(true);
+
+	BYOND_TRY
+	{
+		return read_pointer_byond(pointer, out) ? 1 : 0;
 	}
 	BYOND_CATCH
 	{

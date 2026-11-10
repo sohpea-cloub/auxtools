@@ -15,7 +15,7 @@ use std::{
 use dap_types::{ContinuedEvent, StoppedEvent as Reasons};
 use auxtools_cli::{
 	local::{self, Shared, Stream},
-	server_types::{BreakpointReason, InstructionRef, Request, Response, Stop}
+	server_types::{BreakpointReason, DataChange, InstructionRef, Request, Response, Stop}
 };
 
 use crate::{
@@ -48,8 +48,20 @@ pub struct SetBreakpoint {
 	pub asked: InstructionRef,
 	/// Where the world says it is, if it took it
 	pub at: Option<InstructionRef>,
+	/// For a data breakpoint, the world's watch (and nothing in the two
+	/// above that's any place)
+	pub watch: Option<u32>,
 	/// What the client knows it as
 	pub id: i64
+}
+
+/// What changed at the places a stop is for, a line each
+fn changes_text(changes: &[DataChange]) -> String {
+	changes
+		.iter()
+		.map(|change| format!("{} changed from {} to {}", change.name, change.old, change.new))
+		.collect::<Vec<_>>()
+		.join("\n")
 }
 
 /// The breakpoints set in the world now, by file (or `FUNCTION_BREAKPOINTS`)
@@ -83,6 +95,21 @@ fn announce_stop(out: &Output, last_error: &Mutex<LastError>, set: &SetBreakpoin
 			text = Some(error_kind(caught).to_owned());
 			Reasons::REASON_EXCEPTION
 		}
+		BreakpointReason::Data { changes } => {
+			hit = set
+				.lock()
+				.unwrap()
+				.values()
+				.flatten()
+				.filter(|breakpoint| breakpoint.watch.is_some_and(|watch| changes.iter().any(|change| change.id == watch)))
+				.map(|breakpoint| breakpoint.id)
+				.collect();
+			hit.sort_unstable();
+			// The stop itself has room for a line; the console has it all
+			out.console(changes_text(&changes));
+			description = changes.first().map(|change| format!("{} changed: {} → {}", change.name, change.old, change.new));
+			"data breakpoint"
+		}
 	};
 	out.event(dap::StoppedEvent {
 		reason: reason.to_owned(),
@@ -112,6 +139,8 @@ pub struct Debuggee {
 	set: SetBreakpoints,
 	/// The stack the world last stopped in
 	thread: Arc<AtomicU32>,
+	/// How many times the world has stopped
+	stops: Arc<AtomicU32>,
 	/// Tells this connection's events from an earlier one's
 	pub generation: u64
 }
@@ -148,6 +177,8 @@ impl Debuggee {
 			});
 		};
 		let stop_thread = thread.clone();
+		let stops = Arc::new(AtomicU32::new(0));
+		let reader_stops = stops.clone();
 
 		std::thread::Builder::new()
 			.name("debuggee reader".to_owned())
@@ -167,6 +198,7 @@ impl Debuggee {
 
 						Response::BreakpointHit(stop) => {
 							reader_stopped.store(true, Ordering::Relaxed);
+							reader_stops.fetch_add(1, Ordering::Relaxed);
 							stop_thread.store(stop.thread, Ordering::Relaxed);
 							announce_stop(&out, &last_error, &set, stop);
 						}
@@ -174,6 +206,13 @@ impl Debuggee {
 						// A breakpoint with a message
 						Response::Log { message, file, line } => {
 							if inputs.send(Input::Logged { message, file, line }).is_err() {
+								break "nobody was listening".to_owned();
+							}
+						}
+
+						// What a data breakpoint watched is gone
+						Response::WatchEnded { id, reason } => {
+							if inputs.send(Input::WatchEnded { generation, id, reason }).is_err() {
 								break "nobody was listening".to_owned();
 							}
 						}
@@ -213,6 +252,7 @@ impl Debuggee {
 			last_error: debuggee_last_error,
 			set: debuggee_set,
 			thread,
+			stops,
 			generation
 		})
 	}
@@ -224,10 +264,17 @@ impl Debuggee {
 			return Ok(());
 		};
 		if !self.stopped.swap(true, Ordering::Relaxed) {
+			self.stops.fetch_add(1, Ordering::Relaxed);
 			self.thread.store(stop.thread, Ordering::Relaxed);
 			announce_stop(&self.out, &self.last_error, &self.set, stop);
 		}
 		Ok(())
+	}
+
+	/// Which of the world's stops this is, or the last one was: what a
+	/// client was shown at one (a frame, a variable) isn't there at the next
+	pub fn stop_number(&self) -> u32 {
+		self.stops.load(Ordering::Relaxed)
 	}
 
 	/// Whether the world is paused

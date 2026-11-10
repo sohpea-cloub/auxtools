@@ -298,6 +298,25 @@ fn command_line_more(pid: u64, dir: &Path) {
 	assert_eq!(run(&["status"], 0).trim(), "running");
 	println!("ok: the command line prints a breakpoint's message at each hit, and the world runs on");
 
+	// A global, watched from a running world; then a var of the proc it
+	// paused in, until that changes
+	let printed = run(&["wait", "--change", "rounds", "--timeout", "60"], 0);
+	assert!(
+		printed.starts_with("watching rounds, now ") && printed.contains("\npaused after a change: rounds changed from ") && printed.contains("\n#0 /run_until_stopped"),
+		"wait --change said {}",
+		printed
+	);
+	let printed = run(&["wait", "--change", "said", "--if", "value > old", "--timeout", "60"], 0);
+	assert!(
+		printed.starts_with("watching said, now ") && printed.contains("\npaused after a change: said changed from ") && printed.contains("\n#0 /run_until_stopped"),
+		"wait --change from a pause said {}",
+		printed
+	);
+	let printed = run(&["wait", "--change", "1 + 1"], 1);
+	assert!(printed.starts_with("couldn't watch 1 + 1: "), "wait --change said {}", printed);
+	run(&["continue"], 0);
+	println!("ok: the command line waits for a var to change: a global from a running world, a proc's own from a pause");
+
 	for (args, said) in [
 		(&["frobnicate"][..], "there's no command frobnicate"),
 		(&["stack", "--sideways"][..], "there's no --sideways here"),

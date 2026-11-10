@@ -37,6 +37,8 @@ use crate::{
 	stddef::{strip_declaration, Stddef}
 };
 
+mod data;
+
 /// The exception filter that pauses on runtime errors nothing catches
 const RUNTIMES: &str = "runtimes";
 /// The exception filter that pauses on runtime errors inside a `try`
@@ -79,6 +81,12 @@ pub enum Input {
 	/// Another client hot reloaded the world
 	CodeChanged {
 		generation: u64
+	},
+	/// What a data breakpoint watched is gone
+	WatchEnded {
+		generation: u64,
+		id: u32,
+		reason: String
 	},
 	/// A breakpoint with a message was hit
 	Logged {
@@ -287,7 +295,8 @@ pub struct Adapter {
 	/// How many sleeping procs the thread list has
 	sleeping_threads: u32,
 	/// The client has been told the thread list doesn't have them all
-	said_more_sleep: bool
+	said_more_sleep: bool,
+	data: data::DataBreakpoints
 }
 
 /// Runs the adapter on stdin and stdout until the client leaves
@@ -336,7 +345,8 @@ pub fn run() {
 		caught: None,
 		set: SetBreakpoints::default(),
 		sleeping_threads: aux::DEFAULT_SLEEPING_STACKS,
-		said_more_sleep: false
+		said_more_sleep: false,
+		data: data::DataBreakpoints::default()
 	};
 
 	while let Ok(input) = receiver.recv() {
@@ -399,6 +409,11 @@ impl Adapter {
 			Input::CodeChanged { generation } => {
 				if self.debuggee.as_ref().is_some_and(|d| d.generation == generation) {
 					self.reapply_breakpoints();
+				}
+			}
+			Input::WatchEnded { generation, id, reason } => {
+				if self.debuggee.as_ref().is_some_and(|d| d.generation == generation) {
+					self.watch_ended(id, &reason);
 				}
 			}
 			Input::GameExited(code) => {
@@ -469,6 +484,8 @@ impl Adapter {
 			"setBreakpoints" => arguments(args).and_then(|args| self.set_breakpoints(args)),
 			"setFunctionBreakpoints" => arguments(args).and_then(|args| self.set_function_breakpoints(args)),
 			"setExceptionBreakpoints" => arguments(args).and_then(|args| self.set_exception_breakpoints(args)),
+			"dataBreakpointInfo" => arguments(args).and_then(|args| self.data_breakpoint_info(args)),
+			"setDataBreakpoints" => arguments(args).and_then(|args| self.set_data_breakpoints(args)),
 			"threads" => self.threads(),
 			"stackTrace" => arguments(args).and_then(|args| self.stack_trace(args)),
 			"scopes" => arguments(args).and_then(|args| self.scopes(args)),
@@ -519,6 +536,7 @@ impl Adapter {
 			supportTerminateDebuggee: Some(true),
 			supportsTerminateRequest: Some(true),
 			supportsBreakpointLocationsRequest: Some(true),
+			supportsDataBreakpoints: Some(true),
 			supportsLoadedSourcesRequest: Some(true),
 			..Default::default()
 		})?;
@@ -774,6 +792,7 @@ impl Adapter {
 			}
 		}
 		self.set.lock().unwrap().clear();
+		self.watches_lost();
 
 		// It hangs up straight away if it's on its way to a reboot
 		let byond = match self.request(&AuxRequest::ByondVersion) {
@@ -925,6 +944,7 @@ impl Adapter {
 				let _ = self.apply_breakpoints(&file);
 			}
 			let _ = self.apply_function_breakpoints();
+			self.rewatch();
 		}
 		let _ = self.ack(&AuxRequest::Configured);
 		self.catch_up_on_pause();
@@ -1223,6 +1243,7 @@ impl Adapter {
 				set.push(SetBreakpoint {
 					asked: instruction,
 					at,
+					watch: None,
 					id: number
 				});
 			}
@@ -1339,6 +1360,7 @@ impl Adapter {
 			set.push(SetBreakpoint {
 				asked: instruction,
 				at,
+				watch: None,
 				id
 			});
 		}

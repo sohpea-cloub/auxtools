@@ -150,7 +150,11 @@ impl Launcher {
 					break;
 				}
 				if let Some(value) = line.strip_prefix("Content-Length:") {
-					length = value.trim().parse().unwrap();
+					// A launcher that's on its way out can leave half a line
+					let Ok(given) = value.trim().parse() else {
+						return;
+					};
+					length = given;
 				}
 			}
 			let mut body = vec![0; length];

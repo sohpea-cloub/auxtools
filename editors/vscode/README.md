@@ -84,6 +84,32 @@ The **Loaded Scripts** view (in Run and Debug's "..." menu) lists the files the 
 code is from, and BYOND's `stddef.dm`. A file with no procs in it, only types, vars or
 defines, isn't there: the world knows its files by their procs.
 
+## Data breakpoints
+
+"Who changes this var?": while the world is paused, right-click a variable in the
+**Variables** view and choose **Break on Value Change**. The world then pauses whenever
+that place gets another value, just after the change (on the next line, usually), in
+whatever proc made it, and the debug console says what it was and what it is now:
+`health changed from 100 to 90`. It catches every way a var changes, the engine's own
+included (an atom's `loc` when it moves), since nothing is hooked: the place is looked
+at between every two instructions. Giving a var the value it already has isn't a change.
+
+What can be watched: a var of an object, an entry of a list, a global var, and a proc's
+own vars (in that one call of the proc, until it returns). A list var is watched for
+being given another list, not for what's put in it: watch an entry for that. `src`,
+`usr` and expressions that aren't a place (`a + b`) can't be watched.
+
+A data breakpoint can have a condition, which is about the change: `value` is what's
+there now and `old` what was (`value < old`, `value == null`). It can have a hit count
+too. It ends by itself when its object is deleted or its proc returns, and after the
+world reboots only global vars are still watched; the **Breakpoints** view shows which
+are no longer set, and why.
+
+Each watched place is looked at before every instruction the world runs, which slows
+its code down while the watch is set: with one, a tight loop takes about twice as long as
+it does under the debugger with nothing watched; with five, five times as long. Take
+them away when you have your answer.
+
 ## Runtime errors
 
 Under **Breakpoints** in the Run and Debug view:
