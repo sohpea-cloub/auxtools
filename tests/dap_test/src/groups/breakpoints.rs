@@ -107,6 +107,38 @@ fn placing() {
 	);
 	assert_eq!(why, "the breakpoints' source has no path");
 	ok("breakpoints for a source with no path are refused");
+	world.set_breakpoints(&stepping, json!([]));
+	world.set_breakpoints(&at.file("errors.dm"), json!([]));
+
+	// A `var` with no value is a line of the world's code with nothing on
+	// it: its breakpoint is where the next line starts
+	let tool = at.file("sub/tool.dm");
+	let (var, first, second) = (at.line("declares_var"), at.line("declares_first"), at.line("declares_second"));
+	let set = world.set_breakpoints(&tool, json!([var]));
+	assert_eq!((&set[0]["verified"], &set[0]["line"]), (&json!(true), &json!(var)), "{}", set[0]);
+	world.run("declares");
+	world.stop_at("breakpoint", "/sub_declares", var);
+	world.step_to("next", "/sub_declares", first);
+	world.step_to("next", "/sub_declares", second);
+	world.resume_through("declares");
+	ok("a breakpoint on a var with no value stops there, and the steps from it are on the lines after");
+
+	let set = world.set_breakpoints(&tool, json!([var, first]));
+	for (breakpoint, line) in set.iter().zip([var, first]) {
+		assert_eq!(
+			(&breakpoint["verified"], &breakpoint["line"]),
+			(&json!(true), &json!(line)),
+			"{}",
+			breakpoint
+		);
+	}
+	world.run("declares");
+	world.stop_at("breakpoint", "/sub_declares", var);
+	world.resume();
+	world.stop_at("breakpoint", "/sub_declares", first);
+	world.set_breakpoints(&tool, json!([]));
+	world.resume_through("declares");
+	ok("and so does one on the line after it, set with it");
 	world.end();
 }
 

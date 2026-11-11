@@ -555,6 +555,23 @@ impl InstructionHook for Server {
 			let map = ORIGINAL_BYTECODE.lock().unwrap();
 			if let Some(original) = map.get(&PtrKey::new(opcode_ptr)) {
 				unsafe {
+					// The instruction under the breakpoint runs now, without
+					// coming through here again. If it's a DbgLine (the
+					// breakpoint is that of a line with no code of its own,
+					// like a `var` with no value), a step by lines has to be
+					// told the next line starts here: it would go on to the
+					// one after.
+					if original.first() == Some(&OPCODE_DBGLINE) && !in_eval {
+						match CURRENT_ACTION {
+							DebuggerAction::StepOver { target: frame, .. } | DebuggerAction::StepInto { parent: frame, .. }
+								if frame.is(*(*ctx).proc_instance()) =>
+							{
+								CURRENT_ACTION = DebuggerAction::BreakOnNext;
+							}
+							_ => {}
+						}
+					}
+
 					// The breakpoint we stepped over last is normally back in
 					// place by now. It isn't if an eval ended on that very
 					// instruction, so put it back before we lose track of it.
