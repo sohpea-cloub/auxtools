@@ -38,7 +38,7 @@ jobs:
           sudo apt-get install libgcc-s1:i386 g++-multilib zlib1g-dev:i386 libssl-dev:i386
 
       - name: Build
-        run: cargo build --target=${{ matrix.os.target }} --release --verbose
+        run: cargo build --workspace --target=${{ matrix.os.target }} --release --verbose
         env:
           PKG_CONFIG_ALLOW_CROSS: 1
 
@@ -53,6 +53,6 @@ jobs:
 
       - name: Run Tests (Windows)
         if: ${{ matrix.os.name == 'win' }}
-        run: cargo test --target=${{matrix.os.target}} --verbose
+        run: cargo test --workspace --target=${{matrix.os.target}} --verbose
         env:
           PKG_CONFIG_ALLOW_CROSS: 1
