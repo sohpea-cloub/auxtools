@@ -96,7 +96,7 @@ System libraries:
     ```sh
     sudo dpkg --add-architecture i386
     sudo apt-get update
-    sudo apt-get install build-essential g++-multilib libc6-i386 libstdc++6:i386 pkg-config libssl-dev libssl-dev:i386
+    sudo apt-get install build-essential g++-multilib libc6-i386 libstdc++6:i386
     ```
 
 * Other Linux distributions install the appropriate **32-bit development** and **32-bit runtime** packages.
@@ -115,7 +115,6 @@ To compile in release mode (recommended for speed):
 
 Linux:
 ```sh
-export PKG_CONFIG_ALLOW_CROSS=1
 cargo build --workspace --release --target i686-unknown-linux-gnu
 # output: target/i686-unknown-linux-gnu/release/libauxtools.so,libdebug_server.so,libauxcov.so,auxtools
 ```
@@ -133,7 +132,7 @@ Windows, built on Linux, which is how CI builds it (clang 19 or newer, lld and l
 ci/msvc/fetch-sdk.sh ~/.cache/msvc-sdk   # once: Microsoft's C runtime and Windows SDK, about 800 MB
 export MSVC_SDK=~/.cache/msvc-sdk
 . ci/msvc/env.sh
-cargo build --workspace --exclude byond_get --release --target i686-pc-windows-msvc
+cargo build --workspace --release --target i686-pc-windows-msvc
 ```
 
 ## Continuous integration
