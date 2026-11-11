@@ -610,7 +610,7 @@ dependencies = [
 [[package]]
 name = "dap-types"
 version = "0.0.0"
-source = "git+https://github.com/sohpea-cloub/SpacemanDMM?branch=revamp#98651a2a1989a19949047bbcb3fd938035690588"
+source = "git+https://github.com/sohpea-cloub/SpacemanDMM?branch=revamp#60252d28e8decc3f69842dae22074f995c7f1062"
 dependencies = [
  "foldhash",
  "serde",
@@ -739,7 +739,7 @@ dependencies = [
 [[package]]
 name = "dmasm"
 version = "0.1.0"
-source = "git+https://github.com/sohpea-cloub/dmasm?branch=revamp#278217e5b7322c710a5974a6652b4f31a11af74e"
+source = "git+https://github.com/sohpea-cloub/dmasm?branch=revamp#f55cf0638538f52dbcbb4d6f18ab00c8524b892e"
 dependencies = [
  "bitflags 2.13.2",
  "dreammaker",
@@ -758,7 +758,7 @@ checksum = "c2db04e74f0a9a93103b50e90b96024c9b2bdca8bce6a632ec71b88736d3d359"
 [[package]]
 name = "dreammaker"
 version = "0.1.0"
-source = "git+https://github.com/sohpea-cloub/SpacemanDMM?branch=revamp#98651a2a1989a19949047bbcb3fd938035690588"
+source = "git+https://github.com/sohpea-cloub/SpacemanDMM?branch=revamp#60252d28e8decc3f69842dae22074f995c7f1062"
 dependencies = [
  "beef",
  "bitflags 2.13.2",
@@ -780,7 +780,7 @@ dependencies = [
 [[package]]
 name = "dreammaker-macros"
 version = "0.0.0"
-source = "git+https://github.com/sohpea-cloub/SpacemanDMM?branch=revamp#98651a2a1989a19949047bbcb3fd938035690588"
+source = "git+https://github.com/sohpea-cloub/SpacemanDMM?branch=revamp#60252d28e8decc3f69842dae22074f995c7f1062"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1466,7 +1466,7 @@ dependencies = [
 [[package]]
 name = "interval-tree"
 version = "0.8.0"
-source = "git+https://github.com/sohpea-cloub/SpacemanDMM?branch=revamp#98651a2a1989a19949047bbcb3fd938035690588"
+source = "git+https://github.com/sohpea-cloub/SpacemanDMM?branch=revamp#60252d28e8decc3f69842dae22074f995c7f1062"
 
 [[package]]
 name = "inventory"
