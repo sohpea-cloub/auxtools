@@ -822,14 +822,25 @@ impl Server {
 	fn procs_in(&mut self, file: &str) -> Vec<(ProcRef, Vec<u32>)> {
 		let normalize = |path: &str| path.replace('\\', "/").to_ascii_lowercase();
 		let wanted = normalize(file);
-		let same = |file: &str| file == wanted || file.ends_with(&format!("/{}", wanted)) || wanted.ends_with(&format!("/{}", file));
+		// The file of that name. With none, the files it could be the end of
+		// the path of, or that it's the end of the name of: but not when
+		// there's one, as the world can have `map.dm` and `code/map.dm`
+		// (DreamMaker names a file another .dme includes as that one does).
+		let same = |file: &str| file == wanted;
+		let alike = |file: &str| file.ends_with(&format!("/{}", wanted)) || wanted.ends_with(&format!("/{}", file));
 
-		let ids: Vec<u32> = self
-			.file_index()
-			.iter()
-			.filter(|(file, _)| same(&normalize(file)))
-			.flat_map(|(_, ids)| ids.iter().copied())
-			.collect();
+		let index = self.file_index();
+		let matching = |test: &dyn Fn(&str) -> bool| -> Vec<u32> {
+			index
+				.iter()
+				.filter(|(file, _)| test(&normalize(file)))
+				.flat_map(|(_, ids)| ids.iter().copied())
+				.collect()
+		};
+		let mut ids = matching(&same);
+		if ids.is_empty() {
+			ids = matching(&alike);
+		}
 		ids.into_iter()
 			.filter_map(|id| Proc::from_id(raw_types::procs::ProcId(id)))
 			.map(|proc| {

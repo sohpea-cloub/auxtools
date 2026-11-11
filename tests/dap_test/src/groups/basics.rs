@@ -296,6 +296,7 @@ fn refusals() {
 	ok("stddef.dm's text is the one source the launcher has");
 
 	loaded_sources(&mut world);
+	files_another_environment_names(&mut world);
 	world.end();
 }
 
@@ -304,10 +305,19 @@ fn loaded_sources(world: &mut World) {
 	let sources = world.request("loadedSources", json!({}))["sources"].as_array().unwrap().clone();
 	let (files, references): (Vec<&Value>, Vec<&Value>) = sources.iter().partition(|source| source["path"].is_string());
 	let paths: Vec<PathBuf> = files.iter().map(|source| PathBuf::from(source["path"].as_str().unwrap())).collect();
-	let expected: Vec<PathBuf> = ["errors.dm", "main.dm", "stepping.dm", "values.dm", "watching.dm"]
-		.iter()
-		.map(|name| world.marks.file(name))
-		.collect();
+	// (lib/tool.dm is just "tool.dm" to the world: where it is is worked out)
+	let expected: Vec<PathBuf> = [
+		"errors.dm",
+		"lib/tool.dm",
+		"main.dm",
+		"stepping.dm",
+		"sub/tool.dm",
+		"values.dm",
+		"watching.dm"
+	]
+	.iter()
+	.map(|name| world.marks.file(name))
+	.collect();
 	assert_eq!(paths, expected, "{:?}", sources);
 	for (source, path) in files.iter().zip(&paths) {
 		assert!(path.is_absolute() && path.is_file(), "{}", path.display());
@@ -322,6 +332,26 @@ fn loaded_sources(world: &mut World) {
 	);
 	assert_eq!(sources.last(), Some(references[0]));
 	ok("and stddef.dm last, by the reference its text is given for");
+}
+
+/// DreamMaker names a file that a .dme other than the world's includes as
+/// that .dme does: lib/tool.dm, which lib/lib.dme includes, is "tool.dm" to
+/// the world. sub/tool.dm is "sub/tool.dm", with code on the same lines.
+fn files_another_environment_names(world: &mut World) {
+	assert_eq!(world.marks.line("lib_tool"), world.marks.line("sub_tool"));
+	let source_path = |world: &mut World| PathBuf::from(world.top_frame()["source"]["path"].as_str().unwrap());
+
+	// lib_tool() is called first: a breakpoint taken for the end of the
+	// file's name would stop there
+	world.run_to("tools", "/sub_tool", "sub_tool");
+	assert_eq!(source_path(world), world.marks.file("sub/tool.dm"));
+	world.resume_through("tools");
+	ok("a breakpoint in a file isn't one in a file whose name in the world its path ends with");
+
+	world.run_to("tools", "/lib_tool", "lib_tool");
+	assert_eq!(source_path(world), world.marks.file("lib/tool.dm"));
+	world.resume_through("tools");
+	ok("a file another .dme includes takes breakpoints, and a frame in it is in the file where it is");
 }
 
 /// Evaluates in a world that may not be connected yet

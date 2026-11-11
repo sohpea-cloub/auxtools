@@ -12,15 +12,21 @@ use crate::{
 
 /// A copy of the world's code, to edit, in a directory of its own
 pub fn copy_of_the_world(name: &str) -> PathBuf {
-	let dir = std::env::temp_dir().join(format!("dap_test_{}-{}", name, std::process::id()));
-	let _ = std::fs::remove_dir_all(&dir);
-	std::fs::create_dir_all(&dir).unwrap();
-	for entry in std::fs::read_dir(host_file("")).unwrap() {
-		let path = entry.unwrap().path();
-		if path.extension().is_some_and(|e| e == "dm" || e == "dme" || e == "dmb" || e == "rsc") {
-			std::fs::copy(&path, dir.join(path.file_name().unwrap())).unwrap();
+	fn copy(from: &std::path::Path, to: &std::path::Path) {
+		std::fs::create_dir_all(to).unwrap();
+		for entry in std::fs::read_dir(from).unwrap() {
+			let path = entry.unwrap().path();
+			let copy_to = to.join(path.file_name().unwrap());
+			if path.is_dir() {
+				copy(&path, &copy_to);
+			} else if path.extension().is_some_and(|e| e == "dm" || e == "dme" || e == "dmb" || e == "rsc") {
+				std::fs::copy(&path, copy_to).unwrap();
+			}
 		}
 	}
+	let dir = std::env::temp_dir().join(format!("dap_test_{}-{}", name, std::process::id()));
+	let _ = std::fs::remove_dir_all(&dir);
+	copy(&host_file(""), &dir);
 	dir
 }
 

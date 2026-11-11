@@ -25,13 +25,23 @@ pub struct Marks {
 }
 
 impl Marks {
+	/// The code's files, those in its directories after its own
 	fn files(&self) -> Vec<PathBuf> {
-		let mut files: Vec<PathBuf> = std::fs::read_dir(&self.dir)
-			.unwrap()
-			.map(|entry| entry.unwrap().path())
-			.filter(|path| path.extension().is_some_and(|e| e == "dm"))
-			.collect();
-		files.sort();
+		fn files_in(dir: &std::path::Path, files: &mut Vec<PathBuf>) {
+			let mut entries: Vec<PathBuf> = std::fs::read_dir(dir).unwrap().map(|entry| entry.unwrap().path()).collect();
+			entries.sort();
+			files.extend(
+				entries
+					.iter()
+					.filter(|path| path.is_file() && path.extension().is_some_and(|e| e == "dm"))
+					.cloned()
+			);
+			for directory in entries.iter().filter(|path| path.is_dir()) {
+				files_in(directory, files);
+			}
+		}
+		let mut files = vec![];
+		files_in(&self.dir, &mut files);
 		files
 	}
 

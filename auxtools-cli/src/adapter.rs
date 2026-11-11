@@ -38,6 +38,7 @@ use crate::{
 };
 
 mod data;
+mod files;
 mod journal;
 
 pub use journal::reload_by_another;
@@ -312,9 +313,6 @@ pub struct Adapter {
 	/// the adapter has been told it's ready (`Output::ready`)
 	configured: bool,
 	said_ready: bool,
-	/// The directory the world's code is in, which the world names its files
-	/// relative to
-	root: Option<PathBuf>,
 	stddef: Option<Stddef>,
 	/// The code's macros, as the world was last given them: again each time
 	/// it connects, in case they were sent while it rebooted
@@ -338,8 +336,9 @@ pub struct Adapter {
 	client: ClientAbilities,
 	/// The things that are taking a while, which the client is showing
 	progress: Vec<&'static str>,
-	/// `root`, for the thread that passes the world's output on
-	output_root: Arc<Mutex<Option<PathBuf>>>,
+	/// Which file each of the world's names for them is; shared with the
+	/// thread that passes the world's output on
+	files: Arc<Mutex<files::WorldFiles>>,
 	/// What the world printed, for its record, while it isn't connected
 	waiting_output: Vec<String>,
 	/// The text each file's breakpoints were given for: their lines are
@@ -427,7 +426,6 @@ pub fn serve(out: Output, inputs: mpsc::Sender<Input>, receiver: &mpsc::Receiver
 		watching: false,
 		configured: false,
 		said_ready: false,
-		root: None,
 		stddef: None,
 		macros: None,
 		debuggee: None,
@@ -439,7 +437,7 @@ pub fn serve(out: Output, inputs: mpsc::Sender<Input>, receiver: &mpsc::Receiver
 		reload_started: None,
 		client: ClientAbilities::default(),
 		progress: vec![],
-		output_root: Arc::new(Mutex::new(None)),
+		files: Arc::new(Mutex::new(files::WorldFiles::default())),
 		waiting_output: vec![],
 		breakpoints: BTreeMap::new(),
 		breakpoint_texts: HashMap::new(),
@@ -501,18 +499,7 @@ impl Adapter {
 			Input::WorldOutput(lines) => self.journal_output(lines),
 			Input::Logged { message, file, line } => {
 				// With where it's from, for the client to make a link of
-				let source = file.map(|file| {
-					let file = file.replace('\\', "/");
-					let path = match &self.root {
-						Some(root) => root.join(&file),
-						None => PathBuf::from(&file)
-					};
-					Source {
-						name: path.file_name().map(|name| name.to_string_lossy().into_owned()),
-						path: Some(path.to_string_lossy().into_owned()),
-						..Default::default()
-					}
-				});
+				let source = file.map(|file| self.file_source(&file));
 				self.out.event(OutputEvent {
 					output: message + "\n",
 					category: Some("console".to_owned()),
@@ -769,7 +756,7 @@ impl Adapter {
 			env: &args.env,
 			debug: Some((library, self.debugging))
 		};
-		let (out, inputs, root) = (self.out.clone(), self.inputs.clone(), self.output_root.clone());
+		let (out, inputs, files) = (self.out.clone(), self.inputs.clone(), self.files.clone());
 		let batch = journal::batch_output(self.inputs.clone());
 		let game = Game::start(
 			launch,
@@ -782,17 +769,10 @@ impl Adapter {
 				}
 				match runtime_place(&line) {
 					Some((file, number)) => {
-						let path = match &*root.lock().unwrap() {
-							Some(root) => root.join(file),
-							None => PathBuf::from(file)
-						};
+						let path = files.lock().unwrap().path(file);
 						out.event(OutputEvent {
 							category: Some(category.to_owned()),
-							source: Some(Source {
-								name: path.file_name().map(|name| name.to_string_lossy().into_owned()),
-								path: Some(path.to_string_lossy().into_owned()),
-								..Default::default()
-							}),
+							source: Some(source_at(&path)),
 							line: Some(number),
 							output: line,
 							..Default::default()
@@ -991,8 +971,7 @@ impl Adapter {
 			};
 			Some(local::world_dmb(&args, &cwd)?.with_extension("dme"))
 		});
-		self.root = dme.as_ref().and_then(|dme| std::path::absolute(dme).ok()?.parent().map(Path::to_owned));
-		self.output_root.lock().unwrap().clone_from(&self.root);
+		*self.files.lock().unwrap() = files::WorldFiles::new(dme.as_ref().and_then(|dme| std::path::absolute(dme).ok()));
 		self.hot_reload = settings.hot_reload;
 		if !settings.hot_reload {
 			self.code_read = true;
@@ -1514,10 +1493,10 @@ impl Adapter {
 		Ok(Value::Null)
 	}
 
-	/// What the world calls a file of its code: its path from the code's
-	/// directory. Otherwise the world matches the end of the path.
+	/// What the world calls a file of its code: mostly its path from the
+	/// code's directory. Otherwise the world matches the end of the path.
 	fn world_file_name(&self, path: &str) -> String {
-		file_name_in(self.root.as_deref(), path)
+		self.files.lock().unwrap().name(path)
 	}
 
 	/// Sets a file's breakpoints in the world, in place of the ones it had
@@ -1990,18 +1969,7 @@ impl Adapter {
 			match &frame.file {
 				// One of the debug library's own
 				Some(file) if file == HELPER_FILE => dap_frame.presentationHint = Some(StackFramePresentationHint::Subtle),
-				Some(file) => {
-					let file = file.replace('\\', "/");
-					let path = match &self.root {
-						Some(root) => root.join(&file),
-						None => PathBuf::from(&file)
-					};
-					dap_frame.source = Some(Source {
-						name: path.file_name().map(|name| name.to_string_lossy().into_owned()),
-						path: Some(path.to_string_lossy().into_owned()),
-						..Default::default()
-					});
-				}
+				Some(file) => dap_frame.source = Some(self.file_source(file)),
 				None => match self.stddef.as_ref().and_then(|stddef| stddef.line(&proc.path, proc.override_id)) {
 					Some(line) => {
 						dap_frame.source = Some(Source {
@@ -2300,18 +2268,10 @@ impl Adapter {
 		Ok(serde_json::json!({ "instructions": instructions }))
 	}
 
-	/// A file of the world's code, as the client is shown it
+	/// A file of the world's code, by the world's name for it, as the client
+	/// is shown it
 	fn file_source(&self, file: &str) -> Source {
-		let file = file.replace('\\', "/");
-		let path = match &self.root {
-			Some(root) => root.join(&file),
-			None => PathBuf::from(&file)
-		};
-		Source {
-			name: path.file_name().map(|name| name.to_string_lossy().into_owned()),
-			path: Some(path.to_string_lossy().into_owned()),
-			..Default::default()
-		}
+		source_at(&self.files.lock().unwrap().path(file))
 	}
 
 	fn source(&mut self, args: SourceArguments) -> Handled {
@@ -2365,24 +2325,11 @@ impl Adapter {
 			.into_iter()
 			// The debug library's own procs aren't in a file of the world's
 			.filter(|file| file != HELPER_FILE)
-			.map(|file| {
-				let file = file.replace('\\', "/");
-				match &self.root {
-					Some(root) => root.join(&file),
-					None => PathBuf::from(&file)
-				}
-			})
+			.map(|file| self.files.lock().unwrap().path(&file))
 			.collect();
 		paths.sort();
 		paths.dedup();
-		let mut sources: Vec<Source> = paths
-			.into_iter()
-			.map(|path| Source {
-				name: path.file_name().map(|name| name.to_string_lossy().into_owned()),
-				path: Some(path.to_string_lossy().into_owned()),
-				..Default::default()
-			})
-			.collect();
+		let mut sources: Vec<Source> = paths.iter().map(|path| source_at(path)).collect();
 		if self.stddef.is_some() {
 			sources.push(Source {
 				name: Some("stddef.dm".to_owned()),
@@ -2629,14 +2576,12 @@ fn named_proc(name: &str) -> ProcRef {
 	ProcRef { path, override_id }
 }
 
-/// A file's name as the world has it: its path from `root`, the directory of
-/// the world's code, with forward slashes. A file that isn't under it keeps
-/// its path, which the world matches by its end.
-fn file_name_in(root: Option<&Path>, path: &str) -> String {
-	let path = Path::new(path);
-	match root.and_then(|root| path.strip_prefix(root).ok()) {
-		Some(relative) => relative.to_string_lossy().replace('\\', "/"),
-		None => path.to_string_lossy().into_owned()
+/// A file as the client is shown it
+fn source_at(path: &Path) -> Source {
+	Source {
+		name: path.file_name().map(|name| name.to_string_lossy().into_owned()),
+		path: Some(path.to_string_lossy().into_owned()),
+		..Default::default()
 	}
 }
 
@@ -2683,7 +2628,7 @@ mod tests {
 
 	use auxtools_cli::server_types::{HitCondition, LogPart, RuntimeFilter};
 
-	use super::{changes_things, completion_place, file_name_in, hover_refuses, instruction_window, named_proc, parse_address, runtime_place, shown};
+	use super::{changes_things, completion_place, hover_refuses, instruction_window, named_proc, parse_address, runtime_place, shown};
 
 	#[test]
 	fn byond_says_where_a_runtime_error_was() {
@@ -2937,23 +2882,6 @@ mod tests {
 	fn a_definition_that_isnt_a_number_is_the_first() {
 		let proc = named_proc("/mob/Login#last");
 		assert_eq!((proc.path.as_str(), proc.override_id), ("/mob/Login", 0));
-	}
-
-	#[test]
-	fn a_file_under_the_code_is_named_from_it() {
-		let root = Path::new("code").join("world");
-		let file = root.join("mobs").join("living.dm");
-		assert_eq!(file_name_in(Some(&root), &file.to_string_lossy()), "mobs/living.dm");
-		let file = root.join("world.dm");
-		assert_eq!(file_name_in(Some(&root), &file.to_string_lossy()), "world.dm");
-	}
-
-	#[test]
-	fn a_file_elsewhere_keeps_its_path() {
-		let root = Path::new("code").join("world");
-		let file = Path::new("other").join("living.dm");
-		assert_eq!(file_name_in(Some(&root), &file.to_string_lossy()), file.to_string_lossy());
-		assert_eq!(file_name_in(None, "living.dm"), "living.dm");
 	}
 
 	/// Code of three instructions: two words, one, three
