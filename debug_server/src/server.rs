@@ -591,13 +591,6 @@ impl Server {
 		place
 	}
 
-	fn get_line_number(&self, proc: ProcRef, offset: u32) -> Option<u32> {
-		match auxtools::Proc::find_override(proc.path, proc.override_id) {
-			Some(proc) => Self::line_number_in(unsafe { proc.bytecode() }, offset),
-			None => None
-		}
-	}
-
 	/// The code a frame runs, when it isn't its proc's current code but what
 	/// that was before a hot reload: a frame runs the code it started with.
 	/// `None` too when the two only differ in their line numbers (the proc's
@@ -742,10 +735,10 @@ impl Server {
 		})
 	}
 
-	/// The line a frame is on. A frame that's `asleep` is where it will wake,
-	/// after the instruction it sleeps in: when that's the start of the next
-	/// line, it's still on the one before.
-	fn frame_line_number(&self, frame: &debug::StackFrame, asleep: bool) -> Option<u32> {
+	/// The file and line a frame is on (see `place_in`). A frame that's
+	/// `asleep` is where it will wake, after the instruction it sleeps in:
+	/// when that's the start of the next line, it's still on the one before.
+	fn frame_place(&self, frame: &debug::StackFrame, asleep: bool) -> (Option<String>, Option<u32>) {
 		let offset = if asleep {
 			(frame.offset as u32).saturating_sub(1)
 		} else {
@@ -753,21 +746,18 @@ impl Server {
 		};
 
 		if let Some(bytecode) = Self::old_code_of(frame) {
-			return Self::line_number_in(&bytecode, offset);
+			return match Self::place_in(&bytecode, offset, false) {
+				Some((file, line)) => (file.or_else(|| Self::file_of(&frame.proc)), Some(line)),
+				None => (Self::file_of(&frame.proc), None)
+			};
 		}
-
-		self.get_line_number(
-			ProcRef {
-				path: frame.proc.path.clone(),
-				override_id: frame.proc.override_id()
-			},
-			offset
-		)
+		Self::place_of(&frame.proc, offset)
 	}
 
 	/// A frame as a client is shown it, known to it by `id`
 	fn frame_info(&self, frame: &debug::StackFrame, id: u32, asleep: bool) -> StackFrame {
 		let old_code = Self::old_code_of(frame).is_some();
+		let (file, line) = self.frame_place(frame, asleep);
 		StackFrame {
 			id,
 			instruction: InstructionRef {
@@ -777,8 +767,8 @@ impl Server {
 				},
 				offset: frame.offset as u32
 			},
-			line: self.frame_line_number(frame, asleep),
-			file: Self::file_of(&frame.proc),
+			line,
+			file,
 			old_code,
 			code: self.code_of(frame, old_code)
 		}
@@ -801,26 +791,65 @@ impl Server {
 		Some(String::from_utf8_lossy(name.data()).into_owned())
 	}
 
-	/// The procs in each file, by the name the world was built with
+	/// The procs in each file, by the name the world was built with. A proc
+	/// is in the file its code starts in, and in the others its code names:
+	/// the proc that sets the world's global vars is in every file that has
+	/// one with a value, a type's is in each file that sets a var of it.
 	fn file_index(&mut self) -> &HashMap<String, Vec<u32>> {
 		// Counted again when procs were added
 		let count = auxtools::runtime_tables::proc_count();
 		if self.procs_by_file.as_ref().is_none_or(|(counted, _)| *counted != count) {
+			let dbg_file = dmasm::Opcode::DbgFile.word();
 			let mut by_file: HashMap<String, Vec<u32>> = HashMap::new();
 			for id in 0..count {
-				if let Some(file) = Proc::from_id(raw_types::procs::ProcId(id)).and_then(|proc| Self::file_of(&proc)) {
-					by_file.entry(file).or_default().push(id);
+				let Some(proc) = Proc::from_id(raw_types::procs::ProcId(id)) else {
+					continue;
+				};
+				let Some(file) = Self::file_of(&proc) else { continue };
+				// Few procs name a second file, and reading a proc's code
+				// for it takes a while: only those with a word that could be
+				// one are read
+				if unsafe { proc.bytecode() }.iter().skip(2).any(|&word| word == dbg_file) {
+					for other in Self::files_of(&proc) {
+						if other != file {
+							by_file.entry(other).or_default().push(id);
+						}
+					}
 				}
+				by_file.entry(file).or_default().push(id);
 			}
 			self.procs_by_file = Some((count, by_file));
 		}
 		&self.procs_by_file.as_ref().unwrap().1
 	}
 
+	/// The files a proc's code names (its DbgFiles), each once
+	fn files_of(proc: &Proc) -> Vec<String> {
+		let bytecode = crate::instruction_hooking::original_bytecode(proc);
+		let mut env = disassemble_env::DisassembleEnv;
+		let (nodes, _error) = dmasm::disassembler::disassemble(&bytecode, &mut env);
+		let mut files: Vec<String> = vec![];
+		for node in nodes {
+			if let dmasm::Node::Instruction(dmasm::Instruction::DbgFile(name), _) = node {
+				let name = String::from_utf8_lossy(&name.0).into_owned();
+				if !files.contains(&name) {
+					files.push(name);
+				}
+			}
+		}
+		files
+	}
+
+	/// A file's name as two of them are compared
+	fn normalized(path: &str) -> String {
+		path.replace('\\', "/").to_ascii_lowercase()
+	}
+
 	/// The procs with code in `file` (spelled as `Request::Locate` has it),
-	/// and the lines each has code on, as the world runs it now
-	fn procs_in(&mut self, file: &str) -> Vec<(ProcRef, Vec<u32>)> {
-		let normalize = |path: &str| path.replace('\\', "/").to_ascii_lowercase();
+	/// and the lines of it each has code on, as the world runs it now; and
+	/// the world's names for the file (`normalized`)
+	fn procs_in(&mut self, file: &str) -> (Vec<String>, Vec<(ProcRef, Vec<u32>)>) {
+		let normalize = Self::normalized;
 		let wanted = normalize(file);
 		// The file of that name. With none, the files it could be the end of
 		// the path of, or that it's the end of the name of: but not when
@@ -830,34 +859,37 @@ impl Server {
 		let alike = |file: &str| file.ends_with(&format!("/{}", wanted)) || wanted.ends_with(&format!("/{}", file));
 
 		let index = self.file_index();
-		let matching = |test: &dyn Fn(&str) -> bool| -> Vec<u32> {
-			index
-				.iter()
-				.filter(|(file, _)| test(&normalize(file)))
-				.flat_map(|(_, ids)| ids.iter().copied())
-				.collect()
+		let matching = |test: &dyn Fn(&str) -> bool| -> (Vec<String>, Vec<u32>) {
+			let files: Vec<(&String, &Vec<u32>)> = index.iter().filter(|(file, _)| test(&normalize(file))).collect();
+			let mut ids: Vec<u32> = files.iter().flat_map(|(_, ids)| ids.iter().copied()).collect();
+			ids.sort_unstable();
+			ids.dedup();
+			(files.iter().map(|(file, _)| normalize(file)).collect(), ids)
 		};
-		let mut ids = matching(&same);
+		let (mut files, mut ids) = matching(&same);
 		if ids.is_empty() {
-			ids = matching(&alike);
+			(files, ids) = matching(&alike);
 		}
-		ids.into_iter()
+		let procs = ids
+			.into_iter()
 			.filter_map(|id| Proc::from_id(raw_types::procs::ProcId(id)))
 			.map(|proc| {
-				let lines = Self::lines_of(&proc);
+				let lines = Self::lines_in(&proc, &files);
 				let proc = ProcRef {
 					path: proc.path.clone(),
 					override_id: proc.override_id()
 				};
 				(proc, lines)
 			})
-			.collect()
+			.collect();
+		(files, procs)
 	}
 
 	/// The lines from `start` to `end` of `file` that some proc has code on
 	fn lines_with_code(&mut self, file: &str, start: u32, end: u32) -> Vec<u32> {
 		let mut lines: Vec<u32> = self
 			.procs_in(file)
+			.1
 			.into_iter()
 			.flat_map(|(_, lines)| lines)
 			.filter(|line| (start..=end).contains(line))
@@ -871,7 +903,7 @@ impl Server {
 	fn locate(&mut self, file: &str, line: u32) -> Vec<InstructionRef> {
 		// A line with no code of its own (a proc's declaration, a comment, the
 		// middle of a statement) has its breakpoint on the next one that has
-		let procs = self.procs_in(file);
+		let (files, procs) = self.procs_in(file);
 		let Some(line) = procs.iter().flat_map(|(_, lines)| lines.iter().copied()).filter(|&l| l >= line).min() else {
 			return vec![];
 		};
@@ -881,11 +913,31 @@ impl Server {
 			if !lines.contains(&line) {
 				continue;
 			}
-			if let Some(offset) = self.get_offset(proc.clone(), line) {
+			if let Some(offset) = self.offset_of(proc.clone(), line, Some(&files)) {
 				found.push(InstructionRef { proc, offset });
 			}
 		}
 		found
+	}
+
+	/// The lines of `files` (`normalized`) a proc has code on: its DbgLines
+	/// while its code is of one of them
+	fn lines_in(proc: &Proc, files: &[String]) -> Vec<u32> {
+		let bytecode = crate::instruction_hooking::original_bytecode(proc);
+		let mut env = disassemble_env::DisassembleEnv;
+		let (nodes, _error) = dmasm::disassembler::disassemble(&bytecode, &mut env);
+		let mut inside = false;
+		let mut lines = vec![];
+		for node in nodes {
+			match node {
+				dmasm::Node::Instruction(dmasm::Instruction::DbgFile(name), _) => {
+					inside = files.contains(&Self::normalized(&String::from_utf8_lossy(&name.0)));
+				}
+				dmasm::Node::Instruction(dmasm::Instruction::DbgLine(line), _) if inside => lines.push(line),
+				_ => {}
+			}
+		}
+		lines
 	}
 
 	/// The lines a proc has code on (its DbgLines)
@@ -902,8 +954,19 @@ impl Server {
 			.collect()
 	}
 
-	fn line_number_in(bytecode: &[u32], offset: u32) -> Option<u32> {
+	/// The line the code at `offset` is of, and the file that line is in, if
+	/// the code says (its DbgLine and DbgFile). The file isn't always the one
+	/// the code starts in: the proc that sets the world's global vars has
+	/// each var's file in turn, and so does one that sets a type's vars, or
+	/// that reads another file's default with `::`.
+	///
+	/// `before` is for an `offset` that may be a DbgLine itself: the code
+	/// there is then of the line before, not of the one it's about to say.
+	/// That's where the breakpoint of a line with no code of its own is (a
+	/// proc's `set`, a `var` with no value), which stops on that line.
+	fn place_in(bytecode: &[u32], offset: u32, before: bool) -> Option<(Option<String>, u32)> {
 		let mut current_line_number = None;
+		let mut current_file = None;
 		let mut reached_offset = false;
 
 		let mut env = disassemble_env::DisassembleEnv;
@@ -918,12 +981,19 @@ impl Server {
 					}
 				}
 
-				if let dmasm::Instruction::DbgLine(line) = ins {
-					current_line_number = Some(line);
-					// Before its first line, a proc is at its first line
-					if reached_offset {
-						break;
+				match ins {
+					dmasm::Instruction::DbgFile(name) if !(reached_offset && current_line_number.is_some()) => {
+						current_file = Some(String::from_utf8_lossy(&name.0).into_owned());
 					}
+					dmasm::Instruction::DbgLine(_) if before && debug.offset == offset => {}
+					dmasm::Instruction::DbgLine(line) => {
+						current_line_number = Some(line);
+						// Before its first line, a proc is at its first line
+						if reached_offset {
+							break;
+						}
+					}
+					_ => {}
 				}
 
 				if debug.offset == offset {
@@ -936,21 +1006,55 @@ impl Server {
 		}
 
 		if reached_offset {
-			current_line_number
+			current_line_number.map(|line| (current_file, line))
 		} else {
 			None
 		}
 	}
 
+	/// The file and line of the code at `offset` of a proc. The file is the
+	/// one the proc starts in when its code doesn't say there.
+	fn place_of(proc: &Proc, offset: u32) -> (Option<String>, Option<u32>) {
+		// Read without the breakpoints in it, which can be where a DbgLine
+		// was: only one right here leaves the code on the line before
+		let original = original_bytecode(proc);
+		let here = offset as usize;
+		let breakpoint_here = unsafe { proc.bytecode() }.get(here) != original.get(here);
+		Self::place_at(proc, &original, offset, breakpoint_here)
+	}
+
+	/// The file and line a breakpoint at `offset` of a proc is on: where the
+	/// world is when it stops there
+	fn breakpoint_place(proc: &Proc, offset: u32) -> (Option<String>, Option<u32>) {
+		Self::place_at(proc, &original_bytecode(proc), offset, true)
+	}
+
+	fn place_at(proc: &Proc, original: &[u32], offset: u32, before: bool) -> (Option<String>, Option<u32>) {
+		match Self::place_in(original, offset, before) {
+			Some((file, line)) => (file.or_else(|| Self::file_of(proc)), Some(line)),
+			None => (Self::file_of(proc), None)
+		}
+	}
+
 	fn get_offset(&self, proc: ProcRef, line: u32) -> Option<u32> {
+		self.offset_of(proc, line, None)
+	}
+
+	/// Where a proc's code for `line` starts: the line of one of `files`
+	/// (`normalized`) when they're given, as a proc can have code of several
+	/// (see `place_in`)
+	fn offset_of(&self, proc: ProcRef, line: u32, files: Option<&[String]>) -> Option<u32> {
 		let proc = auxtools::Proc::find_override(proc.path, proc.override_id)?;
 		let mut offset = None;
 		let mut at_offset = false;
+		let mut inside = files.is_none();
 
-		let bytecode = unsafe { proc.bytecode() };
+		// Without the breakpoints in it: a line's breakpoint can be where the
+		// next line's DbgLine was
+		let bytecode = original_bytecode(&proc);
 
 		let mut env = disassemble_env::DisassembleEnv;
-		let (nodes, _error) = dmasm::disassembler::disassemble(bytecode, &mut env);
+		let (nodes, _error) = dmasm::disassembler::disassemble(&bytecode, &mut env);
 
 		for node in nodes {
 			if let dmasm::Node::Instruction(ins, debug) = node {
@@ -959,10 +1063,12 @@ impl Server {
 					break;
 				}
 
-				if let dmasm::Instruction::DbgLine(current_line) = ins {
-					if current_line == line {
-						at_offset = true;
+				match ins {
+					dmasm::Instruction::DbgFile(name) => {
+						inside = files.is_none_or(|files| files.contains(&Self::normalized(&String::from_utf8_lossy(&name.0))));
 					}
+					dmasm::Instruction::DbgLine(current_line) if inside && current_line == line => at_offset = true,
+					_ => {}
 				}
 			}
 		}
@@ -1404,7 +1510,7 @@ impl Server {
 		if !exactly {
 			instruction.offset = Self::breakpoint_offset(&proc, instruction.offset);
 		}
-		let line = self.get_line_number(instruction.proc.clone(), instruction.offset);
+		let (file, line) = Self::breakpoint_place(&proc, instruction.offset);
 
 		// A condition that doesn't compile would pause at every hit, to say so
 		// each time: better said once, now. The same goes for a message's
@@ -1459,11 +1565,7 @@ impl Server {
 					override_id: proc.override_id()
 				};
 				self.send_or_disconnect(Response::BreakpointSet {
-					result: BreakpointSetResult::Success {
-						line,
-						at: instruction,
-						file: Self::file_of(&proc)
-					}
+					result: BreakpointSetResult::Success { line, at: instruction, file }
 				});
 			}
 
@@ -1561,13 +1663,16 @@ impl Server {
 				listed
 					.enumerate()
 					.filter(|(_, stack)| !stack.is_empty())
-					.map(|(position, stack)| Stack {
-						id: self.thread_of(stack),
-						name: stack[0].proc.path.clone(),
-						file: Self::file_of(&stack[0].proc),
+					.map(|(position, stack)| {
 						// A sleeping stack's innermost frame is the one asleep
-						line: self.frame_line_number(&stack[0], position != 0),
-						sleeping: position != 0
+						let (file, line) = self.frame_place(&stack[0], position != 0);
+						Stack {
+							id: self.thread_of(stack),
+							name: stack[0].proc.path.clone(),
+							file,
+							line,
+							sleeping: position != 0
+						}
 					})
 					.collect()
 			}
@@ -2911,10 +3016,11 @@ impl Server {
 					path: proc.path.clone(),
 					override_id: proc.override_id()
 				};
+				let (file, line) = Self::place_of(&proc, offset as u32);
 				Response::Log {
 					message,
-					file: Self::file_of(&proc),
-					line: self.get_line_number(place.clone(), offset as u32),
+					file,
+					line,
 					proc: place,
 					caller
 				}
@@ -2939,19 +3045,10 @@ impl Server {
 			return;
 		}
 		let place = match Proc::from_id(key.0) {
-			Some(proc) => {
-				let line = self.get_line_number(
-					ProcRef {
-						path: proc.path.clone(),
-						override_id: proc.override_id()
-					},
-					key.1 as u32
-				);
-				match (Self::file_of(&proc), line) {
-					(Some(file), Some(line)) => format!(" at {}:{}", file, line),
-					_ => format!(" in {}", proc.path)
-				}
-			}
+			Some(proc) => match Self::place_of(&proc, key.1 as u32) {
+				(Some(file), Some(line)) => format!(" at {}:{}", file, line),
+				_ => format!(" in {}", proc.path)
+			},
 			None => String::new()
 		};
 		let message = format!(
@@ -3339,13 +3436,16 @@ impl Server {
 		debug::CallStacks::active()
 			.iter()
 			.take(JOURNAL_FRAMES)
-			.map(|frame| JournalFrame {
-				proc: match frame.proc.override_id() {
-					0 => frame.proc.path.clone(),
-					n => format!("{}#{}", frame.proc.path, n)
-				},
-				file: Self::file_of(&frame.proc),
-				line: self.frame_line_number(frame, false)
+			.map(|frame| {
+				let (file, line) = self.frame_place(frame, false);
+				JournalFrame {
+					proc: match frame.proc.override_id() {
+						0 => frame.proc.path.clone(),
+						n => format!("{}#{}", frame.proc.path, n)
+					},
+					file,
+					line
+				}
 			})
 			.collect()
 	}

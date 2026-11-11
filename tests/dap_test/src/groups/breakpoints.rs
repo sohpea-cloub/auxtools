@@ -16,12 +16,43 @@ pub fn run() {
 fn before_the_world_runs() {
 	let mut world = World::launch(json!({}));
 	world.catch_runtimes(false);
-	world.break_on(&["early_value", "world_new"]);
+	world.break_on(&["early_value", "tooled", "sub_tool", "world_new"]);
 	world.request("configurationDone", json!({}));
 
-	world.stop_on("breakpoint", "/early_value", "early_value");
+	// One proc sets all the world's global vars, in an order of DreamMaker's
+	// own: its code starts in one file that has one, and goes on in each of
+	// the others
+	let tool = world.marks.file("sub/tool.dm");
+	let (tooled, early_value, sub_tool) = (world.marks.line("tooled"), world.marks.line("early_value"), world.marks.line("sub_tool"));
+	let path = |frame: &serde_json::Value| std::path::PathBuf::from(frame["source"]["path"].as_str().unwrap_or_default());
+	let mut seen = vec![];
+	for _ in 0..3 {
+		let stop = world.stop();
+		assert_eq!(stop.reason, "breakpoint");
+		let thread = world.thread;
+		let frames = world.frames(thread);
+		match stop.proc.as_str() {
+			"/early_value" => assert_eq!(stop.line, early_value),
+			"/sub_tool" => {
+				assert_eq!(stop.line, sub_tool);
+				assert_eq!(
+					(frames[1]["line"].as_u64(), path(&frames[1])),
+					(Some(tooled), tool.clone()),
+					"{}",
+					frames[1]
+				);
+			}
+			_ => assert_eq!((stop.line, path(&frames[0])), (tooled, tool.clone()), "{}", frames[0])
+		}
+		seen.push(stop.proc);
+		world.resume();
+	}
+	seen.sort();
+	seen.dedup();
+	assert_eq!(seen.len(), 3, "{:?}", seen);
 	ok("a breakpoint in the code of a global var's initial value, set before the world runs");
-	world.resume();
+	ok("a breakpoint on a global var's value, in a file that isn't the first with one");
+	ok("the frame that sets a global var is in that var's file, on its line");
 	world.stop_on("breakpoint", "/world/New", "world_new");
 	ok("a breakpoint in world/New");
 	world.resume();

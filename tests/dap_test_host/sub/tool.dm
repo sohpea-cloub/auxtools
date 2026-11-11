@@ -3,3 +3,7 @@
 
 /proc/sub_tool(n)
 	return n + 1 // @sub_tool
+
+// A global var with a value, in a file that isn't the world's first: the proc
+// that sets the world's global vars has the code of every file's
+var/tooled = sub_tool(20) // @tooled
