@@ -90,8 +90,8 @@ pub enum Response {
 		vars: Vec<Variable>
 	},
 
-	// These responses can occur at any moment, even between a request and its response
-	// I guess they aren't really responses...
+	// These responses can occur at any moment, even between a request and its
+	// response I guess they aren't really responses...
 	Disconnect,
 	Notification {
 		message: String

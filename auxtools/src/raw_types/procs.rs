@@ -35,8 +35,8 @@ pub struct ProcMetadata {
 	pub bytecode: misc::BytecodeId,
 	pub locals: misc::LocalsId,
 	pub parameters: misc::ParametersId,
-	// the proc `..()` goes to, 0xFFFF for none. Brings the entry to the 44 bytes
-	// BYOND strides its proc table by
+	// the proc `..()` goes to, 0xFFFF for none. Brings the entry to the 44
+	// bytes BYOND strides its proc table by
 	#[only_in(Post1630)]
 	next_override: ProcId
 }
