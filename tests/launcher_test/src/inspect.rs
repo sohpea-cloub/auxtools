@@ -111,6 +111,13 @@ fn eval_failures(pid: &str, code: &Path) {
 	assert_eq!(fails(pid, &["eval", "1/0"]), "runtime error: Division by zero");
 	// One the proc catches is no failure
 	assert_eq!(run(pid, &["eval", "caught_inside()"], 0).out.trim(), "\"caught\"");
+	// /client in an expression is the value compiled code has for it, and a
+	// proc can be named without its /proc/
+	assert_eq!(run(pid, &["eval", "/client == client_type()"], 0).out.trim(), "1");
+	assert_eq!(
+		run(pid, &["eval", "/datum/twice/act"], 0).out,
+		run(pid, &["eval", "/datum/twice/proc/act"], 0).out
+	);
 	println!("ok: eval's runtime error says the proc it was in, with its file and line, and the procs between it and the expression");
 
 	// Paused, the same

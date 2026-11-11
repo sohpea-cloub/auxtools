@@ -96,6 +96,10 @@ var/datum/held/held = new
 	catch
 		return "caught"
 
+// /client as compiled code has it, for the command line's eval to match
+/proc/client_type()
+	return /client
+
 // A proc with two definitions, for the command line's proc and dis
 /datum/twice/proc/act()
 	return "first"
