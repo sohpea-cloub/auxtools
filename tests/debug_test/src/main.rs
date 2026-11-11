@@ -475,9 +475,13 @@ fn protocol(world: &World, mut client: Client) -> Client {
 
 	// A proc BYOND loses its caller's registers in. (It was a release build's
 	// trampoline that faulted on it, and this world alone crashes DreamDaemon
-	// without us: the test is that it runs through here.)
-	assert_eq!(eval(&mut client, None, "overrun()"), "7");
-	println!("ok: a proc that overruns BYOND's buffer for its stack leaves the world running");
+	// without us: the test is that it runs through here.) Not on Windows,
+	// where BYOND checks its stack after the proc and ends the world itself
+	// (exception c0000409), with or without a debugger.
+	if cfg!(unix) {
+		assert_eq!(eval(&mut client, None, "overrun()"), "7");
+		println!("ok: a proc that overruns BYOND's buffer for its stack leaves the world running");
+	}
 	drop(quiet);
 	println!("ok: bytes that aren't a request get that client hung up on, and a client that says nothing is left alone");
 
