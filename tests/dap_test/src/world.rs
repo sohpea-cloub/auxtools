@@ -177,6 +177,19 @@ impl World {
 	/// be taken.
 	pub fn break_if(&mut self, marked: &[(&str, &str)]) {
 		for (breakpoint, (name, _)) in self.try_break_if(marked).iter().zip(marked) {
+			let mut breakpoint = breakpoint.clone();
+			// One given in the moment a reload lands waits for the launcher to
+			// know the world has the file's change. A client is told when
+			// it's set, which is at once.
+			if breakpoint["message"] == "it's set when the world has the file's change" {
+				let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+				while breakpoint["verified"] != true && std::time::Instant::now() < deadline {
+					match self.launcher.event_within("breakpoint", std::time::Duration::from_secs(1)) {
+						Some(event) if event["body"]["breakpoint"]["id"] == breakpoint["id"] => breakpoint = event["body"]["breakpoint"].clone(),
+						_ => {}
+					}
+				}
+			}
 			assert_eq!(breakpoint["verified"], true, "the breakpoint at {} wasn't set: {}", name, breakpoint);
 		}
 	}
