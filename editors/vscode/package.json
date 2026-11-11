@@ -1,5 +1,5 @@
 {
-	"name": "auxtools-debugger",
+	"name": "auxtools",
 	"displayName": "auxtools Debugger (Beta)",
 	"description": "Debug BYOND (DreamMaker) worlds with auxtools: breakpoints, stepping, variables and expressions, with nothing to add to your code",
 	"version": "0.1.0",

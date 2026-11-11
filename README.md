@@ -152,7 +152,7 @@ A run's artifacts:
 | `auxtools-linux-symbols.tar.gz` | their debug information: `auxtools.debug`, `libdebug_server.so.debug`, which gdb finds next to them |
 | `auxtools-windows.zip` | `auxtools.exe`, `debug_server.dll` |
 | `auxtools-windows-symbols.zip` | `auxtools-cli.pdb`, `debug_server.pdb` |
-| `auxtools-debugger-VERSION.vsix` | the VS Code extension, with both platforms' programs |
+| `auxtools-VERSION.vsix` | the VS Code extension, with both platforms' programs |
 
 [Rust]: https://rust-lang.org
 [Cargo]: https://doc.rust-lang.org/cargo
