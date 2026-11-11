@@ -127,6 +127,33 @@ cargo build --workspace --release --target i686-pc-windows-msvc
 # output: target/i686-pc-windows-msvc/release/auxtools.dll,debug_server.dll,auxcov.dll,auxtools.exe
 ```
 
+Windows, built on Linux, which is how CI builds it (clang 19 or newer, lld and llvm installed):
+
+```sh
+ci/msvc/fetch-sdk.sh ~/.cache/msvc-sdk   # once: Microsoft's C runtime and Windows SDK, about 800 MB
+export MSVC_SDK=~/.cache/msvc-sdk
+. ci/msvc/env.sh
+cargo build --workspace --exclude byond_get --release --target i686-pc-windows-msvc
+```
+
+## Continuous integration
+
+`.github/workflows/ci.yml` runs for pull requests and for `master` in the willox and auxtools organisations, and anywhere else when it's started by hand. It builds both platforms on Linux with a fixed Rust version: Linux's on Ubuntu 22.04, so they run on glibc 2.35 and later, and Windows' with the C runtime linked in, so they run on Windows 10 and later with nothing installed. `ci/check-linux.sh` and `ci/check-windows.sh` hold the programs to that.
+
+It also checks that the code is formatted. `cargo +nightly-2026-10-24 fmt --all` formats it: `.rustfmt.toml` has options that only a nightly rustfmt takes, and that's the one CI checks with.
+
+Each build is then tested on the five BYOND builds in `ci/byond.sha256`, with the suites in `tests/` that run worlds and the launcher's unit tests: Linux's on Ubuntu 22.04, Windows' on Windows Server 2022 and under Wine. `ci/fetch-byond.sh` fetches BYOND from the [byond-builds.dm-lang.org](https://byond-builds.dm-lang.org) mirror, and only uses a download whose SHA-256 is the one in that file. `ci/run-tests.sh PROGRAMS BYOND` runs the same tests anywhere.
+
+A run's artifacts:
+
+| Artifact | In it |
+| --- | --- |
+| `auxtools-linux.tar.gz` | `auxtools`, `libdebug_server.so` |
+| `auxtools-linux-symbols.tar.gz` | their debug information: `auxtools.debug`, `libdebug_server.so.debug`, which gdb finds next to them |
+| `auxtools-windows.zip` | `auxtools.exe`, `debug_server.dll` |
+| `auxtools-windows-symbols.zip` | `auxtools-cli.pdb`, `debug_server.pdb` |
+| `auxtools-debugger-VERSION.vsix` | the VS Code extension, with both platforms' programs |
+
 [Rust]: https://rust-lang.org
 [Cargo]: https://doc.rust-lang.org/cargo
 [rustup]: https://rustup.rs
