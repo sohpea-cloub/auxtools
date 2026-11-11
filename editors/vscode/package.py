@@ -15,6 +15,7 @@ content types. This writes it directly, so there's nothing to install.
 
 import argparse
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -94,6 +95,17 @@ def add(archive, name, data, executable=False):
 	archive.writestr(info, data)
 
 
+def cargo_version():
+	"""The version the launcher and the debug library are built as: the
+	workspace's, in the root Cargo.toml"""
+	manifest = (ROOT / "Cargo.toml").read_text()
+	section = re.search(r"^\[workspace\.package\]$(.*?)(?=^\[|\Z)", manifest, re.M | re.S)
+	version = section and re.search(r'^version\s*=\s*"([^"]+)"', section.group(1), re.M)
+	if not version:
+		sys.exit("Cargo.toml has no version under [workspace.package]")
+	return version.group(1)
+
+
 def main():
 	parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
 	parser.add_argument("--profile", default="release", help="the cargo profile the binaries were built with")
@@ -101,6 +113,9 @@ def main():
 	args = parser.parse_args()
 
 	package = json.loads((HERE / "package.json").read_text())
+	# The extension and the programs in it are one release
+	if package["version"] != cargo_version():
+		sys.exit(f'package.json\'s version is {package["version"]}, and Cargo.toml\'s is {cargo_version()}: they go together')
 	out = Path(args.out) if args.out else Path(f'{package["name"]}-{package["version"]}.vsix')
 
 	files = {}

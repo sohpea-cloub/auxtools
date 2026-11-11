@@ -2,7 +2,7 @@
 	"name": "auxtools",
 	"displayName": "auxtools Debugger (Beta)",
 	"description": "Debug BYOND (DreamMaker) worlds with auxtools: breakpoints, stepping, variables and expressions, with nothing to add to your code",
-	"version": "0.1.0",
+	"version": "3.0.0-dev",
 	"publisher": "auxtools",
 	"license": "GPL-3.0",
 	"repository": {
