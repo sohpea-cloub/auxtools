@@ -25,7 +25,10 @@ use std::{
 	io::{BufRead, BufReader, Read},
 	path::{Path, PathBuf},
 	process::{Child, Command, Stdio},
-	sync::{Arc, Mutex},
+	sync::{
+		atomic::{AtomicBool, Ordering},
+		Arc, Mutex
+	},
 	time::{Duration, Instant}
 };
 
@@ -585,8 +588,6 @@ fn protocol(version: &str) -> u32 {
 /// stand-in is a BYOND server with no debug library, and this test listening
 /// where the library of the version before ours would.
 fn another_version() {
-	use interprocess::local_socket::{prelude::*, GenericNamespaced, ListenerOptions};
-
 	let (dir, dme) = attach_host_copy("another_version");
 	let mut plain = KilledOnDrop(
 		Command::new(paths::find_dreamdaemon())
@@ -601,17 +602,8 @@ fn another_version() {
 	let pid = plain.id();
 	let ours = protocol(&launcher_command(&["version"]).1);
 	let theirs = ours - 1;
-	let name = format!("auxtools-debug-v{}-{}", theirs, pid);
-	let listener = ListenerOptions::new()
-		.name(name.to_ns_name::<GenericNamespaced>().unwrap())
-		.create_sync()
-		.unwrap();
 	// Whoever connects is let in, and told nothing
-	std::thread::spawn(move || {
-		for client in listener.incoming() {
-			drop(client);
-		}
-	});
+	let stand_in = StandIn::listen(format!("auxtools-debug-v{}-{}", theirs, pid), drop);
 
 	let (code, list) = launcher_command(&["list", "--json"]);
 	assert_eq!(code, 0, "{}", list);
@@ -658,10 +650,67 @@ fn another_version() {
 		"attaching to another version's world said {}",
 		printed
 	);
+	// Release the listener before the PID can be reused.
+	drop(stand_in);
 	let _ = plain.kill();
 	let _ = plain.wait();
 	let _ = std::fs::remove_dir_all(&dir);
 	println!("ok: incompatible protocol discovery and attach rejection");
+}
+
+/// Mock debugger listener, closed on drop to prevent stale responses when
+/// Wine reuses the world's PID.
+struct StandIn {
+	name: String,
+	done: Arc<AtomicBool>,
+	listening: Option<std::thread::JoinHandle<()>>
+}
+
+impl StandIn {
+	fn listen(name: String, answer: fn(interprocess::local_socket::Stream)) -> Self {
+		use interprocess::local_socket::{prelude::*, GenericNamespaced, ListenerOptions};
+		let listener = ListenerOptions::new()
+			.name(name.clone().to_ns_name::<GenericNamespaced>().unwrap())
+			.create_sync()
+			.unwrap();
+		let done = Arc::new(AtomicBool::new(false));
+		let stop = done.clone();
+		let listening = std::thread::spawn(move || {
+			for client in listener.incoming().flatten() {
+				if stop.load(Ordering::SeqCst) {
+					return;
+				}
+				std::thread::spawn(move || answer(client));
+			}
+		});
+		StandIn {
+			name,
+			done,
+			listening: Some(listening)
+		}
+	}
+}
+
+impl Drop for StandIn {
+	fn drop(&mut self) {
+		use interprocess::local_socket::{prelude::*, GenericNamespaced, Stream};
+		self.done.store(true, Ordering::SeqCst);
+		// Wake the listener so it sees the stop flag. Windows pipes can miss
+		// clients that disconnect before acceptance, so retry until it exits.
+		let Some(listening) = self.listening.take() else {
+			return;
+		};
+		let deadline = Instant::now() + Duration::from_secs(10);
+		while !listening.is_finished() && Instant::now() < deadline {
+			if let Ok(name) = self.name.clone().to_ns_name::<GenericNamespaced>() {
+				let _ = Stream::connect(name);
+			}
+			std::thread::sleep(Duration::from_millis(20));
+		}
+		if listening.is_finished() {
+			let _ = listening.join();
+		}
+	}
 }
 
 /// Kill and reap the child on drop, including after a failed assertion.
@@ -694,7 +743,6 @@ impl Drop for KilledOnDrop {
 /// allow stop to terminate the world.
 fn no_debugger() {
 	use auxtools_cli::{local, server_types::Response};
-	use interprocess::local_socket::{prelude::*, GenericNamespaced, ListenerOptions};
 
 	const WHY: &str = "Couldn't find current_execution_context (BYOND 516.1600 is outside the checked range 1637..=1688)";
 	// The normal host can exit before these checks finish or leave a reboot
@@ -711,20 +759,12 @@ fn no_debugger() {
 			.unwrap()
 	);
 	let pid = plain.id();
-	let listener = ListenerOptions::new()
-		.name(local::world_name(pid).to_ns_name::<GenericNamespaced>().unwrap())
-		.create_sync()
-		.unwrap();
 	// Match the debug library's initialization-failure response; keep the
 	// connection until the client closes it.
-	std::thread::spawn(move || {
-		for mut client in listener.incoming().flatten() {
-			std::thread::spawn(move || {
-				let _ = local::send(&mut client, &Response::Unavailable { reason: WHY.to_owned() });
-				let _ = local::send(&mut client, &Response::Disconnect);
-				let _ = std::io::copy(&mut client, &mut std::io::sink());
-			});
-		}
+	let stand_in = StandIn::listen(local::world_name(pid), |mut client| {
+		let _ = local::send(&mut client, &Response::Unavailable { reason: WHY.to_owned() });
+		let _ = local::send(&mut client, &Response::Disconnect);
+		let _ = std::io::copy(&mut client, &mut std::io::sink());
 	});
 
 	let mut launcher = Launcher::start();
@@ -774,6 +814,8 @@ fn no_debugger() {
 		"stop said {}",
 		printed
 	);
+	// Release the listener before the PID can be reused.
+	drop(stand_in);
 	let deadline = Instant::now() + Duration::from_secs(10);
 	while plain.try_wait().unwrap().is_none() {
 		assert!(Instant::now() < deadline, "the world is still running after stop");
