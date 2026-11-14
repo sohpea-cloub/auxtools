@@ -589,9 +589,11 @@ fn protocol(version: &str) -> u32 {
 fn another_version() {
 	use interprocess::local_socket::{prelude::*, GenericNamespaced, ListenerOptions};
 
+	// A world that runs until it's stopped (see no_debugger)
+	let (dir, dme) = attach_host_copy("another_version");
 	let mut plain = Command::new(paths::find_dreamdaemon())
 		.with_byond_paths()
-		.arg(host_file("launcher_test_host.dmb"))
+		.arg(dme.with_extension("dmb"))
 		.args(test_args().unwrap_or_else(|| vec!["-trusted".to_owned()]))
 		.stdout(std::process::Stdio::null())
 		.stderr(std::process::Stdio::null())
@@ -659,6 +661,7 @@ fn another_version() {
 	);
 	let _ = plain.kill();
 	let _ = plain.wait();
+	let _ = std::fs::remove_dir_all(&dir);
 	println!("ok: incompatible protocol discovery and attach rejection");
 }
 
@@ -670,9 +673,13 @@ fn no_debugger() {
 	use interprocess::local_socket::{prelude::*, GenericNamespaced, ListenerOptions};
 
 	const WHY: &str = "Couldn't find current_execution_context (BYOND 516.1600 is outside the checked range 1637..=1688)";
+	// A world that runs until it's stopped: launcher_test_host's ends by
+	// itself in under two seconds, which the checks before `stop` can take,
+	// and leaves its reboot marker behind when it's killed in between
+	let (dir, dme) = attach_host_copy("no_debugger");
 	let mut plain = Command::new(paths::find_dreamdaemon())
 		.with_byond_paths()
-		.arg(host_file("launcher_test_host.dmb"))
+		.arg(dme.with_extension("dmb"))
 		.args(test_args().unwrap_or_else(|| vec!["-trusted".to_owned()]))
 		.stdout(std::process::Stdio::null())
 		.stderr(std::process::Stdio::null())
@@ -748,6 +755,7 @@ fn no_debugger() {
 		std::thread::sleep(Duration::from_millis(100));
 	}
 	println!("ok: stop without debugger");
+	let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// The rest of the command line: the other steps, the stacks, a frame's
