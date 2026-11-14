@@ -84,17 +84,27 @@ fn call_soon(dir: &Path) {
 	});
 }
 
-pub fn command_line_inspect(pid: u64, dir: &Path, code: &Path) {
+pub fn evaluations(pid: u64, dir: &Path, code: &Path) {
 	let pid = pid.to_string();
 	let pid = pid.as_str();
 	eval_failures(pid, code);
 	from_files(pid, dir);
 	procs(pid, code);
+}
+
+pub fn breakpoints(pid: u64, dir: &Path, code: &Path) {
+	let pid = pid.to_string();
+	let pid = pid.as_str();
 	where_breakpoints_bound(pid, code);
 	instruction_steps(pid, dir);
 	as_json(pid, dir);
 	on_an_object(pid);
 	macros(pid, code);
+}
+
+pub fn spawned_and_steps(pid: u64, dir: &Path, code: &Path) {
+	let pid = pid.to_string();
+	let pid = pid.as_str();
 	spawned(pid, code);
 	steps_that_end_elsewhere(pid, dir);
 }
