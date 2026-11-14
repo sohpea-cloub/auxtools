@@ -833,20 +833,27 @@ fn nothing_to_run() {
 	let _ = std::fs::remove_dir_all(&dir);
 }
 
-pub fn run() {
+/// Code and type edits tested in separate worlds.
+pub fn edits() {
 	saved_without_reloading();
 	built_in_taken_away();
 	behind_the_clients_back();
 	starting_at_world_new();
 	parent_changed_alone();
 	types_changed_before_reboot();
+}
+
+/// Initializer, file and resource reloads tested in separate worlds.
+pub fn files() {
 	override_restored_before_map();
 	initializers_after_reboot();
 	initializer_added_to_a_world_without();
 	file_named_by_a_reload();
 	resource_files();
 	nothing_to_run();
+}
 
+pub fn run() {
 	let dir = copy_of_the_world("reloading");
 	let mut world = World::launch_as(json!({ "supportsInvalidatedEvent": true }), dir.clone(), json!({ "hotReload": true }));
 	world.catch_runtimes(false);
