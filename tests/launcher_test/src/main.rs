@@ -6,6 +6,11 @@
 //! selects the host (default `dreamdaemon`, meaning dd.exe). DreamSeeker and
 //! windowed DreamDaemon need a display. `LAUNCHER_TEST_ARGS` overrides host
 //! arguments, including trusted-mode options.
+//!
+//! Arguments name the groups to run (see `GROUPS`); none runs them all. The
+//! groups that use the attached world (`ATTACHED`) share one when they run in
+//! the same process, and each starts its own otherwise, so that groups can run
+//! side by side in processes of their own.
 
 // The debug client, which dap_test uses more of
 #[allow(dead_code)]
@@ -87,7 +92,28 @@ fn at_runtime(launcher: &mut Launcher) {
 	launcher.resume();
 }
 
+/// The groups, in the order a run of them all takes
+const GROUPS: &[&str] = &[
+	"launch",
+	"attach",
+	"inspect",
+	"inspect_breakpoints",
+	"inspect_spawned",
+	"trace",
+	"journal",
+	"edited",
+	"command_line",
+	"builds"
+];
+
+/// The groups that run on the world `attach_and_reload` starts
+const ATTACHED: &[&str] = &["attach", "inspect", "inspect_breakpoints", "inspect_spawned", "trace", "journal"];
+
 fn main() {
+	let wanted: Vec<String> = std::env::args().skip(1).collect();
+	for name in &wanted {
+		assert!(GROUPS.contains(&name.as_str()), "there's no group {}; the groups are {:?}", name, GROUPS);
+	}
 	let res = Command::new(paths::find_dm())
 		.with_byond_paths()
 		.arg(host_file("launcher_test_host.dme"))
@@ -96,6 +122,60 @@ fn main() {
 	assert!(res.success(), "dreammaker build failed");
 	let _ = std::fs::remove_file(host_file("rebooted"));
 
+	let server = client::server();
+	let library = library_path();
+	let mut attached: Option<Attached> = None;
+	for group in GROUPS {
+		if !wanted.is_empty() && !wanted.iter().any(|w| w == group) {
+			continue;
+		}
+		println!("--- {}", group);
+		if !ATTACHED.contains(group) {
+			if let Some(world) = attached.take() {
+				world.finish();
+			}
+		}
+		if ATTACHED.contains(group) && attached.is_none() {
+			attached = Some(attach_and_reload(&server, &library));
+		}
+		match (*group, &attached) {
+			("launch", _) => launch(&server, &library),
+			("attach", Some(world)) => {
+				command_line(world.pid, &world.code);
+				command_line_more(world.pid, &world.dir);
+			}
+			("inspect", Some(world)) => inspect::evaluations(world.pid, &world.dir, &world.code),
+			("inspect_breakpoints", Some(world)) => inspect::breakpoints(world.pid, &world.dir, &world.code),
+			("inspect_spawned", Some(world)) => inspect::spawned_and_steps(world.pid, &world.dir, &world.code),
+			("trace", Some(world)) => {
+				command_line_trace(world.pid, &world.code);
+				journal::runtimes(world.pid, &world.dir);
+			}
+			("journal", Some(world)) => {
+				journal::reloads(world.pid, &world.code);
+				journal::hold_max(world.pid);
+				journal::reboot(world.pid, &world.dir);
+			}
+			("edited", _) => edited_after_build(&server),
+			("command_line", _) => launch_from_the_command_line(&server),
+			("builds", _) => {
+				without_debug_info(&server);
+				unread_statics(&server);
+				errored_baseline(&server);
+				dmb_elsewhere(&server);
+			}
+			_ => unreachable!("group {} has no world", group)
+		}
+	}
+	if let Some(world) = attached.take() {
+		world.finish();
+	}
+	println!("all ok");
+}
+
+/// The command line's shape, another protocol version, and a world launched
+/// with the debugger: breakpoints, a reboot that keeps them, and its end
+fn launch(server: &str, library: &Path) {
 	command_line_shape();
 	another_version();
 	no_debugger();
@@ -103,8 +183,6 @@ fn main() {
 	let mut launcher = Launcher::start();
 	launcher.initialize();
 
-	let server = client::server();
-	let library = library_path();
 	launcher.request(
 		"launch",
 		json!({
@@ -163,15 +241,6 @@ fn main() {
 	launcher.disconnect(json!({}));
 	println!("ok: launcher exit");
 	let _ = std::fs::remove_file(host_file("rebooted"));
-
-	attach_and_reload(&server, &library);
-	edited_after_build(&server);
-	launch_from_the_command_line(&server);
-	without_debug_info(&server);
-	unread_statics(&server);
-	errored_baseline(&server);
-	dmb_elsewhere(&server);
-	println!("all ok");
 }
 
 /// The command line, a command at a time: each connects, does it and leaves,
@@ -1181,9 +1250,18 @@ fn line_of(file: &Path, text: &str) -> u64 {
 	source.lines().position(|line| line.starts_with(text)).expect("no such line") as u64 + 1
 }
 
+/// The world `attach_and_reload` starts, and the launcher that started it
+struct Attached {
+	runner: Launcher,
+	pid: u64,
+	dir: PathBuf,
+	code: PathBuf
+}
+
 /// A world launched without debugging, found with `--list`, attached to by
-/// two launchers at once, and hot reloaded by the one that launched it
-fn attach_and_reload(server: &str, library: &Path) {
+/// two launchers at once, and hot reloaded by the one that launched it: its
+/// code then returns 2 where it returned 1
+fn attach_and_reload(server: &str, library: &Path) -> Attached {
 	let (dir, dme) = attach_host_copy("attach");
 	let code = dir.join("attach_host.dm");
 
@@ -1257,60 +1335,59 @@ fn attach_and_reload(server: &str, library: &Path) {
 	let seen = runner.output.matches("attach test: 2").count();
 	runner.wait_count("attach test: 2", seen + 2);
 	println!("ok: attached-session disconnect preserves world");
+	Attached { runner, pid, dir, code }
+}
 
-	command_line(pid, &code);
-	command_line_more(pid, &dir);
-	inspect::command_line_inspect(pid, &dir, &code);
-	command_line_trace(pid, &code);
-	journal::runtimes(pid, &dir);
-	journal::reloads(pid, &code);
-	journal::hold_max(pid);
-	journal::reboot(pid, &dir);
+impl Attached {
+	/// A launcher attached to the world paused, a trace the world's end ends,
+	/// and its end
+	fn finish(self) {
+		let Attached { mut runner, pid, dir, .. } = self;
+		// A launcher that attaches to a world that's paused hears it is
+		let (code_given, printed) = launcher_command(&["--pid", &pid.to_string(), "pause"]);
+		assert_eq!(code_given, 0, "unexpected pause output: {}", printed);
+		let mut late = Launcher::start();
+		late.initialize();
+		late.request("attach", json!({ "processId": pid.to_string() }));
+		late.event("initialized");
+		late.request("configurationDone", json!({}));
+		late.stopped("pause");
+		late.resume();
+		late.disconnect(json!({}));
+		println!("ok: attach to a retained pause");
+		let seen = runner.output.matches("attach test: 2").count();
+		runner.wait_count("attach test: 2", seen + 1);
+		println!("ok: CLI resume");
 
-	// A launcher that attaches to a world that's paused hears it is
-	let (code_given, printed) = launcher_command(&["--pid", &pid.to_string(), "pause"]);
-	assert_eq!(code_given, 0, "unexpected pause output: {}", printed);
-	let mut late = Launcher::start();
-	late.initialize();
-	late.request("attach", json!({ "processId": pid.to_string() }));
-	late.event("initialized");
-	late.request("configurationDone", json!({}));
-	late.stopped("pause");
-	late.resume();
-	late.disconnect(json!({}));
-	println!("ok: attach to a retained pause");
-	let seen = runner.output.matches("attach test: 2").count();
-	runner.wait_count("attach test: 2", seen + 1);
-	println!("ok: CLI resume");
-
-	let waiting = journal::wait_for_reboot(pid);
-	// A trace with no end of its own ends with the world, and says what it
-	// counted
-	let tracing = Command::new(client::launcher_path())
-		.args(["--pid", &pid.to_string(), "trace", "/proc/value", "--by", "caller"])
-		.stdout(Stdio::piped())
-		.stderr(Stdio::piped())
-		.spawn()
-		.unwrap();
-	let seen = runner.output.matches("attach test: 2").count();
-	runner.wait_count("attach test: 2", seen + 2);
-	std::fs::write(dir.join("stop"), "yes").unwrap();
-	let traced = tracing.wait_with_output().unwrap();
-	let (out, err) = (String::from_utf8_lossy(&traced.stdout), String::from_utf8_lossy(&traced.stderr));
-	assert_eq!(traced.status.code(), Some(3), "unexpected trace output: {}{}", out, err);
-	assert!(
-		out.contains("; ended: world\n") && err.starts_with("error: world connection ended before the operation completed"),
-		"unexpected trace output: {}{}",
-		out,
-		err
-	);
-	println!("ok: world exit ends trace with code 3");
-	runner.event("terminated");
-	journal::world_went_away(waiting);
-	assert!(runner.output.contains("attach test: done"), "world did not complete the test");
-	runner.disconnect(json!({}));
-	println!("ok: world and launcher exit");
-	let _ = std::fs::remove_dir_all(&dir);
+		let waiting = journal::wait_for_reboot(pid);
+		// A trace with no end of its own ends with the world, and says what it
+		// counted
+		let tracing = Command::new(client::launcher_path())
+			.args(["--pid", &pid.to_string(), "trace", "/proc/value", "--by", "caller"])
+			.stdout(Stdio::piped())
+			.stderr(Stdio::piped())
+			.spawn()
+			.unwrap();
+		let seen = runner.output.matches("attach test: 2").count();
+		runner.wait_count("attach test: 2", seen + 2);
+		std::fs::write(dir.join("stop"), "yes").unwrap();
+		let traced = tracing.wait_with_output().unwrap();
+		let (out, err) = (String::from_utf8_lossy(&traced.stdout), String::from_utf8_lossy(&traced.stderr));
+		assert_eq!(traced.status.code(), Some(3), "unexpected trace output: {}{}", out, err);
+		assert!(
+			out.contains("; ended: world\n") && err.starts_with("error: world connection ended before the operation completed"),
+			"unexpected trace output: {}{}",
+			out,
+			err
+		);
+		println!("ok: world exit ends trace with code 3");
+		runner.event("terminated");
+		journal::world_went_away(waiting);
+		assert!(runner.output.contains("attach test: done"), "world did not complete the test");
+		runner.disconnect(json!({}));
+		println!("ok: world and launcher exit");
+		let _ = std::fs::remove_dir_all(&dir);
+	}
 }
 
 /// A copy of the world that runs until told to stop, built, in a directory of
