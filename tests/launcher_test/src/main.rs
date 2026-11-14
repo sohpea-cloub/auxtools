@@ -587,14 +587,17 @@ fn protocol(version: &str) -> u32 {
 fn another_version() {
 	use interprocess::local_socket::{prelude::*, GenericNamespaced, ListenerOptions};
 
-	let mut plain = Command::new(paths::find_dreamdaemon())
-		.with_byond_paths()
-		.arg(host_file("launcher_test_host.dmb"))
-		.args(test_args().unwrap_or_else(|| vec!["-trusted".to_owned()]))
-		.stdout(std::process::Stdio::null())
-		.stderr(std::process::Stdio::null())
-		.spawn()
-		.unwrap();
+	let (dir, dme) = attach_host_copy("another_version");
+	let mut plain = KilledOnDrop(
+		Command::new(paths::find_dreamdaemon())
+			.with_byond_paths()
+			.arg(dme.with_extension("dmb"))
+			.args(test_args().unwrap_or_else(|| vec!["-trusted".to_owned()]))
+			.stdout(std::process::Stdio::null())
+			.stderr(std::process::Stdio::null())
+			.spawn()
+			.unwrap()
+	);
 	let pid = plain.id();
 	let ours = protocol(&launcher_command(&["version"]).1);
 	let theirs = ours - 1;
@@ -657,7 +660,33 @@ fn another_version() {
 	);
 	let _ = plain.kill();
 	let _ = plain.wait();
+	let _ = std::fs::remove_dir_all(&dir);
 	println!("ok: incompatible protocol discovery and attach rejection");
+}
+
+/// Kill and reap the child on drop, including after a failed assertion.
+/// `Child::kill` leaves an already reaped process alone, even if its PID is reused.
+struct KilledOnDrop(Child);
+
+impl std::ops::Deref for KilledOnDrop {
+	type Target = Child;
+
+	fn deref(&self) -> &Child {
+		&self.0
+	}
+}
+
+impl std::ops::DerefMut for KilledOnDrop {
+	fn deref_mut(&mut self) -> &mut Child {
+		&mut self.0
+	}
+}
+
+impl Drop for KilledOnDrop {
+	fn drop(&mut self) {
+		let _ = self.0.kill();
+		let _ = self.0.wait();
+	}
 }
 
 /// An unavailable debugger reports its initialization failure once and
@@ -668,14 +697,19 @@ fn no_debugger() {
 	use interprocess::local_socket::{prelude::*, GenericNamespaced, ListenerOptions};
 
 	const WHY: &str = "Couldn't find current_execution_context (BYOND 516.1600 is outside the checked range 1637..=1688)";
-	let mut plain = Command::new(paths::find_dreamdaemon())
-		.with_byond_paths()
-		.arg(host_file("launcher_test_host.dmb"))
-		.args(test_args().unwrap_or_else(|| vec!["-trusted".to_owned()]))
-		.stdout(std::process::Stdio::null())
-		.stderr(std::process::Stdio::null())
-		.spawn()
-		.unwrap();
+	// The normal host can exit before these checks finish or leave a reboot
+	// marker if killed mid-reboot. This host runs until explicitly stopped.
+	let (dir, dme) = attach_host_copy("no_debugger");
+	let mut plain = KilledOnDrop(
+		Command::new(paths::find_dreamdaemon())
+			.with_byond_paths()
+			.arg(dme.with_extension("dmb"))
+			.args(test_args().unwrap_or_else(|| vec!["-trusted".to_owned()]))
+			.stdout(std::process::Stdio::null())
+			.stderr(std::process::Stdio::null())
+			.spawn()
+			.unwrap()
+	);
 	let pid = plain.id();
 	let listener = ListenerOptions::new()
 		.name(local::world_name(pid).to_ns_name::<GenericNamespaced>().unwrap())
@@ -746,6 +780,7 @@ fn no_debugger() {
 		std::thread::sleep(Duration::from_millis(100));
 	}
 	println!("ok: stop without debugger");
+	let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// The rest of the command line: the other steps, the stacks, a frame's
