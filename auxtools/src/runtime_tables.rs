@@ -129,6 +129,57 @@ const TYPEPATH_BUILD: u32 = 1641;
 #[cfg(unix)]
 const LINUX_SWAPPED_BUILD: u32 = 1644;
 
+/// Cache layout verified through this build, starting at 515.1641 on Windows
+/// and 515.1644 on Linux.
+const PATH_CACHE_CHECKED_BUILD: u32 = 1689;
+/// The value tag of a proc.
+const PROC_VALUE: u32 = 0x26;
+
+/// Locate the text2path cache, including cached misses. Its root pointer is
+/// the first `push ADDRESS; call` operand in the typepath registration
+/// function. Return None outside verified builds or if the pattern is absent,
+/// including Linux 515.1641–1643.
+unsafe fn path_cache(build: u32, register: Option<usize>) -> Option<*const *mut u8> {
+	if !(TYPEPATH_BUILD..=PATH_CACHE_CHECKED_BUILD).contains(&build) {
+		return None;
+	}
+	let code = std::slice::from_raw_parts(register? as *const u8, 0x100);
+	let push = (0..code.len() - 10).find(|&at| code[at] == 0x68 && code[at + 5] == 0xE8)?;
+	let address = u32::from_le_bytes([code[push + 1], code[push + 2], code[push + 3], code[push + 4]]);
+	Some(address as usize as *const *mut u8)
+}
+
+/// Replace a cached text2path miss after adding a type or proc. BYOND does
+/// not refresh these entries itself. Preserve existing non-null values.
+///
+/// Tree nodes contain a text key (tag 6, string ID), value, left and right
+/// children, parent and colour.
+pub fn recache_path(path: u32, value: [u32; 2]) {
+	const TEXT: u8 = 0x06;
+	const VALUE: usize = 0x08;
+	const BEFORE: usize = 0x10;
+	const AFTER: usize = 0x14;
+	let Some(cache) = functions().ok().and_then(|functions| functions.path_cache) else {
+		return;
+	};
+	unsafe {
+		let mut node = *cache;
+		while !node.is_null() {
+			let key = (*node, *(node.add(4) as *const u32));
+			node = match (TEXT, path).cmp(&key) {
+				std::cmp::Ordering::Less => *(node.add(BEFORE) as *const *mut u8),
+				std::cmp::Ordering::Greater => *(node.add(AFTER) as *const *mut u8),
+				std::cmp::Ordering::Equal => {
+					if *node.add(VALUE) == 0 {
+						*(node.add(VALUE) as *mut [u32; 2]) = value;
+					}
+					return;
+				}
+			};
+		}
+	}
+}
+
 /// The size of a type table entry on `build`
 fn type_stride(build: u32) -> usize {
 	if build < TYPEPATH_BUILD {
@@ -156,6 +207,8 @@ struct Functions {
 	/// Only type additions require this; proc and var additions can proceed
 	/// when it is unavailable.
 	register_typepath: Result<Option<extern "C" fn(u32)>, String>,
+	/// Verified text2path cache root pointer; see `path_cache`.
+	path_cache: Option<*const *mut u8>,
 	/// The size of a type table entry
 	type_stride: usize,
 	crt_realloc: extern "C" fn(*mut c_void, usize) -> *mut c_void,
@@ -499,6 +552,7 @@ fn resolve() -> Result<Functions, String> {
 					.or_else(|_| find(&REGISTER_TYPEPATH_OLD))
 					.map(|address| Some(std::mem::transmute::<usize, extern "C" fn(u32)>(address)))
 			},
+			path_cache: path_cache(build, find(&REGISTER_TYPEPATH).or_else(|_| find(&REGISTER_TYPEPATH_OLD)).ok()),
 			type_stride: type_stride(build),
 			crt_realloc: std::mem::transmute(crt_realloc),
 			type_count: type_count as *const u32,
@@ -929,6 +983,10 @@ fn resolve() -> Result<Functions, String> {
 				crate::find_recipe_of(&[REGISTER_TYPEPATH, REGISTER_TYPEPATH_OLD, REGISTER_TYPEPATH_EARLY])
 					.map(|address| Some(std::mem::transmute::<usize, extern "C" fn(u32)>(address)))
 			},
+			path_cache: path_cache(
+				build,
+				crate::find_recipe_of(&[REGISTER_TYPEPATH, REGISTER_TYPEPATH_OLD, REGISTER_TYPEPATH_EARLY]).ok()
+			),
 			type_stride: type_stride(build),
 			crt_realloc: std::mem::transmute::<unsafe extern "C" fn(*mut c_void, usize) -> *mut c_void, _>(realloc),
 			type_count: type_count as *const u32,
@@ -1005,6 +1063,7 @@ pub fn add_proc(entry: &ProcEntryWords) -> Result<ProcId, String> {
 	if id == NONE {
 		return Err("BYOND couldn't add the proc".to_owned());
 	}
+	recache_path(entry.0[ProcEntryWords::PATH], [PROC_VALUE, id]);
 	Ok(ProcId(id))
 }
 
@@ -1616,6 +1675,9 @@ pub fn add_type(parent: u32, path: u32) -> Result<u32, String> {
 		}
 		if let Some(register) = register_typepath {
 			register(count as u32);
+			// Registration leaves cached misses unchanged.
+			let typepath = *(word(count, TYPEPATH) as *const [u32; 2]);
+			recache_path(path, typepath);
 		}
 		Ok(count as u32)
 	}

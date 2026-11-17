@@ -1058,8 +1058,9 @@ fn main() {
 	assert_eq!(eval(&mut client, "istype(old_puppy, /datum/animal/dog)"), "1");
 	println!("ok: new types");
 
-	// Cache a failed lookup before adding the type.
+	// Cache failed lookups before adding the type and the proc.
 	assert_eq!(eval(&mut client, "text2path(\"/datum/sought\")"), "null");
+	assert_eq!(eval(&mut client, "text2path(\"/proc/sought_maker\")"), "null");
 	let changes = source.edit(
 		"reload.dm",
 		"/proc/crate_report(type)\n",
@@ -1070,6 +1071,14 @@ fn main() {
 	reload(&mut watcher, &changes);
 	assert_eq!(eval(&mut client, "sought_maker()"), "1");
 	assert_eq!(eval(&mut client, "istype(new /datum/sought, /datum/sought)"), "1");
+	// Cached misses resolve after reload on builds with a supported cache
+	// layout.
+	let build: u32 = eval(&mut client, "world.byond_build").parse().unwrap();
+	if build >= if cfg!(windows) { 1641 } else { 1644 } {
+		assert_eq!(eval(&mut client, "text2path(\"/datum/sought\")"), "/datum/sought");
+		assert_eq!(eval(&mut client, "text2path(\"/proc/sought_maker\")"), "/proc/sought_maker");
+		assert_eq!(eval(&mut client, "call(text2path(\"/proc/sought_maker\"))()"), "1");
+	}
 	println!("ok: reload after cached path lookup failures");
 
 	// Globals and statics whose initial values aren't constants get them once,
