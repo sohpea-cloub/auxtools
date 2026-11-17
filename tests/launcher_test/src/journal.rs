@@ -181,15 +181,23 @@ pub fn reloads(pid: u64, code: &Path) {
 	let printed = run(pid, &["wait", "reload", "--timeout", "1"], 2);
 	assert_eq!(printed.trim(), "error: timed out after 1 second waiting for a hot reload attempt.");
 
+	// Add a known-bug warning without moving subsequent proc lines.
 	let since = newest(pid).to_string();
-	std::fs::write(code, source.replace("\treturn 2\n", "\treturn 3\n")).unwrap();
+	let looped = "\tfor (var/a in list(1)) { try { for (var/b in list(2)) { a += b } } catch (var/e) { a = e } }\n\treturn 3\n";
+	assert!(source.contains("\treturn 2\n\n"), "unexpected value() source after test setup");
+	std::fs::write(code, source.replace("\treturn 2\n\n", looped)).unwrap();
 	let printed = run(pid, &["wait", "reload", "--since", &since, "--timeout", "60"], 0);
 	assert!(
 		printed.starts_with('#') && printed.contains(" hot reload applied: reloaded /value"),
 		"unexpected wait reload output: {}",
 		printed
 	);
-	println!("ok: successful reload result");
+	assert!(
+		printed.contains("\n  warning: /value: line ") && printed.contains("nested list loops separated by `try`"),
+		"no warning about the loop: {}",
+		printed
+	);
+	println!("ok: reload result includes BYOND bug warning");
 
 	let since = newest(pid).to_string();
 	std::fs::write(code, source.replace("\treturn 2\n", "\treturn nothing_called_this\n")).unwrap();
