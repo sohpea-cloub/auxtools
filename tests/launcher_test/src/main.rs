@@ -11,6 +11,7 @@
 //! `ATTACHED` groups share a world within one process. Parallel runs need
 //! separate copies of `tests`, since each run builds its worlds in place.
 
+mod check;
 // The debug client, which dap_test uses more of
 #[allow(dead_code)]
 #[path = "../../dap_test/src/client.rs"]
@@ -178,6 +179,7 @@ fn main() {
 /// Launch, protocol compatibility and breakpoint persistence across reboot.
 fn launch(server: &str, library: &Path) {
 	command_line_shape();
+	check::checks();
 	another_version();
 	no_debugger();
 
@@ -378,6 +380,7 @@ fn command_line_shape() {
 		"step-out",
 		"wait",
 		"trace",
+		"check",
 		"dap",
 		"help",
 		"version"

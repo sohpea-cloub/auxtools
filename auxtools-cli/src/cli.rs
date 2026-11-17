@@ -2,7 +2,8 @@
 //!
 //! Commands that leave the world paused hold the pause after disconnecting.
 //! Results go to stdout as text or JSON; diagnostics go to stderr.
-//! Exit codes: 0 success, 1 failure, 2 timeout, 3 world exited or rebooted.
+//! Exit codes: 0 success, 1 failure, 2 timeout, 3 world exited or rebooted,
+//! 4 the launched world failed, 5 `check` found something.
 
 /// Print to stdout, exiting quietly on write failure (e.g. `| head`).
 /// This also handles Windows, where `print!` would panic on a closed pipe.
@@ -20,6 +21,7 @@ macro_rules! say {
 }
 
 mod args;
+mod check;
 mod help;
 mod hold;
 mod json;
@@ -136,6 +138,7 @@ fn execute(raw: &[String]) -> Result<()> {
 		Command::Version(version) => self::version(version.json),
 		Command::List(list) => self::list(list.json),
 		Command::Launch(launch) => launch::launch(&launch, raw.iter().any(|arg| arg == "--")),
+		Command::Check(check) => check::check(&check),
 		Command::Wait(args::Wait { event: None }) => {
 			help::show(&["wait".to_owned()])?;
 			Err("wait requires a command: pause, reload, or reboot.".into())
@@ -488,6 +491,7 @@ impl World {
 			Command::Wait(args::Wait { event: None })
 			| Command::Launch(_)
 			| Command::List(_)
+			| Command::Check(_)
 			| Command::Dap
 			| Command::Help(_)
 			| Command::Version(_) => Ok(())

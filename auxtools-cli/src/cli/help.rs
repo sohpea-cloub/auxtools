@@ -27,6 +27,7 @@ const GROUPS: &[(&str, &[&str])] = &[
 	("World management", &["launch", "list", "status", "stop", "reboot", "reconnect", "log"]),
 	("Inspection", &["stack", "vars", "eval", "proc", "disassemble"]),
 	("Execution", &["pause", "continue", "step-over", "step-in", "step-out", "wait", "trace"]),
+	("Source code", &["check"]),
 	("Integration", &["dap", "help", "version"])
 ];
 
@@ -497,6 +498,32 @@ Exit codes:
   3  World exited or rebooted."
 	},
 	Page {
+		path: &["check"],
+		brief: "Check project source for known BYOND bugs",
+		summary: "Report known BYOND bugs detected in project source.",
+		usage: "auxtools check [DME] [OPTIONS]",
+		arguments: "DME  Path to the source project.
+     [default: the only .dme in the current directory]",
+		sections: "Behavior:
+  Compile every proc and report known bugs affecting the selected BYOND build.
+  No DMB is written, and BYOND need not be installed or running.
+  Unsupported procs and parse errors are reported as unchecked and do not
+  change the exit code. Text output lists them on stderr; JSON includes them.
+
+Output:
+  Print FILE:LINE: PROC: diagnostic, then a count of issues and checked procs.
+  Paths are relative to the project directory.
+  JSON contains byond, procs, found, not_checked, and parse_errors.
+  Each entry of found has file, line, proc, override, and text;
+  each entry of not_checked has file, proc, override, and error; parse_errors
+  are FILE:LINE: message strings. procs counts the procs checked.
+
+Exit codes:
+  0  No known bugs found.
+  1  Check failed: the project could not be read.
+  5  Known BYOND bugs found."
+	},
+	Page {
 		path: &["dap"],
 		brief: "Serve the Debug Adapter Protocol over stdin and stdout",
 		summary: "Serve the Debug Adapter Protocol over stdin and stdout.",
@@ -589,6 +616,7 @@ Exit codes:
   2  Operation timed out
   3  World connection ended before the operation completed
   4  Foreground launch: world exited unsuccessfully or was terminated
+  5  check: known BYOND bugs found
 
 Commands that follow lifecycle events can reconnect across reboots.
 ";
@@ -639,7 +667,7 @@ fn option_rows(command: &clap::Command, path: &[&str]) -> Vec<(String, String)> 
 			rows.push(((*more).to_owned(), (*help).to_owned()));
 		}
 	}
-	let selects_world = !matches!(path.first(), Some(&("launch" | "list" | "dap" | "help" | "version")));
+	let selects_world = !matches!(path.first(), Some(&("launch" | "list" | "check" | "dap" | "help" | "version")));
 	if selects_world {
 		rows.push(("--pid PID".to_owned(), "Select the world process.".to_owned()));
 	}
@@ -884,6 +912,7 @@ mod tests {
 			"step-out",
 			"wait",
 			"trace",
+			"check",
 			"dap",
 			"help",
 			"version"
@@ -922,7 +951,7 @@ mod tests {
 			for usage in page.usage.lines() {
 				assert!(usage.contains(&format!(" {}", path.join(" "))), "{}", usage);
 				// Only a command to a world is given one
-				let selects = !matches!(names[0], "launch" | "list" | "dap" | "help" | "version");
+				let selects = !matches!(names[0], "launch" | "list" | "check" | "dap" | "help" | "version");
 				assert_eq!(usage.starts_with("auxtools [--pid PID] "), selects, "{}", usage);
 			}
 			if command.has_subcommands() {
@@ -932,7 +961,7 @@ mod tests {
 			assert!(text.contains("  -h, --help"), "{}", text);
 			assert_eq!(
 				text.contains("  --pid PID "),
-				!matches!(names[0], "launch" | "list" | "dap" | "help" | "version"),
+				!matches!(names[0], "launch" | "list" | "check" | "dap" | "help" | "version"),
 				"{}",
 				text
 			);

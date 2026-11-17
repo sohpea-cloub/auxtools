@@ -54,6 +54,7 @@ pub enum Command {
 	StepOut(StepOut),
 	Wait(Wait),
 	Trace(Trace),
+	Check(Check),
 	Dap,
 	Help(Help),
 	Version(Version)
@@ -82,6 +83,7 @@ impl Command {
 			Self::StepOut(_) => "step-out",
 			Self::Wait(_) => "wait",
 			Self::Trace(_) => "trace",
+			Self::Check(_) => "check",
 			Self::Dap => "dap",
 			Self::Help(_) => "help",
 			Self::Version(_) => "version"
@@ -90,7 +92,10 @@ impl Command {
 
 	/// Whether it's a command to a running world, which `--pid` chooses
 	pub const fn selects_world(&self) -> bool {
-		!matches!(self, Self::Launch(_) | Self::List(_) | Self::Dap | Self::Help(_) | Self::Version(_))
+		!matches!(
+			self,
+			Self::Launch(_) | Self::List(_) | Self::Check(_) | Self::Dap | Self::Help(_) | Self::Version(_)
+		)
 	}
 
 	/// Whether response timeouts apply. `stop` waits for process exit instead.
@@ -471,6 +476,18 @@ pub struct Trace {
 }
 
 #[derive(Args)]
+pub struct Check {
+	#[arg(value_name = "DME")]
+	pub dme: Option<PathBuf>,
+	#[arg(short = 'D', value_name = "NAME[=VALUE]", help = "Set a build define (repeatable). Match the DMB build.")]
+	pub defines: Vec<String>,
+	#[arg(long, value_name = "VERSION", value_parser = byond_version, help = byond_version_help())]
+	pub byond_version: Option<(u32, u32)>,
+	#[arg(long, help = JSON)]
+	pub json: bool
+}
+
+#[derive(Args)]
 pub struct Help {
 	/// The command, and its subcommand
 	#[arg(value_name = "COMMAND")]
@@ -513,6 +530,18 @@ fn pid(text: &str) -> Result<u32, String> {
 
 fn port(text: &str) -> Result<u16, String> {
 	text.parse().map_err(|_| "expected a port number from 0 to 65535".to_owned())
+}
+
+/// A BYOND build, as `MAJOR.BUILD`
+fn byond_version(text: &str) -> Result<(u32, u32), String> {
+	text.split_once('.')
+		.and_then(|(major, build)| Some((major.parse().ok()?, build.parse().ok()?)))
+		.ok_or_else(|| "expected a BYOND build such as 516.1689".to_owned())
+}
+
+fn byond_version_help() -> String {
+	let latest = dmasm::ByondVersion::LATEST;
+	format!("Check for bugs affecting this BYOND build. [default: {}.{}]", latest.major, latest.build)
 }
 
 /// Why there's no command to run
@@ -767,6 +796,34 @@ mod tests {
 		assert_eq!(launch.defines, args(&["TESTING", "MAP=box"]));
 		assert_eq!(launch.port, Some(1337));
 		assert_eq!(launch.args, args(&["-trusted", "-verbose"]));
+	}
+
+	#[test]
+	fn check_takes_a_project_its_defines_and_a_build() {
+		let check = |given: &[&str]| match parsed(given).command {
+			Some(Command::Check(check)) => check,
+			_ => panic!("not check")
+		};
+		let bare = check(&["check"]);
+		assert!(bare.dme.is_none() && bare.defines.is_empty() && bare.byond_version.is_none() && !bare.json);
+		let full = check(&["check", "a.dme", "-DTESTING", "-D", "MAP=box", "--byond-version", "516.1689", "--json"]);
+		assert_eq!(full.dme.as_deref(), Some(std::path::Path::new("a.dme")));
+		assert_eq!(full.defines, args(&["TESTING", "MAP=box"]));
+		assert_eq!(full.byond_version, Some((516, 1689)));
+		assert!(full.json);
+		for wrong in ["516", "516.", "516.x", "latest"] {
+			assert_eq!(
+				refused(&["check", "--byond-version", wrong]),
+				format!(
+					"invalid value '{}' for --byond-version: expected a BYOND build such as 516.1689. Run 'auxtools check --help' for usage.",
+					wrong
+				)
+			);
+		}
+		assert_eq!(
+			refused(&["check", "a.dme", "b.dme"]),
+			"unexpected argument 'b.dme'. Run 'auxtools check --help' for usage."
+		);
 	}
 
 	#[test]

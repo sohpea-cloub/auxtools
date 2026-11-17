@@ -37,7 +37,7 @@ auxtools reboot
 auxtools stop
 ```
 
-Exit codes are 0 for success, 1 for failure, 2 for timeout, 3 if the world exits or reboots before completion, and 4 if a world launched in the foreground exits unsuccessfully.
+Exit codes are 0 for success, 1 for failure, 2 for timeout, 3 if the world exits or reboots before completion, 4 if a world launched in the foreground exits unsuccessfully, and 5 if `check` finds known BYOND bugs.
 
 Editors use `auxtools dap` as the debug adapter.
 
@@ -60,6 +60,16 @@ Saving the `.dmf` skin updates the interface sent at login. Connected clients ne
 Changes to `client/script` text also apply at login. Resource-file scripts and included `.dms` files require a rebuild.
 
 Proc-body edits can use a single-file parse. Other edits trigger a full project parse. See the [extension documentation](editors/vscode/README.md#hot-reload-experimental) for reload limits and the [hot reload tests](tests/hot_reload_test) for supported cases.
+
+## Checking for known BYOND bugs
+
+`auxtools check` scans project source for known BYOND bugs, including ignored return values, incorrect operator dispatch and loops that can crash the server. It compiles procs without writing a `.dmb` and runs without BYOND, including in CI.
+
+```sh
+auxtools check tgstation.dme -DCIBUILDING --byond-version 516.1689
+```
+
+Findings use `FILE:LINE: PROC: diagnostic`. Pass the build's defines with `-D` and select its version with `--byond-version`. Exit code 5 means bugs were found; 0 means none were found. Unsupported procs and parse errors are reported as unchecked and do not affect the exit code. Runtime-only bugs, such as errors swallowed inside operator overloads, are not detected.
 
 ## Supported BYOND versions
 
