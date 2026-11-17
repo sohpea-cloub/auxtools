@@ -876,35 +876,9 @@ fn prepare_global_init(
 		warnings.push(ran());
 		return Ok(None);
 	}
-	// Preserve the build's initializer order; dmasm's order is approximate.
-	// Place additions after the preceding var in the new code.
+	// The initializers run in dmasm's own order, the build's as well as the
+	// ones a reload added.
 	let known = global_slots(&code, &init.proc_statics, pending, added, world_globals);
-	let own = original_bytecode(&proc);
-	let (nodes, _) = dmasm::disassembler::disassemble(&own, &mut LenientDisassembleEnv);
-	let built: Vec<u32> = nodes
-		.iter()
-		.filter_map(|node| match node {
-			Node::Instruction(dmasm::Instruction::SetVar(dmasm::Variable::Global(global)), _) => global.id,
-			_ => None
-		})
-		.collect();
-	let mut code = code;
-	let mut unknown = HashSet::new();
-	code.nodes = init.in_built_order(|var, _| {
-		let key = (var.scope.clone().unwrap_or_default(), var.name.0.clone());
-		let Some(id) = known.get(&key) else {
-			unknown.insert(key);
-			return None;
-		};
-		built.iter().position(|set| set == id)
-	});
-	if !unknown.is_empty() {
-		warnings.push(format!(
-			"{}: {} vars could not be matched to built initializers; using dmasm's order for them",
-			NAME,
-			unknown.len()
-		));
-	}
 	let bytecode = assemble_with(NAME, &code, &[], known, pending, world_globals, added)?;
 	let at_start = proc.id == start;
 	prepared_code(proc, NAME.to_owned(), &code, bytecode, pending, world_globals, added).map(|code| Some(StartingInit::Proc(code, at_start)))

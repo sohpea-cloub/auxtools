@@ -51,7 +51,7 @@ Existing calls finish on their original bytecode. Existing instances retain thei
 
 After reboot, the launcher restores reloads before the world runs its code. Reloads introducing resource files absent from the build wait until `world/New`, so map atoms run the built code.
 
-Running globals and statics keep their values when their initializers change. After reboot, updated initializers run once before map creation. Existing initializers keep the build's order; additions follow their preceding var in dmasm's order, which matches DreamMaker's on the codebases it was checked against but can still differ in rare arrangements. New statics in deferred reloads initialize at `world/New`.
+Running globals and statics keep their values when their initializers change. After reboot, updated initializers run once before map creation. They run in an order dmasm works out itself: BYOND's own ordering is complicated, and dmasm's matches it on the codebases it was checked against but can differ in rare arrangements. New statics in deferred reloads initialize at `world/New`.
 
 Saving an icon, sound or other referenced resource reloads it, including files found through `FILE_DIR`. Existing appearances redraw with the new file; recompiled code and defaults use it too. Stored values and generated assets keep their old resources. Shared resources need a rebuild to separate them. After reboot, resource edits are restored at `world/New`. Reloaded `FILE_DIR` resources use paths relative to the world directory rather than their source spelling. See the [extension documentation](editors/vscode/README.md#icons-sounds-and-other-files) for details and limits.
 
