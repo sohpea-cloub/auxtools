@@ -496,6 +496,10 @@ pub struct Optimise {
 	pub dmb: PathBuf,
 	#[arg(short = 'o', long, value_name = "FILE", help = "Write the optimised world to FILE. [default: DMB]")]
 	pub output: Option<PathBuf>,
+	#[arg(long, value_name = "N", value_parser = whole::<u32>, help = ref_seeds_help())]
+	pub ref_seeds: Option<u32>,
+	#[arg(long, value_name = "PASS", value_parser = ["names", "refs"], help = "Leave a pass out: names or refs (repeatable).")]
+	pub skip: Vec<String>,
 	#[arg(long, help = "Report what would change and write nothing.")]
 	pub dry_run: bool,
 	#[arg(long, help = JSON)]
@@ -552,6 +556,13 @@ fn byond_version(text: &str) -> Result<(u32, u32), String> {
 	text.split_once('.')
 		.and_then(|(major, build)| Some((major.parse().ok()?, build.parse().ok()?)))
 		.ok_or_else(|| "expected a BYOND build such as 516.1689".to_owned())
+}
+
+fn ref_seeds_help() -> String {
+	format!(
+		"Add about N strings that keep ref() fast; 0 adds none.\n[default: {}]",
+		crate::optimise::refs::DEFAULT
+	)
 }
 
 fn byond_version_help() -> String {
@@ -850,9 +861,28 @@ mod tests {
 		let bare = optimise(&["optimise", "world.dmb"]);
 		assert_eq!(bare.dmb, std::path::Path::new("world.dmb"));
 		assert!(bare.output.is_none() && !bare.dry_run && !bare.json);
-		let full = optimise(&["optimize", "world.dmb", "-o", "out/world.dmb", "--dry-run", "--json"]);
+		assert!(bare.ref_seeds.is_none() && bare.skip.is_empty());
+		let full = optimise(&[
+			"optimize",
+			"world.dmb",
+			"-o",
+			"out/world.dmb",
+			"--ref-seeds",
+			"1024",
+			"--skip",
+			"names",
+			"--skip=refs",
+			"--dry-run",
+			"--json"
+		]);
 		assert_eq!(full.output.as_deref(), Some(std::path::Path::new("out/world.dmb")));
+		assert_eq!((full.ref_seeds, full.skip), (Some(1024), args(&["names", "refs"])));
 		assert!(full.dry_run && full.json);
+		assert_eq!(
+			refused(&["optimise", "world.dmb", "--ref-seeds", "many"]),
+			"invalid value 'many' for --ref-seeds: expected a non-negative integer. Run 'auxtools optimise --help' for usage."
+		);
+		assert!(refused(&["optimise", "world.dmb", "--skip", "everything"]).starts_with("invalid value 'everything' for --skip"));
 		assert!(refused(&["optimise"]).contains("required"), "{}", refused(&["optimise"]));
 	}
 

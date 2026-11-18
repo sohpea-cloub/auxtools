@@ -15,6 +15,7 @@ use crate::{
 };
 
 const NAMES: &str = include_str!("optimise/names.dm");
+const REFS: &str = include_str!("optimise/refs.dm");
 
 /// What the world writes, as DreamMaker compiled it.
 const STOCK: &str = "\
@@ -112,14 +113,14 @@ fn names() {
 
 	// What BYOND's own procs add to the counts: every world has them
 	let empty = project("empty", "/world/New()\n\t..()\n\tshutdown()\n", &[]);
-	let (code, out, err) = optimise(&empty, &["world.dmb", "--dry-run", "--json"]);
+	let (code, out, err) = optimise(&empty, &["world.dmb", "--skip", "refs", "--dry-run", "--json"]);
 	assert_eq!((code, err.as_str()), (0, ""), "unexpected optimise --dry-run output: {}", out);
 	let own: Value = serde_json::from_str(&out).unwrap_or_else(|_| panic!("unexpected optimise --dry-run --json output: {}", out));
 	let count = |report: &Value, what: &str| report["names"][what].as_u64().unwrap_or_else(|| panic!("no {} in {}", what, report));
 	let (identifiers, procs) = (count(&own, "identifiers") + 7, count(&own, "procs") + 10);
 
 	// A dry run reports and writes nothing
-	let (code, out, err) = optimise(&dir, &["world.dmb", "--dry-run", "--json"]);
+	let (code, out, err) = optimise(&dir, &["world.dmb", "--skip", "refs", "--dry-run", "--json"]);
 	assert_eq!((code, err.as_str()), (0, ""), "unexpected optimise --dry-run output: {}", out);
 	let dry: Value = serde_json::from_str(&out).unwrap_or_else(|_| panic!("unexpected optimise --dry-run --json output: {}", out));
 	assert_eq!(dry["output"], Value::Null, "{}", out);
@@ -154,7 +155,7 @@ fn names() {
 
 	// To another file: the world is left, and the copy behaves the same but
 	// for the name in the error
-	let (code, out, err) = optimise(&dir, &["world.dmb", "--output", "optimised.dmb"]);
+	let (code, out, err) = optimise(&dir, &["world.dmb", "--skip", "refs", "--output", "optimised.dmb"]);
 	assert_eq!((code, err.as_str()), (0, ""), "unexpected optimise --output output: {}", out);
 	assert!(
 		out.starts_with(&format!("names: renamed {} procs of {} identifiers, changed ", procs, identifiers))
@@ -189,7 +190,7 @@ fn names() {
 		renamed,
 		"unexpected results from the world named in source"
 	);
-	let (code, out, _) = optimise(&named, &["world.dmb", "--dry-run", "--json"]);
+	let (code, out, _) = optimise(&named, &["world.dmb", "--skip", "refs", "--dry-run", "--json"]);
 	let left: Value = serde_json::from_str(&out).unwrap_or_else(|_| panic!("unexpected optimise --json output: {}", out));
 	assert_eq!(
 		(code, count(&left, "identifiers")),
@@ -201,14 +202,14 @@ fn names() {
 	println!("ok: optimised world matches set name in source");
 
 	// In place, and again: nothing left to do
-	let (code, out, err) = optimise(&dir, &["world.dmb"]);
+	let (code, out, err) = optimise(&dir, &["world.dmb", "--skip", "refs"]);
 	assert_eq!((code, err.as_str()), (0, ""), "unexpected optimise output: {}", out);
 	let once = std::fs::read(dir.join("world.dmb")).unwrap();
 	assert!(
 		once == std::fs::read(dir.join("optimised.dmb")).unwrap(),
 		"optimise in place and --output wrote different worlds"
 	);
-	let (code, out, err) = optimise(&dir, &["world.dmb", "--json"]);
+	let (code, out, err) = optimise(&dir, &["world.dmb", "--skip", "refs", "--json"]);
 	assert_eq!((code, err.as_str()), (0, ""), "unexpected optimise output: {}", out);
 	let again: Value = serde_json::from_str(&out).unwrap_or_else(|_| panic!("unexpected optimise --json output: {}", out));
 	assert_eq!(
@@ -261,7 +262,63 @@ fn refusals() {
 	let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// The strings of the refs pass are the refs this BYOND build makes.
+fn refs() {
+	let dir = project("refs", REFS, &[]);
+	let made = results(&dir.join("world.dmb"));
+	let lines: Vec<&str> = made.lines().collect();
+	// `[0x`, the kind, then which one in six hex digits
+	for (line, kind) in lines
+		.iter()
+		.zip(["turf [0x1", "obj [0x2", "mob [0x3", "image [0xd", "list [0xf", "datum [0x21"])
+	{
+		let digits = line.strip_prefix(kind).and_then(|rest| rest.strip_suffix(']')).unwrap_or("?");
+		assert!(
+			digits.len() == 6 && digits.bytes().all(|digit| matches!(digit, b'0'..=b'9' | b'a'..=b'f')),
+			"a ref is not as the refs pass writes them: {:?}, expected {}000000]",
+			line,
+			kind
+		);
+	}
+	assert_eq!(lines.len(), 7, "unexpected results from the refs world: {}", made);
+
+	let (code, out, err) = optimise(&dir, &["world.dmb", "--skip", "names", "--json"]);
+	assert_eq!((code, err.as_str()), (0, ""), "unexpected optimise output: {}", out);
+	let report: Value = serde_json::from_str(&out).unwrap_or_else(|_| panic!("unexpected optimise --json output: {}", out));
+	assert_eq!(report["names"], Value::Null, "{}", out);
+	assert_eq!(
+		report["refs"],
+		json!({ "added": 64512, "present": 0, "wanted": 64512, "spacing": 256, "full": false }),
+		"{}",
+		out
+	);
+	assert_eq!(
+		results(&dir.join("world.dmb")),
+		made,
+		"unexpected results from the world with ref strings added"
+	);
+
+	// Again: they are there. Fewer are some of the same.
+	let (code, out, err) = optimise(&dir, &["world.dmb", "--skip", "names", "--ref-seeds", "1000"]);
+	assert_eq!(
+		(code, out.as_str(), err.as_str()),
+		(
+			0,
+			"refs: added 0 strings spaced 256 refs apart, 504 already there\nwrote world.dmb: 0.8 MB to 0.8 MB\n",
+			""
+		),
+		"unexpected optimise output"
+	);
+	let (code, out, err) = optimise(&dir, &["world.dmb", "--skip", "names", "--skip", "refs", "--json"]);
+	assert_eq!((code, err.as_str()), (0, ""), "unexpected optimise output: {}", out);
+	let report: Value = serde_json::from_str(&out).unwrap_or_else(|_| panic!("unexpected optimise --json output: {}", out));
+	assert_eq!((&report["names"], &report["refs"]), (&Value::Null, &Value::Null), "{}", out);
+	println!("ok: ref strings added once, in the form of this build's refs");
+	let _ = std::fs::remove_dir_all(&dir);
+}
+
 pub fn checks() {
 	refusals();
 	names();
+	refs();
 }

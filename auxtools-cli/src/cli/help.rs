@@ -545,6 +545,13 @@ Exit codes:
   the name with spaces is also text in the code, or if it is an operator.
   Global procs keep their names: they are in no type's table.
 
+  Refs: when a world keeps the ref() of things made one after another,
+  DreamDaemon stalls about every thousandth time, for longer the more
+  strings the world has. Ref strings spaced 256 refs apart are added to
+  the string table for turfs, objs, mobs, images, lists and datums, which
+  leaves it nothing to stall on. They take about 5 MB of memory.
+  --ref-seeds 129024 covers twice as many things of each kind.
+
 Effects on the world:
   Runtime errors and call stacks print attack_hand for \"attack hand\".
   call() and hascall() with a name built at run time find attack_hand, not
@@ -553,12 +560,14 @@ Effects on the world:
 
 Output:
   Print what each pass changed and what it left, then the file written.
-  JSON contains dmb, output (null with --dry-run), bytes, and names.
-  bytes has before and after: the file's size.
+  JSON contains dmb, output (null with --dry-run), bytes, names, and refs;
+  a skipped pass is null. bytes has before and after: the file's size.
   names has identifiers, procs, and calls: how many were renamed; kept:
   the identifiers left, listed by reason (verb, named, value, text, shared,
   operator, unread, full); proc_table_bytes with before and after; and
   second_names with before, after, and bytes_each.
+  refs has added, present (strings the world already had), wanted, spacing,
+  and full: whether the world ran out of string ids.
 
 Exit codes:
   0  World optimised.

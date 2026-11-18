@@ -5,6 +5,7 @@
 //! world behaves as before except where the pass's documentation says.
 
 pub mod names;
+pub mod refs;
 
 use std::collections::{HashMap, HashSet};
 

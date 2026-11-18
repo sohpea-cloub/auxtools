@@ -6,7 +6,7 @@ use dmasm::dmb::Dmb;
 use serde_json::{json, Map, Value};
 
 use super::{args, Result};
-use crate::optimise::{names, PROC_ENTRY_BYTES};
+use crate::optimise::{names, refs, PROC_ENTRY_BYTES};
 
 fn megabytes(bytes: u64) -> String {
 	format!("{:.1} MB", bytes as f64 / 1_048_576.0)
@@ -75,11 +75,38 @@ fn names_json(report: &names::Report) -> Value {
 	})
 }
 
+fn refs_text(report: &refs::Report) {
+	say!(
+		"refs: added {} spaced {} refs apart{}",
+		counted(report.added, "string", "strings"),
+		refs::SPACING,
+		match report.present {
+			0 => String::new(),
+			present => format!(", {} already there", present)
+		}
+	);
+	if report.full {
+		say!("  stopped: no string id left");
+	}
+}
+
+fn refs_json(report: &refs::Report) -> Value {
+	json!({
+		"added": report.added,
+		"present": report.present,
+		"wanted": report.wanted,
+		"spacing": refs::SPACING,
+		"full": report.full
+	})
+}
+
 pub fn optimise(args: &args::Optimise) -> Result<()> {
 	let data = std::fs::read(&args.dmb).map_err(|e| format!("cannot read {}: {}.", args.dmb.display(), e))?;
 	let mut dmb = Dmb::read(&data).map_err(|e| format!("cannot read {}: {}.", args.dmb.display(), e))?;
 
-	let names = names::run(&mut dmb);
+	let skipped = |pass: &str| args.skip.iter().any(|skip| skip == pass);
+	let names = (!skipped("names")).then(|| names::run(&mut dmb));
+	let refs = (!skipped("refs")).then(|| refs::run(&mut dmb, args.ref_seeds.unwrap_or(refs::DEFAULT)));
 
 	let output: &PathBuf = args.output.as_ref().unwrap_or(&args.dmb);
 	let written = dmb.write().map_err(|e| format!("cannot write {}: {}.", output.display(), e))?;
@@ -94,11 +121,17 @@ pub fn optimise(args: &args::Optimise) -> Result<()> {
 				"dmb": args.dmb,
 				"output": if args.dry_run { Value::Null } else { json!(output) },
 				"bytes": { "before": data.len(), "after": written.len() },
-				"names": names_json(&names)
+				"names": names.as_ref().map(names_json),
+				"refs": refs.as_ref().map(refs_json)
 			})
 		);
 	} else {
-		names_text(&names);
+		if let Some(names) = &names {
+			names_text(names);
+		}
+		if let Some(refs) = &refs {
+			refs_text(refs);
+		}
 		if args.dry_run {
 			say!(
 				"{} not written: {} to {}",

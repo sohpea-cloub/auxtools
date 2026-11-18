@@ -86,6 +86,8 @@ DreamMaker names a proc after its identifier with spaces for underscores (`attac
 
 The world runs as before, except that runtime errors and call stacks print `attack_hand` where they printed `attack hand`. An identifier keeps its names if any of its procs is a verb, has verb settings or a name from `set name`, or has its path used as a value, or if the name with spaces is also text in the code: `call(thing, "attack hand")` goes on working. `--dry-run` reports what would change, and `--json` lists the identifiers left and why.
 
+It also adds evenly spaced `ref()` strings to the string table. Without them, a world that keeps the refs of things made one after another (weak references, `render_target = ref(src)`) stalls about every thousandth time, for longer the more strings it has: 20,000 kept refs took 8 s in a world of 400,000 strings, and 40 ms with the strings added. `--ref-seeds N` changes how many are added (64,512 by default, about 5 MB) and `--skip PASS` leaves a pass out.
+
 The `.rsc` is not rewritten. The debugger and hot reload do not support an optimised world: debug the world as DreamMaker built it. Worlds built by BYOND 515 and 516 are supported.
 
 ## Supported BYOND versions
