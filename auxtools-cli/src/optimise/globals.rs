@@ -267,8 +267,8 @@ const fn effect(instruction: &Instruction) -> Effect {
 	];
 	match instruction {
 		Sleep | Spawn(_) | Input(..) | InputColor(..) | Alert | PromptCheck | WinGet | WinExists | Shell => Effect::Waits,
-		// Calls of procs named at run time and of libraries
 		CallParent | CallParentArgs(_) | CallParentArgList => Effect::Parent,
+		// Calls of procs named at run time and of libraries
 		CallName(_) | CallNameArgList | CallPath(_) | CallPathArgList | CallLib(_) | CallLibArgList | LoadExt | CallExtLoaded(_)
 		| CallExtLoadedArgList | Eval | DmsNewKernel | DmsParse | DmsExportText | DmsPrepare | Startup(_) | Shutdown | ShutdownArgs => Effect::Waits,
 		New(_) | NewArgList | NewImage | NewImageArgList | NewImageArgs(_) | IconNew(_) | MatrixNew(_) | RegexNew(_) | MakeGenerator(_)
@@ -420,6 +420,12 @@ fn body(words: &[u32]) -> Body {
 		// Nothing runs on from a jump: what follows is reached from elsewhere
 		if matches!(instruction, Jmp(_) | JmpLoop(_) | Ret | End | Throw) {
 			cache = Cache::Other;
+		}
+	}
+	// Bytecode read in part is not rewritten
+	if !body.read {
+		for site in &mut body.sites {
+			site.on_src = false;
 		}
 	}
 	body
