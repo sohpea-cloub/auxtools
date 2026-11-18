@@ -82,7 +82,7 @@ DreamMaker tgstation.dme
 auxtools optimise tgstation.dmb
 ```
 
-DreamMaker names a proc after its identifier with spaces for underscores (`attack_hand` is "attack hand"), and DreamDaemon lists a proc under both in the proc table of every type that has it. The command names each proc after its identifier and changes the calls to match, which halves what the proc costs. On tgstation (46,000 types, 80,000 procs) a freshly loaded server went from 668 MB to 468 MB.
+DreamMaker names a proc after its identifier with spaces for underscores (`attack_hand` is "attack hand"), and DreamDaemon lists a proc under both in the proc table of every type that has it. The command names each proc after its identifier and changes the calls to match, which halves what the proc costs. On tgstation (46,000 types, 80,000 procs) the proc tables go from 468 MB to 257 MB.
 
 The world runs as before, except that runtime errors and call stacks print `attack_hand` where they printed `attack hand`. An identifier keeps its names if any of its procs is a verb, has verb settings or a name from `set name`, or has its path used as a value, or if the name with spaces is also text in the code: `call(thing, "attack hand")` goes on working. `--dry-run` reports what would change, and `--json` lists the identifiers left and why.
 
