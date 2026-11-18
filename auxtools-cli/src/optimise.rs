@@ -134,13 +134,12 @@ impl Uses {
 			let references = match dmasm::scan(words) {
 				Ok(scanned) => {
 					for reference in &scanned.references {
-						let word = words[reference.word_offset as usize];
 						match reference.kind {
 							ReferenceKind::String => {
-								uses.text.insert(word);
+								uses.text.insert(reference.id);
 							}
 							ReferenceKind::Value(PROC_VALUE) => {
-								uses.proc_values.insert(word);
+								uses.proc_values.insert(reference.id);
 							}
 							_ => {}
 						}
