@@ -14,7 +14,7 @@ version = "3.0.9-dev"
 [workspace.dependencies]
 lazy_static = "1"
 retour = { version = "=0.4.0-alpha.4", default-features = false }
-dmasm = { git = "https://github.com/auxtools/dmasm", branch = "master", features = ["serde"] }
+dmasm = { git = "https://github.com/sohpea-cloub/dmasm", branch = "optimise", features = ["serde"] }
 # auxtools' SpacemanDMM, with the parser fixes dmasm's proc compiler needs
 dreammaker = { git = "https://github.com/auxtools/SpacemanDMM", branch = "master" }
 dap-types = { git = "https://github.com/auxtools/SpacemanDMM", branch = "master" }
