@@ -649,10 +649,9 @@ pub fn run(dmb: &mut Dmb) -> Report {
 			continue;
 		};
 		for reference in references {
-			let word = dmb.lists[list as usize][reference.word_offset as usize];
 			match reference.kind {
-				ReferenceKind::ProcName => *referred.entry(Target::Name(word)).or_default() += 1,
-				ReferenceKind::Proc => *referred.entry(Target::Proc(word)).or_default() += 1,
+				ReferenceKind::ProcName => *referred.entry(Target::Name(reference.id)).or_default() += 1,
+				ReferenceKind::Proc => *referred.entry(Target::Proc(reference.id)).or_default() += 1,
 				_ => {}
 			}
 		}
@@ -1023,6 +1022,18 @@ mod tests {
 		kept(&mut dmb);
 		let (mut dmb, helper, _) = world(returns_argument());
 		proc(&mut dmb, "/proc/takes", vec![0x60, 0x26, helper, END]);
+		kept(&mut dmb);
+		// The same with ids over 16 bits, which a value has in two words
+		let (mut dmb, helper, caller) = world(returns_argument());
+		dmb.flags |= Dmb::LARGE_IDS;
+		dmb.strings.resize(0x3_0000, b"filler".to_vec());
+		dmb.strings.push(b"helper".to_vec());
+		dmb.strings[name as usize] = b"was helper".to_vec();
+		dmb.procs[helper as usize].name = 0x3_0000;
+		let code = dmb.procs[caller as usize].code as usize;
+		dmb.lists[code][4] = 0x3_0000;
+		assert_eq!(run(&mut dmb.clone()).procs.len(), 1);
+		proc(&mut dmb, "/proc/says", vec![0x60, 0x0306, 0, END]);
 		kept(&mut dmb);
 		// It has settings, or is an operator
 		let (mut dmb, helper, _) = world(returns_argument());
