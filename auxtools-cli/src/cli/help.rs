@@ -552,20 +552,31 @@ Exit codes:
   leaves it nothing to stall on. They take about 5 MB of memory.
   --ref-seeds 129024 covers twice as many things of each kind.
 
+  Globals, with --globals: a proc on a type has an entry in the table of
+  every type below it, a global proc has none. A proc is called as a global
+  proc, and keeps its path, if it is declared once and never overridden,
+  never uses src, cannot sleep, and is only called on the caller's own src.
+  Few procs are: tgstation saves 3 MB.
+
 Effects on the world:
   Runtime errors and call stacks print attack_hand for \"attack hand\".
   call() and hascall() with a name built at run time find attack_hand, not
   \"attack hand\".
+  A runtime error in a proc made global reports src: null.
   The debugger and hot reload do not support an optimised world.
 
 Output:
   Print what each pass changed and what it left, then the file written.
-  JSON contains dmb, output (null with --dry-run), bytes, names, and refs;
-  a skipped pass is null. bytes has before and after: the file's size.
+  JSON contains dmb, output (null with --dry-run), bytes, names, globals,
+  and refs; a pass not run is null. bytes has before and after: the file's
+  size.
   names has identifiers, procs, and calls: how many were renamed; kept:
   the identifiers left, listed by reason (verb, named, value, text, shared,
   operator, unread, full); proc_table_bytes with before and after; and
   second_names with before, after, and bytes_each.
+  globals has procs: the paths of the procs made global; calls;
+  proc_table_bytes with before and after; and refused: why none was made
+  global, or null.
   refs has added, present (strings the world already had), wanted, spacing,
   and full: whether the world ran out of string ids.
 

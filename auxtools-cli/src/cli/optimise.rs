@@ -6,7 +6,7 @@ use dmasm::dmb::Dmb;
 use serde_json::{json, Map, Value};
 
 use super::{args, Result};
-use crate::optimise::{names, refs, PROC_ENTRY_BYTES};
+use crate::optimise::{globals, names, refs, PROC_ENTRY_BYTES};
 
 fn megabytes(bytes: u64) -> String {
 	format!("{:.1} MB", bytes as f64 / 1_048_576.0)
@@ -75,6 +75,31 @@ fn names_json(report: &names::Report) -> Value {
 	})
 }
 
+fn globals_text(report: &globals::Report) {
+	say!(
+		"globals: made {} global, changed {}",
+		counted(report.procs.len(), "proc", "procs"),
+		counted(report.calls, "call", "calls")
+	);
+	say!(
+		"  proc tables: {} to {}",
+		megabytes(report.before.bytes()),
+		megabytes(report.after.bytes())
+	);
+	if let Some(why) = report.refused {
+		say!("  stopped: {}", why);
+	}
+}
+
+fn globals_json(report: &globals::Report) -> Value {
+	json!({
+		"procs": report.procs,
+		"calls": report.calls,
+		"proc_table_bytes": { "before": report.before.bytes(), "after": report.after.bytes() },
+		"refused": report.refused
+	})
+}
+
 fn refs_text(report: &refs::Report) {
 	say!(
 		"refs: added {} spaced {} refs apart{}",
@@ -106,6 +131,7 @@ pub fn optimise(args: &args::Optimise) -> Result<()> {
 
 	let skipped = |pass: &str| args.skip.iter().any(|skip| skip == pass);
 	let names = (!skipped("names")).then(|| names::run(&mut dmb));
+	let globals = args.globals.then(|| globals::run(&mut dmb));
 	let refs = (!skipped("refs")).then(|| refs::run(&mut dmb, args.ref_seeds.unwrap_or(refs::DEFAULT)));
 
 	let output: &PathBuf = args.output.as_ref().unwrap_or(&args.dmb);
@@ -122,12 +148,16 @@ pub fn optimise(args: &args::Optimise) -> Result<()> {
 				"output": if args.dry_run { Value::Null } else { json!(output) },
 				"bytes": { "before": data.len(), "after": written.len() },
 				"names": names.as_ref().map(names_json),
+				"globals": globals.as_ref().map(globals_json),
 				"refs": refs.as_ref().map(refs_json)
 			})
 		);
 	} else {
 		if let Some(names) = &names {
 			names_text(names);
+		}
+		if let Some(globals) = &globals {
+			globals_text(globals);
 		}
 		if let Some(refs) = &refs {
 			refs_text(refs);

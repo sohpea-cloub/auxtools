@@ -16,6 +16,7 @@ use crate::{
 
 const NAMES: &str = include_str!("optimise/names.dm");
 const REFS: &str = include_str!("optimise/refs.dm");
+const GLOBALS: &str = include_str!("optimise/globals.dm");
 
 /// What the world writes, as DreamMaker compiled it.
 const STOCK: &str = "\
@@ -317,8 +318,117 @@ fn refs() {
 	let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// Procs made global behave as they did, and as global procs in source do.
+fn globals() {
+	const STOCK: &str = "\
+made global: 84 75 26
+kept: 11 2 2 2 1 1 4 4 5 5 6 8
+error: list index out of bounds;  src: /datum/a/sub (/datum/a/sub)
+sleeps resumed 2
+calls_sleeper resumed 2
+spawned 2
+sleepers: 2 2 2 3
+done
+";
+	let dir = project("globals", GLOBALS, &[]);
+	let stock = std::fs::read(dir.join("world.dmb")).unwrap();
+	assert_eq!(
+		results(&dir.join("world.dmb")),
+		STOCK,
+		"unexpected results from the world as DreamMaker built it"
+	);
+
+	// Not unless asked for
+	let (code, out, err) = optimise(&dir, &["world.dmb", "--skip", "refs", "--dry-run", "--json"]);
+	assert_eq!((code, err.as_str()), (0, ""), "unexpected optimise output: {}", out);
+	let report: Value = serde_json::from_str(&out).unwrap_or_else(|_| panic!("unexpected optimise --json output: {}", out));
+	assert_eq!(report["globals"], Value::Null, "{}", out);
+
+	let (code, out, err) = optimise(&dir, &[
+		"world.dmb",
+		"--globals",
+		"--skip",
+		"names",
+		"--skip",
+		"refs",
+		"--output",
+		"optimised.dmb",
+		"--json"
+	]);
+	assert_eq!((code, err.as_str()), (0, ""), "unexpected optimise --globals output: {}", out);
+	let report: Value = serde_json::from_str(&out).unwrap_or_else(|_| panic!("unexpected optimise --globals --json output: {}", out));
+	assert_eq!(
+		(&report["globals"]["procs"], &report["globals"]["calls"], &report["globals"]["refused"]),
+		(
+			&json!(["/datum/a/proc/fails_inside", "/datum/a/proc/pure_helper"]),
+			&json!(10),
+			&Value::Null
+		),
+		"{}",
+		out
+	);
+	assert!(
+		std::fs::read(dir.join("world.dmb")).unwrap() == stock,
+		"optimise --output changed the world it read"
+	);
+	// An error in a proc made global has no src
+	let global = STOCK.replace("src: /datum/a/sub (/datum/a/sub)", "src: null");
+	assert_eq!(
+		results(&dir.join("optimised.dmb")),
+		global,
+		"unexpected results from the world with procs made global"
+	);
+	println!("ok: procs made global run as before");
+
+	// The same as DreamMaker's world with the two written as global procs
+	let source = project("global", GLOBALS, &["-DGLOBAL"]);
+	assert_eq!(
+		results(&source.join("world.dmb")),
+		global,
+		"unexpected results from the world with global procs in source"
+	);
+	let (code, out, _) = optimise(&source, &["world.dmb", "--globals", "--skip", "refs", "--dry-run"]);
+	assert!(
+		code == 0 && out.contains("\nglobals: made 0 procs global, changed 0 calls\n"),
+		"optimise found procs to make global in a world with them global in source: {}",
+		out
+	);
+	println!("ok: procs made global match global procs in source");
+
+	// With the names pass before it, in place, and again
+	let (code, out, err) = optimise(&dir, &["world.dmb", "--globals", "--skip", "refs"]);
+	assert!(
+		code == 0 && err.is_empty() && out.contains("\nglobals: made 2 procs global, changed 10 calls\n"),
+		"unexpected optimise --globals output: {} {}",
+		out,
+		err
+	);
+	assert_eq!(
+		results(&dir.join("world.dmb")),
+		global,
+		"unexpected results from the world with procs renamed and made global"
+	);
+	let once = std::fs::read(dir.join("world.dmb")).unwrap();
+	let (code, out, err) = optimise(&dir, &["world.dmb", "--globals", "--skip", "refs"]);
+	assert!(
+		code == 0 && err.is_empty() && out.contains("\nglobals: made 0 procs global, changed 0 calls\n"),
+		"unexpected optimise --globals output the second time: {} {}",
+		out,
+		err
+	);
+	assert!(
+		std::fs::read(dir.join("world.dmb")).unwrap() == once,
+		"optimising an optimised world changed it"
+	);
+	println!("ok: optimise --globals in place, twice");
+	for dir in [dir, source] {
+		let _ = std::fs::remove_dir_all(dir);
+	}
+}
+
 pub fn checks() {
 	refusals();
 	names();
 	refs();
+	globals();
 }

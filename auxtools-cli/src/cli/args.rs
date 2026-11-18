@@ -500,6 +500,8 @@ pub struct Optimise {
 	pub ref_seeds: Option<u32>,
 	#[arg(long, value_name = "PASS", value_parser = ["names", "refs"], help = "Leave a pass out: names or refs (repeatable).")]
 	pub skip: Vec<String>,
+	#[arg(long, help = "Make procs global that never use src and cannot sleep.")]
+	pub globals: bool,
 	#[arg(long, help = "Report what would change and write nothing.")]
 	pub dry_run: bool,
 	#[arg(long, help = JSON)]
@@ -861,7 +863,8 @@ mod tests {
 		let bare = optimise(&["optimise", "world.dmb"]);
 		assert_eq!(bare.dmb, std::path::Path::new("world.dmb"));
 		assert!(bare.output.is_none() && !bare.dry_run && !bare.json);
-		assert!(bare.ref_seeds.is_none() && bare.skip.is_empty());
+		assert!(bare.ref_seeds.is_none() && bare.skip.is_empty() && !bare.globals);
+		assert!(optimise(&["optimise", "world.dmb", "--globals"]).globals);
 		let full = optimise(&[
 			"optimize",
 			"world.dmb",

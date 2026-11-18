@@ -4,6 +4,7 @@
 //! A pass leaves alone whatever it cannot show to be safe to change, so the
 //! world behaves as before except where the pass's documentation says.
 
+pub mod globals;
 pub mod names;
 pub mod refs;
 
@@ -33,7 +34,12 @@ pub struct ProcPath<'a> {
 
 impl<'a> ProcPath<'a> {
 	pub fn parse(path: &'a [u8]) -> Option<Self> {
-		let slash = path.iter().rposition(|&byte| byte == b'/')?;
+		// `operator/` and `operator/=` have the only identifiers with a
+		// slash
+		let slash = [&b"/operator/"[..], b"/operator/="]
+			.iter()
+			.find_map(|operator| path.ends_with(operator).then(|| path.len() - operator.len()))
+			.or_else(|| path.iter().rposition(|&byte| byte == b'/'))?;
 		let (mut owner, identifier) = (&path[..slash], &path[slash + 1..]);
 		if identifier.is_empty() {
 			return None;

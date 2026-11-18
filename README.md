@@ -88,6 +88,8 @@ The world runs as before, except that runtime errors and call stacks print `atta
 
 It also adds evenly spaced `ref()` strings to the string table. Without them, a world that keeps the refs of things made one after another (weak references, `render_target = ref(src)`) stalls about every thousandth time, for longer the more strings it has: 20,000 kept refs took 8 s in a world of 400,000 strings, and 40 ms with the strings added. `--ref-seeds N` changes how many are added (64,512 by default, about 5 MB) and `--skip PASS` leaves a pass out.
 
+`--globals` also calls as global procs the procs that could have been written as such: declared once and never overridden, never using `src`, unable to sleep, and only called on the caller's own `src`. A global proc is in no type's table. The proc keeps its path, and a runtime error in it reports `src: null`. It is off by default because few procs qualify: tgstation saves 3 MB.
+
 The `.rsc` is not rewritten. The debugger and hot reload do not support an optimised world: debug the world as DreamMaker built it. Worlds built by BYOND 515 and 516 are supported.
 
 ## Supported BYOND versions
