@@ -82,11 +82,13 @@ DreamMaker tgstation.dme
 auxtools optimise tgstation.dmb
 ```
 
-DreamMaker names a proc after its identifier with spaces for underscores (`attack_hand` is "attack hand"), and DreamDaemon lists a proc under both in the proc table of every type that has it. The command names each proc after its identifier and changes the calls to match, which halves what the proc costs. On tgstation (46,000 types, 80,000 procs) a freshly loaded server went from 668 MB to 468 MB.
+DreamMaker names a proc after its identifier with spaces for underscores (`attack_hand` is "attack hand"), and DreamDaemon lists a proc under both in the proc table of every type that has it. The command names each proc after its identifier and changes the calls to match, which halves what the proc costs. On tgstation (46,000 types, 80,000 procs) the proc tables go from 468 MB to 257 MB.
 
 The world runs as before, except that runtime errors and call stacks print `attack_hand` where they printed `attack hand`. An identifier keeps its names if any of its procs is a verb, has verb settings or a name from `set name`, or has its path used as a value, or if the name with spaces is also text in the code: `call(thing, "attack hand")` goes on working. `--dry-run` reports what would change, and `--json` lists the identifiers left and why.
 
 It also adds evenly spaced `ref()` strings to the string table. Without them, a world that keeps the refs of things made one after another (weak references, `render_target = ref(src)`) stalls about every thousandth time, for longer the more strings it has: 20,000 kept refs took 8 s in a world of 400,000 strings, and 40 ms with the strings added. `--ref-seeds N` changes how many are added (64,512 by default, about 5 MB) and `--skip PASS` leaves a pass out.
+
+With both, a freshly loaded tgstation server takes 459 MB instead of 668 MB, and making 20,000 weak references after init takes 0.3 s instead of 10 s.
 
 `--globals` also calls as global procs the procs that could have been written as such: declared once and never overridden, never using `src`, unable to sleep, and only called on the caller's own `src`. A global proc is in no type's table. The proc keeps its path, and a runtime error in it reports `src: null`. It is off by default because few procs qualify: tgstation saves 3 MB.
 
