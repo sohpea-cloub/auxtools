@@ -55,6 +55,8 @@ pub enum Command {
 	Wait(Wait),
 	Trace(Trace),
 	Check(Check),
+	#[command(visible_alias = "optimize")]
+	Optimise(Optimise),
 	Dap,
 	Help(Help),
 	Version(Version)
@@ -84,6 +86,7 @@ impl Command {
 			Self::Wait(_) => "wait",
 			Self::Trace(_) => "trace",
 			Self::Check(_) => "check",
+			Self::Optimise(_) => "optimise",
 			Self::Dap => "dap",
 			Self::Help(_) => "help",
 			Self::Version(_) => "version"
@@ -94,7 +97,7 @@ impl Command {
 	pub const fn selects_world(&self) -> bool {
 		!matches!(
 			self,
-			Self::Launch(_) | Self::List(_) | Self::Check(_) | Self::Dap | Self::Help(_) | Self::Version(_)
+			Self::Launch(_) | Self::List(_) | Self::Check(_) | Self::Optimise(_) | Self::Dap | Self::Help(_) | Self::Version(_)
 		)
 	}
 
@@ -488,6 +491,18 @@ pub struct Check {
 }
 
 #[derive(Args)]
+pub struct Optimise {
+	#[arg(value_name = "DMB")]
+	pub dmb: PathBuf,
+	#[arg(short = 'o', long, value_name = "FILE", help = "Write the optimised world to FILE. [default: DMB]")]
+	pub output: Option<PathBuf>,
+	#[arg(long, help = "Report what would change and write nothing.")]
+	pub dry_run: bool,
+	#[arg(long, help = JSON)]
+	pub json: bool
+}
+
+#[derive(Args)]
 pub struct Help {
 	/// The command, and its subcommand
 	#[arg(value_name = "COMMAND")]
@@ -824,6 +839,21 @@ mod tests {
 			refused(&["check", "a.dme", "b.dme"]),
 			"unexpected argument 'b.dme'. Run 'auxtools check --help' for usage."
 		);
+	}
+
+	#[test]
+	fn optimise_takes_a_world_and_where_to_write_it() {
+		let optimise = |given: &[&str]| match parsed(given).command {
+			Some(Command::Optimise(optimise)) => optimise,
+			_ => panic!("not optimise")
+		};
+		let bare = optimise(&["optimise", "world.dmb"]);
+		assert_eq!(bare.dmb, std::path::Path::new("world.dmb"));
+		assert!(bare.output.is_none() && !bare.dry_run && !bare.json);
+		let full = optimise(&["optimize", "world.dmb", "-o", "out/world.dmb", "--dry-run", "--json"]);
+		assert_eq!(full.output.as_deref(), Some(std::path::Path::new("out/world.dmb")));
+		assert!(full.dry_run && full.json);
+		assert!(refused(&["optimise"]).contains("required"), "{}", refused(&["optimise"]));
 	}
 
 	#[test]

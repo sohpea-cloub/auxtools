@@ -9,6 +9,8 @@ Code Coverage - A tool to generate cobertura code coverage XML reports for a cod
 
 Debug Server - Debug DM worlds from [VS Code](editors/vscode) or the command line, with experimental hot reload.
 
+Optimiser - Rewrite a compiled world to use less memory in DreamDaemon.
+
 ## The debugger
 
 The debugger supports line, function, instruction and data breakpoints; conditional breakpoints and logpoints; runtime error breakpoints; line and instruction stepping; sleeping proc stacks; variable inspection and assignment; expression and proc-body evaluation; and disassembly. A journal records runtime errors, reloads, output and reboots.
@@ -70,6 +72,21 @@ auxtools check tgstation.dme -DCIBUILDING --byond-version 516.1689
 ```
 
 Findings use `FILE:LINE: PROC: diagnostic`. Pass the build's defines with `-D` and select its version with `--byond-version`. Exit code 5 means bugs were found; 0 means none were found. Unsupported procs and parse errors are reported as unchecked and do not affect the exit code. Runtime-only bugs, such as errors swallowed inside operator overloads, are not detected.
+
+## Optimising a compiled world
+
+`auxtools optimise` rewrites a `.dmb` so that DreamDaemon runs the same world in less memory. It reads no source and needs no BYOND install, so it fits after the compile step of a build or a deployment:
+
+```sh
+DreamMaker tgstation.dme
+auxtools optimise tgstation.dmb
+```
+
+DreamMaker names a proc after its identifier with spaces for underscores (`attack_hand` is "attack hand"), and DreamDaemon lists a proc under both in the proc table of every type that has it. The command names each proc after its identifier and changes the calls to match, which halves what the proc costs. On tgstation (46,000 types, 80,000 procs) a freshly loaded server went from 668 MB to 468 MB.
+
+The world runs as before, except that runtime errors and call stacks print `attack_hand` where they printed `attack hand`. An identifier keeps its names if any of its procs is a verb, has verb settings or a name from `set name`, or has its path used as a value, or if the name with spaces is also text in the code: `call(thing, "attack hand")` goes on working. `--dry-run` reports what would change, and `--json` lists the identifiers left and why.
+
+The `.rsc` is not rewritten. The debugger and hot reload do not support an optimised world: debug the world as DreamMaker built it. Worlds built by BYOND 515 and 516 are supported.
 
 ## Supported BYOND versions
 

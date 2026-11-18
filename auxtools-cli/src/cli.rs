@@ -27,6 +27,7 @@ mod hold;
 mod json;
 mod launch;
 mod log;
+mod optimise;
 mod stop;
 mod trace;
 
@@ -139,6 +140,7 @@ fn execute(raw: &[String]) -> Result<()> {
 		Command::List(list) => self::list(list.json),
 		Command::Launch(launch) => launch::launch(&launch, raw.iter().any(|arg| arg == "--")),
 		Command::Check(check) => check::check(&check),
+		Command::Optimise(optimise) => optimise::optimise(&optimise),
 		Command::Wait(args::Wait { event: None }) => {
 			help::show(&["wait".to_owned()])?;
 			Err("wait requires a command: pause, reload, or reboot.".into())
@@ -492,6 +494,7 @@ impl World {
 			| Command::Launch(_)
 			| Command::List(_)
 			| Command::Check(_)
+			| Command::Optimise(_)
 			| Command::Dap
 			| Command::Help(_)
 			| Command::Version(_) => Ok(())

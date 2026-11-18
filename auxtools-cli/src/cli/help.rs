@@ -28,6 +28,7 @@ const GROUPS: &[(&str, &[&str])] = &[
 	("Inspection", &["stack", "vars", "eval", "proc", "disassemble"]),
 	("Execution", &["pause", "continue", "step-over", "step-in", "step-out", "wait", "trace"]),
 	("Source code", &["check"]),
+	("Compiled worlds", &["optimise"]),
 	("Integration", &["dap", "help", "version"])
 ];
 
@@ -524,6 +525,46 @@ Exit codes:
   5  Known BYOND bugs found."
 	},
 	Page {
+		path: &["optimise"],
+		brief: "Rewrite a compiled world to use less memory",
+		summary: "Rewrite a compiled world so that DreamDaemon runs it in less memory.",
+		usage: "auxtools optimise DMB [OPTIONS]",
+		arguments: "DMB  Path to a compiled BYOND world, built by BYOND 515 or 516.",
+		sections: "Behavior:
+  Rewrite the DMB in place, or to FILE with --output. Source code is not
+  read or changed, and BYOND need not be installed. DreamDaemon reads
+  NAME.rsc beside NAME.dmb: keep the file name when writing elsewhere.
+  Optimising an optimised world changes nothing.
+
+  Names: DreamMaker names a proc after its identifier with spaces for
+  underscores (attack_hand is \"attack hand\"), and DreamDaemon lists the
+  proc under both in the proc table of every type that has it. Each proc is
+  renamed to its identifier, with the calls to it, which halves what it
+  costs. An identifier keeps its names if any of its procs is a verb, has
+  verb settings or a name of its own, or has its path used as a value, if
+  the name with spaces is also text in the code, or if it is an operator.
+  Global procs keep their names: they are in no type's table.
+
+Effects on the world:
+  Runtime errors and call stacks print attack_hand for \"attack hand\".
+  call() and hascall() with a name built at run time find attack_hand, not
+  \"attack hand\".
+  The debugger and hot reload do not support an optimised world.
+
+Output:
+  Print what each pass changed and what it left, then the file written.
+  JSON contains dmb, output (null with --dry-run), bytes, and names.
+  bytes has before and after: the file's size.
+  names has identifiers, procs, and calls: how many were renamed; kept:
+  the identifiers left, listed by reason (verb, named, value, text, shared,
+  operator, unread, full); proc_table_bytes with before and after; and
+  second_names with before, after, and bytes_each.
+
+Exit codes:
+  0  World optimised.
+  1  Optimisation failed: the world could not be read or written."
+	},
+	Page {
 		path: &["dap"],
 		brief: "Serve the Debug Adapter Protocol over stdin and stdout",
 		summary: "Serve the Debug Adapter Protocol over stdin and stdout.",
@@ -667,7 +708,10 @@ fn option_rows(command: &clap::Command, path: &[&str]) -> Vec<(String, String)> 
 			rows.push(((*more).to_owned(), (*help).to_owned()));
 		}
 	}
-	let selects_world = !matches!(path.first(), Some(&("launch" | "list" | "check" | "dap" | "help" | "version")));
+	let selects_world = !matches!(
+		path.first(),
+		Some(&("launch" | "list" | "check" | "optimise" | "dap" | "help" | "version"))
+	);
 	if selects_world {
 		rows.push(("--pid PID".to_owned(), "Select the world process.".to_owned()));
 	}
@@ -913,6 +957,7 @@ mod tests {
 			"wait",
 			"trace",
 			"check",
+			"optimise",
 			"dap",
 			"help",
 			"version"
@@ -951,7 +996,7 @@ mod tests {
 			for usage in page.usage.lines() {
 				assert!(usage.contains(&format!(" {}", path.join(" "))), "{}", usage);
 				// Only a command to a world is given one
-				let selects = !matches!(names[0], "launch" | "list" | "check" | "dap" | "help" | "version");
+				let selects = !matches!(names[0], "launch" | "list" | "check" | "optimise" | "dap" | "help" | "version");
 				assert_eq!(usage.starts_with("auxtools [--pid PID] "), selects, "{}", usage);
 			}
 			if command.has_subcommands() {
@@ -961,7 +1006,7 @@ mod tests {
 			assert!(text.contains("  -h, --help"), "{}", text);
 			assert_eq!(
 				text.contains("  --pid PID "),
-				!matches!(names[0], "launch" | "list" | "check" | "dap" | "help" | "version"),
+				!matches!(names[0], "launch" | "list" | "check" | "optimise" | "dap" | "help" | "version"),
 				"{}",
 				text
 			);

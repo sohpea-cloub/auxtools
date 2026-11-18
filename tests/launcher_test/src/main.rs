@@ -18,6 +18,7 @@ mod check;
 mod client;
 mod inspect;
 mod journal;
+mod optimise;
 #[allow(dead_code)]
 #[path = "../../test_runner/src/paths.rs"]
 mod paths;
@@ -106,7 +107,8 @@ const GROUPS: &[&str] = &[
 	"journal",
 	"edited",
 	"command_line",
-	"builds"
+	"builds",
+	"optimise"
 ];
 
 /// Groups sharing the attached world.
@@ -167,6 +169,7 @@ fn main() {
 				errored_baseline(&server);
 				dmb_elsewhere(&server);
 			}
+			("optimise", _) => optimise::checks(),
 			_ => unreachable!("group {} has no world", group)
 		}
 	}
@@ -381,6 +384,7 @@ fn command_line_shape() {
 		"wait",
 		"trace",
 		"check",
+		"optimise",
 		"dap",
 		"help",
 		"version"
