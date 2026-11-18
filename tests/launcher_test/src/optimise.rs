@@ -87,7 +87,10 @@ fn results(dmb: &Path) -> String {
 		}
 		std::thread::sleep(Duration::from_millis(50));
 	}
-	std::fs::read_to_string(dir.join("result.txt")).unwrap_or_else(|e| panic!("{} wrote no results: {}", dmb.display(), e))
+	// (text2file ends a line as the platform does)
+	std::fs::read_to_string(dir.join("result.txt"))
+		.unwrap_or_else(|e| panic!("{} wrote no results: {}", dmb.display(), e))
+		.replace("\r\n", "\n")
 }
 
 /// Run optimise and return its exit code, stdout and stderr.
