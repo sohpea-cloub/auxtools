@@ -179,8 +179,7 @@ pub fn run(dmb: &mut Dmb) -> Report {
 			continue;
 		};
 		for reference in references.iter().filter(|reference| reference.kind == ReferenceKind::ProcName) {
-			let name = dmb.lists[list as usize][reference.word_offset as usize];
-			calls.entry(name).or_default().push((list, reference.word_offset));
+			calls.entry(reference.id).or_default().push((list, reference.word_offset));
 		}
 	}
 
@@ -415,6 +414,22 @@ mod tests {
 		let (mut dmb, _) = world();
 		let text = string(&mut dmb, "do thing");
 		proc(&mut dmb, "/proc/says", "says", vec![0x60, 0x06, text, 0x00]);
+		assert_eq!(kept(&mut dmb), [(Kept::Text, identifier())]);
+
+		// The same in a world with more strings than 16 bits count, where
+		// a value's id is in two words
+		let (mut dmb, _) = world();
+		dmb.flags |= Dmb::LARGE_IDS;
+		dmb.strings.resize(0x3_0000, b"filler".to_vec());
+		dmb.strings.push(b"do thing".to_vec());
+		for record in &mut dmb.procs {
+			if record.name == text {
+				record.name = 0x3_0000;
+			}
+		}
+		dmb.lists[2] = call(0x3_0000);
+		dmb.strings[text as usize] = b"was do thing".to_vec();
+		proc(&mut dmb, "/proc/says", "says", vec![0x60, 0x0306, 0, 0x00]);
 		assert_eq!(kept(&mut dmb), [(Kept::Text, identifier())]);
 
 		// Another proc by either name
