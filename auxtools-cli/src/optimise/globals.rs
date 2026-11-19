@@ -17,7 +17,7 @@ use dmasm::{
 	Instruction, Node, ReferenceKind, Variable
 };
 
-use super::{lists_not_code, ProcPath, ProcTables, Strings, Uses};
+use super::{lists_not_code, own_type, ProcPath, ProcTables, Strings, Uses, OWN_PROCS};
 
 /// Words of `GetVar src`, `SetVar cache`: what `cache = src` in a call's
 /// operand did before the call, for the code after it that reads the cache.
@@ -61,82 +61,6 @@ const WAITING_PROCS: [&str; 26] = [
 	"SetScores",
 	"SoundQuery"
 ];
-
-/// The procs BYOND itself compiles into every world, by type. A call by
-/// name reaches them where their names are those of list procs (`Add`,
-/// `Find`). The objects they make are of their own types.
-const OWN_PROCS: [(&str, &[&str]); 8] = [
-	("/sound", &["New", "operator:=", "RscFile"]),
-	("/icon", &[
-		"New",
-		"operator:=",
-		"Icon",
-		"RscFile",
-		"IconStates",
-		"Turn",
-		"Flip",
-		"Shift",
-		"SetIntensity",
-		"Blend",
-		"SwapColor",
-		"DrawBox",
-		"Insert",
-		"MapColors",
-		"Scale",
-		"Crop",
-		"GetPixel",
-		"Width",
-		"Height"
-	]),
-	("/matrix", &[
-		"New",
-		"operator:=",
-		"Multiply",
-		"Add",
-		"Subtract",
-		"Invert",
-		"Turn",
-		"Scale",
-		"Translate",
-		"Interpolate"
-	]),
-	("/database", &["New", "Open", "Close", "Error", "ErrorMsg"]),
-	("/database/query", &[
-		"New",
-		"Open",
-		"Clear",
-		"Add",
-		"Execute",
-		"NextRow",
-		"RowsAffected",
-		"Reset",
-		"Columns",
-		"GetColumn",
-		"GetRowData",
-		"Close"
-	]),
-	("/exception", &["New"]),
-	("/regex", &["New", "Find", "Replace", "Find_char", "Replace_char"]),
-	("/generator", &[
-		"New",
-		"Rand",
-		"Turn",
-		"operator+",
-		"operator-",
-		"operator*",
-		"operator/",
-		"operator+=",
-		"operator-=",
-		"operator*=",
-		"operator/=",
-		"operator_turn"
-	])
-];
-
-/// Whether a type is one of BYOND's own that `OWN_PROCS` lists.
-fn own_type(owner: &[u8]) -> bool {
-	OWN_PROCS.iter().any(|(ty, _)| ty.as_bytes() == owner)
-}
 
 #[derive(Debug, Default)]
 pub struct Report {

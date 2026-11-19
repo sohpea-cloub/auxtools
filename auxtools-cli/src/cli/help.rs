@@ -558,6 +558,11 @@ Exit codes:
   never uses src, cannot sleep, and is only called on the caller's own src.
   Few procs are: tgstation saves 3 MB.
 
+  --report also prints, and writes nothing: what the world's proc tables
+  and var tables take (a type that sets or declares a var has a table of
+  16 bytes for each var it has), the types whose procs and whose vars cost
+  most, and the procs on types that no call, text or value names.
+
 Effects on the world:
   Runtime errors and call stacks print attack_hand for \"attack hand\".
   call() and hascall() with a name built at run time find attack_hand, not
@@ -567,9 +572,13 @@ Effects on the world:
 
 Output:
   Print what each pass changed and what it left, then the file written.
-  JSON contains dmb, output (null with --dry-run), bytes, names, globals,
-  and refs; a pass not run is null. bytes has before and after: the file's
-  size.
+  JSON contains dmb, output (null with --dry-run or --report), bytes,
+  report, names, globals, and refs; a pass not run is null, and so is report
+  without --report. bytes has before and after: the file's size.
+  report has types, procs, and strings: how many; proc_tables with bytes,
+  names, second_names, and costliest; var_tables with bytes, entries,
+  tables, and costliest; and unused_procs. Each entry of costliest has
+  type, entries, tables, and bytes; each of unused_procs has proc and bytes.
   names has identifiers, procs, and calls: how many were renamed; kept:
   the identifiers left, listed by reason (verb, named, value, text, shared,
   operator, unread, full); proc_table_bytes with before and after; and

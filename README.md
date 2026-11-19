@@ -92,6 +92,8 @@ With both, a freshly loaded tgstation server takes 459 MB instead of 668 MB, and
 
 `--globals` also calls as global procs the procs that could have been written as such: declared once and never overridden, never using `src`, unable to sleep, and only called on the caller's own `src`. A global proc is in no type's table. The proc keeps its path, and a runtime error in it reports `src: null`. It is off by default because few procs qualify: tgstation saves 3 MB.
 
+`--report` prints what the world's types cost as it was built and writes nothing: the size of its proc tables and var tables, the types whose procs and vars cost most, and the procs nothing names, which cost every type below them for no use. On tgstation the 705 names of `/atom`'s procs take 207 MB in 25,691 tables.
+
 The `.rsc` is not rewritten. The debugger and hot reload do not support an optimised world: debug the world as DreamMaker built it. Worlds built by BYOND 515 and 516 are supported.
 
 ## Supported BYOND versions

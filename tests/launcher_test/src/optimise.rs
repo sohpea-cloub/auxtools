@@ -157,6 +157,45 @@ fn names() {
 	);
 	println!("ok: optimise --dry-run");
 
+	// A report of what the world's types cost writes nothing either
+	let (code, out, err) = optimise(&dir, &["world.dmb", "--skip", "refs", "--report"]);
+	assert_eq!((code, err.as_str()), (0, ""), "unexpected optimise --report output: {}", out);
+	for line in [
+		"\nproc tables: ",
+		" names in 3 tables of /datum/a\n",
+		" on types that no call, text or value names: ",
+		"\nvar tables: ",
+		"\nworld.dmb not written: "
+	] {
+		assert!(out.contains(line), "optimise --report did not print {:?}: {}", line, out);
+	}
+	let (code, out, err) = optimise(&dir, &["world.dmb", "--skip", "refs", "--report", "--json"]);
+	assert_eq!((code, err.as_str()), (0, ""), "unexpected optimise --report --json output: {}", out);
+	let report: Value = serde_json::from_str(&out).unwrap_or_else(|_| panic!("unexpected optimise --report --json output: {}", out));
+	assert_eq!(report["output"], Value::Null, "{}", out);
+	assert_eq!(
+		report["report"]["proc_tables"]["second_names"], dry["names"]["second_names"]["before"],
+		"{}",
+		out
+	);
+	// Every proc of the world's own is called
+	let unused = report["report"]["unused_procs"]
+		.as_array()
+		.unwrap_or_else(|| panic!("no unused_procs in {}", out));
+	assert!(
+		!unused
+			.iter()
+			.any(|unused| unused["proc"].as_str().is_some_and(|path| path.starts_with("/datum/a/"))),
+		"{}",
+		out
+	);
+	assert_eq!(dry["report"], Value::Null, "{}", out);
+	assert!(
+		std::fs::read(dir.join("world.dmb")).unwrap() == stock,
+		"optimise --report changed the world"
+	);
+	println!("ok: optimise --report");
+
 	// To another file: the world is left, and the copy behaves the same but
 	// for the name in the error
 	let (code, out, err) = optimise(&dir, &["world.dmb", "--skip", "refs", "--output", "optimised.dmb"]);

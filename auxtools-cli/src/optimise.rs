@@ -7,6 +7,7 @@
 pub mod globals;
 pub mod names;
 pub mod refs;
+pub mod report;
 
 use std::collections::{HashMap, HashSet};
 
@@ -21,6 +22,89 @@ const PROC_VALUE: u8 = 0x26;
 const TEXT_VALUE: u8 = 0x06;
 /// Bytes of a type's proc table that one name of one proc takes.
 pub const PROC_ENTRY_BYTES: u64 = 12;
+
+/// The procs BYOND itself compiles into every world, by type. A call by
+/// name reaches them where their names are those of list procs (`Add`,
+/// `Find`). The objects they make are of their own types.
+pub const OWN_PROCS: [(&str, &[&str]); 8] = [
+	("/sound", &["New", "operator:=", "RscFile"]),
+	("/icon", &[
+		"New",
+		"operator:=",
+		"Icon",
+		"RscFile",
+		"IconStates",
+		"Turn",
+		"Flip",
+		"Shift",
+		"SetIntensity",
+		"Blend",
+		"SwapColor",
+		"DrawBox",
+		"Insert",
+		"MapColors",
+		"Scale",
+		"Crop",
+		"GetPixel",
+		"Width",
+		"Height"
+	]),
+	("/matrix", &[
+		"New",
+		"operator:=",
+		"Multiply",
+		"Add",
+		"Subtract",
+		"Invert",
+		"Turn",
+		"Scale",
+		"Translate",
+		"Interpolate"
+	]),
+	("/database", &["New", "Open", "Close", "Error", "ErrorMsg"]),
+	("/database/query", &[
+		"New",
+		"Open",
+		"Clear",
+		"Add",
+		"Execute",
+		"NextRow",
+		"RowsAffected",
+		"Reset",
+		"Columns",
+		"GetColumn",
+		"GetRowData",
+		"Close"
+	]),
+	("/exception", &["New"]),
+	("/regex", &["New", "Find", "Replace", "Find_char", "Replace_char"]),
+	("/generator", &[
+		"New",
+		"Rand",
+		"Turn",
+		"operator+",
+		"operator-",
+		"operator*",
+		"operator/",
+		"operator+=",
+		"operator-=",
+		"operator*=",
+		"operator/=",
+		"operator_turn"
+	])
+];
+
+/// Whether a type is one of BYOND's own that `OWN_PROCS` lists.
+pub fn own_type(owner: &[u8]) -> bool {
+	OWN_PROCS.iter().any(|(ty, _)| ty.as_bytes() == owner)
+}
+
+/// Whether the proc is one of BYOND's own.
+pub fn own_proc(path: &ProcPath) -> bool {
+	OWN_PROCS
+		.iter()
+		.any(|(ty, procs)| ty.as_bytes() == path.owner && procs.iter().any(|proc| proc.as_bytes() == path.identifier))
+}
 
 /// A proc's path, split into the type it is on and its identifier.
 pub struct ProcPath<'a> {
@@ -214,6 +298,16 @@ impl ProcTables {
 	}
 
 	pub fn count(dmb: &Dmb) -> Self {
+		Self::walk(dmb).0
+	}
+
+	/// For each type, how many names and second names its own procs add to
+	/// its table and to that of every type below it.
+	pub fn introduced(dmb: &Dmb) -> Vec<(u32, u32)> {
+		Self::walk(dmb).1
+	}
+
+	fn walk(dmb: &Dmb) -> (Self, Vec<(u32, u32)>) {
 		// The two names of each proc, as string ids; an identifier with no
 		// string of its own gets an id past the table's end.
 		let mut identifiers: HashMap<Vec<u8>, u32> = HashMap::new();
@@ -258,6 +352,7 @@ impl ProcTables {
 			Leave(Vec<(u32, bool)>)
 		}
 		let mut tables = Self::default();
+		let mut introduced = vec![(0, 0); dmb.types.len()];
 		let mut held: HashSet<u32> = HashSet::new();
 		let mut second_held = 0u64;
 		let mut stack: Vec<Step> = roots.into_iter().rev().map(Step::Enter).collect();
@@ -277,6 +372,8 @@ impl ProcTables {
 							second_held += 1;
 						}
 					}
+					let seconds = added.iter().filter(|(_, second)| *second).count() as u32;
+					introduced[index] = (added.len() as u32 - seconds, seconds);
 					tables.second_names += second_held;
 					tables.names += held.len() as u64 - second_held;
 					stack.push(Step::Leave(added));
@@ -290,6 +387,36 @@ impl ProcTables {
 				}
 			}
 		}
-		tables
+		(tables, introduced)
 	}
+}
+
+/// Each type's parent, `None` at a root.
+pub fn parents(dmb: &Dmb) -> Vec<Option<usize>> {
+	dmb.types
+		.iter()
+		.enumerate()
+		.map(|(index, ty)| Some(ty.parent as usize).filter(|&parent| ty.parent != NONE && parent < dmb.types.len() && parent != index))
+		.collect()
+}
+
+/// For each type, the sum of `own` over the type and every type below it.
+pub fn below(parents: &[Option<usize>], own: &[u64]) -> Vec<u64> {
+	let depth = |mut index: usize| {
+		let mut depth = 0;
+		while let Some(parent) = parents[index].filter(|_| depth <= parents.len()) {
+			index = parent;
+			depth += 1;
+		}
+		depth
+	};
+	let mut order: Vec<(usize, usize)> = (0..parents.len()).map(|index| (depth(index), index)).collect();
+	order.sort_unstable_by(|a, b| b.cmp(a));
+	let mut sums = own.to_vec();
+	for (_, index) in order {
+		if let Some(parent) = parents[index] {
+			sums[parent] += sums[index];
+		}
+	}
+	sums
 }

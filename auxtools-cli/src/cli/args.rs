@@ -504,6 +504,8 @@ pub struct Optimise {
 	pub globals: bool,
 	#[arg(long, help = "Report what would change and write nothing.")]
 	pub dry_run: bool,
+	#[arg(long, help = "Report what the world's types cost as well, and write nothing.")]
+	pub report: bool,
 	#[arg(long, help = JSON)]
 	pub json: bool
 }
@@ -880,7 +882,8 @@ mod tests {
 		]);
 		assert_eq!(full.output.as_deref(), Some(std::path::Path::new("out/world.dmb")));
 		assert_eq!((full.ref_seeds, full.skip), (Some(1024), args(&["names", "refs"])));
-		assert!(full.dry_run && full.json);
+		assert!(full.dry_run && full.json && !full.report);
+		assert!(optimise(&["optimise", "world.dmb", "--report"]).report);
 		assert_eq!(
 			refused(&["optimise", "world.dmb", "--ref-seeds", "many"]),
 			"invalid value 'many' for --ref-seeds: expected a non-negative integer. Run 'auxtools optimise --help' for usage."
