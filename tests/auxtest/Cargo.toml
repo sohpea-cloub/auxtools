@@ -10,6 +10,3 @@ crate-type = ["cdylib"]
 
 [dependencies]
 auxtools = { path = "../../auxtools" }
-
-[dev-dependencies]
-test-cdylib = "1"

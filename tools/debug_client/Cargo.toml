@@ -6,7 +6,6 @@ authors.workspace = true
 edition.workspace = true
 
 [dependencies]
-serde = { version = "1", features = ["derive"] }
 bincode = "1"
 dmasm = { workspace = true }
 auxtools-cli = { path = "../../auxtools-cli" }
