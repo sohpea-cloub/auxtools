@@ -145,6 +145,7 @@ var/stop_busy = FALSE
 	var/started = world.timeofday
 	var/passes = 0
 	stop_busy = FALSE
+	world.log << "dap: busy"
 	while (!stop_busy && abs(world.timeofday - started) < 50)
 		passes++ // @busy_loop
 	return passes

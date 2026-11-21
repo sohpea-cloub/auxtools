@@ -30,8 +30,10 @@ pub fn run() {
 	assert_eq!(trace["totalFrames"], 0);
 	ok("running thread without frames");
 
-	// A proc that doesn't sleep
+	// A proc that doesn't sleep. Until it says it has started, a pause would
+	// stop the loop that starts it.
 	world.run("busy");
+	world.wait_output("dap: busy");
 	world.request("pause", json!({ "threadId": 0 }));
 	let stop = world.stop();
 	assert_eq!((stop.reason.as_str(), stop.proc.as_str()), ("pause", "/sc_busy"));
@@ -51,7 +53,10 @@ pub fn run() {
 	world.resume();
 	for _ in 0..3 {
 		world.pipeline(&[("pause", json!({ "threadId": 0 })), ("continue", json!({ "threadId": 0 }))]);
-		// The stop may arrive before the continue; either order is valid.
+		// A stop told before the continue was answered is one the continue
+		// ended. One told after it is a pause that took effect later: the
+		// world has to be stopped.
+		world.drop_earlier_events("stopped");
 		if let Some(stop) = world.event_within("stopped", Duration::from_secs(1)) {
 			let thread = stop["body"]["threadId"].as_u64().unwrap();
 			assert!(!world.frames(thread).is_empty(), "told of a stop the world had carried on from: {}", stop);
@@ -66,7 +71,17 @@ pub fn run() {
 	// Nothing of the world's runs for three seconds: it pauses in the
 	// debugger's own loop, which isn't shown as a thread
 	world.eval_global("idle_ticks = 30");
-	world.wait_output("dap: running");
+	world.wait_output("dap: idling");
+	// It says so two instructions before it sleeps, and a pause sent now can
+	// get there first. Its loop counts its turns: once the count stands still
+	// it is asleep.
+	loop {
+		let ticks = world.eval_global("ticks");
+		std::thread::sleep(Duration::from_millis(30));
+		if world.eval_global("ticks") == ticks {
+			break;
+		}
+	}
 	world.request("pause", json!({ "threadId": 0 }));
 	let stop = world.stopped("pause");
 	let thread = stop["body"]["threadId"].as_u64().unwrap();

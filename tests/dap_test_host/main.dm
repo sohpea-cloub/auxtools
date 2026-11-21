@@ -54,6 +54,7 @@ var/early_global = early_value()
 			// Nothing of the world's runs for a while
 			var/idle = idle_ticks
 			idle_ticks = 0
+			world.log << "dap: idling"
 			sleep(idle)
 			world.log << "dap: idle over"
 		sleep(world.tick_lag)
