@@ -66,6 +66,12 @@ pub fn events_pending() -> bool {
 	EVENTS.load(Ordering::Acquire) && EVENTS.swap(false, Ordering::AcqRel)
 }
 
+/// Whether the world thread has an event or a wake notification to pick up.
+/// Leaves both for `events_pending` and `woke`.
+pub fn wants_world() -> bool {
+	EVENTS.load(Ordering::Acquire) || WOKE.load(Ordering::Relaxed)
+}
+
 /// Consume the wake notification.
 pub fn woke() -> bool {
 	// Asked on every instruction, so it only writes when it was

@@ -407,6 +407,33 @@ unsafe fn in_helper(ctx: *mut raw_types::procs::ExecutionContext) -> bool {
 	Proc::from_id(id).is_some_and(|proc| crate::launched::is_helper(&proc))
 }
 
+/// Whether the debugger has nothing to do before this instruction: no
+/// breakpoint or `throw` here, no step, watch, evaluation or profile in
+/// progress, and nothing waiting from a client. That is nearly every
+/// instruction of a running world, so this is all it costs them. Records what
+/// `handle_instruction` would have.
+#[inline(always)]
+pub(crate) fn passes(server: &Server, ctx: *mut raw_types::procs::ExecutionContext) -> bool {
+	unsafe {
+		let opcode = *(*(*ctx).bytecode()).add(*(*ctx).bytecode_offset() as usize);
+		if opcode == OPCODE_DEBUG_BREAK
+			|| opcode == OPCODE_THROW
+			|| !matches!(CURRENT_ACTION, DebuggerAction::None)
+			|| (*DEFERRED_INSTRUCTION_REPLACE.get()).is_some()
+			|| server.is_in_eval()
+			|| server.has_watches()
+			|| crate::profiler::running()
+			|| crate::waker::wants_world()
+		{
+			return false;
+		}
+		crate::waker::alive();
+		LAST_FRAME = ctx;
+		LAST_OPCODE = opcode;
+		true
+	}
+}
+
 impl InstructionHook for Server {
 	fn handle_instruction(&mut self, ctx: *mut raw_types::procs::ExecutionContext) {
 		// Always handle the deferred instruction replacement first - everything

@@ -79,21 +79,31 @@ struct DebugServerInstructionHook<'a> {
 }
 
 impl InstructionHook for DebugServerInstructionHook<'static> {
+	#[inline]
 	fn handle_instruction(&mut self, ctx: *mut raw_types::procs::ExecutionContext) {
 		let Some(debug_server) = self.debug_server.get_mut() else {
 			return;
 		};
-
-		// BYOND calls this through extern "C" code, and a panic that gets back
-		// out there aborts the whole game. Losing the debugger is the better
-		// deal.
-		let handled = catch_unwind(AssertUnwindSafe(|| {
-			profiler::enter(ctx, debug_server.is_in_eval());
-			debug_server.handle_instruction(ctx);
-		}));
-		if let Err(payload) = handled {
-			recover(&*payload, debug_server);
+		if instruction_hooking::passes(debug_server, ctx) {
+			return;
 		}
+		attend(debug_server, ctx);
+	}
+}
+
+/// The debugger's work at an instruction that has some. Kept out of line so
+/// the instructions with none pay for no more than the check.
+#[inline(never)]
+fn attend(debug_server: &mut server::Server, ctx: *mut raw_types::procs::ExecutionContext) {
+	// BYOND calls this through extern "C" code, and a panic that gets back
+	// out there aborts the whole game. Losing the debugger is the better
+	// deal.
+	let handled = catch_unwind(AssertUnwindSafe(|| {
+		profiler::enter(ctx, debug_server.is_in_eval());
+		debug_server.handle_instruction(ctx);
+	}));
+	if let Err(payload) = handled {
+		recover(&*payload, debug_server);
 	}
 }
 
