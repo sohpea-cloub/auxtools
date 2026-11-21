@@ -86,6 +86,8 @@ jobs:
           IFS=. read -r major minor patch <<<"$VERSION"
           next="$major.$minor.$((patch + 1))-dev"
           ci/set-version.py "$next"
+          # ci.yml knows this commit by its author and subject, and builds
+          # it without running the tests again.
           git commit --quiet -am "Start development on $next"
           git branch dev
 

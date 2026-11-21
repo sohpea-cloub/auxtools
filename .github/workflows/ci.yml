@@ -290,6 +290,10 @@ jobs:
   test-linux:
     name: Linux, BYOND ${{ matrix.byond }}
     needs: build-linux
+    # The commit release.yml pushes after a release differs only in its version
+    # from the tree that release tested. Build and pack it, for the artifacts
+    # and the crate caches, without testing it again.
+    if: github.event_name != 'push' || github.event.head_commit.author.name != 'github-actions[bot]' || !startsWith(github.event.head_commit.message, 'Start development on ')
     # Test Linux binaries on the minimum supported glibc environment.
     runs-on: ubuntu-22.04
     timeout-minutes: 20
@@ -330,6 +334,8 @@ jobs:
   test-windows:
     name: Windows, BYOND ${{ matrix.byond }}
     needs: build-windows
+    # Skip the commit pushed after a release, as on Linux.
+    if: github.event_name != 'push' || github.event.head_commit.author.name != 'github-actions[bot]' || !startsWith(github.event.head_commit.message, 'Start development on ')
     # Test Windows binaries on Server 2022 (Windows 10 generation).
     runs-on: windows-2022
     timeout-minutes: 20
@@ -367,6 +373,8 @@ jobs:
   test-wine:
     name: Wine, BYOND ${{ matrix.byond }}
     needs: build-windows
+    # Skip the commit pushed after a release, as on Linux.
+    if: github.event_name != 'push' || github.event.head_commit.author.name != 'github-actions[bot]' || !startsWith(github.event.head_commit.message, 'Start development on ')
     # Use Wine 10.0.
     runs-on: ubuntu-26.04
     timeout-minutes: 20
