@@ -659,6 +659,9 @@ impl InstructionHook for Server {
 			}
 		}
 
+		// A pause above may have set a breakpoint on this very instruction.
+		// Read it again, or BYOND would run the breakpoint opcode.
+		let opcode = unsafe { *opcode_ptr };
 		if opcode == OPCODE_DEBUG_BREAK {
 			// We don't want to break twice when stepping on to a breakpoint
 			if !did_breakpoint && !in_eval {
