@@ -1,11 +1,8 @@
 # auxtools
 
-auxtools is a Rust-based successor to the [extools](https://github.com/MCHSL/extools) project.
+auxtools debugs DM worlds from [VS Code](editors/vscode) or the command line, with experimental hot reload.
 
-Currently, it implements some of the features such as the debug server, but is planned to supplant most functionality (maptick, etc.).
-
-## Features
-Debug Server - Debug DM worlds from [VS Code](editors/vscode) or the command line, with experimental hot reload.
+The `auxtools` crate, which the debugger is built on, lets other Rust libraries hook DM procs and work with BYOND values.
 
 ## The debugger
 
@@ -109,10 +106,10 @@ Symbol patterns were checked throughout these ranges. Newer builds are attempted
 
 The patterns use [byond-scan](https://github.com/Absolucy/byond-scan) and are stored in `auxtools/src/symbols/`.
 
-CI tests the debugger, hot reload and CLI on 515.1637, 515.1647, 516.1659, 516.1685 and 516.1689. The integration suites cover the debug server, source reloads, launcher lifecycle, CLI output and DAP behavior. Linux tests run on Ubuntu 22.04; Windows tests run in `dd.exe` on Windows Server 2022 and under Wine.
+CI tests the library, debugger, hot reload and CLI on 515.1637, 515.1647, 516.1659, 516.1685 and 516.1689. The integration suites cover the library's hooks and values, the debug server, source reloads, launcher lifecycle, CLI output and DAP behavior. Linux tests run on Ubuntu 22.04; Windows tests run in `dd.exe` on Windows Server 2022 and under Wine.
 
 The VS Code extension has separate integration coverage on Linux 516.1688 using a harness outside this repository. It has no automated Windows coverage. DreamSeeker and windowed DreamDaemon were checked manually with the first part
-of `launcher_test` before the CLI was added; they are outside these automated runs. The `auxtest` suite was last checked on 516.1687.
+of `launcher_test` before the CLI was added; they are outside these automated runs.
 
 ## Dependencies
 
@@ -161,9 +158,10 @@ System libraries:
 
 ## Compiling
 
-Cargo downloads and builds Rust dependencies. The lockfile pins two git dependencies:
-[auxtools/dmasm](https://github.com/auxtools/dmasm) for proc compilation and hot reload, and
-[auxtools/SpacemanDMM](https://github.com/auxtools/SpacemanDMM) for parser fixes.
+Cargo downloads and builds Rust dependencies. The lockfile pins three git dependencies:
+[auxtools/dmasm](https://github.com/auxtools/dmasm) for proc compilation and hot reload,
+[auxtools/SpacemanDMM](https://github.com/auxtools/SpacemanDMM) for parser fixes, and
+[byond-scan](https://github.com/Absolucy/byond-scan) for finding BYOND's functions.
 
 Build the workspace in release mode:
 
@@ -221,8 +219,6 @@ version. Publishing uses the `release` environment and trusted publishing on
 both registries. See [release.yml](.github/workflows/release.yml) for setup.
 
 [Rust]: https://rust-lang.org
-[Cargo]: https://doc.rust-lang.org/cargo
-[rustup]: https://rustup.rs
 [msvc]: https://visualstudio.microsoft.com/thank-you-downloading-visual-studio/?sku=BuildTools
 
 ## License
