@@ -731,8 +731,13 @@ impl Server {
 	/// Find a frame's pre-reload bytecode. Return `None` if it matches current
 	/// code or differs only in line numbers, which can use current mappings.
 	fn old_code_of(frame: &debug::StackFrame) -> Option<Vec<u32>> {
-		let running = unsafe { *(*frame.context).bytecode() };
-		let (current, _) = unsafe { frame.proc.bytecode_mut_ptr() };
+		Self::old_code_running(&frame.proc, frame.context)
+	}
+
+	/// Find old bytecode directly from a proc and execution context.
+	fn old_code_running(proc: &Proc, context: *mut raw_types::procs::ExecutionContext) -> Option<Vec<u32>> {
+		let running = unsafe { *(*context).bytecode() };
+		let (current, _) = unsafe { proc.bytecode_mut_ptr() };
 		if running == current {
 			return None;
 		}
@@ -750,7 +755,7 @@ impl Server {
 				})
 				.collect()
 		};
-		let now = original_bytecode(&frame.proc);
+		let now = original_bytecode(proc);
 		if old.len() == now.len() && instructions(&old) == instructions(&now) {
 			return None;
 		}
@@ -872,19 +877,20 @@ impl Server {
 	/// sleep instruction; if that is the next DbgLine, report the preceding
 	/// line.
 	fn frame_place(&self, frame: &debug::StackFrame, asleep: bool) -> (Option<String>, Option<u32>) {
-		let offset = if asleep {
-			(frame.offset as u32).saturating_sub(1)
-		} else {
-			frame.offset as u32
-		};
+		Self::place_running(&frame.proc, frame.context, frame.offset, asleep)
+	}
 
-		if let Some(bytecode) = Self::old_code_of(frame) {
+	/// Resolve a frame's source location without collecting its values.
+	fn place_running(proc: &Proc, context: *mut raw_types::procs::ExecutionContext, offset: u16, asleep: bool) -> (Option<String>, Option<u32>) {
+		let offset = if asleep { (offset as u32).saturating_sub(1) } else { offset as u32 };
+
+		if let Some(bytecode) = Self::old_code_running(proc, context) {
 			return match Self::place_in(&bytecode, offset, false) {
-				Some((file, line)) => (file.or_else(|| Self::file_of(&frame.proc)), Some(line)),
-				None => (Self::file_of(&frame.proc), None)
+				Some((file, line)) => (file.or_else(|| Self::file_of(proc)), Some(line)),
+				None => (Self::file_of(proc), None)
 			};
 		}
-		Self::place_of(&frame.proc, offset)
+		Self::place_of(proc, offset)
 	}
 
 	/// A frame as a client is shown it, known to it by `id`
@@ -4047,20 +4053,67 @@ impl Server {
 		}
 	}
 
-	/// The procs the running code is in, as the record keeps them
+	/// Collect journal frames without arguments or locals. Cache proc names
+	/// and locations until bytecode changes to reduce runtime-error overhead.
 	fn journal_stack(&self) -> Vec<JournalFrame> {
-		Self::shown(&debug::CallStacks::active())
-			.iter()
-			.take(JOURNAL_FRAMES)
-			.map(|frame| {
-				let (file, line) = self.frame_place(frame, false);
-				JournalFrame {
-					proc: unnamed::proc_name(&frame.proc),
-					file,
-					line
+		/// A frame by its proc, offset, and the code it runs
+		type Known = HashMap<(raw_types::procs::ProcId, u16, usize), JournalFrame>;
+		static KNOWN: Mutex<(u64, Option<Known>)> = Mutex::new((0, None));
+		// Bound memory during long sessions.
+		const KEEP: usize = 16384;
+
+		let mut guard = KNOWN.lock().unwrap();
+		let (changes, known) = &mut *guard;
+		let now = auxtools::bytecode_changes();
+		if *changes != now || known.as_ref().is_some_and(|known| known.len() >= KEEP) {
+			*changes = now;
+			*known = None;
+		}
+		let known = known.get_or_insert_with(HashMap::new);
+
+		// Innermost first, with a flag for debugger helper frames.
+		let mut frames: Vec<(JournalFrame, bool)> = vec![];
+		let mut ctx = unsafe { *raw_types::funcs::CURRENT_EXECUTION_CONTEXT };
+		while !ctx.is_null() {
+			let (id, offset, running) = unsafe { ((**(*ctx).proc_instance()).proc, *(*ctx).bytecode_offset(), *(*ctx).bytecode()) };
+			let Some(proc) = Proc::from_id(id) else {
+				break;
+			};
+			let helper = crate::launched::runs_spawns(&proc);
+			let (current, length) = unsafe { proc.bytecode_mut_ptr() };
+			// Cache only current bytecode without a breakpoint at this offset.
+			let breakpoint =
+				(offset as u32) < length as u32 && crate::instruction_hooking::is_breakpoint_word(unsafe { *current.add(offset as usize) });
+			let plain = std::ptr::eq(running, current) && !breakpoint;
+			let key = (id, offset, running as usize);
+			let frame = match known.get(&key).filter(|_| plain) {
+				Some(frame) => frame.clone(),
+				None => {
+					let (file, line) = Self::place_running(&proc, ctx, offset, false);
+					let frame = JournalFrame {
+						proc: unnamed::proc_name(&proc),
+						file,
+						line
+					};
+					// BYOND names type initializers after load; keep a
+					// placeholder name out of the cache.
+					if plain && !frame.proc.starts_with('(') {
+						known.insert(key, frame.clone());
+					}
+					frame
 				}
-			})
-			.collect()
+			};
+			frames.push((frame, helper));
+			ctx = unsafe { *(*ctx).parent_context() };
+		}
+
+		// Omit outer debugger helper frames, as `shown` does.
+		let shown = match frames.iter().rposition(|(_, helper)| !helper) {
+			Some(last) => last + 1,
+			None => frames.len()
+		};
+		frames.truncate(shown.min(JOURNAL_FRAMES));
+		frames.into_iter().map(|(frame, _)| frame).collect()
 	}
 
 	/// What `Request::Journal` asks for

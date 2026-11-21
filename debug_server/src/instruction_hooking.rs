@@ -397,7 +397,12 @@ unsafe fn thrown(ctx: *mut raw_types::procs::ExecutionContext) -> String {
 	}
 }
 
-/// Whether the instruction about to run in a frame has a breakpoint on it
+/// Whether a breakpoint replaced this opcode or operand word.
+pub(crate) fn is_breakpoint_word(word: u32) -> bool {
+	matches!(word, OPCODE_DEBUG_BREAK | OPCODE_DEBUG_OPERAND)
+}
+
+/// Whether the current instruction has a breakpoint.
 pub(crate) fn is_breakpoint(ctx: *mut raw_types::procs::ExecutionContext) -> bool {
 	unsafe { *(*(*ctx).bytecode()).add(*(*ctx).bytecode_offset() as usize) == OPCODE_DEBUG_BREAK }
 }
