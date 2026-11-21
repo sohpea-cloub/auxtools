@@ -24,9 +24,7 @@ pub struct ChainBuilder {
 impl ChainBuilder {
     pub fn begin(base: Variable) -> Self {
         let var = match base {
-            Variable::Cache => {
-                Variable::Null
-            }
+            Variable::Cache => Variable::Null,
 
             other => Variable::SetCache(Box::new(other), Box::new(Variable::Null)),
         };

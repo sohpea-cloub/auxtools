@@ -4,12 +4,13 @@ version = "0.1.0"
 authors = ["Sophie Wallace <sophie@wiox.me>"]
 edition = "2018"
 license = "GPL-3.0"
-repository = "https://github.com/willox/dmasm"
+repository.workspace = true
+rust-version.workspace = true
 
 [dependencies]
 nom = "7"
 bitflags = "2"
 serde = { version = "1", features = ["derive"], optional = true }
-dreammaker = { git = "https://github.com/auxtools/SpacemanDMM", branch = "master" }
+dreammaker = { workspace = true }
 md-5 = "0.10.6"
 sha1 = "0.10.7"

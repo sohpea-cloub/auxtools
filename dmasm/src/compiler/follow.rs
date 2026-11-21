@@ -311,19 +311,13 @@ pub(super) fn emit_typed<'a>(
 
                                 compiler.emit_ins(Instruction::PopCache);
 
-                                compiler.emit_ins(Instruction::Call(
-                                    callee.clone(),
-                                    65535,
-                                ));
+                                compiler.emit_ins(Instruction::Call(callee.clone(), 65535));
                             }
 
                             args::ArgsResult::ArgList => {
                                 compiler.emit_ins(Instruction::PopCache);
 
-                                compiler.emit_ins(Instruction::Call(
-                                    callee.clone(),
-                                    65535,
-                                ));
+                                compiler.emit_ins(Instruction::Call(callee.clone(), 65535));
                             }
                         }
                     }

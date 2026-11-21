@@ -158,8 +158,9 @@ System libraries:
 
 ## Compiling
 
-Cargo downloads and builds Rust dependencies. The lockfile pins three git dependencies:
-[auxtools/dmasm](https://github.com/auxtools/dmasm) for proc compilation and hot reload,
+[dmasm](dmasm), the DM compiler and assembler behind expression evaluation and hot reload, is
+a crate of this workspace. Cargo downloads and builds the other Rust dependencies. The
+lockfile pins two git dependencies:
 [auxtools/SpacemanDMM](https://github.com/auxtools/SpacemanDMM) for parser fixes, and
 [byond-scan](https://github.com/Absolucy/byond-scan) for finding BYOND's functions.
 
@@ -226,5 +227,5 @@ both registries. See [release.yml](.github/workflows/release.yml) for setup.
 Auxtools is licensed under the [MIT license](https://en.wikipedia.org/wiki/MIT_License).
 See [LICENSE](./LICENSE) for more details.
 
-The debug server and launcher are licensed under GPL-3.0.
-See [debug_server/LICENSE](./debug_server/LICENSE) and [auxtools-cli/LICENSE](./auxtools-cli/LICENSE).
+The debug server, launcher and dmasm are licensed under GPL-3.0.
+See [debug_server/LICENSE](./debug_server/LICENSE), [auxtools-cli/LICENSE](./auxtools-cli/LICENSE) and [dmasm/LICENSE](./dmasm/LICENSE).

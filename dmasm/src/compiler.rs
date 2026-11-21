@@ -69,38 +69,25 @@ pub enum CompileError {
     UnexpectedNamedArguments,
 
     UnsupportedPrefabWithVars,
-    UnsupportedBuiltin {
-        proc: String,
-    },
+    UnsupportedBuiltin { proc: String },
     UnsupportedImplicitNew,
     UnsupportedRelativeCall,
     UnsupportedImplicitLocate,
     UnsupportedStringInterpolation,
     UnsupportedInput,
-    UnsupportedCompilerMacro {
-        name: String,
-    },
+    UnsupportedCompilerMacro { name: String },
     UnsupportedStatement(&'static str),
     UndefinedVar(String),
     AtLine(u32, Box<CompileError>),
 
     AmbiguousListConstructor,
-    NotInByond {
-        what: String,
-        byond: ByondVersion,
-    },
+    NotInByond { what: String, byond: ByondVersion },
     InvalidLocateArgs,
     BadProcReference(String),
 
     IncorrectArgCount(String),
-    MissingArgument {
-        proc: String,
-        index: u32,
-    },
-    TooManyArguments {
-        proc: String,
-        expected: u32,
-    },
+    MissingArgument { proc: String, index: u32 },
+    TooManyArguments { proc: String, expected: u32 },
 }
 
 impl From<strings::StringError> for CompileError {
