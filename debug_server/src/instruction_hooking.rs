@@ -329,6 +329,7 @@ fn handle_runtime(error: &str) {
 		};
 		if let Some(action) = handle_breakpoint(ctx, reason) {
 			CURRENT_ACTION = action;
+			auxtools::instruction_hook::hear_all();
 		}
 	});
 
@@ -437,6 +438,26 @@ pub(crate) fn passes(server: &Server, ctx: *mut raw_types::procs::ExecutionConte
 		LAST_FRAME = ctx;
 		LAST_OPCODE = opcode;
 		true
+	}
+}
+
+/// Stop hearing the instructions `passes` would pass: every one but a
+/// `throw` and a breakpoint, whose opcode BYOND doesn't have. They then run
+/// as they do in a world without a debugger. Whatever gives the debugger work
+/// again calls `hear_all`: a client's request or the waker from their
+/// threads, `Server::handle_request`, the start of an evaluation and a pause
+/// on this one.
+pub(crate) fn rest() {
+	if !auxtools::instruction_hook::hear_only(&[OPCODE_THROW]) {
+		return;
+	}
+	unsafe {
+		// What runs before the next instruction heard isn't seen
+		LAST_FRAME = std::ptr::null_mut();
+	}
+	// Announced while the instructions were being let go
+	if crate::waker::wants_world() {
+		auxtools::instruction_hook::hear_all();
 	}
 }
 

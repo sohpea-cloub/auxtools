@@ -2257,6 +2257,7 @@ impl Server {
 
 		// Report assignment runtime errors to the requester without pausing.
 		self.in_eval = true;
+		auxtools::instruction_hook::hear_all();
 		self.eval_error = None;
 		let written = self.write_variable(&container, name, &value);
 		self.in_eval = false;
@@ -2371,6 +2372,7 @@ impl Server {
 		// instruction hook would handle the client's next request in the middle
 		// of this one, and a runtime would pause inside the pause we're in.
 		self.in_eval = true;
+		auxtools::instruction_hook::hear_all();
 		self.eval_error = None;
 		self.eval_callee_errors.clear();
 		self.eval_callee_more = 0;
@@ -2981,6 +2983,7 @@ impl Server {
 	/// Mark DM run by `work` as a debugger evaluation.
 	fn evaluating<T>(&mut self, work: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
 		self.in_eval = true;
+		auxtools::instruction_hook::hear_all();
 		self.eval_error = None;
 		let result = work();
 		self.in_eval = false;
@@ -3111,6 +3114,7 @@ impl Server {
 		// Assembly may evaluate DM to resolve paths and resources; treat
 		// it as debugger evaluation.
 		self.in_eval = true;
+		auxtools::instruction_hook::hear_all();
 		self.eval_error = None;
 
 		let mut warnings = id_warnings;
@@ -3256,6 +3260,9 @@ impl Server {
 
 	// returns true if we need to break
 	fn handle_request(&mut self, request: Request) -> bool {
+		// A request can start a step, a watch, an evaluation or a profile,
+		// which need instructions a world at rest doesn't hear
+		auxtools::instruction_hook::hear_all();
 		match request {
 			Request::Disconnect => unreachable!(),
 			Request::CatchRuntimes { uncaught, caught } => {

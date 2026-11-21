@@ -85,6 +85,11 @@ impl InstructionHook for DebugServerInstructionHook<'static> {
 			return;
 		};
 		if instruction_hooking::passes(debug_server, ctx) {
+			// Nothing to do before any instruction like this one. Another
+			// hook of this library's would still want them all.
+			if unsafe { (*INSTRUCTION_HOOKS.get()).len() } == 1 {
+				instruction_hooking::rest();
+			}
 			return;
 		}
 		attend(debug_server, ctx);
@@ -95,6 +100,9 @@ impl InstructionHook for DebugServerInstructionHook<'static> {
 /// the instructions with none pay for no more than the check.
 #[inline(never)]
 fn attend(debug_server: &mut server::Server, ctx: *mut raw_types::procs::ExecutionContext) {
+	// A breakpoint or a throw reached while at rest can leave work for the
+	// instruction after it
+	auxtools::instruction_hook::hear_all();
 	// BYOND calls this through extern "C" code, and a panic that gets back
 	// out there aborts the whole game. Losing the debugger is the better
 	// deal.
@@ -112,6 +120,7 @@ fn install_server(server: server::Server) {
 	let debug_server_instruction_hook;
 	unsafe {
 		*DEBUG_SERVER.get() = Some(server);
+		auxtools::instruction_hook::hear_all();
 		debug_server_instruction_hook = DebugServerInstructionHook {
 			debug_server: &mut *std::ptr::addr_of_mut!(DEBUG_SERVER)
 		};

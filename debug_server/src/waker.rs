@@ -54,9 +54,12 @@ pub fn set_port(port: u16) {
 	PORT.store(port, Ordering::Relaxed);
 }
 
-/// Signal a new event. Call after sending it to the channel.
+/// Signal a new event. Call after sending it to the channel. The world's
+/// thread may have stopped hearing instructions it had no work before
+/// (`instruction_hooking::rest`): the next one is heard again.
 pub fn event_sent() {
-	EVENTS.store(true, Ordering::Release);
+	EVENTS.store(true, Ordering::SeqCst);
+	auxtools::instruction_hook::hear_all();
 }
 
 /// Consume the pending-event flag. If set, drain the channel; later sends
@@ -69,7 +72,7 @@ pub fn events_pending() -> bool {
 /// Whether the world thread has an event or a wake notification to pick up.
 /// Leaves both for `events_pending` and `woke`.
 pub fn wants_world() -> bool {
-	EVENTS.load(Ordering::Acquire) || WOKE.load(Ordering::Relaxed)
+	EVENTS.load(Ordering::SeqCst) || WOKE.load(Ordering::SeqCst)
 }
 
 /// Consume the wake notification.
@@ -93,6 +96,11 @@ fn watch() {
 	let mut quiet_since = Instant::now();
 	let mut connection: Option<TcpStream> = None;
 	loop {
+		// A world at rest counts no instructions. Have it hear its next one,
+		// so that one that is running shows it
+		if wanted() {
+			auxtools::instruction_hook::hear_all();
+		}
 		thread::sleep(CHECK_EVERY);
 
 		if !wanted() {
@@ -119,7 +127,8 @@ fn watch() {
 			let address = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
 			connection = TcpStream::connect_timeout(&address, Duration::from_secs(1)).ok();
 			if connection.is_some() {
-				WOKE.store(true, Ordering::Relaxed);
+				WOKE.store(true, Ordering::SeqCst);
+				auxtools::instruction_hook::hear_all();
 			}
 		}
 		quiet_since = Instant::now();
