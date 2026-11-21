@@ -8,9 +8,14 @@
 #
 # Set WINE=wine to run Windows binaries on Linux.
 #
+# The tests run side by side, each in target/run-tests/TEST with its own
+# copy of the test worlds, and each prints its output when it ends. A test
+# still running after TIMEOUT seconds (900) is ended and fails. Set SERIAL=1
+# to run them one at a time from the repository root, with no time limit.
+#
 # With no TEST arguments, also run PROGRAMS/unit tests if that directory exists.
 set -u
-[ $# -ge 2 ] || { sed -n '2,11p' "$0" >&2; exit 2; }
+[ $# -ge 2 ] || { sed -n '2,16p' "$0" >&2; exit 2; }
 programs=$(cd "$1" && pwd) || exit 2
 byond=$(cd "$2" && pwd) || exit 2
 shift 2
@@ -37,6 +42,16 @@ esac
 export BYOND_PATH
 
 failed=
+# report NAME STATUS SECONDS
+report() {
+	if [ "$2" -eq 0 ]; then
+		echo "passed: $1 ($3 s)"
+	else
+		echo "FAILED: $1 (exit status $2, $3 s)"
+		failed="$failed $1"
+	fi
+}
+
 run() {
 	name=$1
 	shift
@@ -45,17 +60,57 @@ run() {
 	${WINE:+"$WINE"} "$@"
 	status=$?
 	echo "::endgroup::"
-	if [ $status -eq 0 ]; then
-		echo "passed: $name ($(($(date +%s) - start)) s)"
-	else
-		echo "FAILED: $name (exit status $status, $(($(date +%s) - start)) s)"
-		failed="$failed $name"
-	fi
+	report "$name" $status $(($(date +%s) - start))
 }
 
-for test in $tests; do
-	run "$test" "$programs/$test$exe"
-done
+if [ -n "${SERIAL:-}" ]; then
+	for test in $tests; do
+		run "$test" "$programs/$test$exe"
+	done
+else
+	# A test compiles and edits its world where it finds it, in tests/*_host
+	# under the current directory, so each gets a copy.
+	work=$PWD/target/run-tests
+	rm -rf "$work"
+	# Wine creates its prefix on first use: once, not by every test at once.
+	[ -z "${WINE:-}" ] || "$WINE" cmd /c exit
+	declare -A pids
+	trap 'kill "${pids[@]}" 2>/dev/null; exit 130' INT TERM
+	start=$(date +%s)
+	for test in $tests; do
+		mkdir -p "$work/$test/tests"
+		cp -r tests/*_host "$work/$test/tests/"
+		(cd "$work/$test" && exec ${WINE:+"$WINE"} "$programs/$test$exe") >"$work/$test.log" 2>&1 &
+		pids[$test]=$!
+	done
+	left=$tests
+	while [ -n "$left" ]; do
+		sleep 1
+		seconds=$(($(date +%s) - start))
+		running=
+		for test in $left; do
+			if kill -0 "${pids[$test]}" 2>/dev/null; then
+				if [ $seconds -lt "${TIMEOUT:-900}" ]; then
+					running="$running $test"
+					continue
+				fi
+				# The job's own time limit would end the step with the
+				# test's output unseen.
+				kill "${pids[$test]}"
+				echo "$test was still running after $seconds s" >>"$work/$test.log"
+			fi
+			wait "${pids[$test]}"
+			status=$?
+			unset "pids[$test]"
+			echo "::group::$test"
+			cat "$work/$test.log"
+			echo "::endgroup::"
+			report "$test" $status $seconds
+		done
+		left=$running
+	done
+	trap - INT TERM
+fi
 
 # cargo runs a package's unit tests from the package's directory
 if [ -d "$programs/unit" ] && [ $# -eq 0 ]; then
