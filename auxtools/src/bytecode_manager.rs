@@ -15,6 +15,20 @@ use crate::{debug, raw_types, *};
 
 static mut BYTECODE_ALLOCATIONS: UnsafeCell<Option<State>> = UnsafeCell::new(None);
 
+/// How many times a proc has been given other bytecode, or a world its own
+static CHANGES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// A count that moves whenever a proc's bytecode is replaced and when a world
+/// starts or ends. What was worked out from the procs' code holds for as long
+/// as it stays the same.
+pub fn bytecode_changes() -> u64 {
+	CHANGES.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+fn changed() {
+	CHANGES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+}
+
 struct State {
 	allocations: HashSet<Vec<u32>>,
 	original: HashMap<raw_types::procs::ProcId, (*mut u32, u16)>,
@@ -24,6 +38,7 @@ struct State {
 }
 
 pub fn init() {
+	changed();
 	unsafe {
 		let ptr = BYTECODE_ALLOCATIONS.get();
 		*ptr = Some(State {
@@ -55,6 +70,7 @@ fn get_active_bytecode_ptrs() -> HashSet<*mut u32> {
 }
 
 pub fn shutdown() {
+	changed();
 	let active_ptrs = get_active_bytecode_ptrs();
 
 	let state = unsafe { (*BYTECODE_ALLOCATIONS.get()).take().unwrap() };
@@ -106,6 +122,7 @@ pub fn bytecode_at(ptr: *const u32) -> Option<Vec<u32>> {
 }
 
 pub fn set_bytecode(proc: &Proc, mut bytecode: Vec<u32>) {
+	changed();
 	let state = state();
 	remember_original(state, proc);
 
