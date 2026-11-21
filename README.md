@@ -173,7 +173,7 @@ Linux:
 cargo build --workspace --release --target i686-unknown-linux-gnu
 ```
 
-Outputs in `target/i686-unknown-linux-gnu/release`: `libauxtools.so`, `libdebug_server.so`, `auxtools`.
+Outputs in `target/i686-unknown-linux-gnu/release`: `libdebug_server.so`, `auxtools`.
 
 Windows:
 
@@ -181,7 +181,7 @@ Windows:
 cargo build --workspace --release --target i686-pc-windows-msvc
 ```
 
-Outputs in `target/i686-pc-windows-msvc/release`: `auxtools.dll`, `debug_server.dll`, `auxtools.exe`.
+Outputs in `target/i686-pc-windows-msvc/release`: `debug_server.dll`, `auxtools.exe`.
 
 To cross-compile Windows builds on Linux, install clang 19 or newer, lld and LLVM, then fetch the SDK (about 800 MB):
 
@@ -207,7 +207,7 @@ BYOND test archives come from the [BYOND build mirror](https://byond-builds.dm-l
 | `auxtools-linux.tar.gz` | Launcher and debug library |
 | `auxtools-linux-symbols.tar.gz` | `auxtools.debug`, `libdebug_server.so.debug`; place beside the binaries for gdb |
 | `auxtools-windows.zip` | Launcher and debug library |
-| `auxtools-windows-symbols.zip` | `auxtools-cli.pdb`, `debug_server.pdb` |
+| `auxtools-windows-symbols.zip` | `auxtools.pdb`, `debug_server.pdb` |
 | `auxtools-VERSION.vsix` | VS Code extension with Linux and Windows binaries |
 
 ## Releasing

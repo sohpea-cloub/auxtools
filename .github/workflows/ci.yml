@@ -216,7 +216,7 @@ jobs:
           cd "target/$TARGET/release"
           "$GITHUB_WORKSPACE/ci/check-windows.sh" auxtools.exe debug_server.dll
           python3 -m zipfile -c "$RUNNER_TEMP/auxtools-windows.zip" auxtools.exe debug_server.dll
-          python3 -m zipfile -c "$RUNNER_TEMP/auxtools-windows-symbols.zip" auxtools-cli.pdb debug_server.pdb
+          python3 -m zipfile -c "$RUNNER_TEMP/auxtools-windows-symbols.zip" auxtools.pdb debug_server.pdb
           tar -cf "$RUNNER_TEMP/bundle-windows.tar" auxtools.exe debug_server.dll auxtest.dll test_runner.exe debug_test.exe hot_reload_test.exe launcher_test.exe dap_test.exe unit
 
       - name: Upload the launcher and the debug library
