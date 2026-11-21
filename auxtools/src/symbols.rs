@@ -172,17 +172,3 @@ pub(crate) fn resolve_partial() -> Result<(), String> {
 	}
 	Ok(())
 }
-
-/// The names that fail to resolve on the running build, for
-/// `auxtools_check_signatures`.
-pub(crate) fn unresolved() -> Result<Vec<&'static str>, String> {
-	let (module, build) = module_and_build()?;
-	let mut names: Vec<&'static str> = RECIPES
-		.iter()
-		.map(|recipe| recipe.name)
-		.filter(|name| build.1 >= ALIST_BUILD || !name.starts_with("alist_"))
-		.filter(|name| resolve(&module, build, name).is_err())
-		.collect();
-	names.dedup();
-	Ok(names)
-}

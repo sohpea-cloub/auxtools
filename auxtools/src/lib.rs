@@ -423,14 +423,3 @@ byond_ffi_fn! { auxtools_full_shutdown(_input) {
 	};
 	Some("SUCCESS".to_owned())
 } }
-
-byond_ffi_fn! { auxtools_check_signatures(_input) {
-	if let Err(e) = version::init() {
-		return Some(format!("FAILED ({})", e));
-	}
-	match symbols::unresolved() {
-		Err(e) => Some(format!("FAILED ({})", e)),
-		Ok(missing) if missing.is_empty() => Some("SUCCESS".to_owned()),
-		Ok(missing) => Some(format!("MISSING: {}", missing.join(", ")))
-	}
-} }
