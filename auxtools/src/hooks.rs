@@ -30,6 +30,9 @@ extern "C" {
 	static mut runtime_original: *const c_void;
 	fn runtime_hook(error: *const c_char);
 
+	// Set while a shim replaces BYOND's runtime errors with its own (hooks.h)
+	static runtime_intercepted: bool;
+
 	fn call_proc_by_id_hook_trampoline(
 		usr: raw_types::values::Value,
 		proc_type: u32,
@@ -84,11 +87,7 @@ pub fn init() -> Result<(), String> {
 		runtime_hook.enable().unwrap();
 		runtime_original = runtime_hook.trampoline() as *const () as *const c_void;
 
-		let call_hook = RawDetour::new(
-			raw_types::funcs::call_proc_by_id_byond as *const (),
-			call_proc_by_id_hook_trampoline as *const ()
-		)
-		.unwrap();
+		let call_hook = RawDetour::new(raw_types::funcs::call_proc_by_id_byond as *const (), call_proc_by_id_entry as *const ()).unwrap();
 
 		call_hook.enable().unwrap();
 		call_proc_by_id_original = call_hook.trampoline() as *const () as *const c_void;
@@ -130,10 +129,112 @@ unsafe impl<T> Sync for GameThreadOnly<T> {}
 static PROC_HOOKS: GameThreadOnly<RefCell<FxHashMap<raw_types::procs::ProcId, (ProcHook, String)>>> =
 	GameThreadOnly(RefCell::new(HashMap::with_hasher(BuildHasherDefault::new())));
 
+/// How many hooked procs have each low word of a proc ID. The entry to the
+/// call detour looks a called proc up here, so a call to a proc that shares no
+/// low word with a hooked one never reaches `PROC_HOOKS`.
+static mut HOOKED_LOW_WORDS: [u8; 0x10000] = [0; 0x10000];
+
+/// Where `call_proc_by_id`'s proc ID argument is on the stack at entry: after
+/// the return address, `usr` and the proc type, and on Linux the pointer the
+/// result is written through, which Windows returns in registers instead.
+#[cfg(unix)]
+const PROC_ID_ARGUMENT: usize = 0x14;
+#[cfg(windows)]
+const PROC_ID_ARGUMENT: usize = 0x10;
+
+/// Where the detour on `call_proc_by_id` lands, on every DM proc call. Nearly
+/// all of them have nothing for us: no work or world load is waiting for a
+/// call, no shim is taking runtime errors and the proc isn't hooked. Those go
+/// on to BYOND's function from here; the rest take
+/// `call_proc_by_id_hook_trampoline`.
+///
+/// On Linux BYOND's function can return with EBX, ESI, EDI and EBP overwritten
+/// (see `call_keeping_registers` in hooks.cpp), and BYOND's own caller crashes
+/// on some of those. So the call is made on a copy of the twelve argument
+/// dwords with the four registers saved around it, as the trampoline does.
+#[cfg(unix)]
+#[unsafe(naked)]
+unsafe extern "C" fn call_proc_by_id_entry() {
+	core::arch::naked_asm!(
+		"cmp byte ptr [{work}], 0",
+		"jne 2f",
+		"cmp byte ptr [{load}], 0",
+		"jne 2f",
+		"cmp byte ptr [{intercepted}], 0",
+		"jne 2f",
+		// EAX is free at a function's entry
+		"movzx eax, word ptr [esp + {proc_id}]",
+		"cmp byte ptr [{hooked} + eax], 0",
+		"jne 2f",
+		"push ebp",
+		"push ebx",
+		"push esi",
+		"push edi",
+		// twelve bytes more keep the stack aligned to sixteen at the call
+		"sub esp, 12",
+		// The last argument dword, then each one before it: every push moves
+		// ESP down to where the same offset finds the next
+		".rept 12",
+		"push dword ptr [esp + 76]",
+		".endr",
+		"call dword ptr [{original}]",
+		// The function popped the pointer its result is written through, the
+		// first of the twelve; EAX holds it
+		"add esp, 56",
+		"pop edi",
+		"pop esi",
+		"pop ebx",
+		"pop ebp",
+		"ret 4",
+		"2:",
+		"jmp {trampoline}",
+		work = sym crate::PROC_CALL_WORK_PENDING,
+		load = sym crate::WORLD_LOAD_PENDING,
+		intercepted = sym runtime_intercepted,
+		proc_id = const PROC_ID_ARGUMENT,
+		hooked = sym HOOKED_LOW_WORDS,
+		original = sym call_proc_by_id_original,
+		trampoline = sym call_proc_by_id_hook_trampoline
+	)
+}
+
+/// The same for Windows, where BYOND's function keeps the registers it
+/// should, so the call's own arguments serve.
+#[cfg(windows)]
+#[unsafe(naked)]
+unsafe extern "C" fn call_proc_by_id_entry() {
+	core::arch::naked_asm!(
+		"cmp byte ptr [{work}], 0",
+		"jne 2f",
+		"cmp byte ptr [{load}], 0",
+		"jne 2f",
+		"cmp byte ptr [{intercepted}], 0",
+		"jne 2f",
+		// EAX is free at a function's entry
+		"movzx eax, word ptr [esp + {proc_id}]",
+		"cmp byte ptr [{hooked} + eax], 0",
+		"jne 2f",
+		"jmp dword ptr [{original}]",
+		"2:",
+		"jmp {trampoline}",
+		work = sym crate::PROC_CALL_WORK_PENDING,
+		load = sym crate::WORLD_LOAD_PENDING,
+		intercepted = sym runtime_intercepted,
+		proc_id = const PROC_ID_ARGUMENT,
+		hooked = sym HOOKED_LOW_WORDS,
+		original = sym call_proc_by_id_original,
+		trampoline = sym call_proc_by_id_hook_trampoline
+	)
+}
+
 fn hook_by_id(id: raw_types::procs::ProcId, hook: ProcHook, hook_path: String) -> Result<(), HookFailure> {
 	let mut map = PROC_HOOKS.0.borrow_mut();
 	if let std::collections::hash_map::Entry::Vacant(e) = map.entry(id) {
 		e.insert((hook, hook_path));
+		unsafe {
+			let count = &mut HOOKED_LOW_WORDS[id.0 as usize & 0xFFFF];
+			*count = count.saturating_add(1);
+		}
 		Ok(())
 	} else {
 		Err(HookFailure::AlreadyHooked)
@@ -142,6 +243,9 @@ fn hook_by_id(id: raw_types::procs::ProcId, hook: ProcHook, hook_path: String) -
 
 pub fn clear_hooks() {
 	PROC_HOOKS.0.borrow_mut().clear();
+	unsafe {
+		HOOKED_LOW_WORDS.fill(0);
+	}
 }
 
 pub fn hook<S: Into<String>>(name: S, hook: ProcHook) -> Result<(), HookFailure> {
