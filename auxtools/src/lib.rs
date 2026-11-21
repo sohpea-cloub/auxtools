@@ -8,6 +8,8 @@
 pub mod appearance_tables;
 pub mod byond_ffi;
 mod bytecode_manager;
+#[cfg(unix)]
+mod cpu_clock;
 pub mod debug;
 pub mod hooks;
 mod init;
@@ -166,6 +168,8 @@ fn init_full() -> Result<(), String> {
 	pin_dll().map_err(|()| "Could not pin the library in memory.".to_owned())?;
 	hooks::init().map_err(|_| "Couldn't initialize proc hooking".to_owned())?;
 	instruction_hook::init()?;
+	#[cfg(unix)]
+	cpu_clock::init();
 
 	set_init_level(InitLevel::Partial);
 	Ok(())
@@ -360,6 +364,8 @@ byond_ffi_fn! { auxtools_full_shutdown(_input) {
 		shutdown_partial();
 	}
 	hooks::shutdown();
+	#[cfg(unix)]
+	cpu_clock::shutdown();
 	set_init_level(InitLevel::Full);
 	init::run_full_shutdown();
 
