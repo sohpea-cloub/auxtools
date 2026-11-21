@@ -51,6 +51,44 @@ jobs:
       - name: Check the formatting
         run: cargo "+$RUSTFMT_TOOLCHAIN" fmt --all -- --check
 
+  clippy:
+    name: Lint with clippy
+    # A release is a tree that a run for master linted.
+    if: (github.event_name == 'workflow_dispatch' || github.repository_owner == 'willox' || github.repository_owner == 'auxtools') && !inputs.version
+    # The build scripts compile C++ for the target, as in the Linux build.
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    env:
+      TARGET: i686-unknown-linux-gnu
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install the 32-bit compiler
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gcc-multilib g++-multilib
+
+      - name: Install Rust
+        run: |
+          rustup toolchain install "$RUST_VERSION" --profile minimal --component clippy --target "$TARGET" --no-self-update
+          rustup default "$RUST_VERSION"
+
+      # The Linux build saves these.
+      - name: Restore downloaded crates
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+          key: crates-linux-${{ hashFiles('Cargo.lock') }}
+          restore-keys: crates-linux-
+
+      # The workspace has about fifty warnings: report them without failing.
+      # Once they are fixed, run cargo clippy with -D warnings instead.
+      - name: Lint
+        run: ci/clippy.sh --locked --target "$TARGET" --workspace
+
   build-linux:
     name: Build for Linux
     if: github.event_name == 'workflow_dispatch' || github.repository_owner == 'willox' || github.repository_owner == 'auxtools'
