@@ -1053,9 +1053,13 @@ fn held_for_build_flags() {
 	world.request("auxtoolsBuildFlags", json!({ "flags": ["FLAG_A"] }));
 	build(&["-DFLAG_A"]);
 	world.drop_events("process");
+	world.drop_events("auxtoolsReload");
 	world.request("restart", json!({ "arguments": launch_arguments(&paths::find_byond(), &dme, more) }));
 	world.wait_count("dap: world/New", 4);
 	world.wait_output("using the rebuilt .dmb");
+	// The launcher reads the rebuilt world's source while it runs, and takes
+	// an edit saved meanwhile for part of the build
+	while world.event("auxtoolsReload")["body"]["state"] != "active" {}
 	assert!(!world.has_event("process"), "the restart relaunched the world");
 	assert_eq!(world.eval_global("flagged()"), "\"b\"");
 	edit(&mut world, "flags.dm", "\treturn \"b\"\n", "\treturn \"c\"\n");
