@@ -8,7 +8,7 @@ use std::{
 	collections::{HashMap, HashSet},
 	ffi::{OsStr, OsString},
 	path::{Path, PathBuf},
-	sync::{mpsc, Arc},
+	sync::{mpsc, Arc, OnceLock},
 	time::{Duration, Instant, SystemTime}
 };
 
@@ -22,11 +22,23 @@ use crate::{adapter::Input, dap::Output, resources::Resources, script::Script, s
 
 /// How often to look for changed files
 const INTERVAL: Duration = Duration::from_millis(500);
+/// How long changed files have to stay as they are before they're reloaded
+const SETTLE: Duration = Duration::from_millis(200);
+/// Milliseconds to use for both instead, for tests that edit a file in one
+/// write and then wait for its reload
+const INTERVAL_VAR: &str = "AUXTOOLS_WATCH_INTERVAL";
 /// Limit polling to 1 / LOOKING_SHARE of the worker's time.
 const LOOKING_SHARE: u32 = 5;
 /// Allowance for Linux file timestamps lagging the clock by a coarse timer
 /// tick.
 const STAMP_LAG: Duration = Duration::from_millis(50);
+
+/// `usual`, or what `AUXTOOLS_WATCH_INTERVAL` gives if that is shorter
+fn interval(usual: Duration) -> Duration {
+	static GIVEN: OnceLock<Option<Duration>> = OnceLock::new();
+	let given = GIVEN.get_or_init(|| std::env::var(INTERVAL_VAR).ok()?.parse().ok().map(Duration::from_millis));
+	given.map_or(usual, |given| given.min(usual))
+}
 
 pub struct Options {
 	pub dme: PathBuf,
@@ -315,7 +327,7 @@ impl Code {
 
 	fn watch(&self, watching: &mut Watching) {
 		loop {
-			let wait = INTERVAL.max(watching.files.took * (LOOKING_SHARE - 1));
+			let wait = interval(INTERVAL).max(watching.files.took * (LOOKING_SHARE - 1));
 			match self.commands.recv_timeout(wait) {
 				Ok(Command::Connected { world, .. }) => self.connected(world),
 				Ok(Command::Defines(defines)) => self.defines_wanted(defines),
@@ -354,7 +366,7 @@ impl Code {
 
 		// Editors save in steps, and a checkout touches many files
 		loop {
-			std::thread::sleep(Duration::from_millis(200));
+			std::thread::sleep(interval(SETTLE));
 			let more = watching.files.changed(&self.root);
 			if more.is_empty() {
 				break;

@@ -74,6 +74,10 @@ fn main() {
 		);
 	}
 
+	// The launcher looks for edited files this often, in milliseconds, in
+	// place of twice a second: the tests wait for every reload
+	std::env::set_var("AUXTOOLS_WATCH_INTERVAL", "50");
+
 	// Left behind by a run that failed
 	let _ = std::fs::remove_file(world::host_file("fail_early"));
 	let res = Command::new(paths::find_dm())
