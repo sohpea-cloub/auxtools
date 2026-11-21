@@ -32,7 +32,11 @@ env:
   CARGO_TERM_COLOR: always
   # Build each artifact from source without reusing prior build outputs.
   CARGO_INCREMENTAL: 0
+  # rust-toolchain.toml names the same version for local builds, with both
+  # targets. RUSTUP_TOOLCHAIN keeps cargo to the toolchain each job installs:
+  # following the file, rustup would fetch the target the job doesn't build.
   RUST_VERSION: 1.99.1
+  RUSTUP_TOOLCHAIN: 1.99.1
   # Pin nightly rustfmt for the options in .rustfmt.toml.
   RUSTFMT_TOOLCHAIN: nightly-2026-10-24
 
@@ -44,6 +48,10 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Check that rust-toolchain.toml names the Rust version
+        run: |
+          [ "$RUSTUP_TOOLCHAIN" = "$RUST_VERSION" ] && grep -qxF "channel = \"$RUST_VERSION\"" rust-toolchain.toml || { echo "::error::RUSTUP_TOOLCHAIN or rust-toolchain.toml doesn't name Rust $RUST_VERSION"; exit 1; }
 
       - name: Install rustfmt
         run: rustup toolchain install "$RUSTFMT_TOOLCHAIN" --profile minimal --component rustfmt --no-self-update
