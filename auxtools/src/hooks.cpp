@@ -37,8 +37,9 @@ extern "C" {
 	extern void (*dec_ref_count_byond)(Value);
 }
 
-// If the top of this stack is true, we replace byond's runtime exceptions with our own
-std::stack<bool> runtime_contexts({false});
+extern "C" {
+	bool runtime_intercepted = false;
+}
 
 #if defined(__i386__) && !defined(_WIN32)
 // On Linux, BYOND's call_proc_by_id can corrupt callee-saved registers.
@@ -140,7 +141,7 @@ extern "C" void on_runtime(const char* pError);
 
 extern "C" void runtime_hook(char* pError) {
 	const char* pErrorCorrected = (pError != nullptr) ? pError : "<null>";
-	if (runtime_contexts.top()) {
+	if (runtime_intercepted) {
 #ifdef USE_SJLJ
 		longjmp(*current_jmp, 1);
 #else

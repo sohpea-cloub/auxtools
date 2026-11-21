@@ -16,7 +16,6 @@
 #include <setjmp.h>
 #endif
 
-#include <stack>
 #include <string>
 
 #ifdef USE_SJLJ
@@ -40,15 +39,22 @@ struct AuxtoolsException {
     std::string message;
 };
 
-extern std::stack<bool> runtime_contexts;
+// Replace BYOND runtime errors with C++ exceptions while set.
+// Also checked by the proc-call detour in hooks.rs.
+extern "C" bool runtime_intercepted;
 
+// Sets `runtime_intercepted` for a scope
 struct RuntimeContext {
-    RuntimeContext(bool intercept_exceptions) {
-        runtime_contexts.push(intercept_exceptions);
+    bool outer;
+
+    RuntimeContext(bool intercept_exceptions)
+        : outer(runtime_intercepted)
+    {
+        runtime_intercepted = intercept_exceptions;
     }
 
     ~RuntimeContext() {
-        runtime_contexts.pop();
+        runtime_intercepted = outer;
     }
     RuntimeContext(const RuntimeContext&) = delete;
     RuntimeContext(RuntimeContext&&) = delete;

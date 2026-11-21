@@ -184,7 +184,7 @@ pub struct WorldLoad {
 
 static WORLD_LOAD: OnceLock<&'static WorldLoad> = OnceLock::new();
 // Set while a world is yet to load. Read on every DM proc call.
-static WORLD_LOAD_PENDING: AtomicBool = AtomicBool::new(false);
+pub(crate) static WORLD_LOAD_PENDING: AtomicBool = AtomicBool::new(false);
 // The init funcs run after the partial init, as they would with auxtools_init
 static FULL_INIT_FUNCS_PENDING: AtomicBool = AtomicBool::new(false);
 // Marker proc and table entry identifying the exiting world.
@@ -235,8 +235,8 @@ pub fn shut_down_with_world() {
 	shutdown_partial();
 }
 
-// DM proc calls seen
-static PROC_CALLS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+// Calls counted by `on_proc_call` and the detour's direct path.
+pub(crate) static PROC_CALLS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 
 /// Wrapping proc-call count for activity detection. Readable from any thread.
 pub fn proc_calls() -> u32 {
@@ -246,7 +246,7 @@ pub fn proc_calls() -> u32 {
 // Work waiting for a later proc call (see `at_proc_calls`), and whether there
 // is any. Read on every DM proc call.
 static PROC_CALL_WORK: Mutex<Vec<fn() -> bool>> = Mutex::new(Vec::new());
-static PROC_CALL_WORK_PENDING: AtomicBool = AtomicBool::new(false);
+pub(crate) static PROC_CALL_WORK_PENDING: AtomicBool = AtomicBool::new(false);
 
 /// Run `work` at proc entry on BYOND's thread until it returns true.
 /// Use for initialization that must wait for later load stages.

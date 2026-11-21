@@ -30,6 +30,9 @@ extern "C" {
 	static mut runtime_original: *const c_void;
 	fn runtime_hook(error: *const c_char);
 
+	// Set while a shim replaces BYOND's runtime errors with its own (hooks.h)
+	static runtime_intercepted: bool;
+
 	fn call_proc_by_id_hook_trampoline(
 		usr: raw_types::values::Value,
 		proc_type: u32,
@@ -84,11 +87,7 @@ pub fn init() -> Result<(), String> {
 		runtime_hook.enable().unwrap();
 		runtime_original = runtime_hook.trampoline() as *const () as *const c_void;
 
-		let call_hook = RawDetour::new(
-			raw_types::funcs::call_proc_by_id_byond as *const (),
-			call_proc_by_id_hook_trampoline as *const ()
-		)
-		.unwrap();
+		let call_hook = RawDetour::new(raw_types::funcs::call_proc_by_id_byond as *const (), call_proc_by_id_entry as *const ()).unwrap();
 
 		call_hook.enable().unwrap();
 		call_proc_by_id_original = call_hook.trampoline() as *const () as *const c_void;
@@ -130,10 +129,111 @@ unsafe impl<T> Sync for GameThreadOnly<T> {}
 static PROC_HOOKS: GameThreadOnly<RefCell<FxHashMap<raw_types::procs::ProcId, (ProcHook, String)>>> =
 	GameThreadOnly(RefCell::new(HashMap::with_hasher(BuildHasherDefault::new())));
 
+/// Hook counts by the low 16 bits of proc ID. Zero skips the `PROC_HOOKS`
+/// lookup; collisions use the full lookup.
+static mut HOOKED_LOW_WORDS: [u8; 0x10000] = [0; 0x10000];
+
+/// Stack offset of the proc ID after the return address, `usr` and proc
+/// type. Linux adds a return-value pointer; Windows returns in registers.
+#[cfg(unix)]
+const PROC_ID_ARGUMENT: usize = 0x14;
+#[cfg(windows)]
+const PROC_ID_ARGUMENT: usize = 0x10;
+
+/// Bypass the trampoline when no proc hook, pending work, world load or
+/// runtime interception needs it.
+///
+/// Linux BYOND may clobber EBX, ESI, EDI and EBP, crashing its caller. Save
+/// these registers around a call with twelve copied argument dwords, as
+/// `call_keeping_registers` in hooks.cpp does.
+#[cfg(unix)]
+#[unsafe(naked)]
+unsafe extern "C" fn call_proc_by_id_entry() {
+	core::arch::naked_asm!(
+		"cmp byte ptr [{work}], 0",
+		"jne 2f",
+		"cmp byte ptr [{load}], 0",
+		"jne 2f",
+		"cmp byte ptr [{intercepted}], 0",
+		"jne 2f",
+		// EAX is caller-saved.
+		"movzx eax, word ptr [esp + {proc_id}]",
+		"cmp byte ptr [{hooked} + eax], 0",
+		"jne 2f",
+		// Trampoline calls are counted by `on_proc_call`.
+		"inc dword ptr [{calls}]",
+		"push ebp",
+		"push ebx",
+		"push esi",
+		"push edi",
+		// Preserve 16-byte stack alignment at the call.
+		"sub esp, 12",
+		// Copy argument dwords in reverse order. Each push advances the
+		// source at the same offset from ESP.
+		".rept 12",
+		"push dword ptr [esp + 76]",
+		".endr",
+		"call dword ptr [{original}]",
+		// BYOND popped the return-value pointer and left it in EAX.
+		"add esp, 56",
+		"pop edi",
+		"pop esi",
+		"pop ebx",
+		"pop ebp",
+		"ret 4",
+		"2:",
+		"jmp {trampoline}",
+		work = sym crate::PROC_CALL_WORK_PENDING,
+		load = sym crate::WORLD_LOAD_PENDING,
+		intercepted = sym runtime_intercepted,
+		proc_id = const PROC_ID_ARGUMENT,
+		hooked = sym HOOKED_LOW_WORDS,
+		calls = sym crate::PROC_CALLS,
+		original = sym call_proc_by_id_original,
+		trampoline = sym call_proc_by_id_hook_trampoline
+	)
+}
+
+/// Windows BYOND preserves callee-saved registers, allowing a direct jump
+/// with the caller's arguments.
+#[cfg(windows)]
+#[unsafe(naked)]
+unsafe extern "C" fn call_proc_by_id_entry() {
+	core::arch::naked_asm!(
+		"cmp byte ptr [{work}], 0",
+		"jne 2f",
+		"cmp byte ptr [{load}], 0",
+		"jne 2f",
+		"cmp byte ptr [{intercepted}], 0",
+		"jne 2f",
+		// EAX is caller-saved.
+		"movzx eax, word ptr [esp + {proc_id}]",
+		"cmp byte ptr [{hooked} + eax], 0",
+		"jne 2f",
+		// Trampoline calls are counted by `on_proc_call`.
+		"inc dword ptr [{calls}]",
+		"jmp dword ptr [{original}]",
+		"2:",
+		"jmp {trampoline}",
+		work = sym crate::PROC_CALL_WORK_PENDING,
+		load = sym crate::WORLD_LOAD_PENDING,
+		intercepted = sym runtime_intercepted,
+		proc_id = const PROC_ID_ARGUMENT,
+		hooked = sym HOOKED_LOW_WORDS,
+		calls = sym crate::PROC_CALLS,
+		original = sym call_proc_by_id_original,
+		trampoline = sym call_proc_by_id_hook_trampoline
+	)
+}
+
 fn hook_by_id(id: raw_types::procs::ProcId, hook: ProcHook, hook_path: String) -> Result<(), HookFailure> {
 	let mut map = PROC_HOOKS.0.borrow_mut();
 	if let std::collections::hash_map::Entry::Vacant(e) = map.entry(id) {
 		e.insert((hook, hook_path));
+		unsafe {
+			let count = &mut HOOKED_LOW_WORDS[id.0 as usize & 0xFFFF];
+			*count = count.saturating_add(1);
+		}
 		Ok(())
 	} else {
 		Err(HookFailure::AlreadyHooked)
@@ -142,6 +242,9 @@ fn hook_by_id(id: raw_types::procs::ProcId, hook: ProcHook, hook_path: String) -
 
 pub fn clear_hooks() {
 	PROC_HOOKS.0.borrow_mut().clear();
+	unsafe {
+		HOOKED_LOW_WORDS.fill(0);
+	}
 }
 
 pub fn hook<S: Into<String>>(name: S, hook: ProcHook) -> Result<(), HookFailure> {
@@ -203,6 +306,9 @@ pub unsafe fn proc_starting(ctx: *mut raw_types::procs::ExecutionContext) {
 	}
 
 	let proc_id = (*instance).proc;
+	if HOOKED_LOW_WORDS[proc_id.0 as usize & 0xFFFF] == 0 {
+		return;
+	}
 	let Some(hook) = PROC_HOOKS.0.borrow().get(&proc_id).map(|(hook, _)| *hook) else {
 		return;
 	};
