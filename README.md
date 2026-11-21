@@ -5,8 +5,6 @@ auxtools is a Rust-based successor to the [extools](https://github.com/MCHSL/ext
 Currently, it implements some of the features such as the debug server, but is planned to supplant most functionality (maptick, etc.).
 
 ## Features
-Code Coverage - A tool to generate cobertura code coverage XML reports for a codebase. Note that, due to a [BYOND issue](http://www.byond.com/forum/post/108025) it requires some additional work to have properly un-mangled file names in the report.
-
 Debug Server - Debug DM worlds from [VS Code](editors/vscode) or the command line, with experimental hot reload.
 
 ## The debugger
@@ -114,7 +112,7 @@ The patterns use [byond-scan](https://github.com/Absolucy/byond-scan) and are st
 CI tests the debugger, hot reload and CLI on 515.1637, 515.1647, 516.1659, 516.1685 and 516.1689. The integration suites cover the debug server, source reloads, launcher lifecycle, CLI output and DAP behavior. Linux tests run on Ubuntu 22.04; Windows tests run in `dd.exe` on Windows Server 2022 and under Wine.
 
 The VS Code extension has separate integration coverage on Linux 516.1688 using a harness outside this repository. It has no automated Windows coverage. DreamSeeker and windowed DreamDaemon were checked manually with the first part
-of `launcher_test` before the CLI was added; they are outside these automated runs. The `auxtest` suite and coverage reports were last checked on 516.1687.
+of `launcher_test` before the CLI was added; they are outside these automated runs. The `auxtest` suite was last checked on 516.1687.
 
 ## Dependencies
 
@@ -175,7 +173,7 @@ Linux:
 cargo build --workspace --release --target i686-unknown-linux-gnu
 ```
 
-Outputs in `target/i686-unknown-linux-gnu/release`: `libauxtools.so`, `libdebug_server.so`, `libauxcov.so`, `auxtools`.
+Outputs in `target/i686-unknown-linux-gnu/release`: `libauxtools.so`, `libdebug_server.so`, `auxtools`.
 
 Windows:
 
@@ -183,7 +181,7 @@ Windows:
 cargo build --workspace --release --target i686-pc-windows-msvc
 ```
 
-Outputs in `target/i686-pc-windows-msvc/release`: `auxtools.dll`, `debug_server.dll`, `auxcov.dll`, `auxtools.exe`.
+Outputs in `target/i686-pc-windows-msvc/release`: `auxtools.dll`, `debug_server.dll`, `auxtools.exe`.
 
 To cross-compile Windows builds on Linux, install clang 19 or newer, lld and LLVM, then fetch the SDK (about 800 MB):
 
@@ -232,5 +230,5 @@ both registries. See [release.yml](.github/workflows/release.yml) for setup.
 Auxtools is licensed under the [MIT license](https://en.wikipedia.org/wiki/MIT_License).
 See [LICENSE](./LICENSE) for more details.
 
-The debug server, launcher and Auxcov coverage tool are licensed under GPL-3.0.
-See [debug_server/LICENSE](./debug_server/LICENSE), [auxtools-cli/LICENSE](./auxtools-cli/LICENSE) and [auxcov/LICENSE](./auxcov/LICENSE).
+The debug server and launcher are licensed under GPL-3.0.
+See [debug_server/LICENSE](./debug_server/LICENSE) and [auxtools-cli/LICENSE](./auxtools-cli/LICENSE).
