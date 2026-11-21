@@ -349,7 +349,13 @@ fn start() {
 	if std::env::var(DEBUG_VAR).is_ok_and(|value| value == "wait") {
 		// A request that panics drops the clients, as it does once the world
 		// runs, and the world starts
+		let ends = crate::WORLD_ENDS.load(Ordering::Relaxed);
 		let _ = crate::guard_server(&mut server, Server::process_until_configured);
+		// An evaluation ended the world, as `auxtools stop` does: it has no
+		// use for a debugger
+		if crate::WORLD_ENDS.load(Ordering::Relaxed) != ends {
+			return;
+		}
 	}
 	crate::install_server(server);
 

@@ -26,7 +26,7 @@ use client::{Client, World};
 use paths::ByondCommand;
 use server_types::{
 	BreakpointReason, BreakpointSetResult, ContinueKind, InstructionRef, ProcRef, ProfileReply, ProfileRequest, ProfileTotals, ProfiledCode, Request,
-	Response, VariablesRef
+	Response, VariablesRef, ENDING_CONTEXT
 };
 
 // The debug server names global procs without the /proc part
@@ -697,6 +697,24 @@ fn profile(world: &World, mut client: Client) -> Client {
 	client
 }
 
+/// A world still waiting for its debugger is ended by an evaluation, as
+/// `auxtools stop` ends it. The evaluation leaves the debug library by
+/// unwinding, which aborted DreamDaemon when nothing caught it.
+fn waiting_world_ends() {
+	let world = World::start(&host_file("debug_test_host.dmb"), &[]);
+	let mut client = world.connect_silent();
+	client.send(Request::Eval {
+		frame_id: None,
+		command: "world.Del()".to_owned(),
+		context: Some(ENDING_CONTEXT.to_owned())
+	});
+	client.wait_closed();
+	let code = world.exit_code();
+	let output = world.output();
+	assert!(code.is_some() && !output.contains("panic"), "ended with {:?} after {}", code, output);
+	println!("ok: an evaluation ends a world that waits for its debugger");
+}
+
 /// Requests that panic in the debug library (`#panic`, which debug builds
 /// have): the client is dropped, and the world and its debugger carry on.
 #[cfg(debug_assertions)]
@@ -831,6 +849,7 @@ fn main() {
 	println!("ok: the world connects again after a reboot");
 	drop(world);
 
+	waiting_world_ends();
 	#[cfg(debug_assertions)]
 	panics();
 
