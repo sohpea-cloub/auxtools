@@ -80,7 +80,7 @@ pub fn shutdown() {
 		let proc = Proc::from_id(id).unwrap();
 
 		unsafe {
-			raw_types::misc::set_bytecode(*(*proc.entry()).metadata.bytecode(), ptr, len);
+			raw_types::misc::set_bytecode((*proc.entry()).metadata.bytecode, ptr, len);
 		}
 	}
 
@@ -149,6 +149,6 @@ pub fn set_bytecode(proc: &Proc, mut bytecode: Vec<u32>) {
 	let len = u16::try_from(len).unwrap();
 
 	unsafe {
-		raw_types::misc::set_bytecode(*(*proc.entry()).metadata.bytecode(), ptr, len);
+		raw_types::misc::set_bytecode((*proc.entry()).metadata.bytecode, ptr, len);
 	}
 }

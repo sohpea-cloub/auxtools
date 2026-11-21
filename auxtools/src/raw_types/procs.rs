@@ -19,25 +19,17 @@ pub struct ProcEntry {
 	pub metadata: ProcMetadata
 }
 
-#[versioned(
-	Pre1630 if crate::version::BYOND_VERSION_MINOR <= 1627,
-	Post1630,
-)]
 #[repr(C)]
 pub struct ProcMetadata {
 	// three bytes straight out of the .dmb, meaning unknown
-	#[only_in(Post1630)]
 	byte_24: i8,
-	#[only_in(Post1630)]
 	byte_25: u8,
-	#[only_in(Post1630)]
 	byte_26: i8,
 	pub bytecode: misc::BytecodeId,
 	pub locals: misc::LocalsId,
 	pub parameters: misc::ParametersId,
 	// the proc `..()` goes to, 0xFFFF for none. Brings the entry to the 44
 	// bytes BYOND strides its proc table by
-	#[only_in(Post1630)]
 	next_override: ProcId
 }
 
@@ -231,10 +223,7 @@ mod layout_tests {
 	fn proc_entry() {
 		let metadata = offset_of!(super::ProcEntry, metadata);
 		assert_eq!(size_of::<super::ProcEntry>(), 44);
-		assert_eq!(metadata + offset_of!(super::ProcMetadataPost1630, bytecode), 28);
-		assert_eq!(metadata + offset_of!(super::ProcMetadataPost1630, next_override), 40);
-		// before 1630 the entry is 36 bytes with the bytecode id at +24
-		assert_eq!(metadata + size_of::<super::ProcMetadataPre1630>(), 36);
-		assert_eq!(metadata + offset_of!(super::ProcMetadataPre1630, bytecode), 24);
+		assert_eq!(metadata + offset_of!(super::ProcMetadata, bytecode), 28);
+		assert_eq!(metadata + offset_of!(super::ProcMetadata, next_override), 40);
 	}
 }

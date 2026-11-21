@@ -1,7 +1,3 @@
-#if DM_VERSION < 515
-#define call_ext call
-#endif
-
 /datum
 	var/__auxtools_weakref_id
 

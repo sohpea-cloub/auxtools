@@ -2,7 +2,6 @@
 use std::ffi::c_void;
 
 use super::strings;
-use crate::version;
 
 #[repr(C)]
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
@@ -60,24 +59,10 @@ impl AsMiscId for ParametersId {
 
 #[repr(C)]
 #[derive(Copy, Clone)]
-pub struct Bytecode_V1 {
-	pub count: u16,
-	pub bytecode: *mut u32
-}
-
-#[repr(C)]
-#[derive(Copy, Clone)]
 pub struct Bytecode_V2 {
 	pub count: u16,
 	unk_0: u32,
 	pub bytecode: *mut u32
-}
-
-#[repr(C)]
-#[derive(Copy, Clone)]
-pub struct Locals_V1 {
-	pub count: u16,
-	pub names: *const strings::VariableId
 }
 
 #[repr(C)]
@@ -91,25 +76,10 @@ pub struct Locals_V2 {
 
 #[repr(C)]
 #[derive(Copy, Clone)]
-pub struct Parameters_V1 {
-	params_count_mul_4: u16,
-	pub data: *const ParametersData
-}
-
-#[repr(C)]
-#[derive(Copy, Clone)]
 pub struct Parameters_V2 {
 	params_count_mul_4: u16,
 	unk_0: u32,
 	pub data: *const ParametersData
-}
-
-#[repr(C)]
-#[derive(Copy, Clone)]
-pub union Misc_V1 {
-	pub bytecode: Bytecode_V1,
-	pub locals: Locals_V1,
-	pub parameters: Parameters_V1
 }
 
 #[repr(C)]
@@ -128,12 +98,6 @@ pub struct ParametersData {
 	unk_4: u32
 }
 
-impl Parameters_V1 {
-	pub const fn count(&self) -> usize {
-		(self.params_count_mul_4 / 4) as usize
-	}
-}
-
 impl Parameters_V2 {
 	pub const fn count(&self) -> usize {
 		(self.params_count_mul_4 / 4) as usize
@@ -146,19 +110,7 @@ pub fn set_bytecode(id: BytecodeId, new_bytecode: *mut u32, new_bytecode_count: 
 		assert_eq!(super::funcs::get_misc_by_id(&mut misc, id.as_misc_id()), 1);
 	}
 
-	let (major, minor) = version::get();
-
-	// Lame
-	if major > 513 || minor >= 1539 {
-		let misc = misc as *mut Misc_V2;
-		unsafe {
-			(*misc).bytecode.bytecode = new_bytecode;
-			(*misc).bytecode.count = new_bytecode_count;
-		}
-		return;
-	}
-
-	let misc = misc as *mut Misc_V1;
+	let misc = misc as *mut Misc_V2;
 	unsafe {
 		(*misc).bytecode.bytecode = new_bytecode;
 		(*misc).bytecode.count = new_bytecode_count;
@@ -172,14 +124,9 @@ pub fn add_ref<T: AsMiscId>(id: &T) {
 		assert_eq!(super::funcs::get_misc_by_id(&mut misc, id.as_misc_id()), 1);
 	}
 
-	let (major, minor) = version::get();
-
-	// Older entries have no reference count
-	if major > 513 || minor >= 1539 {
-		let misc = misc as *mut Misc_V2;
-		unsafe {
-			(*misc).locals.unk_0 += 1;
-		}
+	let misc = misc as *mut Misc_V2;
+	unsafe {
+		(*misc).locals.unk_0 += 1;
 	}
 }
 
@@ -189,15 +136,7 @@ pub fn get_bytecode(id: BytecodeId) -> (*mut u32, u16) {
 		assert_eq!(super::funcs::get_misc_by_id(&mut misc, id.as_misc_id()), 1);
 	}
 
-	let (major, minor) = version::get();
-
-	// Lame
-	if major > 513 || minor >= 1539 {
-		let misc = misc as *mut Misc_V2;
-		return unsafe { ((*misc).bytecode.bytecode, (*misc).bytecode.count) };
-	}
-
-	let misc = misc as *mut Misc_V1;
+	let misc = misc as *mut Misc_V2;
 	unsafe { ((*misc).bytecode.bytecode, (*misc).bytecode.count) }
 }
 
@@ -207,15 +146,7 @@ pub fn get_locals(id: LocalsId) -> (*const strings::VariableId, usize) {
 		assert_eq!(super::funcs::get_misc_by_id(&mut misc, id.as_misc_id()), 1);
 	}
 
-	let (major, minor) = version::get();
-
-	// Lame
-	if major > 513 || minor >= 1539 {
-		let misc = misc as *mut Misc_V2;
-		return unsafe { ((*misc).locals.names, (*misc).locals.count as usize) };
-	}
-
-	let misc = misc as *mut Misc_V1;
+	let misc = misc as *mut Misc_V2;
 	unsafe { ((*misc).locals.names, (*misc).locals.count as usize) }
 }
 
@@ -225,14 +156,6 @@ pub fn get_parameters(id: ParametersId) -> (*const ParametersData, usize) {
 		assert_eq!(super::funcs::get_misc_by_id(&mut misc, id.as_misc_id()), 1);
 	}
 
-	let (major, minor) = version::get();
-
-	// Lame
-	if major > 513 || minor >= 1539 {
-		let misc = misc as *mut Misc_V2;
-		return unsafe { ((*misc).parameters.data, (*misc).parameters.count()) };
-	}
-
-	let misc = misc as *mut Misc_V1;
+	let misc = misc as *mut Misc_V2;
 	unsafe { ((*misc).parameters.data, (*misc).parameters.count()) }
 }
