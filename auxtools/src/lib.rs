@@ -9,7 +9,7 @@ pub mod appearance_tables;
 pub mod byond_ffi;
 mod bytecode_manager;
 #[cfg(unix)]
-mod cpu_clock;
+mod clocks;
 pub mod debug;
 pub mod hooks;
 mod init;
@@ -170,7 +170,7 @@ fn init_full() -> Result<(), String> {
 	hooks::init().map_err(|_| "Couldn't initialize proc hooking".to_owned())?;
 	instruction_hook::init()?;
 	#[cfg(unix)]
-	cpu_clock::init();
+	clocks::init();
 	string_tree::init();
 
 	set_init_level(InitLevel::Partial);
@@ -367,7 +367,7 @@ byond_ffi_fn! { auxtools_full_shutdown(_input) {
 	}
 	hooks::shutdown();
 	#[cfg(unix)]
-	cpu_clock::shutdown();
+	clocks::shutdown();
 	string_tree::shutdown();
 	set_init_level(InitLevel::Full);
 	init::run_full_shutdown();
