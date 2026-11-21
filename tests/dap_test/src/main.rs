@@ -59,6 +59,12 @@ const GROUPS: &[(&str, fn())] = &[
 
 fn main() {
 	let wanted: Vec<String> = std::env::args().skip(1).collect();
+	if wanted == ["--list"] {
+		for (group, _) in GROUPS {
+			println!("{}", group);
+		}
+		return;
+	}
 	for name in &wanted {
 		assert!(
 			GROUPS.iter().any(|(group, _)| group == name),

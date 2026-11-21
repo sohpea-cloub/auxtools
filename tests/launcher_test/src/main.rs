@@ -115,6 +115,12 @@ const ATTACHED: &[&str] = &["attach", "inspect", "inspect_breakpoints", "inspect
 
 fn main() {
 	let wanted: Vec<String> = std::env::args().skip(1).collect();
+	if wanted == ["--list"] {
+		for group in GROUPS {
+			println!("{}", group);
+		}
+		return;
+	}
 	for name in &wanted {
 		assert!(GROUPS.contains(&name.as_str()), "unknown group {}; available groups: {:?}", name, GROUPS);
 	}
