@@ -164,34 +164,35 @@ fn generate_union(struct_ident: &Ident, vis: &Visibility, attrs: &[Attribute], v
 	}
 }
 
-fn build_dispatch_chain(struct_ident: &Ident, variants: &[VersionVariant], helper_names: &[Ident]) -> TokenStream {
-	let fallback = helper_names.last().unwrap();
-	let mut chain = quote! { #struct_ident::#fallback };
+/// The field's offset in the variant the running BYOND build selects
+fn build_offset_chain(struct_ident: &Ident, field_name: &Ident, variants: &[VersionVariant]) -> TokenStream {
+	let fallback = variant_inner_name(struct_ident, variants.last().unwrap());
+	let mut chain = quote! { ::core::mem::offset_of!(#fallback, #field_name) };
 
-	for (variant, helper) in variants[..variants.len() - 1].iter().zip(&helper_names[..helper_names.len() - 1]).rev() {
+	for variant in variants[..variants.len() - 1].iter().rev() {
 		let cond = variant.condition.as_ref().unwrap();
+		let inner = variant_inner_name(struct_ident, variant);
 		chain = quote! {
-			if #cond { #struct_ident::#helper } else { #chain }
+			if #cond { ::core::mem::offset_of!(#inner, #field_name) } else { #chain }
 		};
 	}
 
 	chain
 }
 
+fn offset_static_name(struct_ident: &Ident, field_name: &Ident) -> Ident {
+	format_ident!("__VERSIONED_OFFSET_{}_{}", struct_ident, field_name)
+}
+
+/// A static per field holding its offset in the running build's variant
 fn generate_field_statics(struct_ident: &Ident, field: &Field, variants: &[VersionVariant]) -> TokenStream {
 	let field_name = field.ident.as_ref().unwrap();
-	let field_ty = &field.ty;
-	let static_name = format_ident!("__VERSIONED_{}_{}", struct_ident, field_name);
-	let static_name_mut = format_ident!("__VERSIONED_MUT_{}_{}", struct_ident, field_name);
-	let fallback = variants.last().unwrap();
-	let fallback_fn = format_ident!("__versioned_{}_{}", field_name, variant_field_name(fallback));
-	let fallback_fn_mut = format_ident!("__versioned_{}_{}_mut", field_name, variant_field_name(fallback));
+	let static_name = offset_static_name(struct_ident, field_name);
+	let fallback = variant_inner_name(struct_ident, variants.last().unwrap());
 
 	quote! {
 		#[allow(non_upper_case_globals)]
-		static mut #static_name: fn(&#struct_ident) -> &#field_ty = #struct_ident::#fallback_fn;
-		#[allow(non_upper_case_globals)]
-		static mut #static_name_mut: fn(&mut #struct_ident) -> &mut #field_ty = #struct_ident::#fallback_fn_mut;
+		static mut #static_name: usize = ::core::mem::offset_of!(#fallback, #field_name);
 	}
 }
 
@@ -202,24 +203,11 @@ fn generate_init_fn(struct_ident: &Ident, pub_fields: &[&VersionedField], varian
 		.iter()
 		.map(|vf| {
 			let field_name = vf.field.ident.as_ref().unwrap();
-			let static_name = format_ident!("__VERSIONED_{}_{}", struct_ident, field_name);
-			let static_name_mut = format_ident!("__VERSIONED_MUT_{}_{}", struct_ident, field_name);
-
-			let helper_names: Vec<Ident> = variants
-				.iter()
-				.map(|v| format_ident!("__versioned_{}_{}", field_name, variant_field_name(v)))
-				.collect();
-			let helper_names_mut: Vec<Ident> = variants
-				.iter()
-				.map(|v| format_ident!("__versioned_{}_{}_mut", field_name, variant_field_name(v)))
-				.collect();
-
-			let dispatch = build_dispatch_chain(struct_ident, variants, &helper_names);
-			let dispatch_mut = build_dispatch_chain(struct_ident, variants, &helper_names_mut);
+			let static_name = offset_static_name(struct_ident, field_name);
+			let offset = build_offset_chain(struct_ident, field_name, variants);
 
 			quote! {
-				#static_name = #dispatch;
-				#static_name_mut = #dispatch_mut;
+				#static_name = #offset;
 			}
 		})
 		.collect();
@@ -235,36 +223,42 @@ fn generate_init_fn(struct_ident: &Ident, pub_fields: &[&VersionedField], varian
 	}
 }
 
+/// Accessors that add the field's offset to the struct's address. They are
+/// read on every instruction a debugger hook handles, so they inline, and a
+/// field every variant has in the same place reads no static at all.
 fn generate_impl(struct_ident: &Ident, variants: &[VersionVariant], pub_fields: &[&VersionedField]) -> TokenStream {
+	let fallback = variant_inner_name(struct_ident, variants.last().unwrap());
 	let methods = pub_fields.iter().map(|vf| {
 		let field = &vf.field;
 		let field_name = field.ident.as_ref().unwrap();
 		let field_ty = &field.ty;
 		let field_name_mut = format_ident!("{}_mut", field_name);
-		let static_name = format_ident!("__VERSIONED_{}_{}", struct_ident, field_name);
-		let static_name_mut = format_ident!("__VERSIONED_MUT_{}_{}", struct_ident, field_name);
-
-		let helpers = variants.iter().map(|v| {
-			let helper_name = format_ident!("__versioned_{}_{}", field_name, variant_field_name(v));
-			let helper_name_mut = format_ident!("__versioned_{}_{}_mut", field_name, variant_field_name(v));
-			let union_field = variant_field_name(v);
-			quote! {
-				fn #helper_name(this: &Self) -> &#field_ty {
-					unsafe { &this.#union_field.#field_name }
-				}
-				fn #helper_name_mut(this: &mut Self) -> &mut #field_ty {
-					unsafe { &mut this.#union_field.#field_name }
-				}
-			}
-		});
+		let static_name = offset_static_name(struct_ident, field_name);
+		let fixed_name = format_ident!("__VERSIONED_FIXED_{}", field_name);
+		let others = variants[..variants.len() - 1].iter().map(|v| variant_inner_name(struct_ident, v));
 
 		quote! {
-			#(#helpers)*
+			#[allow(non_upper_case_globals)]
+			const #fixed_name: bool = true #(&& ::core::mem::offset_of!(#others, #field_name) == ::core::mem::offset_of!(#fallback, #field_name))*;
+
+			#[inline]
 			pub fn #field_name(&self) -> &#field_ty {
-				unsafe { #static_name(self) }
+				let offset = if Self::#fixed_name {
+					::core::mem::offset_of!(#fallback, #field_name)
+				} else {
+					unsafe { #static_name }
+				};
+				unsafe { &*(self as *const Self).cast::<u8>().add(offset).cast::<#field_ty>() }
 			}
+
+			#[inline]
 			pub fn #field_name_mut(&mut self) -> &mut #field_ty {
-				unsafe { #static_name_mut(self) }
+				let offset = if Self::#fixed_name {
+					::core::mem::offset_of!(#fallback, #field_name)
+				} else {
+					unsafe { #static_name }
+				};
+				unsafe { &mut *(self as *mut Self).cast::<u8>().add(offset).cast::<#field_ty>() }
 			}
 		}
 	});
