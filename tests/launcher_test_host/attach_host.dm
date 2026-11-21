@@ -30,6 +30,10 @@ var/datum/held/held = new
 	sleep(1)
 	return fail_deeper(5)
 
+// The debugger answers a running world once a tick: 10 ms, not 100
+/world
+	fps = 100
+
 /world/New()
 	..()
 	spawn(1)
@@ -68,21 +72,24 @@ var/datum/held/held = new
 		tally()
 		rounds++
 		said++
-		// A runtime error when the test asks for one
-		if (fexists("fail"))
-			fdel("fail")
-			spawn(0)
-				fail()
-		// A reboot when the test asks for one
-		if (fexists("reboot"))
-			fdel("reboot")
-			world.Reboot()
-		// A call for the command line to step through
-		if (fexists("call"))
-			fdel("call")
-			spawn(0)
-				fail_in(1)
-		sleep(5)
+		// What the test asks for with a file, twice a second: a command the
+		// test starts next, to wait for it, has to connect first
+		if (rounds % 5 == 0)
+			// A runtime error
+			if (fexists("fail"))
+				fdel("fail")
+				spawn(0)
+					fail()
+			// A reboot
+			if (fexists("reboot"))
+				fdel("reboot")
+				world.Reboot()
+			// A call for the command line to step through
+			if (fexists("call"))
+				fdel("call")
+				spawn(0)
+					fail_in(1)
+		sleep(1)
 	world.log << "attach test: done"
 	del(world)
 
