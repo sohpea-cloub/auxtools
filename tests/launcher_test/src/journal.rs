@@ -25,8 +25,11 @@ pub fn run(pid: u64, args: &[&str], code: i32) -> String {
 /// A command left running, whose lines are read as they come
 pub struct Background {
 	child: Child,
+	/// Its stdout, line by line
 	lines: mpsc::Receiver<String>,
-	/// What it printed, so far
+	/// Its stderr, whole, once it has ended
+	errors: Option<std::thread::JoinHandle<String>>,
+	/// What it printed, so far: stdout, then stderr
 	pub printed: String
 }
 
@@ -42,24 +45,40 @@ impl Background {
 			.unwrap();
 		let (sender, lines) = mpsc::channel();
 		let stdout = child.stdout.take().unwrap();
-		let errors = sender.clone();
 		std::thread::spawn(move || {
 			for line in BufReader::new(stdout).lines().map_while(Result::ok) {
 				let _ = sender.send(line);
 			}
 		});
 		let mut stderr = child.stderr.take().unwrap();
-		std::thread::spawn(move || {
+		let errors = std::thread::spawn(move || {
 			let mut text = String::new();
 			let _ = stderr.read_to_string(&mut text);
-			for line in text.lines() {
-				let _ = errors.send(line.to_owned());
-			}
+			text
 		});
 		Self {
 			child,
 			lines,
+			errors: Some(errors),
 			printed: String::new()
+		}
+	}
+
+	/// The next line: of stdout until that ends, then of stderr. Two readers
+	/// passing lines on as they came would put them in either order.
+	fn next_line(&mut self, deadline: Instant) -> Option<String> {
+		match self.lines.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
+			Ok(line) => Some(line),
+			Err(mpsc::RecvTimeoutError::Timeout) => None,
+			Err(mpsc::RecvTimeoutError::Disconnected) => {
+				let text = self.errors.take()?.join().unwrap();
+				let (sender, lines) = mpsc::channel();
+				for line in text.lines() {
+					let _ = sender.send(line.to_owned());
+				}
+				self.lines = lines;
+				self.lines.try_recv().ok()
+			}
 		}
 	}
 
@@ -68,9 +87,8 @@ impl Background {
 		let deadline = Instant::now() + TIMEOUT;
 		loop {
 			let line = self
-				.lines
-				.recv_timeout(deadline.saturating_duration_since(Instant::now()))
-				.unwrap_or_else(|_| panic!("no line with {:?} came; it printed {}", text, self.printed));
+				.next_line(deadline)
+				.unwrap_or_else(|| panic!("no line with {:?} came; it printed {}", text, self.printed));
 			self.printed += &line;
 			self.printed += "\n";
 			if line.contains(text) {
@@ -89,8 +107,8 @@ impl Background {
 			assert!(Instant::now() < deadline, "timed out waiting for process exit; output: {}", self.printed);
 			std::thread::sleep(Duration::from_millis(50));
 		};
-		// What's left to read is read by now, or soon
-		while let Ok(line) = self.lines.recv_timeout(Duration::from_secs(2)) {
+		// Both streams have ended with it
+		while let Some(line) = self.next_line(deadline) {
 			self.printed += &line;
 			self.printed += "\n";
 		}
