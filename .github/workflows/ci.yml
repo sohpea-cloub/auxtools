@@ -103,7 +103,7 @@ jobs:
         run: cargo build --release --locked --target "$TARGET" --workspace
 
       - name: Unit tests
-        run: cargo test --release --locked --target "$TARGET" -p auxtools-cli
+        run: cargo test --release --locked --target "$TARGET" -p auxtools-cli -p auxtools -p debug_server
 
       - name: The extension's tests
         run: |
@@ -209,7 +209,7 @@ jobs:
       - name: Build the unit tests
         run: |
           . ci/msvc/env.sh
-          ci/unit-tests.sh "target/$TARGET/release/unit" --release --locked --target "$TARGET" -p auxtools-cli
+          ci/unit-tests.sh "target/$TARGET/release/unit" --release --locked --target "$TARGET" -p auxtools-cli -p auxtools -p debug_server
 
       - name: Check and pack
         run: |
