@@ -50,7 +50,7 @@ const HELPER_PROCS: &str = r#"
 			while(next)
 				auxtools_spawned(next[1], next[2])
 				next = auxtools_spawn_next()
-		sleep(1)
+		sleep(world.tick_lag)
 
 /proc/auxtools_spawn_inbox()
 	return null
