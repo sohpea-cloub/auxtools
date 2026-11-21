@@ -22,6 +22,7 @@ mod runtime;
 pub mod runtime_tables;
 mod string;
 mod string_intern;
+mod string_tree;
 mod symbols;
 mod value;
 mod value_from;
@@ -170,6 +171,7 @@ fn init_full() -> Result<(), String> {
 	instruction_hook::init()?;
 	#[cfg(unix)]
 	cpu_clock::init();
+	string_tree::init();
 
 	set_init_level(InitLevel::Partial);
 	Ok(())
@@ -366,6 +368,7 @@ byond_ffi_fn! { auxtools_full_shutdown(_input) {
 	hooks::shutdown();
 	#[cfg(unix)]
 	cpu_clock::shutdown();
+	string_tree::shutdown();
 	set_init_level(InitLevel::Full);
 	init::run_full_shutdown();
 

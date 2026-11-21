@@ -485,6 +485,10 @@ fn protocol(world: &World, mut client: Client) -> Client {
 		assert_eq!(eval(&mut client, None, "overrun()"), "7");
 		println!("ok: a proc that overruns BYOND's buffer for its stack leaves the world running");
 	}
+	// The library answers BYOND's string lookups and keeps its string tree
+	// level (string_tree.rs)
+	assert_eq!(eval(&mut client, None, "strings_astray(10000)"), "0");
+	println!("ok: strings made in order, in reverse and scattered, dropped and made again, each stay one string");
 	drop(quiet);
 	println!("ok: bytes that aren't a request get that client hung up on, and a client that says nothing is left alone");
 

@@ -1,4 +1,5 @@
 #include <stdint.h>
+#include <stdlib.h>
 #include "hooks.h"
 
 #ifdef USE_SJLJ
@@ -211,6 +212,42 @@ extern "C" uint8_t get_proc_array_entry(void **out, uint32_t id)
 	{
 		return 0;
 	}
+}
+
+// BYOND's string lookup behind string_tree.rs's detour
+extern "C"
+{
+	// BYOND's function past the detour
+	Fnget_string_id_byond get_string_id_original = nullptr;
+
+	uint32_t string_tree_find(const char *text, uint8_t kind, uint8_t other);
+	void string_tree_added(uint32_t id);
+
+	void *get_string_entry_unchecked(uint32_t id)
+	{
+		return get_string_table_entry_byond(id);
+	}
+}
+
+// Stands in for BYOND's function, so it takes its arguments the same way.
+// The call to that function has no Rust frame under it: an exception BYOND
+// throws from there goes on to its caller.
+extern "C" LINUX_REGPARM3 uint32_t get_string_id_hook(const char *text, uint8_t kind, uint8_t other, uint8_t keep)
+{
+	uint32_t id = string_tree_find(text, kind, other);
+	if (id != 0xFFFFFFFF)
+	{
+		// BYOND's function frees text that isn't the caller's to keep once
+		// it has found the string
+		if (!keep)
+		{
+			free((void *)text);
+		}
+		return id;
+	}
+	id = get_string_id_original(text, kind, other, keep);
+	string_tree_added(id);
+	return id;
 }
 
 extern "C" uint8_t get_string_id(uint32_t *out, const char *data)

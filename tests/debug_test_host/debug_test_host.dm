@@ -116,3 +116,47 @@ var/overrun_global = 2
 	var/datum/overrun/o = new
 	o.calls(113, 227, "c113")
 	return 7
+
+// How many of the strings made here aren't the one string their text names.
+// A lookup that misses a string the world has makes a second with the same
+// text, and a list keyed by the first no longer finds it. The texts arrive in
+// order, in reverse and scattered, some are text BYOND converts or checks
+// before it looks, and half are dropped and made again.
+/proc/strings_astray(count)
+	var/list/by_text = list()
+	var/wrong = 0
+	for(var/i in 1 to count)
+		by_text["up [num2text(i, 8)]"] = i
+	for(var/i in count to 1 step -1)
+		by_text["down [num2text(i, 8)]"] = i
+	for(var/i in 1 to count)
+		by_text["mix [num2text((i * 7919) % count, 8)] [i]"] = i
+	for(var/i in 1 to count / 10)
+		by_text["caf\u00e9 [i]"] = i
+		by_text["\improper thing [i]"] = i
+	for(var/i in 1 to count)
+		if(by_text["up [num2text(i, 8)]"] != i)
+			wrong++
+		if(by_text["down [num2text(i, 8)]"] != i)
+			wrong++
+		if(by_text["mix [num2text((i * 7919) % count, 8)] [i]"] != i)
+			wrong++
+	for(var/i in 1 to count / 10)
+		if(by_text["caf\u00e9 [i]"] != i)
+			wrong++
+		if(by_text["\improper thing [i]"] != i)
+			wrong++
+	for(var/i in 1 to count step 2)
+		by_text -= "up [num2text(i, 8)]"
+	for(var/i in 1 to count)
+		by_text["again [num2text(i, 8)]"] = i
+	for(var/i in 1 to count step 2)
+		by_text["up [num2text(i, 8)]"] = i
+	for(var/i in 1 to count)
+		if(by_text["up [num2text(i, 8)]"] != i)
+			wrong++
+		if(by_text["again [num2text(i, 8)]"] != i)
+			wrong++
+	if(length(by_text) != count * 4 + (count / 10) * 2)
+		wrong++
+	return wrong
