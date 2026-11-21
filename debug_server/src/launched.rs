@@ -201,15 +201,24 @@ fn read_command_line() -> (Vec<String>, String) {
 	(std::env::args_os().map(|arg| arg.to_string_lossy().into_owned()).collect(), cwd)
 }
 
+/// Called by the loader on Linux and by the launcher on Windows: a panic
+/// that got out would abort the game as it starts.
 fn attach() {
-	let _ = COMMAND_LINE.set(read_command_line());
-	if let Err(e) = auxtools::init_on_world_load(&WORLD_LOAD) {
-		failed(&e);
+	let attached = crate::guard(|| {
+		let _ = COMMAND_LINE.set(read_command_line());
+		auxtools::init_on_world_load(&WORLD_LOAD)
+	});
+	if let Err(e) = attached.and_then(|initialised| initialised) {
+		let _ = crate::guard(|| failed(&e));
 	}
 }
 
-/// Adds the procs in [`HELPER_PROCS`] the world doesn't have
 fn prepare() -> Result<(), String> {
+	crate::guard(add_helper_procs)?
+}
+
+/// Adds the procs in [`HELPER_PROCS`] the world doesn't have
+fn add_helper_procs() -> Result<(), String> {
 	crate::world_resources::loading();
 	let request = helper_procs()?;
 	KEEPALIVE_OURS.store(
@@ -282,7 +291,15 @@ fn overrides(path: &str) -> u32 {
 	(0..).take_while(|&id| Proc::find_override(path, id).is_some()).count() as u32
 }
 
+/// A debugger that panics as it starts is one the world doesn't have:
+/// clients are told why.
 fn ready() {
+	if let Err(e) = crate::guard(start) {
+		failed(&e);
+	}
+}
+
+fn start() {
 	if let Some(proc) = Proc::find("/proc/auxtools_launched_world_del") {
 		let _ = proc.hook(world_del);
 	}
@@ -330,7 +347,9 @@ fn ready() {
 		}
 	};
 	if std::env::var(DEBUG_VAR).is_ok_and(|value| value == "wait") {
-		server.process_until_configured();
+		// A request that panics drops the clients, as it does once the world
+		// runs, and the world starts
+		let _ = crate::guard_server(&mut server, Server::process_until_configured);
 	}
 	crate::install_server(server);
 
@@ -343,13 +362,13 @@ fn ready() {
 /// The world has read its data: resources get their own ids from here on
 fn world_new(_: &Value, _: &Value, _: Vec<Value>) -> auxtools::DMResult {
 	crate::world_resources::loaded();
-	if let Some(server) = unsafe { &mut *crate::DEBUG_SERVER.get() } {
-		server.world_data_loaded();
-	}
+	crate::on_server(Server::world_data_loaded);
 	Ok(Value::NULL)
 }
 
-/// Handle world/Del completion; `failed` indicates a runtime error.
+/// Handle world/Del completion; `failed` indicates a runtime error. What
+/// the server does is guarded apart from the library's shutdown, which a
+/// server that panics must not keep from running.
 fn world_del(_: &Value, _: &Value, args: Vec<Value>) -> auxtools::DMResult {
 	let failed = args.first().is_some_and(|failed| failed.as_number().is_ok_and(|failed| failed != 0.0));
 	if REBOOTING.swap(false, Ordering::Relaxed) {
@@ -358,12 +377,10 @@ fn world_del(_: &Value, _: &Value, args: Vec<Value>) -> auxtools::DMResult {
 		let ours = Proc::find_override("/world/Del", Proc::APART);
 		auxtools::init_on_next_world_load(ours.as_ref());
 	} else if !failed {
-		if let Some(server) = unsafe { &mut *crate::DEBUG_SERVER.get() } {
-			server.world_shutting_down();
-		}
+		crate::on_server(Server::world_shutting_down);
 		auxtools::shut_down_with_world();
-	} else if let Some(server) = unsafe { &mut *crate::DEBUG_SERVER.get() } {
-		server.world_carries_on();
+	} else {
+		crate::on_server(Server::world_carries_on);
 	}
 	// A failed Del leaves the world running and must preserve its debugger.
 	Ok(Value::NULL)
@@ -377,34 +394,26 @@ fn world_reboot(_: &Value, _: &Value, _: Vec<Value>) -> auxtools::DMResult {
 /// Re-enable pauses after world/Reboot() returns or fails without rebooting.
 fn world_reboot_declined(_: &Value, _: &Value, _: Vec<Value>) -> auxtools::DMResult {
 	REBOOTING.store(false, Ordering::Relaxed);
-	if let Some(server) = unsafe { &mut *crate::DEBUG_SERVER.get() } {
-		server.world_carries_on();
-	}
+	crate::on_server(Server::world_carries_on);
 	Ok(Value::NULL)
 }
 
 /// The list the world's loop looks at for spawned code to run
 fn spawn_inbox(_: &Value, _: &Value, _: Vec<Value>) -> auxtools::DMResult {
-	match unsafe { &mut *crate::DEBUG_SERVER.get() } {
-		Some(server) => Ok(server.spawn_inbox()),
-		None => Ok(Value::NULL)
-	}
+	Ok(crate::on_server(Server::spawn_inbox).unwrap_or(Value::NULL))
 }
 
 /// Dequeue spawned code, installing it in `/proc/auxtools_spawn_stub`.
 /// Return its number and arguments, or null if the queue is empty.
 fn spawn_next(_: &Value, _: &Value, _: Vec<Value>) -> auxtools::DMResult {
-	match unsafe { &mut *crate::DEBUG_SERVER.get() } {
-		Some(server) => server.next_spawn(),
-		None => Ok(Value::NULL)
-	}
+	crate::on_server(Server::next_spawn).unwrap_or(Ok(Value::NULL))
 }
 
 /// Complete a spawned evaluation with its result list, or null on failure.
 fn spawn_done(_: &Value, _: &Value, args: Vec<Value>) -> auxtools::DMResult {
 	let number = args.first().and_then(|number| number.as_number().ok());
-	if let (Some(server), Some(number)) = (unsafe { &mut *crate::DEBUG_SERVER.get() }, number) {
-		server.spawn_done(number as u64, args.get(1).unwrap_or(&Value::NULL));
+	if let Some(number) = number {
+		crate::on_server(|server| server.spawn_done(number as u64, args.get(1).unwrap_or(&Value::NULL)));
 	}
 	Ok(Value::NULL)
 }

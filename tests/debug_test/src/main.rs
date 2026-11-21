@@ -697,6 +697,33 @@ fn profile(world: &World, mut client: Client) -> Client {
 	client
 }
 
+/// Requests that panic in the debug library (`#panic`, which debug builds
+/// have): the client is dropped, and the world and its debugger carry on.
+#[cfg(debug_assertions)]
+fn panics() {
+	let panic = || Request::Eval {
+		frame_id: None,
+		command: "#panic".to_owned(),
+		context: None
+	};
+	let world = World::start(&host_file("debug_test_host.dmb"), &[]);
+	let mut client = world.connect_silent();
+	client.send(panic());
+	client.wait_closed();
+	let mut client = world.connect();
+	assert_eq!(status(&mut client), None);
+	assert_eq!(eval(&mut client, None, "1 + 1"), "2");
+	println!("ok: a request that panics while the world waits for its debugger drops the client, and the world starts");
+
+	client.send(panic());
+	client.wait_closed();
+	let mut client = world.connect();
+	assert_eq!(eval(&mut client, None, "1 + 1"), "2");
+	let output = world.output();
+	assert_eq!(output.matches("asked for with #panic").count(), 2, "{}", output);
+	println!("ok: a request that panics while the world runs drops the client, and the world carries on");
+}
+
 fn main() {
 	let res = Command::new(paths::find_dm())
 		.with_byond_paths()
@@ -802,6 +829,10 @@ fn main() {
 	let mut client = world.connect();
 	pause(&mut client);
 	println!("ok: the world connects again after a reboot");
+	drop(world);
+
+	#[cfg(debug_assertions)]
+	panics();
 
 	println!("Debug server tests succeeded");
 }

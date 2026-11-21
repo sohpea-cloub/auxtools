@@ -11,20 +11,21 @@ use winapi::{
 	vc::excpt::EXCEPTION_EXECUTE_HANDLER
 };
 
-use crate::{server_types::BreakpointReason, DEBUG_SERVER};
+use crate::server_types::BreakpointReason;
 
 extern "system" fn exception_filter(info: *mut EXCEPTION_POINTERS) -> LONG {
-	unsafe {
-		report(info);
-		if let Some(dbg) = &mut *DEBUG_SERVER.get() {
-			let ctx = *raw_types::funcs::CURRENT_EXECUTION_CONTEXT;
+	// A panic that left this would abort the process in place of the exit
+	// its exception gets. The report doesn't need the debugger, and is made
+	// when the debugger has stopped too.
+	let _ = auxtools::guard(|| unsafe { report(info) });
+	crate::on_server(|dbg| {
+		let ctx = unsafe { *raw_types::funcs::CURRENT_EXECUTION_CONTEXT };
 
-			dbg.handle_breakpoint(ctx, BreakpointReason::Runtime {
-				message: "native exception".to_owned(),
-				caught: false
-			});
-		}
-	}
+		dbg.handle_breakpoint(ctx, BreakpointReason::Runtime {
+			message: "native exception".to_owned(),
+			caught: false
+		});
+	});
 
 	EXCEPTION_EXECUTE_HANDLER
 }

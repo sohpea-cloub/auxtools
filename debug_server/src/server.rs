@@ -2764,6 +2764,11 @@ impl Server {
 	/// Evaluate and send the response. Return true if execution continues
 	/// after sleeping or moving to the background.
 	fn handle_eval(&mut self, frame_id: Option<u32>, command: &str) -> bool {
+		// What the tests of the panic guard ask for
+		#[cfg(debug_assertions)]
+		if command == "#panic" {
+			panic!("asked for with #panic");
+		}
 		if let Some(command) = command.strip_prefix('#') {
 			let response = self.handle_command(frame_id, command);
 			self.send_or_disconnect(Response::Eval(Ok(EvalResponse {
@@ -3539,6 +3544,7 @@ impl Server {
 	pub fn recover_from_panic(&mut self) {
 		eprintln!("Debug server panicked, dropping the debug clients");
 		self.in_eval = false;
+		self.waiting_to_start = false;
 		// A panic mid-pause skips the cleanup at the end of handle_breakpoint.
 		// The frames in here point at procs that are about to carry on running.
 		self.state = None;

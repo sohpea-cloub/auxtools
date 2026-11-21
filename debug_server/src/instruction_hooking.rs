@@ -299,9 +299,7 @@ fn proc_instance_is_suspended(proc_ref: ProcInstanceRef) -> bool {
 
 #[runtime_handler]
 fn handle_runtime(error: &str) {
-	// BYOND calls this through extern "C" code, and a panic that gets back out
-	// there aborts the whole game
-	let result = std::panic::catch_unwind(|| unsafe {
+	let _ = crate::guard(|| unsafe {
 		let ctx = *raw_types::funcs::CURRENT_EXECUTION_CONTEXT;
 
 		// If this is eval code, don't catch the breakpoint
@@ -332,12 +330,6 @@ fn handle_runtime(error: &str) {
 			auxtools::instruction_hook::hear_all();
 		}
 	});
-
-	if let Err(payload) = result {
-		if let Some(server) = unsafe { &mut *DEBUG_SERVER.get() } {
-			crate::recover(&*payload, server);
-		}
-	}
 }
 
 /// Whether this frame or a caller has a `try` that catches the error.

@@ -31,8 +31,8 @@ mod mem_profiler;
 mod mem_profiler_stub;
 
 use std::{
+	any::Any,
 	cell::UnsafeCell,
-	panic::{catch_unwind, AssertUnwindSafe},
 	sync::atomic::{AtomicU32, Ordering}
 };
 
@@ -48,7 +48,8 @@ pub static mut DEBUG_SERVER: UnsafeCell<Option<server::Server>> = UnsafeCell::ne
 pub static WORLD_ENDS: AtomicU32 = AtomicU32::new(0);
 
 /// Abort debug server work when evaluated DM code ends the world.
-/// Unwinding code must not access the destroyed server.
+/// Unwinding code must not access the destroyed server. Whatever can run an
+/// evaluation runs under [`guard`], where the unwinding ends.
 pub struct WorldEnded;
 
 /// Running BYOND build used for compilation.
@@ -57,11 +58,46 @@ pub(crate) fn world_byond() -> dmasm::ByondVersion {
 	dmasm::ByondVersion::new(major, build)
 }
 
-/// Handle panics at the BYOND callback boundary.
-fn recover(payload: &(dyn std::any::Any + Send), server: &mut server::Server) {
-	if !payload.is::<WorldEnded>() {
-		server.recover_from_panic();
+/// Run debugger work that BYOND called for. BYOND calls through `extern "C"`
+/// code, and a panic that unwinds into it aborts the whole game. Losing the
+/// debugger is the better deal: the panic ends here, the server drops its
+/// clients, which can connect again, and the error says what panicked.
+///
+/// Work that ended the world (see [`WorldEnded`]) is an error too, and not
+/// a panic.
+pub(crate) fn guard<R>(work: impl FnOnce() -> R) -> Result<R, String> {
+	let done = auxtools::guard(work);
+	settle(done, || unsafe { (*DEBUG_SERVER.get()).as_mut() })
+}
+
+/// [`guard`] for work on a server that isn't the world's yet.
+pub(crate) fn guard_server<R>(server: &mut server::Server, work: impl FnOnce(&mut server::Server) -> R) -> Result<R, String> {
+	let done = auxtools::guard(|| work(&mut *server));
+	settle(done, || Some(server))
+}
+
+/// [`guard`] for work on the world's server, if it has one.
+pub(crate) fn on_server<R>(work: impl FnOnce(&mut server::Server) -> R) -> Option<R> {
+	let server = unsafe { (*DEBUG_SERVER.get()).as_mut() }?;
+	guard_server(server, work).ok()
+}
+
+/// Recover from the panic that ended guarded work, with the server it
+/// was for.
+fn settle<'a, R>(done: Result<R, Box<dyn Any + Send>>, server: impl FnOnce() -> Option<&'a mut server::Server>) -> Result<R, String> {
+	let payload = match done {
+		Ok(done) => return Ok(done),
+		Err(payload) => payload
+	};
+	// Its server went with the world
+	if payload.is::<WorldEnded>() {
+		return Err("the world ended".to_owned());
 	}
+	// Recovering works on what the panic left, and can panic too
+	if let Some(server) = server() {
+		let _ = auxtools::guard(|| server.recover_from_panic());
+	}
+	Err(format!("the debugger panicked: {}", auxtools::panic_message(&*payload)))
 }
 
 #[shutdown]
@@ -100,16 +136,10 @@ impl InstructionHook for DebugServerInstructionHook<'static> {
 fn attend(debug_server: &mut server::Server, ctx: *mut raw_types::procs::ExecutionContext) {
 	// Breakpoints and throws can start work requiring later callbacks.
 	auxtools::instruction_hook::hear_all();
-	// BYOND calls this through extern "C" code, and a panic that gets back
-	// out there aborts the whole game. Losing the debugger is the better
-	// deal.
-	let handled = catch_unwind(AssertUnwindSafe(|| {
+	let _ = guard_server(debug_server, |debug_server| {
 		profiler::enter(ctx, debug_server.is_in_eval());
 		debug_server.handle_instruction(ctx);
-	}));
-	if let Err(payload) = handled {
-		recover(&*payload, debug_server);
-	}
+	});
 }
 
 /// Makes `server` the debug server, run on every instruction
