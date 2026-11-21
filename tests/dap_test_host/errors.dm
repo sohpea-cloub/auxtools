@@ -20,7 +20,7 @@
 
 /proc/fail_caught()
 	try
-		fail_null()
+		fail_null() // @caught_call
 	catch (var/exception/e)
 		return "caught [e.name]"
 
@@ -28,7 +28,7 @@
 	throw EXCEPTION("thrown on purpose") // @fail_throw
 
 /proc/sc_fail_null()
-	fail_deep()
+	fail_deep() // @sc_fail_null
 	world.log << "dap: after the failure" // @after_failure
 
 /proc/sc_fail_index()
@@ -62,7 +62,7 @@
 		var/list/L = null
 		return L[1] // @fail_caught_here
 	catch (var/exception/e)
-		return "caught here [e.name]"
+		return "caught here [e.name]" // @caught_here_catch
 
 /proc/sc_fail_caught_here()
 	world.log << "dap: [fail_caught_here()]"

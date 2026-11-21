@@ -54,9 +54,11 @@ pub fn set_port(port: u16) {
 	PORT.store(port, Ordering::Relaxed);
 }
 
-/// Signal a new event. Call after sending it to the channel.
+/// Signal an event after sending it to the channel. Restore instruction
+/// callbacks so an idle debugger handles the event.
 pub fn event_sent() {
-	EVENTS.store(true, Ordering::Release);
+	EVENTS.store(true, Ordering::SeqCst);
+	auxtools::instruction_hook::hear_all();
 }
 
 /// Consume the pending-event flag. If set, drain the channel; later sends
@@ -64,6 +66,12 @@ pub fn event_sent() {
 pub fn events_pending() -> bool {
 	// Avoid an atomic write on every instruction when the flag is clear.
 	EVENTS.load(Ordering::Acquire) && EVENTS.swap(false, Ordering::AcqRel)
+}
+
+/// Whether the world thread has an event or a wake notification to pick up.
+/// Leaves both for `events_pending` and `woke`.
+pub fn wants_world() -> bool {
+	EVENTS.load(Ordering::SeqCst) || WOKE.load(Ordering::SeqCst)
 }
 
 /// Consume the wake notification.
@@ -82,8 +90,14 @@ fn wanted() -> bool {
 	WAITING.load(Ordering::Relaxed) > 0 || CLIENTS.load(Ordering::Relaxed) > 0
 }
 
+/// Combined instruction and proc-call count. Calls indicate activity even
+/// when instruction callbacks are disabled.
+fn activity() -> u32 {
+	ALIVE.load(Ordering::Relaxed).wrapping_add(auxtools::proc_calls())
+}
+
 fn watch() {
-	let mut last_alive = ALIVE.load(Ordering::Relaxed);
+	let mut last_alive = activity();
 	let mut quiet_since = Instant::now();
 	let mut connection: Option<TcpStream> = None;
 	loop {
@@ -98,12 +112,15 @@ fn watch() {
 			connection = None;
 		}
 
-		let alive = ALIVE.load(Ordering::Relaxed);
+		let alive = activity();
 		if alive != last_alive || !wanted() || connection.is_some() {
 			last_alive = alive;
 			quiet_since = Instant::now();
 			continue;
 		}
+		// A loop without proc calls may still be running. Enable callbacks
+		// to detect instruction activity before treating the world as asleep.
+		auxtools::instruction_hook::hear_all();
 		if quiet_since.elapsed() < PATIENCE {
 			continue;
 		}
@@ -113,7 +130,8 @@ fn watch() {
 			let address = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
 			connection = TcpStream::connect_timeout(&address, Duration::from_secs(1)).ok();
 			if connection.is_some() {
-				WOKE.store(true, Ordering::Relaxed);
+				WOKE.store(true, Ordering::SeqCst);
+				auxtools::instruction_hook::hear_all();
 			}
 		}
 		quiet_since = Instant::now();

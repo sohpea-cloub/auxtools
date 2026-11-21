@@ -235,6 +235,14 @@ pub fn shut_down_with_world() {
 	shutdown_partial();
 }
 
+// DM proc calls seen
+static PROC_CALLS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+/// Wrapping proc-call count for activity detection. Readable from any thread.
+pub fn proc_calls() -> u32 {
+	PROC_CALLS.load(Ordering::Relaxed)
+}
+
 // Work waiting for a later proc call (see `at_proc_calls`), and whether there
 // is any. Read on every DM proc call.
 static PROC_CALL_WORK: Mutex<Vec<fn() -> bool>> = Mutex::new(Vec::new());
@@ -274,6 +282,8 @@ pub fn start_runs_new_code(proc: raw_types::procs::ProcId) {
 /// when the call should run its proc's replacement code
 /// (see [`start_runs_new_code`]).
 pub(crate) fn on_proc_call(proc: raw_types::procs::ProcId, src: raw_types::values::ValueTag) -> bool {
+	// Only BYOND's thread writes it
+	PROC_CALLS.store(PROC_CALLS.load(Ordering::Relaxed).wrapping_add(1), Ordering::Relaxed);
 	if PROC_CALL_WORK_PENDING.load(Ordering::Relaxed) {
 		// Taken out first: the work can make proc calls of its own
 		let work = std::mem::take(&mut *PROC_CALL_WORK.lock().unwrap());

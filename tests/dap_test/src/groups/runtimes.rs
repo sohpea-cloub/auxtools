@@ -137,6 +137,7 @@ pub fn run() {
 	ok("re-enable runtime filter");
 
 	caught_and_thrown(&mut world);
+	steps_from_a_stop(&mut world);
 	conditions(&mut world);
 	world.end();
 }
@@ -190,6 +191,32 @@ fn caught_and_thrown(world: &mut World) {
 	world.resume_through("fail_caught");
 	ok("caught-only filter");
 	world.exception_filters(&["runtimes"], &[]);
+}
+
+/// Restore instruction callbacks when stepping from a runtime-error pause.
+fn steps_from_a_stop(world: &mut World) {
+	// Step into the caller after the failing proc exits.
+	world.run("fail_null");
+	stopped_on(world, "cannot read from list", "/fail_null", "fail_null");
+	world.step_on("next", "/fail_deep", "fail_deep");
+	world.step_on("next", "/sc_fail_null", "sc_fail_null");
+	world.step_on("next", "/sc_fail_null", "after_failure");
+	world.resume_through("fail_null");
+
+	// Step into the local catch block.
+	world.exception_filters(&["runtimes", "caught"], &[]);
+	world.run("fail_caught_here");
+	stopped_on_a(world, true, "cannot read from list", "/fail_caught_here", "fail_caught_here");
+	world.step_on("next", "/fail_caught_here", "caught_here_catch");
+	world.resume_through("fail_caught_here");
+
+	// Step out to the caller's call site.
+	world.run("fail_caught");
+	stopped_on_a(world, true, "cannot read from list", "/fail_null", "fail_null");
+	world.step_on("stepOut", "/fail_caught", "caught_call");
+	world.resume_through("fail_caught");
+	world.exception_filters(&["runtimes"], &[]);
+	ok("stepping after runtime errors");
 }
 
 /// A filter's condition: text the error's message has to have, or mustn't

@@ -92,6 +92,7 @@ impl Server {
 		// Pointer-read errors from deleted targets belong to watch handling,
 		// not the world's runtime error breakpoints.
 		self.in_eval = true;
+		auxtools::instruction_hook::hear_all();
 		for (index, watch) in self.watches.iter().enumerate() {
 			match &watch.place {
 				Place::Pointer(pointer) => match auxtools::pointer::read_raw(pointer) {
@@ -235,6 +236,7 @@ impl Server {
 			None => vec![]
 		};
 		let was_in_eval = std::mem::replace(&mut self.in_eval, true);
+		auxtools::instruction_hook::hear_all();
 		for watch in &mut self.watches {
 			let now = match &watch.place {
 				Place::Pointer(pointer) => auxtools::pointer::read_raw(pointer),

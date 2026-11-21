@@ -27,6 +27,8 @@ where
 					let mut created_tracker = Tracker::new();
 					f(&mut created_tracker);
 					hooks.push(Box::new(created_tracker));
+					// Another hook in this library may have limited callbacks.
+					auxtools::instruction_hook::hear_all();
 				}
 			}
 		}

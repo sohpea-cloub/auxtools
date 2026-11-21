@@ -329,6 +329,7 @@ fn handle_runtime(error: &str) {
 		};
 		if let Some(action) = handle_breakpoint(ctx, reason) {
 			CURRENT_ACTION = action;
+			auxtools::instruction_hook::hear_all();
 		}
 	});
 
@@ -405,6 +406,46 @@ pub(crate) fn is_breakpoint(ctx: *mut raw_types::procs::ExecutionContext) -> boo
 unsafe fn in_helper(ctx: *mut raw_types::procs::ExecutionContext) -> bool {
 	let id = unsafe { (**(*ctx).proc_instance()).proc };
 	Proc::from_id(id).is_some_and(|proc| crate::launched::is_helper(&proc))
+}
+
+/// Skip debugger work when no breakpoint, throw, step, watch, evaluation,
+/// profile or client request needs it. Update activity and instruction state.
+#[inline(always)]
+pub(crate) fn passes(server: &Server, ctx: *mut raw_types::procs::ExecutionContext) -> bool {
+	unsafe {
+		let opcode = *(*(*ctx).bytecode()).add(*(*ctx).bytecode_offset() as usize);
+		if opcode == OPCODE_DEBUG_BREAK
+			|| opcode == OPCODE_THROW
+			|| !matches!(CURRENT_ACTION, DebuggerAction::None)
+			|| (*DEFERRED_INSTRUCTION_REPLACE.get()).is_some()
+			|| server.is_in_eval()
+			|| server.has_watches()
+			|| crate::profiler::running()
+			|| crate::waker::wants_world()
+		{
+			return false;
+		}
+		crate::waker::alive();
+		LAST_FRAME = ctx;
+		LAST_OPCODE = opcode;
+		true
+	}
+}
+
+/// Limit callbacks to throws and breakpoints while idle. Requests, the
+/// waker, evaluations and pauses restore all callbacks with `hear_all`.
+pub(crate) fn rest() {
+	if !auxtools::instruction_hook::hear_only(&[OPCODE_THROW]) {
+		return;
+	}
+	unsafe {
+		// Intermediate frames will run without callbacks.
+		LAST_FRAME = std::ptr::null_mut();
+	}
+	// Recheck work announced during the table update.
+	if crate::waker::wants_world() {
+		auxtools::instruction_hook::hear_all();
+	}
 }
 
 impl InstructionHook for Server {

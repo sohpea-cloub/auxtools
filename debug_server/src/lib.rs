@@ -79,21 +79,36 @@ struct DebugServerInstructionHook<'a> {
 }
 
 impl InstructionHook for DebugServerInstructionHook<'static> {
+	#[inline]
 	fn handle_instruction(&mut self, ctx: *mut raw_types::procs::ExecutionContext) {
 		let Some(debug_server) = self.debug_server.get_mut() else {
 			return;
 		};
-
-		// BYOND calls this through extern "C" code, and a panic that gets back
-		// out there aborts the whole game. Losing the debugger is the better
-		// deal.
-		let handled = catch_unwind(AssertUnwindSafe(|| {
-			profiler::enter(ctx, debug_server.is_in_eval());
-			debug_server.handle_instruction(ctx);
-		}));
-		if let Err(payload) = handled {
-			recover(&*payload, debug_server);
+		if instruction_hooking::passes(debug_server, ctx) {
+			// Other registered hooks may still need every instruction.
+			if unsafe { (*INSTRUCTION_HOOKS.get()).len() } == 1 {
+				instruction_hooking::rest();
+			}
+			return;
 		}
+		attend(debug_server, ctx);
+	}
+}
+
+/// Keep debugger work out of line to minimize idle-handler overhead.
+#[inline(never)]
+fn attend(debug_server: &mut server::Server, ctx: *mut raw_types::procs::ExecutionContext) {
+	// Breakpoints and throws can start work requiring later callbacks.
+	auxtools::instruction_hook::hear_all();
+	// BYOND calls this through extern "C" code, and a panic that gets back
+	// out there aborts the whole game. Losing the debugger is the better
+	// deal.
+	let handled = catch_unwind(AssertUnwindSafe(|| {
+		profiler::enter(ctx, debug_server.is_in_eval());
+		debug_server.handle_instruction(ctx);
+	}));
+	if let Err(payload) = handled {
+		recover(&*payload, debug_server);
 	}
 }
 
@@ -102,6 +117,7 @@ fn install_server(server: server::Server) {
 	let debug_server_instruction_hook;
 	unsafe {
 		*DEBUG_SERVER.get() = Some(server);
+		auxtools::instruction_hook::hear_all();
 		debug_server_instruction_hook = DebugServerInstructionHook {
 			debug_server: &mut *std::ptr::addr_of_mut!(DEBUG_SERVER)
 		};
