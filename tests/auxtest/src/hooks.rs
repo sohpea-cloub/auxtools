@@ -17,6 +17,18 @@ fn hooked_method(x: Value) {
 	Ok(Value::from(x.as_number()? * 2.0))
 }
 
+#[hook("/proc/auxtest_panics")]
+fn panics() {
+	panic!("auxtest asked for this panic");
+}
+
+byond_ffi_fn! { auxtest_ffi_panics() {
+	if true {
+		panic!("auxtest asked for this panic");
+	}
+	Some("unreachable")
+} }
+
 #[hook("/proc/auxtest_hooks")]
 fn test_hooks() {
 	use raw_types::{funcs, strings};

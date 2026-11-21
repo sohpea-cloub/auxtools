@@ -54,14 +54,16 @@ pub fn run_partial_init() -> Result<(), String> {
 	Ok(())
 }
 
+// A shutdown function that panics doesn't keep the others from running
+
 pub fn run_partial_shutdown() {
 	for func in inventory::iter::<PartialShutdownFunc> {
-		func.0();
+		let _ = crate::guard(func.0);
 	}
 }
 
 pub fn run_full_shutdown() {
 	for func in inventory::iter::<FullShutdownFunc> {
-		func.0();
+		let _ = crate::guard(func.0);
 	}
 }

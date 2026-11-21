@@ -102,6 +102,10 @@ static mut DETOURED: bool = false;
 
 /// Install a handler called before each instruction with its running frame.
 /// Replaces the previous handler.
+///
+/// The handler runs unguarded, to keep the cost of an instruction down: a
+/// panic that leaves it aborts the game. It catches its own with
+/// [`crate::guard`] where it can panic.
 pub fn set_handler(handler: Handler) -> Result<(), String> {
 	detour()?;
 	unsafe {

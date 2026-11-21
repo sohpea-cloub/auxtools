@@ -117,6 +117,21 @@ var/datum/weak_test_datum
 	for (var/i in 1 to 4096)
 		new /mob/verb/auxtest_verb(M, "auxtest clone [i]")
 
+/proc/auxtest_panics()
+	CRASH()
+
+// A panic in the library would abort DreamDaemon if it got out. A hook's is
+// a runtime error where the proc was called, and an exported function's an
+// empty string.
+/proc/auxtest_panic_is_caught(auxtest_dll)
+	var/raised
+	try
+		auxtest_panics()
+	catch(var/exception/e)
+		raised = e.name
+	ASSERT(findtext(raised, "panicked: auxtest asked for this panic"))
+	ASSERT(call_ext(auxtest_dll, "auxtest_ffi_panics")() == "")
+
 // Tests
 /proc/auxtest_hooks()
 	CRASH()
@@ -144,6 +159,7 @@ var/datum/weak_test_datum
 
 	// Tests
 	ASSERT(auxtest_hooks() == TRUE)
+	auxtest_panic_is_caught(auxtest_dll)
 	ASSERT(auxtest_lists() == TRUE)
 	ASSERT(auxtest_procs() == TRUE)
 	ASSERT(auxtest_strings() == TRUE)

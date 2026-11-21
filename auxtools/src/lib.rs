@@ -26,9 +26,12 @@ mod value_from;
 pub mod version;
 mod weak_value;
 
-use std::sync::{
-	atomic::{AtomicBool, AtomicU32, Ordering},
-	Mutex, OnceLock
+use std::{
+	any::Any,
+	sync::{
+		atomic::{AtomicBool, AtomicU32, Ordering},
+		Mutex, OnceLock
+	}
 };
 
 pub use auxtools_impl::{full_shutdown, hook, init, pin_dll, runtime_handler, shutdown};
@@ -88,6 +91,21 @@ fn pin_dll() -> Result<(), ()> {
 	Ok(())
 }
 
+/// Run `work` for a call BYOND made. BYOND calls through `extern "C"` code,
+/// and a panic that unwinds into it aborts the game: the panic ends here, and
+/// its payload is returned. The library runs every callback it is given this
+/// way, except the instruction handler (see [`instruction_hook::set_handler`]).
+pub fn guard<R>(work: impl FnOnce() -> R) -> Result<R, Box<dyn Any + Send>> {
+	std::panic::catch_unwind(std::panic::AssertUnwindSafe(work))
+}
+
+/// The message of a panic [`guard`] caught.
+pub fn panic_message(payload: &(dyn Any + Send)) -> String {
+	let message = payload.downcast_ref::<&str>().copied();
+	let message = message.or_else(|| payload.downcast_ref::<String>().map(String::as_str));
+	message.unwrap_or("no message").to_owned()
+}
+
 // The first failed init. Trying again would run setup on top of what the
 // failed attempt left behind, so every later call hands this back instead.
 static INIT_FAILURE: OnceLock<String> = OnceLock::new();
@@ -113,8 +131,13 @@ fn try_init() -> Result<(), String> {
 }
 
 /// Run `prepare` after loading the proc table and before installing
-/// compile-time hooks, so it can add required procs.
+/// compile-time hooks, so it can add required procs. A panic, in `prepare` or
+/// an init function, is a failed init.
 fn try_init_with(prepare: Option<fn() -> Result<(), String>>) -> Result<(), String> {
+	guard(|| init_with(prepare)).unwrap_or_else(|panic| Err(format!("panicked: {}", panic_message(&*panic))))
+}
+
+fn init_with(prepare: Option<fn() -> Result<(), String>>) -> Result<(), String> {
 	if get_init_level() == InitLevel::None {
 		return Ok(());
 	}
@@ -171,7 +194,9 @@ fn init_full() -> Result<(), String> {
 	Ok(())
 }
 
-/// Called on BYOND's thread by [`init_on_world_load`] each time a world loads
+/// Called on BYOND's thread by [`init_on_world_load`] each time a world loads.
+/// A panic in `prepare` fails the init; one in `ready` or `failed` ends that
+/// call.
 pub struct WorldLoad {
 	/// Run before compile-time hooks, after the proc table is available.
 	/// May add procs required by those hooks.
@@ -287,7 +312,8 @@ pub(crate) fn on_proc_call(proc: raw_types::procs::ProcId, src: raw_types::value
 	if PROC_CALL_WORK_PENDING.load(Ordering::Relaxed) {
 		// Taken out first: the work can make proc calls of its own
 		let work = std::mem::take(&mut *PROC_CALL_WORK.lock().unwrap());
-		let waiting: Vec<_> = work.into_iter().filter(|work| !work()).collect();
+		// Work that panics isn't tried again
+		let waiting: Vec<_> = work.into_iter().filter(|&work| !guard(work).unwrap_or(true)).collect();
 		let mut queue = PROC_CALL_WORK.lock().unwrap();
 		queue.extend(waiting);
 		PROC_CALL_WORK_PENDING.store(!queue.is_empty(), Ordering::Relaxed);
@@ -322,13 +348,13 @@ pub(crate) fn on_proc_call(proc: raw_types::procs::ProcId, src: raw_types::value
 	match try_init_with(Some(on_load.prepare)) {
 		Ok(()) => {
 			*STARTING.lock().unwrap() = Some(proc);
-			(on_load.ready)();
+			let _ = guard(on_load.ready);
 			*STARTING.lock().unwrap() = None;
 		}
 		Err(e) => {
 			hooks::clear_hooks();
 			proc::clear_procs();
-			(on_load.failed)(&e);
+			let _ = guard(|| (on_load.failed)(&e));
 		}
 	}
 	START_RUNS_NEW.swap(u32::MAX, Ordering::Relaxed) == proc.0

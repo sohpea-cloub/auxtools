@@ -72,6 +72,9 @@ pub fn byond_return(value: Option<Vec<u8>>) -> *const c_char {
 /// You should favour [hooks](attr.hook.html) over these when working with
 /// auxtools.
 ///
+/// A body that panics returns an empty string: the panic would abort the game
+/// if it got out.
+///
 /// # Examples
 /// ```ignore
 /// byond_ffi_fn! { my_proc(_input) {
@@ -87,7 +90,7 @@ macro_rules! byond_ffi_fn {
             _argc: ::std::os::raw::c_int, _argv: *const *const ::std::os::raw::c_char
         ) -> *const ::std::os::raw::c_char {
             let closure = || ($body);
-            $crate::byond_ffi::byond_return(closure().map(From::from))
+            $crate::byond_ffi::byond_return($crate::guard(closure).unwrap_or(None).map(From::from))
         }
     };
 
@@ -112,7 +115,7 @@ macro_rules! byond_ffi_fn {
             )?
 
             let closure = || ($body);
-            $crate::byond_ffi::byond_return(closure().map(From::from))
+            $crate::byond_ffi::byond_return($crate::guard(closure).unwrap_or(None).map(From::from))
         }
     };
 }
