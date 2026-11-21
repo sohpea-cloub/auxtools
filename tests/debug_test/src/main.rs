@@ -737,9 +737,15 @@ fn panics() {
 	client.wait_closed();
 	let mut client = world.connect();
 	assert_eq!(eval(&mut client, None, "1 + 1"), "2");
+	pause(&mut client);
+	client.send(panic());
+	client.wait_closed();
+	let mut client = world.connect();
+	assert_eq!(status(&mut client), None);
+	assert_eq!(eval(&mut client, None, "1 + 1"), "2");
 	let output = world.output();
-	assert_eq!(output.matches("asked for with #panic").count(), 2, "{}", output);
-	println!("ok: a request that panics while the world runs drops the client, and the world carries on");
+	assert_eq!(output.matches("asked for with #panic").count(), 3, "{}", output);
+	println!("ok: a request that panics while the world runs or is paused drops the client, and the world carries on");
 }
 
 fn main() {

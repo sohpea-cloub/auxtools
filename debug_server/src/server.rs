@@ -3548,6 +3548,7 @@ impl Server {
 		// A panic mid-pause skips the cleanup at the end of handle_breakpoint.
 		// The frames in here point at procs that are about to carry on running.
 		self.state = None;
+		self.paused = None;
 		self.disconnect_all();
 		self.profiling = None;
 		crate::profiler::discard();
