@@ -19,6 +19,11 @@ var/early_global = early_value()
 		return L[1] // @early_failure
 	return 5 // @early_value
 
+// The debug server only answers a running world while DM code runs: with short
+// ticks and a loop that runs every tick, a request waits 10 ms, not 100.
+/world
+	fps = 100
+
 /world/New()
 	// pixlocs and turfs need a map
 	maxx = 3
@@ -51,7 +56,7 @@ var/early_global = early_value()
 			idle_ticks = 0
 			sleep(idle)
 			world.log << "dap: idle over"
-		sleep(1)
+		sleep(world.tick_lag)
 
 /proc/sc_quit()
 	world.log << "dap: quitting"

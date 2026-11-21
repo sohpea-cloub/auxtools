@@ -16,7 +16,11 @@ mod paths;
 #[path = "../../../debug_server/src/server_types.rs"]
 mod server_types;
 
-use std::{path::PathBuf, process::Command, time::Duration};
+use std::{
+	path::PathBuf,
+	process::Command,
+	time::{Duration, Instant}
+};
 
 use client::{Client, World};
 use paths::ByondCommand;
@@ -782,8 +786,12 @@ fn main() {
 	});
 	eval(&mut client, None, "start_runtimes()");
 	client.resume();
-	// start_runtimes() gives two seconds of runtime errors, wait them out
-	std::thread::sleep(Duration::from_secs(3));
+	// start_runtimes() gives twenty runtime errors, wait them out
+	let start = Instant::now();
+	while eval(&mut client, None, "runtimes_left") != "0" {
+		assert!(start.elapsed() < Duration::from_secs(10), "the world's runtime errors never ended");
+		std::thread::sleep(Duration::from_millis(20));
+	}
 	pause(&mut client);
 	println!("ok: survived runtime errors, and still answers");
 	client.resume();

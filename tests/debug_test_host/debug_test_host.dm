@@ -38,8 +38,8 @@ var/reboot_requested = FALSE
 /proc/profiled_call()
 	return profiled_loop(1000)
 
-// Two seconds of runtime errors, then quiet again. The debugger is told not
-// to pause on them.
+// Twenty runtime errors, one a tick, then quiet again. The debugger is told
+// not to pause on them.
 /proc/start_runtimes()
 	runtimes_left = 20
 
@@ -49,6 +49,11 @@ var/reboot_requested = FALSE
 
 /proc/request_reboot()
 	reboot_requested = TRUE
+
+// The debug server only answers a running world while DM code runs: with short
+// ticks and a loop that runs every tick, a request waits 10 ms, not 100.
+/world
+	fps = 100
 
 /proc/main_loop()
 #if DM_VERSION >= 516
@@ -62,7 +67,7 @@ var/reboot_requested = FALSE
 			runtimes_left--
 			spawn()
 				make_runtime()
-		sleep(1)
+		sleep(world.tick_lag)
 
 	// Rebooting has to happen out here. The debugger evaluates
 	// request_reboot() from inside the debug server, which can't shut itself

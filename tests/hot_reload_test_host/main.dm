@@ -16,11 +16,15 @@ var/reboot_requested = FALSE
 /proc/request_reboot()
 	reboot_requested = TRUE
 
-// The debug server only answers while DM code runs
+// The debug server only answers while DM code runs, so the loop runs every
+// tick, and the ticks are short: a request waits 10 ms for it, not 100.
+/world
+	fps = 100
+
 /proc/main_loop()
 	while (!reboot_requested)
 		tick()
-		sleep(1)
+		sleep(world.tick_lag)
 
 	// Rebooting has to happen out here. The test asks for it through the
 	// debug server, which can't shut itself down there.
