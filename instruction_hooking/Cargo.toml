@@ -6,7 +6,7 @@ publish = false
 edition.workspace = true
 rust-version.workspace = true
 repository.workspace = true
-license.workspace = true
+license = "GPL-3.0"
 
 [dependencies]
 auxtools = { path = "../auxtools" }

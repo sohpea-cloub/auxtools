@@ -227,5 +227,5 @@ both registries. See [release.yml](.github/workflows/release.yml) for setup.
 Auxtools is licensed under the [MIT license](https://en.wikipedia.org/wiki/MIT_License).
 See [LICENSE](./LICENSE) for more details.
 
-The debug server, launcher and dmasm are licensed under GPL-3.0.
-See [debug_server/LICENSE](./debug_server/LICENSE), [auxtools-cli/LICENSE](./auxtools-cli/LICENSE) and [dmasm/LICENSE](./dmasm/LICENSE).
+The debug server, its instruction hook interface, the launcher and dmasm are licensed under GPL-3.0.
+See [debug_server/LICENSE](./debug_server/LICENSE), [instruction_hooking/LICENSE](./instruction_hooking/LICENSE), [auxtools-cli/LICENSE](./auxtools-cli/LICENSE) and [dmasm/LICENSE](./dmasm/LICENSE).
