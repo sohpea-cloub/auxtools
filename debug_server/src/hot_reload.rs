@@ -587,6 +587,18 @@ pub fn prepare(request: &HotReloadRequest, warnings: &mut Vec<String>, skipped: 
 		.enumerate()
 		.map(|(n, (instance, entry, _))| (first_instance + n as u32, instance, entry))
 		.collect();
+	if !prepared.new_globals.is_empty() {
+		if let Err(e) = runtime_tables::global_vars_available() {
+			errors.push(format!(
+				"new global vars can't be listed in global.vars on this build of BYOND ({}); rebuild to add them",
+				e
+			));
+		}
+	}
+	let stub = Proc::find("/proc/auxtools_expr_stub").is_some() || pending.procs.contains_key(&strip_path("/proc/auxtools_expr_stub"));
+	if (prepared.global_init_now.is_some() || !prepared.run_once.is_empty()) && !stub {
+		errors.push("initial values can't be worked out: the world has no /proc/auxtools_expr_stub to run them in".to_owned());
+	}
 	if errors.is_empty() {
 		match type_vars.intern() {
 			Ok(fields) => prepared.type_fields = fields,

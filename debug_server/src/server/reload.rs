@@ -205,7 +205,12 @@ impl Server {
 			Ok((appended, applied)) => {
 				hot_reload::apply(appended, &mut self.breakpoints.claims, &mut self.breakpoints.moved, &mut warnings);
 				warnings.extend(applied.warnings);
-				if let Err(e) = resource_reload::resend(&applied.appearances) {
+				let resent = if applied.appearances.is_empty() {
+					Ok(0)
+				} else {
+					resource_reload::resend(&applied.appearances)
+				};
+				if let Err(e) = resent {
 					warnings.push(format!("resource reload: could not send updated appearances to clients: {}", e));
 				}
 				self.reloads.record_resource_ids(&applied.reloaded, &mut warnings);

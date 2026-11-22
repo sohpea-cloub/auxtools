@@ -316,6 +316,10 @@ pub fn types_available() -> Result<(), String> {
 	functions()?.register_typepath.as_ref().map(|_| ()).map_err(Clone::clone)
 }
 
+pub fn global_vars_available() -> Result<(), String> {
+	functions()?.global_vars.as_ref().map(|_| ()).map_err(Clone::clone)
+}
+
 pub fn proc_entry(id: ProcId) -> Option<ProcEntryWords> {
 	let mut entry: *mut crate::raw_types::procs::ProcEntry = std::ptr::null_mut();
 	unsafe {
