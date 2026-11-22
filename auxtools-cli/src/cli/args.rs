@@ -45,74 +45,96 @@ pub struct Cli {
 	pub command: Option<Command>
 }
 
-#[derive(Subcommand)]
-pub enum Command {
-	Launch(Launch),
-	List(List),
-	Status(Status),
-	Stop(Stop),
-	Reboot(Reboot),
-	Reconnect(Reconnect),
-	Log(Log),
-	Stack(Stack),
-	Vars(Vars),
-	Eval(Eval),
-	Proc(ProcInfo),
-	Disassemble(Disassemble),
-	Pause(Pause),
-	Continue(Continue),
-	StepOver(StepOver),
-	StepIn(StepIn),
-	StepOut(StepOut),
-	Wait(Wait),
-	Trace(Trace),
-	Profile(Profile),
-	Check(Check),
-	Dap,
-	Help(Help),
-	Version(Version)
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Scope {
+	Local,
+	World,
+	WorldExit
+}
+
+macro_rules! commands {
+	($($group:tt { $($name:tt => $variant:ident $(($options:ident))?, $scope:ident;)* })*) => {
+		#[derive(Subcommand)]
+		pub enum Command {
+			$($(
+				#[command(name = $name)]
+				$variant $(($options))?,
+			)*)*
+		}
+
+		impl Command {
+			pub const fn name(&self) -> &'static str {
+				match self {
+					$($(Self::$variant { .. } => $name,)*)*
+				}
+			}
+
+			pub const fn scope(&self) -> Scope {
+				match self {
+					$($(Self::$variant { .. } => Scope::$scope,)*)*
+				}
+			}
+		}
+
+		pub const GROUPS: &[(&str, &[(&str, Scope)])] = &[
+			$(($group, &[$(($name, Scope::$scope),)*]),)*
+		];
+	};
+}
+
+commands! {
+	"World management" {
+		"launch" => Launch(Launch), Local;
+		"list" => List(List), Local;
+		"status" => Status(Status), World;
+		"stop" => Stop(Stop), WorldExit;
+		"reboot" => Reboot(Reboot), World;
+		"reconnect" => Reconnect(Reconnect), World;
+		"log" => Log(Log), World;
+	}
+	"Inspection" {
+		"stack" => Stack(Stack), World;
+		"vars" => Vars(Vars), World;
+		"eval" => Eval(Eval), World;
+		"proc" => Proc(ProcInfo), World;
+		"disassemble" => Disassemble(Disassemble), World;
+	}
+	"Execution" {
+		"pause" => Pause(Pause), World;
+		"continue" => Continue(Continue), World;
+		"step-over" => StepOver(StepOver), World;
+		"step-in" => StepIn(StepIn), World;
+		"step-out" => StepOut(StepOut), World;
+		"wait" => Wait(Wait), World;
+		"trace" => Trace(Trace), World;
+		"profile" => Profile(Profile), World;
+	}
+	"Source code" {
+		"check" => Check(Check), Local;
+	}
+	"Integration" {
+		"dap" => Dap, Local;
+		"help" => Help(Help), Local;
+		"version" => Version(Version), Local;
+	}
 }
 
 impl Command {
-	pub const fn name(&self) -> &'static str {
-		match self {
-			Self::Launch(_) => "launch",
-			Self::List(_) => "list",
-			Self::Status(_) => "status",
-			Self::Stop(_) => "stop",
-			Self::Reboot(_) => "reboot",
-			Self::Reconnect(_) => "reconnect",
-			Self::Log(_) => "log",
-			Self::Stack(_) => "stack",
-			Self::Vars(_) => "vars",
-			Self::Eval(_) => "eval",
-			Self::Proc(_) => "proc",
-			Self::Disassemble(_) => "disassemble",
-			Self::Pause(_) => "pause",
-			Self::Continue(_) => "continue",
-			Self::StepOver(_) => "step-over",
-			Self::StepIn(_) => "step-in",
-			Self::StepOut(_) => "step-out",
-			Self::Wait(_) => "wait",
-			Self::Trace(_) => "trace",
-			Self::Profile(_) => "profile",
-			Self::Check(_) => "check",
-			Self::Dap => "dap",
-			Self::Help(_) => "help",
-			Self::Version(_) => "version"
-		}
-	}
-
 	pub const fn selects_world(&self) -> bool {
-		!matches!(
-			self,
-			Self::Launch(_) | Self::List(_) | Self::Check(_) | Self::Dap | Self::Help(_) | Self::Version(_)
-		)
+		!matches!(self.scope(), Scope::Local)
 	}
 
 	pub const fn awaits_responses(&self) -> bool {
-		self.selects_world() && !matches!(self, Self::Stop(_))
+		matches!(self.scope(), Scope::World)
 	}
+}
+
+pub fn scope_of(name: &str) -> Option<Scope> {
+	GROUPS
+		.iter()
+		.flat_map(|(_, commands)| commands.iter())
+		.find(|(command, _)| *command == name)
+		.map(|(_, scope)| *scope)
 }
 
 #[derive(Args)]
@@ -587,8 +609,11 @@ pub fn command() -> clap::Command {
 
 pub fn parse(args: &[String]) -> Result<Cli, Unparsed> {
 	let given = std::iter::once("auxtools".to_owned()).chain(args.iter().cloned());
-	let matches = command().try_get_matches_from(given).map_err(|error| help::unparsed(&error, args))?;
-	Cli::from_arg_matches(&matches).map_err(|error| help::unparsed(&error, args))
+	let mut command = command();
+	let matches = command
+		.try_get_matches_from_mut(given)
+		.map_err(|error| help::unparsed(&error, args, &command))?;
+	Cli::from_arg_matches(&matches).map_err(|error| help::unparsed(&error, args, &command))
 }
 
 pub fn rules(command: &Command) -> Result<(), String> {

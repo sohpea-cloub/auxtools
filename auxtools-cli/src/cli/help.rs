@@ -1,6 +1,9 @@
 use clap::error::{ContextKind, ContextValue, ErrorKind};
 
-use super::{args::Unparsed, Failure, Result};
+use super::{
+	args::{self, Scope, Unparsed},
+	Failure, Result
+};
 
 pub struct Page {
 	pub path: &'static [&'static str],
@@ -10,23 +13,6 @@ pub struct Page {
 	pub arguments: &'static str,
 	pub sections: &'static str
 }
-
-const GROUPS: &[(&str, &[&str])] = &[
-	("World management", &["launch", "list", "status", "stop", "reboot", "reconnect", "log"]),
-	("Inspection", &["stack", "vars", "eval", "proc", "disassemble"]),
-	("Execution", &[
-		"pause",
-		"continue",
-		"step-over",
-		"step-in",
-		"step-out",
-		"wait",
-		"trace",
-		"profile"
-	]),
-	("Source code", &["check"]),
-	("Integration", &["dap", "help", "version"])
-];
 
 const STEP_SECTIONS: &str = "Behavior:
   Requires a paused world. Resume execution and wait for a pause or confirmed
@@ -598,15 +584,15 @@ Usage:
   auxtools help [COMMAND [SUBCOMMAND]]
 "
 	);
-	let width = GROUPS
+	let width = args::GROUPS
 		.iter()
-		.flat_map(|(_, names)| names.iter())
-		.map(|name| name.len())
+		.flat_map(|(_, commands)| commands.iter())
+		.map(|(name, _)| name.len())
 		.max()
 		.unwrap_or(0);
-	for (group, names) in GROUPS {
+	for (group, commands) in args::GROUPS {
 		text += &format!("\n{}:\n", group);
-		for name in *names {
+		for (name, _) in *commands {
 			let brief = page(&[name]).map_or("", |page| page.brief);
 			text += &format!("  {:width$}  {}\n", name, brief);
 		}
@@ -649,7 +635,7 @@ Exit codes:
 
 Commands that follow lifecycle events can reconnect across reboots.
 ",
-		response_timeout = super::args::response_timeout_help()
+		response_timeout = args::response_timeout_help()
 	);
 	text
 }
@@ -693,12 +679,12 @@ fn option_rows(command: &clap::Command, path: &[&str]) -> Vec<(String, String)> 
 			rows.push(((*more).to_owned(), (*help).to_owned()));
 		}
 	}
-	let selects_world = !matches!(path.first(), Some(&("launch" | "list" | "check" | "dap" | "help" | "version")));
-	if selects_world {
+	let scope = path.first().and_then(|name| args::scope_of(name));
+	if matches!(scope, Some(Scope::World | Scope::WorldExit)) {
 		rows.push(("--pid PID".to_owned(), "Select the world process.".to_owned()));
 	}
-	if selects_world && path.first() != Some(&"stop") {
-		rows.push(("--response-timeout SECONDS".to_owned(), super::args::response_timeout_help()));
+	if scope == Some(Scope::World) {
+		rows.push(("--response-timeout SECONDS".to_owned(), args::response_timeout_help()));
 	}
 	if common_json {
 		rows.push(("--json".to_owned(), COMMON_JSON.to_owned()));
@@ -731,18 +717,9 @@ pub fn render(page: &Page, command: &clap::Command) -> String {
 }
 
 pub fn attach(command: clap::Command) -> clap::Command {
-	fn attached(mut command: clap::Command, path: &[&'static str]) -> clap::Command {
-		let names: Vec<&'static str> = command
-			.get_subcommands()
-			.filter_map(|sub| {
-				PAGES
-					.iter()
-					.flat_map(|page| page.path.iter())
-					.find(|name| **name == sub.get_name())
-					.copied()
-			})
-			.collect();
-		for name in names {
+	fn attached(mut command: clap::Command, path: &[&str]) -> clap::Command {
+		let names: Vec<String> = command.get_subcommands().map(|sub| sub.get_name().to_owned()).collect();
+		for name in &names {
 			let mut below = path.to_vec();
 			below.push(name);
 			command = command.mut_subcommand(name, |sub| attached(sub, &below));
@@ -766,7 +743,7 @@ pub fn show(path: &[String]) -> Result<()> {
 		say_part!("{}", overview());
 		return Ok(());
 	}
-	let root = super::args::command();
+	let root = args::command();
 	let mut command = &root;
 	for (i, name) in path.iter().enumerate() {
 		command = command
@@ -793,8 +770,9 @@ fn unknown_command(parents: &[&str], name: &str) -> String {
 	}
 }
 
-fn command_path(args: &[String]) -> Vec<&'static str> {
-	let mut path: Vec<&'static str> = vec![];
+fn command_path<'a>(root: &'a clap::Command, args: &[String]) -> Vec<&'a str> {
+	let mut path = vec![];
+	let mut command = root;
 	let mut args = args.iter();
 	while let Some(arg) = args.next() {
 		if arg == "--pid" {
@@ -804,24 +782,23 @@ fn command_path(args: &[String]) -> Vec<&'static str> {
 		if arg.starts_with('-') {
 			continue;
 		}
-		let mut longer: Vec<&str> = path.clone();
-		longer.push(arg);
-		match page(&longer) {
-			Some(page) => path = page.path.to_vec(),
+		match command.find_subcommand(arg) {
+			Some(sub) => command = sub,
 			None => break
 		}
-		if PAGES.iter().all(|page| page.path.len() <= path.len() || !page.path.starts_with(&path)) {
+		path.push(command.get_name());
+		if !command.has_subcommands() {
 			break;
 		}
 	}
 	path
 }
 
-pub fn unparsed(error: &clap::Error, args: &[String]) -> Unparsed {
+pub fn unparsed(error: &clap::Error, args: &[String], root: &clap::Command) -> Unparsed {
 	if matches!(error.kind(), ErrorKind::DisplayHelp | ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand) {
 		return Unparsed::Help(error.render().to_string());
 	}
-	let path = command_path(args);
+	let path = command_path(root, args);
 	let text = |kind: ContextKind| match error.get(kind) {
 		Some(ContextValue::String(text)) => Some(text.clone()),
 		Some(ContextValue::Strings(texts)) => Some(texts.join(", ")),
@@ -881,7 +858,8 @@ pub fn unparsed(error: &clap::Error, args: &[String]) -> Unparsed {
 
 #[cfg(test)]
 mod tests {
-	use super::{command_path, overview, page, render, GROUPS, PAGES};
+	use super::{command_path, overview, page, render, PAGES};
+	use crate::cli::args::{self, Scope};
 
 	fn commands() -> Vec<(Vec<String>, clap::Command)> {
 		fn under(command: &clap::Command, path: &[String], found: &mut Vec<(Vec<String>, clap::Command)>) {
@@ -893,7 +871,7 @@ mod tests {
 			}
 		}
 		let mut found = vec![];
-		under(&crate::cli::args::command(), &[], &mut found);
+		under(&args::command(), &[], &mut found);
 		found
 	}
 
@@ -905,33 +883,6 @@ mod tests {
 			assert!(page(&names).is_some(), "{} has no page", path.join(" "));
 		}
 		assert_eq!(commands.len(), PAGES.len(), "a page is of no command");
-		for expected in [
-			"launch",
-			"list",
-			"status",
-			"stop",
-			"reboot",
-			"reconnect",
-			"log",
-			"stack",
-			"vars",
-			"eval",
-			"proc",
-			"disassemble",
-			"pause",
-			"continue",
-			"step-over",
-			"step-in",
-			"step-out",
-			"wait",
-			"trace",
-			"check",
-			"dap",
-			"help",
-			"version"
-		] {
-			assert!(page(&[expected]).is_some(), "{}", expected);
-		}
 		for gone in ["next", "step", "out", "dis", "--list", "run"] {
 			assert!(page(&[gone]).is_none(), "{}", gone);
 		}
@@ -940,7 +891,10 @@ mod tests {
 	#[test]
 	fn the_first_page_lists_every_command_once() {
 		let help = overview();
-		let listed: Vec<&str> = GROUPS.iter().flat_map(|(_, names)| names.iter().copied()).collect();
+		let listed: Vec<&str> = args::GROUPS
+			.iter()
+			.flat_map(|(_, commands)| commands.iter().map(|(name, _)| *name))
+			.collect();
 		for page in PAGES.iter().filter(|page| page.path.len() == 1) {
 			assert_eq!(listed.iter().filter(|name| **name == page.path[0]).count(), 1, "{}", page.path[0]);
 			assert!(
@@ -963,7 +917,7 @@ mod tests {
 			assert!(page.summary.ends_with('.'), "{}", page.summary);
 			for usage in page.usage.lines() {
 				assert!(usage.contains(&format!(" {}", path.join(" "))), "{}", usage);
-				let selects = !matches!(names[0], "launch" | "list" | "check" | "dap" | "help" | "version");
+				let selects = args::scope_of(names[0]) != Some(Scope::Local);
 				assert_eq!(usage.starts_with("auxtools [--pid PID] "), selects, "{}", usage);
 			}
 			if command.has_subcommands() {
@@ -971,12 +925,7 @@ mod tests {
 				continue;
 			}
 			assert!(text.contains("  -h, --help"), "{}", text);
-			assert_eq!(
-				text.contains("  --pid PID "),
-				!matches!(names[0], "launch" | "list" | "check" | "dap" | "help" | "version"),
-				"{}",
-				text
-			);
+			assert_eq!(text.contains("  --pid PID "), args::scope_of(names[0]) != Some(Scope::Local), "{}", text);
 			assert!(!text.contains("--detached"), "{}", text);
 		}
 	}
@@ -1035,12 +984,13 @@ mod tests {
 
 	#[test]
 	fn the_command_an_error_is_about_is_found_among_the_arguments() {
-		let args = |args: &[&str]| args.iter().map(|arg| (*arg).to_owned()).collect::<Vec<String>>();
-		assert_eq!(command_path(&args(&["--pid", "12", "wait", "pause", "--break", "x"])), ["wait", "pause"]);
-		assert_eq!(command_path(&args(&["wait", "--break", "x"])), ["wait"]);
-		assert_eq!(command_path(&args(&["eval", "wait", "pause"])), ["eval"]);
-		assert_eq!(command_path(&args(&["frobnicate", "stop"])), Vec::<&str>::new());
-		assert_eq!(command_path(&args(&["--json"])), Vec::<&str>::new());
+		let root = args::command();
+		let path = |args: &[&str]| command_path(&root, &args.iter().map(|arg| (*arg).to_owned()).collect::<Vec<String>>());
+		assert_eq!(path(&["--pid", "12", "wait", "pause", "--break", "x"]), ["wait", "pause"]);
+		assert_eq!(path(&["wait", "--break", "x"]), ["wait"]);
+		assert_eq!(path(&["eval", "wait", "pause"]), ["eval"]);
+		assert_eq!(path(&["frobnicate", "stop"]), Vec::<&str>::new());
+		assert_eq!(path(&["--json"]), Vec::<&str>::new());
 	}
 
 	#[test]
