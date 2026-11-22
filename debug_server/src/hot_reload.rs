@@ -1,5 +1,6 @@
 use std::{
 	collections::{btree_map::Entry, BTreeMap, BTreeSet, HashMap, HashSet},
+	rc::Rc,
 	sync::Mutex
 };
 
@@ -551,7 +552,7 @@ pub fn prepare(request: &HotReloadRequest, warnings: &mut Vec<String>, skipped: 
 			));
 			continue;
 		}
-		match assemble(&name, &code, &[], &pending, &mut world_globals, &mut added) {
+		match assemble(&name, &code, None, &pending, &mut world_globals, &mut added) {
 			Ok(bytecode) => prepared.run_once.push((id, name, bytecode)),
 			Err(e) => errors.push(e)
 		}
@@ -604,7 +605,7 @@ pub fn prepare(request: &HotReloadRequest, warnings: &mut Vec<String>, skipped: 
 fn assemble(
 	name: &str,
 	code: &ProcReload,
-	original: &[u32],
+	original: Option<&Proc>,
 	pending: &Pending,
 	world_globals: &mut WorldGlobals,
 	added: &mut AddedVars
@@ -615,15 +616,16 @@ fn assemble(
 fn assemble_with(
 	name: &str,
 	code: &ProcReload,
-	original: &[u32],
+	original: Option<&Proc>,
 	known: HashMap<(StaticScope, Vec<u8>), u32>,
 	pending: &Pending,
 	world_globals: &mut WorldGlobals,
 	added: &mut AddedVars
 ) -> Result<Vec<u32>, String> {
-	let nodes = adapt_debug_info(&code.nodes, original);
+	let nodes = adapt_debug_info(&code.nodes, &original.map(original_code).unwrap_or_default());
 
-	let proc_globals = globals_in(original);
+	let uses = original.map(|proc| world_globals.of(proc)).unwrap_or_default();
+	let proc_globals = uses.by_name();
 	let new_statics = new_statics(code, &proc_globals, pending, added).map_err(|e| format!("{}: {}", name, e))?;
 	let mut env = ReloadEnv {
 		proc_globals,
@@ -632,7 +634,7 @@ fn assemble_with(
 		new_statics,
 		known,
 		instances: &mut added.instances,
-		place: code_place(original),
+		place: uses.place(),
 		error: None
 	};
 	let bytecode = match dmasm::assembler::assemble(&nodes, &mut env) {
@@ -664,7 +666,7 @@ fn prepare_code(
 	if proc.is_hooked() {
 		warnings.push(format!("{}: auxtools has hooked it, so the hook runs instead of the new code", name));
 	}
-	let bytecode = assemble(&name, reload, &original_code(&proc), pending, world_globals, added)?;
+	let bytecode = assemble(&name, reload, Some(&proc), pending, world_globals, added)?;
 	prepared_code(proc, name, reload, bytecode, pending, world_globals, added)
 }
 
@@ -738,7 +740,7 @@ fn prepare_global_init(
 	let code = value_code(init.code.clone());
 	let Some(proc) = global_init_proc() else {
 		let known = global_slots(&code, &init.proc_statics, pending, added, world_globals);
-		let bytecode = assemble_with(NAME, &code, &[], known, pending, world_globals, added)?;
+		let bytecode = assemble_with(NAME, &code, None, known, pending, world_globals, added)?;
 		return Ok(Some(StartingInit::Now(bytecode)));
 	};
 	if proc.id != start && debug::CallStacks::active().iter().any(|frame| frame.proc.id == proc.id) {
@@ -746,7 +748,7 @@ fn prepare_global_init(
 		return Ok(None);
 	}
 	let known = global_slots(&code, &init.proc_statics, pending, added, world_globals);
-	let bytecode = assemble_with(NAME, &code, &[], known, pending, world_globals, added)?;
+	let bytecode = assemble_with(NAME, &code, None, known, pending, world_globals, added)?;
 	let at_start = proc.id == start;
 	prepared_code(proc, NAME.to_owned(), &code, bytecode, pending, world_globals, added).map(|code| Some(StartingInit::Proc(code, at_start)))
 }
@@ -825,11 +827,11 @@ fn global_slots(
 						_ => None
 					}
 				}
-				StaticScope::Proc { path, nth } => proc_static(path, *nth, name, counts).or_else(|| {
+				StaticScope::Proc { path, nth } => proc_static(path, *nth, name, counts, world_globals).or_else(|| {
 					let unique = |ids: BTreeSet<u32>| (ids.len() == 1).then(|| ids.first().copied()).flatten();
 					let places: Vec<_> = Proc::overrides(&strip_path(path))
 						.iter()
-						.filter_map(|proc| code_place(&original_code(proc)))
+						.filter_map(|proc| world_globals.of(proc).place())
 						.collect();
 					let initialized = world_globals.initialized();
 					let in_proc = initialized
@@ -862,12 +864,18 @@ fn global_init_proc() -> Option<Proc> {
 	(!a_types).then_some(proc)
 }
 
-fn proc_static(path: &str, nth: u32, name: &[u8], counts: &BTreeMap<String, BTreeMap<String, usize>>) -> Option<u32> {
+fn proc_static(
+	path: &str,
+	nth: u32,
+	name: &[u8],
+	counts: &BTreeMap<String, BTreeMap<String, usize>>,
+	world_globals: &mut WorldGlobals
+) -> Option<u32> {
 	let declared = *counts.get(path)?.get(String::from_utf8_lossy(name).as_ref())?;
 	let ids: BTreeSet<u32> = Proc::overrides(&strip_path(path))
 		.iter()
 		.filter_map(|proc| {
-			let named = globals_in(&original_code(proc)).remove(name)?;
+			let named = world_globals.of(proc).by_name().remove(name)?;
 			(named.len() == declared).then(|| named.get(nth as usize).copied())?
 		})
 		.collect();
@@ -991,7 +999,7 @@ fn in_list_proc(param: &str, code: &ProcReload, pending: &Pending, world_globals
 	let shown = format!("parameter {}'s `in` list", param);
 	let template = proc_template()?;
 	let code = value_code(code.clone());
-	let bytecode = assemble(&shown, &code, &[], pending, world_globals, added)?;
+	let bytecode = assemble(&shown, &code, None, pending, world_globals, added)?;
 
 	let mut entry = template;
 	for word in [
@@ -1142,9 +1150,7 @@ fn prepare_init_proc(
 		None => proc_template().ok()
 	}
 	.ok_or_else(|| fail("couldn't find a proc entry to copy".to_owned()))?;
-	let original = current.as_ref().map(original_code).unwrap_or_default();
-
-	let bytecode = assemble(&shown, code, &original, pending, world_globals, added)?;
+	let bytecode = assemble(&shown, code, current.as_ref(), pending, world_globals, added)?;
 	let mut entry = template;
 	if current.is_none() {
 		entry.0[ProcEntryWords::PATH] = leaked_string(&format!("{}/proc/(init)", init.type_path)).map_err(fail)?;
@@ -1258,7 +1264,7 @@ fn prepare_new_proc(
 
 	let template = proc_template().map_err(fail)?;
 
-	let bytecode = assemble(&shown, &new.code, &[], pending, world_globals, added)?;
+	let bytecode = assemble(&shown, &new.code, None, pending, world_globals, added)?;
 
 	let string = |text: &str| -> Result<u32, String> {
 		let string = StringRef::new(text).map_err(|_| fail(format!("couldn't make the string {}", text)))?;
@@ -2559,82 +2565,101 @@ fn variable_ids(name: &[u8]) -> Vec<u32> {
 	}
 }
 
-fn globals_in(bytecode: &[u32]) -> HashMap<Vec<u8>, Vec<u32>> {
-	let mut out: HashMap<Vec<u8>, Vec<u32>> = HashMap::new();
-	let (nodes, _) = dmasm::disassembler::disassemble(bytecode, &mut LenientDisassembleEnv);
-
-	for node in &nodes {
-		let Node::Instruction(ins, _) = node else { continue };
-		for var in ins.variables() {
-			for global in var.globals() {
-				let Some(id) = global.id else { continue };
-				let ids = out.entry(global.name.0.clone()).or_default();
-				if let Err(at) = ids.binary_search(&id) {
-					ids.insert(at, id);
-				}
-			}
-		}
-	}
-
-	out
-}
-
-fn code_place(bytecode: &[u32]) -> Option<(Vec<u8>, u32, u32)> {
-	let (nodes, _) = dmasm::disassembler::disassemble(bytecode, &mut LenientDisassembleEnv);
-	let mut file = None;
-	let mut lines: Option<(u32, u32)> = None;
-	for node in &nodes {
-		match node {
-			Node::Instruction(dmasm::Instruction::DbgFile(name), _) if file.is_none() => file = Some(name.0.clone()),
-			Node::Instruction(dmasm::Instruction::DbgLine(line), _) => {
-				lines = Some(lines.map_or((*line, *line), |(a, b)| (a.min(*line), b.max(*line))));
-			}
-			_ => {}
-		}
-	}
-	let (first, last) = lines?;
-	Some((file?, first, last))
-}
-
 #[derive(Default)]
-struct WorldGlobals(Option<HashMap<Vec<u8>, Vec<(u32, String)>>>, Option<Vec<(Vec<u8>, Vec<u8>, u32, u32)>>);
+struct GlobalUses {
+	files: Vec<Vec<u8>>,
+	lines: Option<(u32, u32)>,
+	uses: Vec<(Option<usize>, Vec<u8>, u32, u32)>
+}
 
-impl WorldGlobals {
-	fn initialized(&mut self) -> &[(Vec<u8>, Vec<u8>, u32, u32)] {
-		self.1.get_or_insert_with(|| {
-			let Some(proc) = crate::unnamed::find(auxtools_protocol::GLOBAL_INIT, 0) else {
-				return vec![];
-			};
-			let bytecode = original_code(&proc);
-			let (nodes, _) = dmasm::disassembler::disassemble(&bytecode, &mut LenientDisassembleEnv);
-			let (mut file, mut line) = (vec![], 0);
-			let mut set = vec![];
-			for node in &nodes {
-				let Node::Instruction(ins, _) = node else { continue };
-				match ins {
-					dmasm::Instruction::DbgFile(name) => file = name.0.clone(),
-					dmasm::Instruction::DbgLine(at) => line = *at,
-					_ => {
-						for var in ins.variables() {
-							for global in var.globals() {
-								if let Some(id) = global.id {
-									set.push((file.clone(), global.name.0.clone(), line, id));
-								}
+impl GlobalUses {
+	fn read(bytecode: &[u32]) -> Self {
+		let mut read = Self::default();
+		let (nodes, _) = dmasm::disassembler::disassemble(bytecode, &mut LenientDisassembleEnv);
+		let (mut file, mut line) = (None, 0);
+		for node in &nodes {
+			let Node::Instruction(ins, _) = node else { continue };
+			match ins {
+				dmasm::Instruction::DbgFile(name) => {
+					file = Some(read.files.iter().position(|known| *known == name.0).unwrap_or_else(|| {
+						read.files.push(name.0.clone());
+						read.files.len() - 1
+					}));
+				}
+				dmasm::Instruction::DbgLine(at) => {
+					line = *at;
+					read.lines = Some(read.lines.map_or((line, line), |(first, last)| (first.min(line), last.max(line))));
+				}
+				_ => {
+					for var in ins.variables() {
+						for global in var.globals() {
+							if let Some(id) = global.id {
+								read.uses.push((file, global.name.0.clone(), line, id));
 							}
 						}
 					}
 				}
 			}
-			set
-		})
+		}
+		read
+	}
+
+	fn by_name(&self) -> HashMap<Vec<u8>, Vec<u32>> {
+		let mut out: HashMap<Vec<u8>, Vec<u32>> = HashMap::new();
+		for (_, name, _, id) in &self.uses {
+			let ids = out.entry(name.clone()).or_default();
+			if let Err(at) = ids.binary_search(id) {
+				ids.insert(at, *id);
+			}
+		}
+		out
+	}
+
+	fn place(&self) -> Option<(Vec<u8>, u32, u32)> {
+		let (first, last) = self.lines?;
+		Some((self.files.first()?.clone(), first, last))
+	}
+}
+
+#[derive(Default)]
+struct WorldGlobals {
+	users: Option<HashMap<Vec<u8>, Vec<(u32, String)>>>,
+	initialized: Option<Vec<(Vec<u8>, Vec<u8>, u32, u32)>>,
+	procs: HashMap<u32, (usize, u16, Rc<GlobalUses>)>
+}
+
+impl WorldGlobals {
+	fn of(&mut self, proc: &Proc) -> Rc<GlobalUses> {
+		let (at, len) = unsafe { proc.bytecode_mut_ptr() };
+		let at = at as usize;
+		if let Some((_, _, read)) = self.procs.get(&proc.id.0).filter(|(was_at, was_len, _)| *was_at == at && *was_len == len) {
+			return read.clone();
+		}
+		let read = Rc::new(GlobalUses::read(&original_code(proc)));
+		self.procs.insert(proc.id.0, (at, len, read.clone()));
+		read
+	}
+
+	fn initialized(&mut self) -> &[(Vec<u8>, Vec<u8>, u32, u32)] {
+		if self.initialized.is_none() {
+			let read = crate::unnamed::find(auxtools_protocol::GLOBAL_INIT, 0).map(|proc| self.of(&proc));
+			let uses = read.iter().flat_map(|read| {
+				read.uses.iter().map(|(file, name, line, id)| {
+					let file = file.map_or_else(Vec::new, |file| read.files[file].clone());
+					(file, name.clone(), *line, *id)
+				})
+			});
+			self.initialized = Some(uses.collect());
+		}
+		self.initialized.as_deref().unwrap_or_default()
 	}
 
 	fn users(&mut self, name: &[u8]) -> &[(u32, String)] {
-		let map = self.0.get_or_insert_with(|| {
+		let map = self.users.get_or_insert_with(|| {
 			let mut map: HashMap<Vec<u8>, Vec<(u32, String)>> = HashMap::new();
 			let mut id = 0;
 			while let Some(proc) = Proc::from_id(raw_types::procs::ProcId(id)) {
-				for (name, ids) in globals_in(&original_code(&proc)) {
+				for (name, ids) in GlobalUses::read(&original_code(&proc)).by_name() {
 					map.entry(name).or_default().extend(ids.into_iter().map(|id| (id, proc.path.clone())));
 				}
 				id += 1;
