@@ -5,8 +5,6 @@ const FROM_515_1644: VersionRange = VersionRange { min: 1644, max: 1688 };
 const LATE_515: VersionRange = VersionRange { min: 1644, max: 1647 };
 const EARLY_515: VersionRange = VersionRange { min: 1637, max: 1643 };
 
-pub(crate) const REMOVE_FROM_LIST_STACK_BUILD: u32 = 1674;
-
 const GLOBAL_VARS_SIG: &str = "89 1D ?? ?? ?? ?? 57 E8 ?? ?? ?? ?? 83 C4 10 85 FF 74 08 85 C0 0F 84 ?? ?? ?? ?? 83 EC 0C C1 E3 02 A3 ?? ?? ?? ?? 53 \
                                E8 ?? ?? ?? ?? 83 C4 10 85 DB 74 08 85 C0 0F 84 ?? ?? ?? ?? A3 ?? ?? ?? ??";
 
@@ -23,7 +21,7 @@ const STRING_ACCESSOR_SIG: &str = "56 53 83 EC 14 8B 44 24 20 39 05 ?? ?? ?? ?? 
 const ALIST_SIG: &str =
 	"8B 54 24 04 8B 4C 24 08 80 FA 0F 74 ?? 31 C0 80 FA 55 75 ?? 3B 0D ?? ?? ?? ?? 73 ?? A1 ?? ?? ?? ?? 8B 04 88 85 C0 74 ?? 8B 00 C3";
 
-pub(crate) const RECIPES: &[Recipe] = &[
+pub(super) const RECIPES: &[Recipe] = &[
 	Recipe {
 		name: "get_proc_array_entry",
 		versions: FROM_515_1644,

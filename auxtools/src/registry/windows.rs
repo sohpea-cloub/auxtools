@@ -15,7 +15,7 @@ const STRING_ACCESSOR_SIG: &str = "55 8B EC 8B 4D 08 3B 0D ?? ?? ?? ?? 73 ?? A1 
 
 const ALIST_SIG: &str = "3B 35 ?? ?? ?? ?? 73 ?? A1 ?? ?? ?? ?? C7 04 B0 00 00 00 00 46 3B 35 ?? ?? ?? ?? 72 EB";
 
-pub(crate) const RECIPES: &[Recipe] = &[
+pub(super) const RECIPES: &[Recipe] = &[
 	Recipe {
 		name: "get_proc_array_entry",
 		versions: SUPPORTED,
