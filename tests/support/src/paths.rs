@@ -86,9 +86,28 @@ pub fn next_to_us(name: &str) -> PathBuf {
 	path
 }
 
+static LAUNCHER: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+
+pub fn use_launcher(launcher: &str) {
+	let launcher = PathBuf::from(launcher);
+	if launcher.is_file() {
+		let _ = LAUNCHER.set(launcher);
+	}
+}
+
 #[track_caller]
 pub fn launcher_path() -> PathBuf {
-	next_to_us(if cfg!(windows) { "auxtools.exe" } else { "auxtools" })
+	if let Some(launcher) = LAUNCHER.get() {
+		return launcher.clone();
+	}
+	let name = if cfg!(windows) { "auxtools.exe" } else { "auxtools" };
+	let us = std::env::current_exe().unwrap();
+	[1, 3]
+		.into_iter()
+		.filter_map(|up| us.ancestors().nth(up))
+		.map(|dir| dir.join(name))
+		.find(|path| path.is_file())
+		.unwrap_or_else(|| panic!("couldn't find {} near {}; build it first", name, us.display()))
 }
 
 #[track_caller]
