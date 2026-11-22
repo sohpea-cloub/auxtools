@@ -1119,7 +1119,6 @@ impl<'a> Compiler<'a> {
                 if matches!(term.elem, dreammaker::ast::Term::Null)
                     && term.location.file == dreammaker::FileId::UNKNOWN
                     && unspanned_follows.is_empty()
-                    && self.proc.is_some()
                 {
                     self.emit_ins(Instruction::PushVal(operands::Value::Null));
                     return Ok(EvalKind::Stack);

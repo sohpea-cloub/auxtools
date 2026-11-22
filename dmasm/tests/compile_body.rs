@@ -1,7 +1,9 @@
 use dmasm::compiler::{compile_body_in, is_body, CompileError, ExprGlobal, ExprScope, FoundProc};
 use dmasm::ByondVersion;
 
-fn body(code: &str) -> Result<(Vec<String>, Vec<String>), CompileError> {
+const PARAMS: [&str; 4] = [".", "src", "by", "globals"];
+
+fn with_scope<R>(compile: impl FnOnce(&ExprScope) -> R) -> R {
     let scope = ExprScope {
         has_src_var: &|name| name == "hp",
         has_src_proc: &|name| name == "bump",
@@ -34,18 +36,66 @@ fn body(code: &str) -> Result<(Vec<String>, Vec<String>), CompileError> {
             _ => None,
         },
     };
-    let compiled = compile_body_in(
-        code,
-        &[".", "src", "by", "globals"],
-        Some(&scope),
-        ByondVersion::LATEST,
-    )?;
-    let text = dmasm::format(&compiled.nodes)
+    compile(&scope)
+}
+
+fn lines(nodes: &[dmasm::Node]) -> Vec<String> {
+    dmasm::format(nodes)
         .lines()
         .map(|l| l.trim().to_owned())
         .filter(|l| !l.is_empty())
-        .collect();
-    Ok((text, compiled.locals))
+        .collect()
+}
+
+fn body(code: &str) -> Result<(Vec<String>, Vec<String>), CompileError> {
+    let compiled =
+        with_scope(|scope| compile_body_in(code, &PARAMS, Some(scope), ByondVersion::LATEST))?;
+    Ok((lines(&compiled.nodes), compiled.locals))
+}
+
+fn until_return(code: Vec<String>) -> Vec<String> {
+    let mut labels: Vec<String> = vec![];
+    let mut out = vec![];
+    for line in code {
+        if line.starts_with("DbgLine") {
+            continue;
+        }
+        let renamed = line
+            .split_inclusive(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+            .map(|word| {
+                let name =
+                    word.trim_end_matches(|c: char| !(c.is_ascii_alphanumeric() || c == '_'));
+                if !name.starts_with("LAB_") {
+                    return word.to_owned();
+                }
+                let index = labels.iter().position(|l| l == name).unwrap_or_else(|| {
+                    labels.push(name.to_owned());
+                    labels.len() - 1
+                });
+                format!("L{index}{}", &word[name.len()..])
+            })
+            .collect::<String>();
+        let ret = renamed == "Ret";
+        out.push(renamed);
+        if ret {
+            break;
+        }
+    }
+    out
+}
+
+#[track_caller]
+fn same_alone_and_in_a_body(code: &str) -> Vec<String> {
+    let alone = with_scope(|scope| {
+        dmasm::compiler::compile_expr_in(code, &PARAMS, Some(scope), ByondVersion::LATEST)
+    })
+    .unwrap_or_else(|e| panic!("{code} alone: {e}"));
+    let (in_body, locals) =
+        body(&format!("return {code}")).unwrap_or_else(|e| panic!("{code} in a body: {e}"));
+    assert!(locals.is_empty(), "{code}: {locals:?}");
+    let alone = until_return(lines(&alone));
+    assert_eq!(alone, until_return(in_body), "{code}");
+    alone
 }
 
 const RETURN: [&str; 6] = [
@@ -523,4 +573,19 @@ fn an_assignment_to_a_global_is_a_value_too() {
         let (compiled, _) = body(code).unwrap_or_else(|e| panic!("{code}: {e}"));
         assert_has(&compiled, &written);
     }
+}
+
+#[test]
+fn null_is_read_alone_as_in_a_body() {
+    for code in ["null", "by == null", "by ? null : 1", "bump(null, , 1)"] {
+        let compiled = same_alone_and_in_a_body(code);
+        assert!(
+            compiled.iter().any(|l| l == "GetVar null"),
+            "{code}: {compiled:?}"
+        );
+    }
+    assert_has(
+        &same_alone_and_in_a_body("bump(null, , 1)"),
+        &["GetVar null", "PushVal null", "PushInt 1"],
+    );
 }

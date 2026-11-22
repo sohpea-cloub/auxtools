@@ -26,11 +26,7 @@ pub(super) fn emit(compiler: &mut Compiler<'_>, term: Term) -> Result<EvalKind, 
         }
         Term::Expr(expr) => compiler.emit_expr(*expr),
 
-        Term::Null if compiler.proc.is_some() => Ok(EvalKind::Var(Variable::Null)),
-        Term::Null => {
-            compiler.emit_ins(Instruction::PushVal(Value::Null));
-            Ok(EvalKind::Stack)
-        }
+        Term::Null => Ok(EvalKind::Var(Variable::Null)),
         Term::Int(i) => {
             compiler.emit_number(i as f32);
             Ok(EvalKind::Stack)
