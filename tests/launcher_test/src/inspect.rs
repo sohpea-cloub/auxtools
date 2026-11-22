@@ -6,7 +6,7 @@ use std::{
 
 use serde_json::{json, Value};
 
-use super::{client::launcher_path, line_of};
+use super::{client::launcher_path, journal::paused_at, line_of};
 
 struct Ran {
 	code: i32,
@@ -250,11 +250,9 @@ fn procs(pid: &str, code: &Path) {
 	println!("ok: values kept between evaluations");
 	for (marker, value) in [("\t\ttotal += i // first loop", "1"), ("\t\ttotal += i // second loop", "10")] {
 		let place = format!("attach_host.dm:{}", line_of(code, marker));
-		let waiting = crate::journal::Background::start(pid.parse().unwrap(), &["wait", "pause", "--break", &place, "--timeout", "60"]);
-		std::thread::sleep(std::time::Duration::from_secs(1));
-		run(pid, &["eval", "--spawn", "two_loops()"], 0);
-		let (exit, printed) = waiting.finish();
-		assert_eq!(exit, 0, "unexpected wait output: {}", printed);
+		paused_at(pid.parse().unwrap(), &place, || {
+			run(pid, &["eval", "--spawn", "two_loops()"], 0);
+		});
 		let vars = run(pid, &["vars"], 0).out;
 		assert_eq!(vars.matches("  i = ").count(), 1, "vars said {}", vars);
 		assert!(vars.contains(&format!("  i = {}\n", value)), "vars said {}", vars);
@@ -832,21 +830,12 @@ fn spawned(pid: &str, code: &Path) {
 	);
 	println!("ok: spawned runtime error stacks");
 
-	let waiting = crate::journal::Background::start(pid.parse().unwrap(), &[
-		"wait",
-		"pause",
-		"--break",
-		"/proc/slow_double",
-		"--timeout",
-		"60"
-	]);
-	std::thread::sleep(std::time::Duration::from_secs(2));
-	run(pid, &["eval", "--spawn", "slow_double(6)"], 0);
-	let (exit, printed) = waiting.finish();
+	let printed = paused_at(pid.parse().unwrap(), "/proc/slow_double", || {
+		run(pid, &["eval", "--spawn", "slow_double(6)"], 0);
+	});
 	assert!(
-		exit == 0 && printed.contains(&format!("pid {}: paused at a breakpoint\n#0 /slow_double  ", pid)),
-		"wait gave {}: {}",
-		exit,
+		printed.contains(&format!("pid {}: paused at a breakpoint\n#0 /slow_double  ", pid)),
+		"unexpected wait output: {}",
 		printed
 	);
 	let stack = run(pid, &["stack"], 0).out;
@@ -877,23 +866,12 @@ fn spawned(pid: &str, code: &Path) {
 	let printed = run(pid, &["disassemble", "/proc/last_in_file"], 0).out;
 	assert!(printed.contains("attach_host.dme\""), "missing .dme debug marker: {}", printed);
 	let place = format!("/last_in_file  attach_host.dm:{}", line);
-	let waiting = crate::journal::Background::start(pid.parse().unwrap(), &[
-		"wait",
-		"pause",
-		"--break",
-		&format!("attach_host.dm:{}", line),
-		"--timeout",
-		"60"
-	]);
-	std::thread::sleep(std::time::Duration::from_secs(2));
-	run(pid, &["eval", "--spawn", "last_in_file()"], 0);
-	let (exit, printed) = waiting.finish();
+	let printed = paused_at(pid.parse().unwrap(), &format!("attach_host.dm:{}", line), || {
+		run(pid, &["eval", "--spawn", "last_in_file()"], 0);
+	});
 	assert!(
-		exit == 0
-			&& printed.contains(&format!("breakpoint set at {}\n", place))
-			&& printed.contains(&format!("paused at a breakpoint\n#0 {}\n", place)),
-		"wait gave {}: {}",
-		exit,
+		printed.contains(&format!("breakpoint set at {}\n", place)) && printed.contains(&format!("paused at a breakpoint\n#0 {}\n", place)),
+		"unexpected wait output: {}",
 		printed
 	);
 	assert!(run(pid, &["stack"], 0).out.starts_with(&format!("#0 {}\n", place)));
@@ -961,11 +939,9 @@ fn steps_that_end_elsewhere(pid: &str, dir: &Path) {
 	run(pid, &["continue"], 0);
 	println!("ok: a step reports the runtime error that ended its proc");
 
-	let waiting = crate::journal::Background::start(number, &["wait", "pause", "--break", "/proc/slow_double", "--timeout", "60"]);
-	std::thread::sleep(std::time::Duration::from_secs(2));
-	run(pid, &["eval", "--spawn", "slow_double(6, 40)"], 0);
-	let (exit, printed) = waiting.finish();
-	assert_eq!(exit, 0, "unexpected wait output: {}", printed);
+	paused_at(number, "/proc/slow_double", || {
+		run(pid, &["eval", "--spawn", "slow_double(6, 40)"], 0);
+	});
 	let on_sleep = run(pid, &["step-over", "--timeout", "30", "--json"], 0).out;
 	assert!(
 		on_sleep.contains("\"reason\":\"step\"") && on_sleep.contains("\"proc\":\"/slow_double\""),
@@ -986,11 +962,9 @@ fn steps_that_end_elsewhere(pid: &str, dir: &Path) {
 		"step-over said {}",
 		ran.err
 	);
-	let waiting = crate::journal::Background::start(number, &["wait", "pause", "--break", "/proc/slow_double", "--timeout", "60"]);
-	std::thread::sleep(std::time::Duration::from_secs(2));
-	run(pid, &["eval", "--spawn", "slow_double(7, 40)"], 0);
-	let (exit, printed) = waiting.finish();
-	assert_eq!(exit, 0, "unexpected wait output: {}", printed);
+	paused_at(number, "/proc/slow_double", || {
+		run(pid, &["eval", "--spawn", "slow_double(7, 40)"], 0);
+	});
 	run(pid, &["step-over", "--timeout", "30"], 0);
 	let ran = run(pid, &["step-over", "--timeout", "0.5"], 2);
 	assert_eq!(ran.out, format!("pid {}: running\n", pid));

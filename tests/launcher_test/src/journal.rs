@@ -21,8 +21,28 @@ pub fn run(pid: u64, args: &[&str], code: i32) -> String {
 pub struct Background {
 	child: Child,
 	lines: mpsc::Receiver<String>,
-	errors: Option<std::thread::JoinHandle<String>>,
-	pub printed: String
+	errors: mpsc::Receiver<String>,
+	pub printed: String,
+	said: String
+}
+
+fn lines_of(stream: impl Read + Send + 'static) -> mpsc::Receiver<String> {
+	let (sender, lines) = mpsc::channel();
+	std::thread::spawn(move || {
+		for line in BufReader::new(stream).lines().map_while(Result::ok) {
+			if sender.send(line).is_err() {
+				return;
+			}
+		}
+	});
+	lines
+}
+
+fn next_line(lines: &mpsc::Receiver<String>, read: &mut String, deadline: Instant) -> Option<String> {
+	let line = lines.recv_timeout(deadline.saturating_duration_since(Instant::now())).ok()?;
+	*read += &line;
+	*read += "\n";
+	Some(line)
 }
 
 impl Background {
@@ -35,55 +55,42 @@ impl Background {
 			.stderr(Stdio::piped())
 			.spawn()
 			.unwrap();
-		let (sender, lines) = mpsc::channel();
-		let stdout = child.stdout.take().unwrap();
-		std::thread::spawn(move || {
-			for line in BufReader::new(stdout).lines().map_while(Result::ok) {
-				let _ = sender.send(line);
-			}
-		});
-		let mut stderr = child.stderr.take().unwrap();
-		let errors = std::thread::spawn(move || {
-			let mut text = String::new();
-			let _ = stderr.read_to_string(&mut text);
-			text
-		});
 		Self {
+			lines: lines_of(child.stdout.take().unwrap()),
+			errors: lines_of(child.stderr.take().unwrap()),
 			child,
-			lines,
-			errors: Some(errors),
-			printed: String::new()
-		}
-	}
-
-	fn next_line(&mut self, deadline: Instant) -> Option<String> {
-		match self.lines.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
-			Ok(line) => Some(line),
-			Err(mpsc::RecvTimeoutError::Timeout) => None,
-			Err(mpsc::RecvTimeoutError::Disconnected) => {
-				let text = self.errors.take()?.join().unwrap();
-				let (sender, lines) = mpsc::channel();
-				for line in text.lines() {
-					let _ = sender.send(line.to_owned());
-				}
-				self.lines = lines;
-				self.lines.try_recv().ok()
-			}
+			printed: String::new(),
+			said: String::new()
 		}
 	}
 
 	pub fn line_with(&mut self, text: &str) -> String {
 		let deadline = Instant::now() + TIMEOUT;
 		loop {
-			let line = self
-				.next_line(deadline)
-				.unwrap_or_else(|| panic!("no line with {:?} came; it printed {}", text, self.printed));
-			self.printed += &line;
-			self.printed += "\n";
-			if line.contains(text) {
-				return line;
+			match next_line(&self.lines, &mut self.printed, deadline) {
+				Some(line) if line.contains(text) => return line,
+				Some(_) => {}
+				None => {
+					self.read_errors();
+					panic!("no line with {:?} came; it printed {}{}", text, self.printed, self.said)
+				}
 			}
 		}
+	}
+
+	pub fn error_with(&mut self, text: &str) -> String {
+		let deadline = Instant::now() + TIMEOUT;
+		loop {
+			match next_line(&self.errors, &mut self.said, deadline) {
+				Some(line) if line.contains(text) => return line,
+				Some(_) => {}
+				None => panic!("no line with {:?} came on stderr; it printed {}{}", text, self.printed, self.said)
+			}
+		}
+	}
+
+	fn read_errors(&mut self) {
+		while next_line(&self.errors, &mut self.said, Instant::now()).is_some() {}
 	}
 
 	pub fn finish(mut self) -> (i32, String) {
@@ -92,14 +99,15 @@ impl Background {
 			if let Some(status) = self.child.try_wait().unwrap() {
 				break status.code().unwrap_or(-1);
 			}
-			assert!(Instant::now() < deadline, "timed out waiting for process exit; output: {}", self.printed);
+			if Instant::now() >= deadline {
+				self.read_errors();
+				panic!("timed out waiting for process exit; output: {}{}", self.printed, self.said);
+			}
 			std::thread::sleep(Duration::from_millis(50));
 		};
-		while let Some(line) = self.next_line(deadline) {
-			self.printed += &line;
-			self.printed += "\n";
-		}
-		(code, self.printed)
+		while next_line(&self.lines, &mut self.printed, deadline).is_some() {}
+		while next_line(&self.errors, &mut self.said, deadline).is_some() {}
+		(code, self.printed + &self.said)
 	}
 
 	#[cfg(unix)]
@@ -110,6 +118,29 @@ impl Background {
 	pub fn stop(mut self) {
 		let _ = self.child.kill();
 		let _ = self.child.wait();
+	}
+}
+
+pub fn wait_at(pid: u64, place: &str) -> Background {
+	let mut waiting = Background::start(pid, &["wait", "pause", "--break", place, "--timeout", "60"]);
+	waiting.error_with("breakpoint set at ");
+	waiting
+}
+
+pub fn paused_at(pid: u64, place: &str, trigger: impl FnOnce()) -> String {
+	let waiting = wait_at(pid, place);
+	trigger();
+	let (exit, printed) = waiting.finish();
+	assert_eq!(exit, 0, "`wait pause --break {}` gave {}: {}", place, exit, printed);
+	printed
+}
+
+pub fn rounds_pass(pid: u64, more: u64) {
+	let rounds = || run(pid, &["eval", "rounds"], 0).trim().parse::<u64>().unwrap();
+	let (from, deadline) = (rounds(), Instant::now() + TIMEOUT);
+	while rounds() < from + more {
+		assert!(Instant::now() < deadline, "the world's loop stopped at round {}", from);
+		std::thread::sleep(Duration::from_millis(20));
 	}
 }
 
@@ -245,8 +276,8 @@ pub fn reloads(pid: u64, code: &Path) {
 	attached.event("initialized");
 	attached.request("configurationDone", serde_json::json!({}));
 
-	let waiting = Background::start(pid, &["wait", "reload", "--timeout", "60"]);
-	std::thread::sleep(Duration::from_secs(1));
+	let since = newest(pid).to_string();
+	let waiting = Background::start(pid, &["wait", "reload", "--since", &since, "--timeout", "60"]);
 	std::fs::write(code, &source).unwrap();
 	let (exit, printed) = waiting.finish();
 	assert!(
@@ -301,8 +332,7 @@ pub fn reloads(pid: u64, code: &Path) {
 	println!("ok: uptime and latest reload status");
 
 	let place = format!("attach_host.dm:{}", crate::line_of(code, "\t\ttotal += i // first loop"));
-	let waiting = Background::start(pid, &["wait", "pause", "--break", &place, "--timeout", "60"]);
-	std::thread::sleep(Duration::from_secs(1));
+	let waiting = wait_at(pid, &place);
 	let since = newest(pid).to_string();
 	std::fs::write(code, source.replace("/proc/two_loops()\n", "/proc/two_loops()\n\tvar/moved = 1\n")).unwrap();
 	run(pid, &["wait", "reload", "--since", &since, "--timeout", "60"], 0);
@@ -318,8 +348,7 @@ pub fn reloads(pid: u64, code: &Path) {
 
 pub fn reboot(pid: u64, dir: &Path) {
 	let before = newest(pid);
-	let waiting = Background::start(pid, &["wait", "reboot", "--timeout", "60"]);
-	std::thread::sleep(Duration::from_secs(1));
+	let waiting = Background::start(pid, &["wait", "reboot", "--since", &before.to_string(), "--timeout", "60"]);
 	std::fs::write(dir.join("reboot"), "yes").unwrap();
 	let (exit, printed) = waiting.finish();
 	assert!(

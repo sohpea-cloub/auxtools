@@ -939,25 +939,17 @@ fn command_line_more(pid: u64, dir: &Path) {
 	);
 	println!("ok: log runtime filter");
 
-	let waiting = std::process::Command::new(launcher_path())
-		.args(["--pid", pid.as_str(), "wait", "pause", "--break", "/proc/fail", "--timeout", "60"])
-		.stdout(std::process::Stdio::piped())
-		.stderr(std::process::Stdio::piped())
-		.spawn()
-		.unwrap();
-	std::thread::sleep(Duration::from_secs(2));
+	let waiting = journal::wait_at(pid.parse().unwrap(), "/proc/fail");
 	let printed = run(&["wait", "pause", "--break", "/proc/tick", "--timeout", "60"], 0);
 	assert!(printed.contains("#0 /tick"), "the other wait said {}", printed);
-	std::thread::sleep(Duration::from_secs(1));
 	run(&["continue"], 0);
 	std::fs::write(dir.join("fail"), "yes").unwrap();
-	let out = waiting.wait_with_output().unwrap();
-	let printed = String::from_utf8_lossy(&out.stdout);
+	let (exit, printed) = waiting.finish();
 	assert!(
-		printed.starts_with(&format!("pid {}: paused at a breakpoint\n#0 /fail", pid)),
-		"the waiting client said {}{}",
-		printed,
-		String::from_utf8_lossy(&out.stderr)
+		exit == 0 && printed.starts_with(&format!("pid {}: paused at a breakpoint\n#0 /fail", pid)),
+		"the waiting client gave {}: {}",
+		exit,
+		printed
 	);
 	run(&["continue"], 0);
 	println!("ok: CLI wait passes over another client's pause");
@@ -1197,20 +1189,16 @@ fn command_line_trace(pid: u64, code: &Path) {
 
 	#[cfg(unix)]
 	{
-		let tracing = Command::new(client::launcher_path())
-			.args(["--pid", &pid, "trace", "/proc/tick", "--by", "n"])
-			.stdout(Stdio::piped())
-			.stderr(Stdio::piped())
-			.spawn()
-			.unwrap();
-		std::thread::sleep(Duration::from_secs(2));
+		let mut tracing = journal::Background::start(pid.parse().unwrap(), &["trace", "/proc/tick", "--by", "n"]);
+		tracing.line_with("tracing /tick");
+		journal::rounds_pass(pid.parse().unwrap(), 2);
 		Command::new("kill").args(["-INT", &tracing.id().to_string()]).status().unwrap();
-		let traced = tracing.wait_with_output().unwrap();
-		let out = String::from_utf8_lossy(&traced.stdout);
+		let (code, out) = tracing.finish();
 		assert!(
-			traced.status.success() && out.contains(" skipped; ended: interrupted\n") && out.contains("  1\n"),
-			"an interrupted trace said {}",
-			out
+			code == 0 && out.contains(" skipped; ended: interrupted\n") && out.contains("  1\n"),
+			"an interrupted trace said {} (exit {})",
+			out,
+			code
 		);
 		println!("ok: interrupted trace summary");
 	}

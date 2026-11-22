@@ -123,17 +123,9 @@ pub fn profile(pid: u64, dir: &Path, code: &Path) {
 
 	let busy = "error: cannot start a profile: another profile is running.\n";
 	let left_running = |args: &[&str]| {
-		for wait in 1..=10 {
-			let running = Background::start(pid, args);
-			std::thread::sleep(Duration::from_secs(wait));
-			let pid = pid.to_string();
-			let (code, printed) = crate::client::launcher_command(&["--pid", &pid, "profile", "--for", "1"]);
-			if (code, printed.as_str()) == (1, busy) {
-				return running;
-			}
-			running.stop();
-		}
-		panic!("concurrent profile was not rejected");
+		let mut running = Background::start(pid, args);
+		running.error_with("profiling until interrupted");
+		running
 	};
 	let running = left_running(&["profile"]);
 	for (args, said) in [
@@ -162,7 +154,7 @@ pub fn profile(pid: u64, dir: &Path, code: &Path) {
 	#[cfg(unix)]
 	{
 		let running = left_running(&["profile", "/proc/tick"]);
-		std::thread::sleep(Duration::from_secs(2));
+		crate::journal::rounds_pass(pid, 2);
 		std::process::Command::new("kill")
 			.args(["-INT", &running.id().to_string()])
 			.status()
