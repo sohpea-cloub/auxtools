@@ -1,4 +1,5 @@
 use std::{
+	borrow::Cow,
 	cell::{OnceCell, RefCell},
 	collections::{BTreeMap, HashMap, VecDeque},
 	io::Write,
@@ -17,7 +18,7 @@ use auxtools::{
 use auxtools_protocol::*;
 use instruction_hooking::disassemble_env;
 
-use super::instruction_hooking::{hook_instruction, original_bytecode, unhook_all, unhook_instruction};
+use super::instruction_hooking::{hook_instruction, original_code, unhook_all, unhook_instruction};
 use crate::{
 	code_index::{self, Code},
 	connection::{self, Connection},
@@ -580,12 +581,12 @@ impl Server {
 	fn disassemble(&self, code: CodeRef) -> Result<Disassembly, String> {
 		let proc = Proc::from_id(raw_types::procs::ProcId(code.proc)).ok_or_else(|| format!("the world has no proc {:#x}", code.proc))?;
 		let bytecode = if code.old == 0 {
-			original_bytecode(&proc)
+			original_code(&proc)
 		} else {
 			let running = self.old_codes.borrow().get(code.old as usize - 1).copied();
 			let old = running.and_then(|running| Some((running, auxtools::bytecode_at(running as *const u32)?)));
 			match old {
-				Some((running, old)) => crate::instruction_hooking::unpatched(running as *const u32, old),
+				Some((running, old)) => Cow::Owned(crate::instruction_hooking::unpatched(running as *const u32, old)),
 				None => return Err(format!("{} has no old code {}", proc.path, code.old))
 			}
 		};
@@ -2523,7 +2524,7 @@ impl Server {
 	fn handle_disassemble(&mut self, path: &str, id: u32) -> String {
 		match unnamed::find(path, id) {
 			Some(proc) => {
-				let bytecode = original_bytecode(&proc);
+				let bytecode = original_code(&proc);
 
 				let mut env = crate::DisassembleEnv;
 				let (nodes, error) = dmasm::disassembler::disassemble(&bytecode, &mut env);
