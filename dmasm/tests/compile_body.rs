@@ -652,3 +652,38 @@ fn a_chain_of_and_or_or_is_the_same_alone_as_in_a_body() {
     let folded = same_alone_and_in_a_body("1 && by");
     assert!(!folded.iter().any(|l| l.starts_with("Jmp")), "{folded:?}");
 }
+
+#[test]
+fn squares_and_bit_constants_are_the_same_alone_as_in_a_body() {
+    assert_has(
+        &same_alone_and_in_a_body("by ** 2"),
+        &["GetVar arg(2)", "PowSquare"],
+    );
+    assert_has(
+        &same_alone_and_in_a_body("by ** -1"),
+        &["GetVar arg(2)", "PowNegativeOne"],
+    );
+    assert_has(
+        &same_alone_and_in_a_body("by * by"),
+        &["GetVar arg(2)", "PowSquare"],
+    );
+    assert_has(
+        &same_alone_and_in_a_body("hp * hp"),
+        &["GetVar cache = arg(1); cache[\"hp\"]", "PowSquare"],
+    );
+    assert_has(
+        &same_alone_and_in_a_body("16777217 & by"),
+        &["PushInt 0", "GetVar arg(2)", "Band"],
+    );
+    for code in [
+        "by ** 3",
+        "by * by * hp",
+        "(by + 1) * (by + 1)",
+        "255 & by",
+        "by | 255",
+        "-1 ^ by",
+        "3 * by",
+    ] {
+        same_alone_and_in_a_body(code);
+    }
+}

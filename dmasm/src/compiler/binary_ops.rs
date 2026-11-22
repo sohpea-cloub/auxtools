@@ -231,9 +231,7 @@ pub(super) fn emit(
             EvalKind::Stack
         }
 
-        BinaryOp::Pow
-            if compiler.proc.is_some()
-                && matches!(super::fold::number(compiler, &rhs), Some(n) if n == 2.0 || n == -1.0) =>
+        BinaryOp::Pow if matches!(super::fold::number(compiler, &rhs), Some(n) if n == 2.0 || n == -1.0) =>
         {
             let square = super::fold::number(compiler, &rhs) == Some(2.0);
             let lhs = compiler.emit_expr(lhs)?;
@@ -247,8 +245,7 @@ pub(super) fn emit(
         }
 
         BinaryOp::Mul
-            if compiler.proc.is_some()
-                && !mul_lhs
+            if !mul_lhs
                 && same_variable(compiler, &lhs) == same_variable(compiler, &rhs)
                 && is_plain_variable(&lhs) =>
         {
@@ -279,17 +276,14 @@ pub(super) fn emit(
         | BinaryOp::LShift
         | BinaryOp::RShift
         | BinaryOp::FloatMod => {
-            let bit_op = compiler.proc.is_some()
-                && matches!(op, BinaryOp::BitAnd | BinaryOp::BitOr | BinaryOp::BitXor);
+            let bit_op = matches!(op, BinaryOp::BitAnd | BinaryOp::BitOr | BinaryOp::BitXor);
             for (i, operand) in vec![lhs, rhs].into_iter().enumerate() {
                 match super::fold::number(compiler, &operand) {
                     Some(n) if bit_op && i == 0 && !(compiler.debugger && super::fold::wide(n)) => {
                         super::fold::warn_bits(compiler, n);
                         compiler.emit_number(super::fold::bits(n) as f32)
                     }
-                    Some(n) if op == BinaryOp::Mul && i == 0 && compiler.proc.is_some() => {
-                        compiler.emit_number(n)
-                    }
+                    Some(n) if op == BinaryOp::Mul && i == 0 => compiler.emit_number(n),
                     _ => {
                         compiler.mul_lhs = op == BinaryOp::Mul && i == 0;
                         let kind = compiler.emit_expr(operand)?;
