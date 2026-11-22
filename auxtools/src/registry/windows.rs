@@ -15,6 +15,31 @@ const STRING_ACCESSOR_SIG: &str = "55 8B EC 8B 4D 08 3B 0D ?? ?? ?? ?? 73 ?? A1 
 
 const ALIST_SIG: &str = "3B 35 ?? ?? ?? ?? 73 ?? A1 ?? ?? ?? ?? C7 04 B0 00 00 00 00 46 3B 35 ?? ?? ?? ?? 72 EB";
 
+const TYPE_MAP_ACCESSOR: &str = "55 8B EC 8B 4D 08 3B 0D ?? ?? ?? ?? 77 0A A1 ?? ?? ?? ?? 8D 04 C8 5D C3 33 C0 5D C3";
+
+const TYPE_LOADER: &str = "69 F0 98 00 00 00 83 C4 04 A3 ?? ?? ?? ?? 56 FF D3 83 C4 04 85 F6 74 08 85 C0 0F 84 ?? ?? ?? ?? A3 ?? ?? ?? ?? A1 ?? ?? \
+                           ?? ?? 8D 34 85 00 00 00 00 56 FF D3 83 C4 04 85 F6 74 08 85 C0 0F 84 ?? ?? ?? ?? A3 ?? ?? ?? ?? A1 ?? ?? ?? ?? 8D 34 C5 \
+                           00 00 00 00 56 FF D3 83 C4 04 85 F6 74 08 85 C0 0F 84 ?? ?? ?? ?? A3 ?? ?? ?? ?? A1 ?? ?? ?? ?? 8D 34 85 00 00 00 00 56 \
+                           FF D3 83 C4 04 85 F6 74 08 85 C0 0F 84 ?? ?? ?? ?? 33 F6 A3 ?? ?? ?? ??";
+
+const TYPE_LOADER_515: &str = "A3 ?? ?? ?? ?? 8D 34 C0 C1 E6 04 56 FF D3 83 C4 04 85 F6 74 08 85 C0 0F 84 ?? ?? ?? ?? A3 ?? ?? ?? ?? A1 ?? ?? ?? ?? \
+                               8D 34 85 00 00 00 00 56 FF D3 83 C4 04 85 F6 74 08 85 C0 0F 84 ?? ?? ?? ?? A3 ?? ?? ?? ?? A1 ?? ?? ?? ?? 8D 34 C5 00 \
+                               00 00 00 56 FF D3 83 C4 04 85 F6 74 08 85 C0 0F 84 ?? ?? ?? ?? A3 ?? ?? ?? ?? A1 ?? ?? ?? ?? 8D 34 85 00 00 00 00 56 \
+                               FF D3 83 C4 04 85 F6 74 08 85 C0 0F 84 ?? ?? ?? ?? 33 F6 A3 ?? ?? ?? ??";
+
+const BEFORE_TYPEPATHS: VersionRange = VersionRange { min: 1637, max: 1640 };
+
+const WITH_TYPEPATHS: VersionRange = VersionRange { min: 1641, max: 1688 };
+
+const IN_LIST_LOADER: &str = "8D 34 85 00 00 00 00 83 C4 04 A3 ?? ?? ?? ?? 56 FF D3 83 C4 04 85 F6 74 08 85 C0 0F 84 ?? ?? ?? ?? 33 F6 A3 ?? ?? ?? \
+                              ?? 39 35 ?? ?? ?? ?? 76 ?? 80 3D ?? ?? ?? ?? 00 57 74 ?? E8 ?? ?? ?? ?? 8B C8 EB ?? E8 ?? ?? ?? ?? 0F B7 C8 A1 ?? ?? \
+                              ?? ?? 83 C4 04 89 0C B0";
+
+const MOB_LOADER: &str = "89 35 ?? ?? ?? ?? C1 E6 04 56 FF D3 83 C4 04 85 F6 74 08 85 C0 0F 84 ?? ?? ?? ?? 33 DB A3 ?? ?? ?? ?? 39 1D ?? ?? ?? ?? 76";
+
+const INSTANCE_LOADER: &str = "A3 ?? ?? ?? ?? 8D 34 40 C1 E6 02 56 FF D3 83 C4 04 85 F6 74 08 85 C0 0F 84 ?? ?? ?? ?? 33 DB A3 ?? ?? ?? ?? 39 1D ?? \
+                               ?? ?? ?? 76 ?? 33 F6 A1 ?? ?? ?? ?? 03 C6 57 50 E8";
+
 pub(super) const RECIPES: &[Recipe] = &[
 	Recipe {
 		name: "get_proc_array_entry",
@@ -308,6 +333,181 @@ pub(super) const RECIPES: &[Recipe] = &[
 			SignatureTreatment::NoOffset,
 			"55 8B EC 6A FF 68 ?? ?? ?? ?? 64 A1 00 00 00 00 50 51 53 56 57 A1 ?? ?? ?? ?? 33 C5 50 8D 45 F4 64 A3 00 00 00 00 89 65 F0 8B 4D 08 0F \
 			 B6 C1 83 C0 F1 83 F8 45"
+		),
+		hops: &[],
+		extract: Extract::Entry
+	},
+	Recipe {
+		name: "procdef_add",
+		versions: SUPPORTED,
+		anchor: Anchor::Signature(
+			SignatureTreatment::NoOffset,
+			"55 8B EC A1 ?? ?? ?? ?? 53 8B 5D 08 56 33 F6 57 85 C0 74 ?? 33 FF A1 ?? ?? ?? ?? 03 C7 53 50 E8"
+		),
+		hops: &[],
+		extract: Extract::Entry
+	},
+	Recipe {
+		name: "misc_intern_copy",
+		versions: SUPPORTED,
+		anchor: Anchor::Signature(
+			SignatureTreatment::NoOffset,
+			"55 8B EC 56 8B 35 ?? ?? ?? ?? 57 85 F6 74 0A 8B 46 08 A3 ?? ?? ?? ?? EB 0D 6A 0C FF 15 ?? ?? ?? ?? 83 C4 04 8B F0 85 F6 74 ?? 66 8B 4D \
+			 0C"
+		),
+		hops: &[],
+		extract: Extract::Entry
+	},
+	Recipe {
+		name: "obj_type_count",
+		versions: SUPPORTED,
+		anchor: Anchor::Signature(SignatureTreatment::NoOffset, TYPE_MAP_ACCESSOR),
+		hops: &[],
+		extract: Extract::AbsMem(OperandSelect::NthAbsMem(0))
+	},
+	Recipe {
+		name: "proc_name_maps",
+		versions: SUPPORTED,
+		anchor: Anchor::Signature(SignatureTreatment::NoOffset, TYPE_MAP_ACCESSOR),
+		hops: &[],
+		extract: Extract::AbsMem(OperandSelect::NthAbsMem(1))
+	},
+	Recipe {
+		name: "global_values",
+		versions: SUPPORTED,
+		anchor: Anchor::Signature(SignatureTreatment::NoOffset, GLOBAL_VARS_SIG),
+		hops: &[],
+		extract: Extract::AbsMem(OperandSelect::NthAbsMem(1))
+	},
+	Recipe {
+		name: "global_vars",
+		versions: SUPPORTED,
+		anchor: Anchor::Signature(
+			SignatureTreatment::NoOffset,
+			"0F B7 07 50 53 E8 ?? ?? ?? ?? 53 A3 ?? ?? ?? ?? FF 15 ?? ?? ?? ?? FF 35"
+		),
+		hops: &[],
+		extract: Extract::AbsMem(OperandSelect::NthAbsMem(0))
+	},
+	Recipe {
+		name: "AllocShared",
+		versions: SUPPORTED,
+		anchor: Anchor::Export(c"?AllocShared@@YAPAXK@Z"),
+		hops: &[],
+		extract: Extract::Entry
+	},
+	Recipe {
+		name: "FreeShared",
+		versions: SUPPORTED,
+		anchor: Anchor::Export(c"?FreeShared@@YA_NPAX@Z"),
+		hops: &[],
+		extract: Extract::Entry
+	},
+	Recipe {
+		name: "CopyShared",
+		versions: SUPPORTED,
+		anchor: Anchor::Export(c"?CopyShared@@YAPAXPAX@Z"),
+		hops: &[],
+		extract: Extract::Entry
+	},
+	Recipe {
+		name: "type_preorder",
+		versions: WITH_TYPEPATHS,
+		anchor: Anchor::Signature(SignatureTreatment::NoOffset, TYPE_LOADER),
+		hops: &[],
+		extract: Extract::AbsMem(OperandSelect::NthAbsMem(4))
+	},
+	Recipe {
+		name: "type_preorder",
+		versions: BEFORE_TYPEPATHS,
+		anchor: Anchor::Signature(SignatureTreatment::NoOffset, TYPE_LOADER_515),
+		hops: &[],
+		extract: Extract::AbsMem(OperandSelect::NthAbsMem(4))
+	},
+	Recipe {
+		name: "type_appearance_cache",
+		versions: WITH_TYPEPATHS,
+		anchor: Anchor::Signature(SignatureTreatment::NoOffset, TYPE_LOADER),
+		hops: &[],
+		extract: Extract::AbsMem(OperandSelect::NthAbsMem(10))
+	},
+	Recipe {
+		name: "type_appearance_cache",
+		versions: BEFORE_TYPEPATHS,
+		anchor: Anchor::Signature(SignatureTreatment::NoOffset, TYPE_LOADER_515),
+		hops: &[],
+		extract: Extract::AbsMem(OperandSelect::NthAbsMem(10))
+	},
+	Recipe {
+		name: "in_list_count",
+		versions: SUPPORTED,
+		anchor: Anchor::Signature(SignatureTreatment::NoOffset, IN_LIST_LOADER),
+		hops: &[],
+		extract: Extract::AbsMem(OperandSelect::NthAbsMem(1))
+	},
+	Recipe {
+		name: "in_list_procs",
+		versions: SUPPORTED,
+		anchor: Anchor::Signature(SignatureTreatment::NoOffset, IN_LIST_LOADER),
+		hops: &[],
+		extract: Extract::AbsMem(OperandSelect::NthAbsMem(2))
+	},
+	Recipe {
+		name: "world_name_map",
+		versions: SUPPORTED,
+		anchor: Anchor::Signature(
+			SignatureTreatment::NoOffset,
+			"F6 45 08 02 0F 84 ?? ?? ?? ?? FF 75 20 FF 75 10 FF 75 0C 68 ?? ?? ?? ?? E8 ?? ?? ?? ?? 83 C4 10"
+		),
+		hops: &[],
+		extract: Extract::Offset(20)
+	},
+	Recipe {
+		name: "mob_count",
+		versions: SUPPORTED,
+		anchor: Anchor::Signature(SignatureTreatment::NoOffset, MOB_LOADER),
+		hops: &[],
+		extract: Extract::AbsMem(OperandSelect::NthAbsMem(0))
+	},
+	Recipe {
+		name: "mobs",
+		versions: SUPPORTED,
+		anchor: Anchor::Signature(SignatureTreatment::NoOffset, MOB_LOADER),
+		hops: &[],
+		extract: Extract::AbsMem(OperandSelect::NthAbsMem(1))
+	},
+	Recipe {
+		name: "instance_count",
+		versions: SUPPORTED,
+		anchor: Anchor::Signature(SignatureTreatment::NoOffset, INSTANCE_LOADER),
+		hops: &[],
+		extract: Extract::AbsMem(OperandSelect::NthAbsMem(0))
+	},
+	Recipe {
+		name: "instances",
+		versions: SUPPORTED,
+		anchor: Anchor::Signature(SignatureTreatment::NoOffset, INSTANCE_LOADER),
+		hops: &[],
+		extract: Extract::AbsMem(OperandSelect::NthAbsMem(1))
+	},
+	Recipe {
+		name: "register_typepath",
+		versions: VersionRange { min: 1686, max: 1688 },
+		anchor: Anchor::Signature(
+			SignatureTreatment::NoOffset,
+			"55 8B EC 57 8B 7D 08 3B 3D ?? ?? ?? ?? 0F 83 ?? ?? ?? ?? 81 FF FF FF 00 00 0F 84 ?? ?? ?? ?? 56 69 F7 98 00 00 00 03 35 ?? ?? ?? ?? 0F \
+			 84 ?? ?? ?? ?? 80 BE 8C 00 00 00 00 75"
+		),
+		hops: &[],
+		extract: Extract::Entry
+	},
+	Recipe {
+		name: "register_typepath",
+		versions: VersionRange { min: 1641, max: 1685 },
+		anchor: Anchor::Signature(
+			SignatureTreatment::NoOffset,
+			"55 8B EC 57 8B 7D 08 3B 3D ?? ?? ?? ?? 0F 83 ?? ?? ?? ?? 56 69 F7 98 00 00 00 03 35 ?? ?? ?? ?? 0F 84 ?? ?? ?? ?? 80 BE 8C 00 00 00 00 \
+			 75"
 		),
 		hops: &[],
 		extract: Extract::Entry

@@ -9,7 +9,10 @@
 
 use std::ffi::c_void;
 
-use crate::raw_types::{misc, procs::ProcId};
+use crate::{
+	raw_types::{misc, procs::ProcId},
+	registry::find
+};
 
 /// A proc table entry as BYOND stores it, word by word: path, name, desc and
 /// category string ids, the path's last part, flags, three packed bytes,
@@ -221,246 +224,8 @@ pub(crate) fn reset() {
 }
 
 #[cfg(windows)]
-mod recipes {
-	use byond_scan::{Anchor, Extract, OperandSelect, Recipe, SignatureTreatment, VersionRange};
-
-	const CHECKED: VersionRange = VersionRange { min: 1637, max: 1688 };
-
-	pub const PROCDEF_ADD: Recipe = Recipe {
-		name: "procdef_add",
-		versions: CHECKED,
-		anchor: Anchor::Signature(
-			SignatureTreatment::NoOffset,
-			"55 8B EC A1 ?? ?? ?? ?? 53 8B 5D 08 56 33 F6 57 85 C0 74 ?? 33 FF A1 ?? ?? ?? ?? 03 C7 53 50 E8"
-		),
-		hops: &[],
-		extract: Extract::Entry
-	};
-
-	pub const MISC_INTERN_COPY: Recipe = Recipe {
-		name: "misc_intern_copy",
-		versions: CHECKED,
-		anchor: Anchor::Signature(
-			SignatureTreatment::NoOffset,
-			"55 8B EC 56 8B 35 ?? ?? ?? ?? 57 85 F6 74 0A 8B 46 08 A3 ?? ?? ?? ?? EB 0D 6A 0C FF 15 ?? ?? ?? ?? 83 C4 04 8B F0 85 F6 74 ?? 66 8B 4D \
-			 0C"
-		),
-		hops: &[],
-		extract: Extract::Entry
-	};
-
-	const TYPE_MAP_ACCESSOR: &str = "55 8B EC 8B 4D 08 3B 0D ?? ?? ?? ?? 77 0A A1 ?? ?? ?? ?? 8D 04 C8 5D C3 33 C0 5D C3";
-
-	pub const TYPE_COUNT: Recipe = Recipe {
-		name: "obj_type_count",
-		versions: CHECKED,
-		anchor: Anchor::Signature(SignatureTreatment::NoOffset, TYPE_MAP_ACCESSOR),
-		hops: &[],
-		extract: Extract::AbsMem(OperandSelect::NthAbsMem(0))
-	};
-
-	pub const NAME_MAPS: Recipe = Recipe {
-		name: "proc_name_maps",
-		versions: CHECKED,
-		anchor: Anchor::Signature(SignatureTreatment::NoOffset, TYPE_MAP_ACCESSOR),
-		hops: &[],
-		extract: Extract::AbsMem(OperandSelect::NthAbsMem(1))
-	};
-
-	pub const GLOBAL_VALUES: Recipe = Recipe {
-		name: "global_values",
-		versions: CHECKED,
-		anchor: Anchor::Signature(
-			SignatureTreatment::NoOffset,
-			"A3 ?? ?? ?? ?? 56 FF D3 83 C4 04 85 F6 74 08 85 C0 0F 84 4B 01 00 00 A3 ?? ?? ?? ?? A1 ?? ?? ?? ?? 8D 34 85 00 00 00 00 56 FF D3 83 C4 \
-			 04 85 F6 74 08 85 C0 0F 84 2D 01 00 00 33 DB A3 ?? ?? ?? ?? 39 1D"
-		),
-		hops: &[],
-		extract: Extract::AbsMem(OperandSelect::NthAbsMem(1))
-	};
-
-	pub const GLOBAL_VARS: Recipe = Recipe {
-		name: "global_vars",
-		versions: CHECKED,
-		anchor: Anchor::Signature(
-			SignatureTreatment::NoOffset,
-			"0F B7 07 50 53 E8 ?? ?? ?? ?? 53 A3 ?? ?? ?? ?? FF 15 ?? ?? ?? ?? FF 35"
-		),
-		hops: &[],
-		extract: Extract::AbsMem(OperandSelect::NthAbsMem(0))
-	};
-
-	pub const ALLOC_SHARED: Recipe = Recipe {
-		name: "AllocShared",
-		versions: CHECKED,
-		anchor: Anchor::Export(c"?AllocShared@@YAPAXK@Z"),
-		hops: &[],
-		extract: Extract::Entry
-	};
-
-	pub const FREE_SHARED: Recipe = Recipe {
-		name: "FreeShared",
-		versions: CHECKED,
-		anchor: Anchor::Export(c"?FreeShared@@YA_NPAX@Z"),
-		hops: &[],
-		extract: Extract::Entry
-	};
-
-	pub const COPY_SHARED: Recipe = Recipe {
-		name: "CopyShared",
-		versions: CHECKED,
-		anchor: Anchor::Export(c"?CopyShared@@YAPAXPAX@Z"),
-		hops: &[],
-		extract: Extract::Entry
-	};
-
-	const TYPE_LOADER: &str = "69 F0 98 00 00 00 83 C4 04 A3 ?? ?? ?? ?? 56 FF D3 83 C4 04 85 F6 74 08 85 C0 0F 84 ?? ?? ?? ?? A3 ?? ?? ?? ?? A1 ?? \
-	                           ?? ?? ?? 8D 34 85 00 00 00 00 56 FF D3 83 C4 04 85 F6 74 08 85 C0 0F 84 ?? ?? ?? ?? A3 ?? ?? ?? ?? A1 ?? ?? ?? ?? 8D \
-	                           34 C5 00 00 00 00 56 FF D3 83 C4 04 85 F6 74 08 85 C0 0F 84 ?? ?? ?? ?? A3 ?? ?? ?? ?? A1 ?? ?? ?? ?? 8D 34 85 00 00 \
-	                           00 00 56 FF D3 83 C4 04 85 F6 74 08 85 C0 0F 84 ?? ?? ?? ?? 33 F6 A3 ?? ?? ?? ??";
-
-	const TYPE_LOADER_515: &str = "A3 ?? ?? ?? ?? 8D 34 C0 C1 E6 04 56 FF D3 83 C4 04 85 F6 74 08 85 C0 0F 84 ?? ?? ?? ?? A3 ?? ?? ?? ?? A1 ?? ?? \
-	                               ?? ?? 8D 34 85 00 00 00 00 56 FF D3 83 C4 04 85 F6 74 08 85 C0 0F 84 ?? ?? ?? ?? A3 ?? ?? ?? ?? A1 ?? ?? ?? ?? \
-	                               8D 34 C5 00 00 00 00 56 FF D3 83 C4 04 85 F6 74 08 85 C0 0F 84 ?? ?? ?? ?? A3 ?? ?? ?? ?? A1 ?? ?? ?? ?? 8D 34 \
-	                               85 00 00 00 00 56 FF D3 83 C4 04 85 F6 74 08 85 C0 0F 84 ?? ?? ?? ?? 33 F6 A3 ?? ?? ?? ??";
-	const BEFORE_TYPEPATHS: VersionRange = VersionRange { min: 1637, max: 1640 };
-	const WITH_TYPEPATHS: VersionRange = VersionRange { min: 1641, max: 1688 };
-
-	pub const PREORDER: [Recipe; 2] = [
-		Recipe {
-			name: "type_preorder",
-			versions: WITH_TYPEPATHS,
-			anchor: Anchor::Signature(SignatureTreatment::NoOffset, TYPE_LOADER),
-			hops: &[],
-			extract: Extract::AbsMem(OperandSelect::NthAbsMem(4))
-		},
-		Recipe {
-			name: "type_preorder",
-			versions: BEFORE_TYPEPATHS,
-			anchor: Anchor::Signature(SignatureTreatment::NoOffset, TYPE_LOADER_515),
-			hops: &[],
-			extract: Extract::AbsMem(OperandSelect::NthAbsMem(4))
-		}
-	];
-
-	pub const APPEARANCE_CACHE: [Recipe; 2] = [
-		Recipe {
-			name: "type_appearance_cache",
-			versions: WITH_TYPEPATHS,
-			anchor: Anchor::Signature(SignatureTreatment::NoOffset, TYPE_LOADER),
-			hops: &[],
-			extract: Extract::AbsMem(OperandSelect::NthAbsMem(10))
-		},
-		Recipe {
-			name: "type_appearance_cache",
-			versions: BEFORE_TYPEPATHS,
-			anchor: Anchor::Signature(SignatureTreatment::NoOffset, TYPE_LOADER_515),
-			hops: &[],
-			extract: Extract::AbsMem(OperandSelect::NthAbsMem(10))
-		}
-	];
-
-	const IN_LIST_LOADER: &str = "8D 34 85 00 00 00 00 83 C4 04 A3 ?? ?? ?? ?? 56 FF D3 83 C4 04 85 F6 74 08 85 C0 0F 84 ?? ?? ?? ?? 33 F6 A3 ?? ?? \
-	                              ?? ?? 39 35 ?? ?? ?? ?? 76 ?? 80 3D ?? ?? ?? ?? 00 57 74 ?? E8 ?? ?? ?? ?? 8B C8 EB ?? E8 ?? ?? ?? ?? 0F B7 C8 A1 \
-	                              ?? ?? ?? ?? 83 C4 04 89 0C B0";
-
-	pub const IN_LIST_COUNT: Recipe = Recipe {
-		name: "in_list_count",
-		versions: CHECKED,
-		anchor: Anchor::Signature(SignatureTreatment::NoOffset, IN_LIST_LOADER),
-		hops: &[],
-		extract: Extract::AbsMem(OperandSelect::NthAbsMem(1))
-	};
-
-	pub const IN_LIST_PROCS: Recipe = Recipe {
-		name: "in_list_procs",
-		versions: CHECKED,
-		anchor: Anchor::Signature(SignatureTreatment::NoOffset, IN_LIST_LOADER),
-		hops: &[],
-		extract: Extract::AbsMem(OperandSelect::NthAbsMem(2))
-	};
-
-	pub const WORLD_NAME_MAP: Recipe = Recipe {
-		name: "world_name_map",
-		versions: CHECKED,
-		anchor: Anchor::Signature(
-			SignatureTreatment::NoOffset,
-			"F6 45 08 02 0F 84 ?? ?? ?? ?? FF 75 20 FF 75 10 FF 75 0C 68 ?? ?? ?? ?? E8 ?? ?? ?? ?? 83 C4 10"
-		),
-		hops: &[],
-		extract: Extract::Offset(20)
-	};
-
-	pub const MOB_COUNT: Recipe = Recipe {
-		name: "mob_count",
-		versions: CHECKED,
-		anchor: Anchor::Signature(SignatureTreatment::NoOffset, MOB_LOADER),
-		hops: &[],
-		extract: Extract::AbsMem(OperandSelect::NthAbsMem(0))
-	};
-
-	pub const MOBS: Recipe = Recipe {
-		name: "mobs",
-		versions: CHECKED,
-		anchor: Anchor::Signature(SignatureTreatment::NoOffset, MOB_LOADER),
-		hops: &[],
-		extract: Extract::AbsMem(OperandSelect::NthAbsMem(1))
-	};
-
-	const MOB_LOADER: &str =
-		"89 35 ?? ?? ?? ?? C1 E6 04 56 FF D3 83 C4 04 85 F6 74 08 85 C0 0F 84 ?? ?? ?? ?? 33 DB A3 ?? ?? ?? ?? 39 1D ?? ?? ?? ?? 76";
-
-	const INSTANCE_LOADER: &str = "A3 ?? ?? ?? ?? 8D 34 40 C1 E6 02 56 FF D3 83 C4 04 85 F6 74 08 85 C0 0F 84 ?? ?? ?? ?? 33 DB A3 ?? ?? ?? ?? 39 \
-	                               1D ?? ?? ?? ?? 76 ?? 33 F6 A1 ?? ?? ?? ?? 03 C6 57 50 E8";
-
-	pub const INSTANCE_COUNT: Recipe = Recipe {
-		name: "instance_count",
-		versions: CHECKED,
-		anchor: Anchor::Signature(SignatureTreatment::NoOffset, INSTANCE_LOADER),
-		hops: &[],
-		extract: Extract::AbsMem(OperandSelect::NthAbsMem(0))
-	};
-
-	pub const INSTANCES: Recipe = Recipe {
-		name: "instances",
-		versions: CHECKED,
-		anchor: Anchor::Signature(SignatureTreatment::NoOffset, INSTANCE_LOADER),
-		hops: &[],
-		extract: Extract::AbsMem(OperandSelect::NthAbsMem(1))
-	};
-
-	pub const REGISTER_TYPEPATH: Recipe = Recipe {
-		name: "register_typepath",
-		versions: VersionRange { min: 1686, max: 1688 },
-		anchor: Anchor::Signature(
-			SignatureTreatment::NoOffset,
-			"55 8B EC 57 8B 7D 08 3B 3D ?? ?? ?? ?? 0F 83 ?? ?? ?? ?? 81 FF FF FF 00 00 0F 84 ?? ?? ?? ?? 56 69 F7 98 00 00 00 03 35 ?? ?? ?? ?? 0F \
-			 84 ?? ?? ?? ?? 80 BE 8C 00 00 00 00 75"
-		),
-		hops: &[],
-		extract: Extract::Entry
-	};
-
-	pub const REGISTER_TYPEPATH_OLD: Recipe = Recipe {
-		name: "register_typepath",
-		versions: VersionRange { min: 1641, max: 1685 },
-		anchor: Anchor::Signature(
-			SignatureTreatment::NoOffset,
-			"55 8B EC 57 8B 7D 08 3B 3D ?? ?? ?? ?? 0F 83 ?? ?? ?? ?? 56 69 F7 98 00 00 00 03 35 ?? ?? ?? ?? 0F 84 ?? ?? ?? ?? 80 BE 8C 00 00 00 00 \
-			 75"
-		),
-		hops: &[],
-		extract: Extract::Entry
-	};
-}
-
-#[cfg(windows)]
-fn resolve() -> Result<Functions, String> {
-	use recipes::*;
-	let find = |recipe| crate::find_recipe(recipe);
-	let build = crate::byond_build()?;
-
-	let crt_realloc = unsafe {
+fn crt_realloc() -> Result<extern "C" fn(*mut c_void, usize) -> *mut c_void, String> {
+	unsafe {
 		use winapi::um::libloaderapi::{GetModuleHandleA, GetProcAddress};
 		let module = GetModuleHandleA(c"ucrtbase.dll".as_ptr());
 		if module.is_null() {
@@ -470,446 +235,69 @@ fn resolve() -> Result<Functions, String> {
 		if realloc.is_null() {
 			return Err("Couldn't find realloc in ucrtbase.dll".to_owned());
 		}
-		realloc
-	};
-
-	let type_count = find(&TYPE_COUNT)?;
-	unsafe {
-		Ok(Functions {
-			procdef_add: std::mem::transmute(find(&PROCDEF_ADD)?),
-			misc_intern: MiscIntern::Copy(std::mem::transmute(find(&MISC_INTERN_COPY)?)),
-			alloc_shared: std::mem::transmute(find(&ALLOC_SHARED)?),
-			free_shared: std::mem::transmute(find(&FREE_SHARED)?),
-			copy_shared: std::mem::transmute(find(&COPY_SHARED)?),
-			register_typepath: if build < TYPEPATH_BUILD {
-				Ok(None)
-			} else {
-				find(&REGISTER_TYPEPATH)
-					.or_else(|_| find(&REGISTER_TYPEPATH_OLD))
-					.map(|address| Some(std::mem::transmute::<usize, extern "C" fn(u32)>(address)))
-			},
-			path_cache: path_cache(build, find(&REGISTER_TYPEPATH).or_else(|_| find(&REGISTER_TYPEPATH_OLD)).ok()),
-			type_stride: type_stride(build),
-			crt_realloc: std::mem::transmute(crt_realloc),
-			type_count: type_count as *const u32,
-			type_table: (type_count - 4) as *const *mut u8,
-			name_maps: find(&NAME_MAPS)? as *const *mut ProcNameMap,
-			preorder: crate::find_recipe_of(&PREORDER)? as *const *mut u32,
-			appearance_cache: crate::find_recipe_of(&APPEARANCE_CACHE)? as *const *mut u32,
-			in_list_count: find(&IN_LIST_COUNT)? as *const u32,
-			in_list_procs: find(&IN_LIST_PROCS)? as *const *mut u32,
-			instance_count: find(&INSTANCE_COUNT)? as *const u32,
-			instances: find(&INSTANCES)? as *const *mut Instance,
-			mob_count: find(&MOB_COUNT)? as *const u32,
-			mobs: find(&MOBS)? as *const *mut MobType,
-			world_name_map: (find(&WORLD_NAME_MAP)? as *const *mut ProcNameMap).read_unaligned(),
-			global_values: find(&GLOBAL_VALUES)? as *const *const crate::raw_types::values::Value,
-			global_vars: find(&GLOBAL_VARS).map(|address| address as *mut u32)
-		})
+		Ok(std::mem::transmute(realloc))
 	}
 }
 
 #[cfg(unix)]
-mod recipes {
-	use byond_scan::{Anchor, Extract, OperandSelect, Recipe, SignatureTreatment, VersionRange};
-
-	const CHECKED: VersionRange = VersionRange { min: 1644, max: 1688 };
-	const EXPORTED: VersionRange = VersionRange { min: 1637, max: 1688 };
-
-	pub const PROCDEF_ADD: Recipe = Recipe {
-		name: "procdef_add",
-		versions: CHECKED,
-		anchor: Anchor::Signature(
-			SignatureTreatment::NoOffset,
-			"57 56 53 83 EC 10 A1 ?? ?? ?? ?? 8B 7C 24 20 85 C0 0F 84 ?? ?? ?? ?? 31 F6 31 DB EB ?? 8D 76 00 A1 ?? ?? ?? ?? 83 C3 01"
-		),
-		hops: &[],
-		extract: Extract::Entry
-	};
-
-	pub const MISC_INTERN_COPY: Recipe = Recipe {
-		name: "misc_intern_copy",
-		versions: CHECKED,
-		anchor: Anchor::Signature(
-			SignatureTreatment::NoOffset,
-			"57 56 53 8B 1D ?? ?? ?? ?? 8B 7C 24 10 8B 74 24 14 85 DB 74 ?? 8B 43 08 A3 ?? ?? ?? ?? 66 89 33 0F B7 F6"
-		),
-		hops: &[],
-		extract: Extract::Entry
-	};
-
-	const TYPE_MAP_ACCESSOR: &str = "8B 54 24 04 31 C0 39 15 ?? ?? ?? ?? 72 08 A1 ?? ?? ?? ?? 8D 04 D0 C3";
-
-	pub const TYPE_COUNT: Recipe = Recipe {
-		name: "obj_type_count",
-		versions: CHECKED,
-		anchor: Anchor::Signature(SignatureTreatment::NoOffset, TYPE_MAP_ACCESSOR),
-		hops: &[],
-		extract: Extract::AbsMem(OperandSelect::NthAbsMem(0))
-	};
-
-	pub const NAME_MAPS: Recipe = Recipe {
-		name: "proc_name_maps",
-		versions: CHECKED,
-		anchor: Anchor::Signature(SignatureTreatment::NoOffset, TYPE_MAP_ACCESSOR),
-		hops: &[],
-		extract: Extract::AbsMem(OperandSelect::NthAbsMem(1))
-	};
-
-	pub const GLOBAL_VALUES: Recipe = Recipe {
-		name: "global_values",
-		versions: CHECKED,
-		anchor: Anchor::Signature(
-			SignatureTreatment::NoOffset,
-			"89 1D ?? ?? ?? ?? 57 E8 ?? ?? ?? ?? 83 C4 10 85 FF 74 08 85 C0 0F 84 ?? ?? ?? ?? 83 EC 0C C1 E3 02 A3 ?? ?? ?? ?? 53 E8 ?? ?? ?? ?? 83 \
-			 C4 10 85 DB 74 08 85 C0 0F 84 ?? ?? ?? ?? A3 ?? ?? ?? ??"
-		),
-		hops: &[],
-		extract: Extract::AbsMem(OperandSelect::NthAbsMem(1))
-	};
-
-	pub const GLOBAL_VARS: Recipe = Recipe {
-		name: "global_vars",
-		versions: CHECKED,
-		anchor: Anchor::Signature(
-			SignatureTreatment::NoOffset,
-			"66 D1 EA 0F B7 D2 E8 ?? ?? ?? ?? 59 58 0F B7 07 50 53 E8 ?? ?? ?? ?? 89 C7 89 1C 24 A3 ?? ?? ?? ??"
-		),
-		hops: &[],
-		extract: Extract::AbsMem(OperandSelect::NthAbsMem(0))
-	};
-
-	pub const ALLOC_SHARED: Recipe = Recipe {
-		name: "AllocShared",
-		versions: EXPORTED,
-		anchor: Anchor::Export(c"_Z11AllocSharedm"),
-		hops: &[],
-		extract: Extract::Entry
-	};
-
-	pub const FREE_SHARED: Recipe = Recipe {
-		name: "FreeShared",
-		versions: EXPORTED,
-		anchor: Anchor::Export(c"_Z10FreeSharedPv"),
-		hops: &[],
-		extract: Extract::Entry
-	};
-
-	pub const COPY_SHARED: Recipe = Recipe {
-		name: "CopyShared",
-		versions: EXPORTED,
-		anchor: Anchor::Export(c"_Z10CopySharedPv"),
-		hops: &[],
-		extract: Extract::Entry
-	};
-
-	const TYPE_LOADER: &str = "69 FB 94 00 00 00 83 EC 0C 89 1D ?? ?? ?? ?? 57 E8 ?? ?? ?? ?? 83 C4 10 85 FF 74 08 85 C0 0F 84 ?? ?? ?? ?? 83 EC 0C \
-	                           8D 3C 9D 00 00 00 00 A3 ?? ?? ?? ?? 57 89 BD ?? ?? ?? ?? E8 ?? ?? ?? ?? 83 C4 10 85 FF 0F 95 85 ?? ?? ?? ?? 0F B6 8D \
-	                           ?? ?? ?? ?? 85 C0 75 08 84 C9 0F 85 ?? ?? ?? ?? 83 EC 0C 8D 3C DD 00 00 00 00 A3 ?? ?? ?? ?? 57 E8 ?? ?? ?? ?? 83 C4 \
-	                           10 85 FF 74 08 85 C0 0F 84 ?? ?? ?? ?? 83 EC 0C FF B5 ?? ?? ?? ?? A3 ?? ?? ?? ?? E8 ?? ?? ?? ?? 83 C4 10 85 C0 75 ?? \
-	                           80 BD ?? ?? ?? ?? 00 0F 85 ?? ?? ?? ?? A3 ?? ?? ?? ??";
-
-	pub const PREORDER: [Recipe; 2] = [
-		Recipe {
-			name: "type_preorder",
-			versions: CHECKED,
-			anchor: Anchor::Signature(SignatureTreatment::NoOffset, TYPE_LOADER),
-			hops: &[],
-			extract: Extract::AbsMem(OperandSelect::NthAbsMem(4))
-		},
-		Recipe {
-			name: "type_preorder",
-			versions: EARLY,
-			anchor: Anchor::Signature(SignatureTreatment::NoOffset, TYPE_LOADER_EARLY),
-			hops: &[],
-			extract: Extract::AbsMem(OperandSelect::NthAbsMem(4))
-		}
-	];
-
-	pub const APPEARANCE_CACHE: [Recipe; 2] = [
-		Recipe {
-			name: "type_appearance_cache",
-			versions: CHECKED,
-			anchor: Anchor::Signature(SignatureTreatment::NoOffset, TYPE_LOADER),
-			hops: &[],
-			extract: Extract::AbsMem(OperandSelect::NthAbsMem(6))
-		},
-		Recipe {
-			name: "type_appearance_cache",
-			versions: EARLY,
-			anchor: Anchor::Signature(SignatureTreatment::NoOffset, TYPE_LOADER_EARLY),
-			hops: &[],
-			extract: Extract::AbsMem(OperandSelect::NthAbsMem(8))
-		}
-	];
-
-	const IN_LIST_LOADER: &str = "83 EC 0C 8D 1C 85 00 00 00 00 A3 ?? ?? ?? ?? 53 E8 ?? ?? ?? ?? 83 C4 10 85 DB 74 08 85 C0 0F 84 ?? ?? ?? ?? A3 ?? \
-	                              ?? ?? ?? 31 DB EB ?? 83 EC 0C 56 E8 ?? ?? ?? ?? 83 C4 10 8B 15 ?? ?? ?? ?? 89 04 9A";
-
-	pub const IN_LIST_COUNT: Recipe = Recipe {
-		name: "in_list_count",
-		versions: CHECKED,
-		anchor: Anchor::Signature(SignatureTreatment::NoOffset, IN_LIST_LOADER),
-		hops: &[],
-		extract: Extract::AbsMem(OperandSelect::NthAbsMem(1))
-	};
-
-	pub const IN_LIST_PROCS: Recipe = Recipe {
-		name: "in_list_procs",
-		versions: CHECKED,
-		anchor: Anchor::Signature(SignatureTreatment::NoOffset, IN_LIST_LOADER),
-		hops: &[],
-		extract: Extract::AbsMem(OperandSelect::NthAbsMem(2))
-	};
-
-	pub const WORLD_NAME_MAP: Recipe = Recipe {
-		name: "world_name_map",
-		versions: CHECKED,
-		anchor: Anchor::Signature(
-			SignatureTreatment::NoOffset,
-			"0F B6 45 ?? 89 7D 0C C7 45 08 ?? ?? ?? ?? 89 45 14 89 F0 0F B6 F0 89 75 10 8D 65 F4 5B 5E 5F 5D E9"
-		),
-		hops: &[],
-		extract: Extract::Offset(10)
-	};
-
-	pub const MOB_COUNT: Recipe = Recipe {
-		name: "mob_count",
-		versions: CHECKED,
-		anchor: Anchor::Signature(SignatureTreatment::NoOffset, MOB_LOADER),
-		hops: &[],
-		extract: Extract::AbsMem(OperandSelect::NthAbsMem(0))
-	};
-
-	pub const MOBS: Recipe = Recipe {
-		name: "mobs",
-		versions: CHECKED,
-		anchor: Anchor::Signature(SignatureTreatment::NoOffset, MOB_LOADER),
-		hops: &[],
-		extract: Extract::AbsMem(OperandSelect::NthAbsMem(1))
-	};
-
-	const MOB_LOADER: &str = "89 C7 83 C4 10 89 FB 83 EC 0C 89 3D ?? ?? ?? ?? C1 E3 04 53 E8 ?? ?? ?? ?? 83 C4 10 85 DB 74 08 85 C0 0F 84 ?? ?? ?? \
-	                          ?? A3 ?? ?? ?? ?? 31 DB 85 FF 74 ?? 89 D8 83 EC 08 C1 E0 04 03 05";
-
-	const INSTANCE_LOADER: &str = "6B D8 0C 83 EC 0C A3 ?? ?? ?? ?? 53 E8 ?? ?? ?? ?? 83 C4 10 85 DB 74 08 85 C0 0F 84 ?? ?? ?? ?? A3 ?? ?? ?? ?? \
-	                               31 DB EB ?? 6B C3 0C 03 05 ?? ?? ?? ?? 57 57 56 50 E8";
-
-	pub const INSTANCE_COUNT: Recipe = Recipe {
-		name: "instance_count",
-		versions: CHECKED,
-		anchor: Anchor::Signature(SignatureTreatment::NoOffset, INSTANCE_LOADER),
-		hops: &[],
-		extract: Extract::AbsMem(OperandSelect::NthAbsMem(0))
-	};
-
-	pub const INSTANCES: Recipe = Recipe {
-		name: "instances",
-		versions: CHECKED,
-		anchor: Anchor::Signature(SignatureTreatment::NoOffset, INSTANCE_LOADER),
-		hops: &[],
-		extract: Extract::AbsMem(OperandSelect::NthAbsMem(1))
-	};
-
-	pub const REGISTER_TYPEPATH: Recipe = Recipe {
-		name: "register_typepath",
-		versions: VersionRange { min: 1686, max: 1688 },
-		anchor: Anchor::Signature(
-			SignatureTreatment::NoOffset,
-			"53 83 EC 18 8B 44 24 20 3B 05 ?? ?? ?? ?? 73 ?? 3D FF FF 00 00 74 ?? 69 D8 94 00 00 00 03 1D ?? ?? ?? ?? 74 ?? 80 BB 8C 00 00 00 00 74 \
-			 ?? 8D 44 24 08 83 EC 04 6A 06"
-		),
-		hops: &[],
-		extract: Extract::Entry
-	};
-
-	pub const REGISTER_TYPEPATH_OLD: Recipe = Recipe {
-		name: "register_typepath",
-		versions: VersionRange { min: 1644, max: 1685 },
-		anchor: Anchor::Signature(
-			SignatureTreatment::NoOffset,
-			"53 83 EC 18 8B 44 24 20 3B 05 ?? ?? ?? ?? 73 ?? 69 D8 94 00 00 00 03 1D ?? ?? ?? ?? 74 ?? 80 BB 8C 00 00 00 00 74 ?? 8D 44 24 08 83 EC \
-			 04 6A 06"
-		),
-		hops: &[],
-		extract: Extract::Entry
-	};
-
-	const EARLY: VersionRange = VersionRange { min: 1637, max: 1643 };
-	const TYPE_LOADER_EARLY: &str = "A3 ?? ?? ?? ?? 69 F0 ?? 00 00 00 89 34 24 E8 ?? ?? ?? ?? 85 F6 0F 85 ?? ?? ?? ?? 8B 35 ?? ?? ?? ?? A3 ?? ?? ?? \
-	                                 ?? C1 E6 02 89 34 24 E8 ?? ?? ?? ?? 85 C0 0F 84 ?? ?? ?? ?? 8B 35 ?? ?? ?? ?? A3 ?? ?? ?? ?? C1 E6 03 89 34 24 \
-	                                 E8 ?? ?? ?? ?? 85 C0 0F 84 ?? ?? ?? ?? 8B 35 ?? ?? ?? ?? A3 ?? ?? ?? ?? C1 E6 02 89 34 24 E8 ?? ?? ?? ?? 85 C0 \
-	                                 0F 84 ?? ?? ?? ?? 8B 15 ?? ?? ?? ?? A3 ?? ?? ?? ??";
-	const VAR_LOADER_EARLY: &str =
-		"A3 ?? ?? ?? ?? 8D 34 C5 00 00 00 00 89 34 24 E8 ?? ?? ?? ?? 85 F6 0F 85 ?? ?? ?? ?? 8B 35 ?? ?? ?? ?? A3 ?? ?? ?? ?? C1 E6 02";
-	const IN_LIST_LOADER_EARLY: &str =
-		"A3 ?? ?? ?? ?? C1 E0 02 31 F6 89 04 24 E8 ?? ?? ?? ?? A3 ?? ?? ?? ?? EB ?? 89 1C 24 E8 ?? ?? ?? ?? 8B 15 ?? ?? ?? ?? 89 04 B2";
-	const MOB_LOADER_EARLY: &str = "A3 ?? ?? ?? ?? 89 C6 C1 E6 04 89 34 24 E8 ?? ?? ?? ?? 85 F6 0F 85 ?? ?? ?? ?? 8B 3D ?? ?? ?? ?? A3 ?? ?? ?? ??";
-	const INSTANCE_LOADER_EARLY: &str = "A3 ?? ?? ?? ?? 6B C0 0C 31 FF 31 F6 89 04 24 E8 ?? ?? ?? ?? A3 ?? ?? ?? ?? EB ?? A1 ?? ?? ?? ?? 83 C6 01";
-
-	pub const PROCDEF_ADD_EARLY: Recipe = Recipe {
-		name: "procdef_add",
-		versions: EARLY,
-		anchor: Anchor::Signature(
-			SignatureTreatment::NoOffset,
-			"55 31 C0 89 E5 57 56 53 83 EC 2C 8B 35 ?? ?? ?? ?? 8B 7D 08 85 F6 74 ?? 31 F6 31 DB"
-		),
-		hops: &[],
-		extract: Extract::Entry
-	};
-	pub const MISC_INTERN: Recipe = Recipe {
-		name: "misc_intern",
-		versions: EARLY,
-		anchor: Anchor::Signature(
-			SignatureTreatment::NoOffset,
-			"55 B8 FF FF 00 00 89 E5 83 EC 68 89 5D F4 8B 5D 08 89 75 F8 89 7D FC 85 DB 74"
-		),
-		hops: &[],
-		extract: Extract::Entry
-	};
-	pub const TYPE_COUNT_EARLY: Recipe = Recipe {
-		name: "obj_type_count",
-		versions: EARLY,
-		anchor: Anchor::Signature(SignatureTreatment::NoOffset, TYPE_LOADER_EARLY),
-		hops: &[],
-		extract: Extract::AbsMem(OperandSelect::NthAbsMem(0))
-	};
-	pub const NAME_MAPS_EARLY: Recipe = Recipe {
-		name: "proc_name_maps",
-		versions: EARLY,
-		anchor: Anchor::Signature(SignatureTreatment::NoOffset, TYPE_LOADER_EARLY),
-		hops: &[],
-		extract: Extract::AbsMem(OperandSelect::NthAbsMem(6))
-	};
-	pub const GLOBAL_VALUES_EARLY: Recipe = Recipe {
-		name: "global_values",
-		versions: EARLY,
-		anchor: Anchor::Signature(SignatureTreatment::NoOffset, VAR_LOADER_EARLY),
-		hops: &[],
-		extract: Extract::AbsMem(OperandSelect::NthAbsMem(3))
-	};
-	pub const GLOBAL_VARS_EARLY: Recipe = Recipe {
-		name: "global_vars",
-		versions: EARLY,
-		anchor: Anchor::Signature(
-			SignatureTreatment::NoOffset,
-			"66 D1 E8 0F B7 C0 89 44 24 04 E8 ?? ?? ?? ?? 0F B7 06 89 3C 24 89 44 24 04 E8 ?? ?? ?? ?? 89 3C 24 A3 ?? ?? ?? ??"
-		),
-		hops: &[],
-		extract: Extract::AbsMem(OperandSelect::NthAbsMem(0))
-	};
-	pub const IN_LIST_COUNT_EARLY: Recipe = Recipe {
-		name: "in_list_count",
-		versions: EARLY,
-		anchor: Anchor::Signature(SignatureTreatment::NoOffset, IN_LIST_LOADER_EARLY),
-		hops: &[],
-		extract: Extract::AbsMem(OperandSelect::NthAbsMem(0))
-	};
-	pub const IN_LIST_PROCS_EARLY: Recipe = Recipe {
-		name: "in_list_procs",
-		versions: EARLY,
-		anchor: Anchor::Signature(SignatureTreatment::NoOffset, IN_LIST_LOADER_EARLY),
-		hops: &[],
-		extract: Extract::AbsMem(OperandSelect::NthAbsMem(1))
-	};
-	pub const MOB_COUNT_EARLY: Recipe = Recipe {
-		name: "mob_count",
-		versions: EARLY,
-		anchor: Anchor::Signature(SignatureTreatment::NoOffset, MOB_LOADER_EARLY),
-		hops: &[],
-		extract: Extract::AbsMem(OperandSelect::NthAbsMem(0))
-	};
-	pub const MOBS_EARLY: Recipe = Recipe {
-		name: "mobs",
-		versions: EARLY,
-		anchor: Anchor::Signature(SignatureTreatment::NoOffset, MOB_LOADER_EARLY),
-		hops: &[],
-		extract: Extract::AbsMem(OperandSelect::NthAbsMem(2))
-	};
-	pub const INSTANCE_COUNT_EARLY: Recipe = Recipe {
-		name: "instance_count",
-		versions: EARLY,
-		anchor: Anchor::Signature(SignatureTreatment::NoOffset, INSTANCE_LOADER_EARLY),
-		hops: &[],
-		extract: Extract::AbsMem(OperandSelect::NthAbsMem(0))
-	};
-	pub const INSTANCES_EARLY: Recipe = Recipe {
-		name: "instances",
-		versions: EARLY,
-		anchor: Anchor::Signature(SignatureTreatment::NoOffset, INSTANCE_LOADER_EARLY),
-		hops: &[],
-		extract: Extract::AbsMem(OperandSelect::NthAbsMem(1))
-	};
-	pub const WORLD_NAME_MAP_EARLY: Recipe = Recipe {
-		name: "world_name_map",
-		versions: EARLY,
-		anchor: Anchor::Signature(
-			SignatureTreatment::NoOffset,
-			"89 7C 24 0C 89 5C 24 08 C7 04 24 ?? ?? ?? ?? 89 74 24 04 E8 ?? ?? ?? ?? E9"
-		),
-		hops: &[],
-		extract: Extract::Offset(11)
-	};
-	pub const REGISTER_TYPEPATH_EARLY: Recipe = Recipe {
-		name: "register_typepath",
-		versions: VersionRange { min: 1641, max: 1643 },
-		anchor: Anchor::Signature(
-			SignatureTreatment::NoOffset,
-			"55 89 E5 53 83 EC 24 8B 45 08 3B 05 ?? ?? ?? ?? 73 ?? 69 D8 94 00 00 00 03 1D ?? ?? ?? ?? 74 ?? 80 BB 8C 00 00 00 00 74 ?? C7 44 24 08 \
-			 06 00 00 00"
-		),
-		hops: &[],
-		extract: Extract::Entry
-	};
-}
-
-#[cfg(unix)]
-fn resolve() -> Result<Functions, String> {
-	use recipes::*;
+fn crt_realloc() -> Result<extern "C" fn(*mut c_void, usize) -> *mut c_void, String> {
 	extern "C" {
 		fn realloc(ptr: *mut c_void, size: usize) -> *mut c_void;
 	}
-	let find = |recipe| crate::find_recipe(recipe);
-	let build = crate::byond_build()?;
+	Ok(unsafe { std::mem::transmute::<unsafe extern "C" fn(*mut c_void, usize) -> *mut c_void, _>(realloc) })
+}
 
-	let type_count = crate::find_recipe_of(&[TYPE_COUNT, TYPE_COUNT_EARLY])?;
+#[cfg(windows)]
+unsafe fn misc_intern(_build: u32) -> Result<MiscIntern, String> {
+	Ok(MiscIntern::Copy(std::mem::transmute(find!("misc_intern_copy")?)))
+}
+
+#[cfg(unix)]
+unsafe fn misc_intern(build: u32) -> Result<MiscIntern, String> {
+	Ok(if build < LINUX_SWAPPED_BUILD {
+		MiscIntern::Take(std::mem::transmute(find!("misc_intern")?))
+	} else {
+		MiscIntern::Copy(std::mem::transmute(find!("misc_intern_copy")?))
+	})
+}
+
+fn resolve() -> Result<Functions, String> {
+	let build = crate::byond_build()?;
+	let type_count = find!("obj_type_count")?;
+	#[cfg(windows)]
+	let type_table = type_count - 4;
+	#[cfg(unix)]
+	let type_table = if build < LINUX_SWAPPED_BUILD { type_count - 4 } else { type_count + 4 };
+	let register_typepath = if build < TYPEPATH_BUILD {
+		Ok(None)
+	} else {
+		find!("register_typepath").map(Some)
+	};
 	unsafe {
 		Ok(Functions {
-			procdef_add: std::mem::transmute(crate::find_recipe_of(&[PROCDEF_ADD, PROCDEF_ADD_EARLY])?),
-			misc_intern: if build < LINUX_SWAPPED_BUILD {
-				MiscIntern::Take(std::mem::transmute(find(&MISC_INTERN)?))
-			} else {
-				MiscIntern::Copy(std::mem::transmute(find(&MISC_INTERN_COPY)?))
-			},
-			alloc_shared: std::mem::transmute(find(&ALLOC_SHARED)?),
-			free_shared: std::mem::transmute(find(&FREE_SHARED)?),
-			copy_shared: std::mem::transmute(find(&COPY_SHARED)?),
-			register_typepath: if build < TYPEPATH_BUILD {
-				Ok(None)
-			} else {
-				crate::find_recipe_of(&[REGISTER_TYPEPATH, REGISTER_TYPEPATH_OLD, REGISTER_TYPEPATH_EARLY])
-					.map(|address| Some(std::mem::transmute::<usize, extern "C" fn(u32)>(address)))
-			},
-			path_cache: path_cache(
-				build,
-				crate::find_recipe_of(&[REGISTER_TYPEPATH, REGISTER_TYPEPATH_OLD, REGISTER_TYPEPATH_EARLY]).ok()
-			),
+			procdef_add: std::mem::transmute(find!("procdef_add")?),
+			misc_intern: misc_intern(build)?,
+			alloc_shared: std::mem::transmute(find!("AllocShared")?),
+			free_shared: std::mem::transmute(find!("FreeShared")?),
+			copy_shared: std::mem::transmute(find!("CopyShared")?),
+			path_cache: path_cache(build, register_typepath.clone().ok().flatten()),
+			register_typepath: register_typepath.map(|address| address.map(|address| std::mem::transmute::<usize, extern "C" fn(u32)>(address))),
 			type_stride: type_stride(build),
-			crt_realloc: std::mem::transmute::<unsafe extern "C" fn(*mut c_void, usize) -> *mut c_void, _>(realloc),
+			crt_realloc: crt_realloc()?,
 			type_count: type_count as *const u32,
-			type_table: if build < LINUX_SWAPPED_BUILD { type_count - 4 } else { type_count + 4 } as *const *mut u8,
-			name_maps: crate::find_recipe_of(&[NAME_MAPS, NAME_MAPS_EARLY])? as *const *mut ProcNameMap,
-			preorder: crate::find_recipe_of(&PREORDER)? as *const *mut u32,
-			appearance_cache: crate::find_recipe_of(&APPEARANCE_CACHE)? as *const *mut u32,
-			in_list_count: crate::find_recipe_of(&[IN_LIST_COUNT, IN_LIST_COUNT_EARLY])? as *const u32,
-			in_list_procs: crate::find_recipe_of(&[IN_LIST_PROCS, IN_LIST_PROCS_EARLY])? as *const *mut u32,
-			instance_count: crate::find_recipe_of(&[INSTANCE_COUNT, INSTANCE_COUNT_EARLY])? as *const u32,
-			instances: crate::find_recipe_of(&[INSTANCES, INSTANCES_EARLY])? as *const *mut Instance,
-			mob_count: crate::find_recipe_of(&[MOB_COUNT, MOB_COUNT_EARLY])? as *const u32,
-			mobs: crate::find_recipe_of(&[MOBS, MOBS_EARLY])? as *const *mut MobType,
-			world_name_map: (crate::find_recipe_of(&[WORLD_NAME_MAP, WORLD_NAME_MAP_EARLY])? as *const *mut ProcNameMap).read_unaligned(),
-			global_values: crate::find_recipe_of(&[GLOBAL_VALUES, GLOBAL_VALUES_EARLY])? as *const *const crate::raw_types::values::Value,
-			global_vars: crate::find_recipe_of(&[GLOBAL_VARS, GLOBAL_VARS_EARLY]).map(|address| address as *mut u32)
+			type_table: type_table as *const *mut u8,
+			name_maps: find!("proc_name_maps")? as *const *mut ProcNameMap,
+			preorder: find!("type_preorder")? as *const *mut u32,
+			appearance_cache: find!("type_appearance_cache")? as *const *mut u32,
+			in_list_count: find!("in_list_count")? as *const u32,
+			in_list_procs: find!("in_list_procs")? as *const *mut u32,
+			instance_count: find!("instance_count")? as *const u32,
+			instances: find!("instances")? as *const *mut Instance,
+			mob_count: find!("mob_count")? as *const u32,
+			mobs: find!("mobs")? as *const *mut MobType,
+			world_name_map: (find!("world_name_map")? as *const *mut ProcNameMap).read_unaligned(),
+			global_values: find!("global_values")? as *const *const crate::raw_types::values::Value,
+			global_vars: find!("global_vars").map(|address| address as *mut u32)
 		})
 	}
 }

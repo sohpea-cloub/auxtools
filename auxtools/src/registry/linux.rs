@@ -21,6 +21,38 @@ const STRING_ACCESSOR_SIG: &str = "56 53 83 EC 14 8B 44 24 20 39 05 ?? ?? ?? ?? 
 const ALIST_SIG: &str =
 	"8B 54 24 04 8B 4C 24 08 80 FA 0F 74 ?? 31 C0 80 FA 55 75 ?? 3B 0D ?? ?? ?? ?? 73 ?? A1 ?? ?? ?? ?? 8B 04 88 85 C0 74 ?? 8B 00 C3";
 
+const EXPORTED: VersionRange = VersionRange { min: 1637, max: 1688 };
+
+const TYPE_MAP_ACCESSOR: &str = "8B 54 24 04 31 C0 39 15 ?? ?? ?? ?? 72 08 A1 ?? ?? ?? ?? 8D 04 D0 C3";
+
+const TYPE_LOADER: &str = "69 FB 94 00 00 00 83 EC 0C 89 1D ?? ?? ?? ?? 57 E8 ?? ?? ?? ?? 83 C4 10 85 FF 74 08 85 C0 0F 84 ?? ?? ?? ?? 83 EC 0C 8D \
+                           3C 9D 00 00 00 00 A3 ?? ?? ?? ?? 57 89 BD ?? ?? ?? ?? E8 ?? ?? ?? ?? 83 C4 10 85 FF 0F 95 85 ?? ?? ?? ?? 0F B6 8D ?? ?? \
+                           ?? ?? 85 C0 75 08 84 C9 0F 85 ?? ?? ?? ?? 83 EC 0C 8D 3C DD 00 00 00 00 A3 ?? ?? ?? ?? 57 E8 ?? ?? ?? ?? 83 C4 10 85 FF \
+                           74 08 85 C0 0F 84 ?? ?? ?? ?? 83 EC 0C FF B5 ?? ?? ?? ?? A3 ?? ?? ?? ?? E8 ?? ?? ?? ?? 83 C4 10 85 C0 75 ?? 80 BD ?? ?? \
+                           ?? ?? 00 0F 85 ?? ?? ?? ?? A3 ?? ?? ?? ??";
+
+const IN_LIST_LOADER: &str = "83 EC 0C 8D 1C 85 00 00 00 00 A3 ?? ?? ?? ?? 53 E8 ?? ?? ?? ?? 83 C4 10 85 DB 74 08 85 C0 0F 84 ?? ?? ?? ?? A3 ?? ?? \
+                              ?? ?? 31 DB EB ?? 83 EC 0C 56 E8 ?? ?? ?? ?? 83 C4 10 8B 15 ?? ?? ?? ?? 89 04 9A";
+
+const MOB_LOADER: &str = "89 C7 83 C4 10 89 FB 83 EC 0C 89 3D ?? ?? ?? ?? C1 E3 04 53 E8 ?? ?? ?? ?? 83 C4 10 85 DB 74 08 85 C0 0F 84 ?? ?? ?? ?? \
+                          A3 ?? ?? ?? ?? 31 DB 85 FF 74 ?? 89 D8 83 EC 08 C1 E0 04 03 05";
+
+const INSTANCE_LOADER: &str = "6B D8 0C 83 EC 0C A3 ?? ?? ?? ?? 53 E8 ?? ?? ?? ?? 83 C4 10 85 DB 74 08 85 C0 0F 84 ?? ?? ?? ?? A3 ?? ?? ?? ?? 31 DB \
+                               EB ?? 6B C3 0C 03 05 ?? ?? ?? ?? 57 57 56 50 E8";
+
+const TYPE_LOADER_EARLY: &str = "A3 ?? ?? ?? ?? 69 F0 ?? 00 00 00 89 34 24 E8 ?? ?? ?? ?? 85 F6 0F 85 ?? ?? ?? ?? 8B 35 ?? ?? ?? ?? A3 ?? ?? ?? ?? \
+                                 C1 E6 02 89 34 24 E8 ?? ?? ?? ?? 85 C0 0F 84 ?? ?? ?? ?? 8B 35 ?? ?? ?? ?? A3 ?? ?? ?? ?? C1 E6 03 89 34 24 E8 ?? \
+                                 ?? ?? ?? 85 C0 0F 84 ?? ?? ?? ?? 8B 35 ?? ?? ?? ?? A3 ?? ?? ?? ?? C1 E6 02 89 34 24 E8 ?? ?? ?? ?? 85 C0 0F 84 ?? \
+                                 ?? ?? ?? 8B 15 ?? ?? ?? ?? A3 ?? ?? ?? ??";
+
+const VAR_LOADER_EARLY: &str =
+	"A3 ?? ?? ?? ?? 8D 34 C5 00 00 00 00 89 34 24 E8 ?? ?? ?? ?? 85 F6 0F 85 ?? ?? ?? ?? 8B 35 ?? ?? ?? ?? A3 ?? ?? ?? ?? C1 E6 02";
+const IN_LIST_LOADER_EARLY: &str =
+	"A3 ?? ?? ?? ?? C1 E0 02 31 F6 89 04 24 E8 ?? ?? ?? ?? A3 ?? ?? ?? ?? EB ?? 89 1C 24 E8 ?? ?? ?? ?? 8B 15 ?? ?? ?? ?? 89 04 B2";
+const MOB_LOADER_EARLY: &str = "A3 ?? ?? ?? ?? 89 C6 C1 E6 04 89 34 24 E8 ?? ?? ?? ?? 85 F6 0F 85 ?? ?? ?? ?? 8B 3D ?? ?? ?? ?? A3 ?? ?? ?? ??";
+
+const INSTANCE_LOADER_EARLY: &str = "A3 ?? ?? ?? ?? 6B C0 0C 31 FF 31 F6 89 04 24 E8 ?? ?? ?? ?? A3 ?? ?? ?? ?? EB ?? A1 ?? ?? ?? ?? 83 C6 01";
+
 pub(super) const RECIPES: &[Recipe] = &[
 	Recipe {
 		name: "get_proc_array_entry",
@@ -581,5 +613,293 @@ pub(super) const RECIPES: &[Recipe] = &[
 		),
 		hops: &[],
 		extract: Extract::AbsMem(OperandSelect::NthAbsMem(2))
+	},
+	Recipe {
+		name: "procdef_add",
+		versions: FROM_515_1644,
+		anchor: Anchor::Signature(
+			SignatureTreatment::NoOffset,
+			"57 56 53 83 EC 10 A1 ?? ?? ?? ?? 8B 7C 24 20 85 C0 0F 84 ?? ?? ?? ?? 31 F6 31 DB EB ?? 8D 76 00 A1 ?? ?? ?? ?? 83 C3 01"
+		),
+		hops: &[],
+		extract: Extract::Entry
+	},
+	Recipe {
+		name: "misc_intern_copy",
+		versions: FROM_515_1644,
+		anchor: Anchor::Signature(
+			SignatureTreatment::NoOffset,
+			"57 56 53 8B 1D ?? ?? ?? ?? 8B 7C 24 10 8B 74 24 14 85 DB 74 ?? 8B 43 08 A3 ?? ?? ?? ?? 66 89 33 0F B7 F6"
+		),
+		hops: &[],
+		extract: Extract::Entry
+	},
+	Recipe {
+		name: "obj_type_count",
+		versions: FROM_515_1644,
+		anchor: Anchor::Signature(SignatureTreatment::NoOffset, TYPE_MAP_ACCESSOR),
+		hops: &[],
+		extract: Extract::AbsMem(OperandSelect::NthAbsMem(0))
+	},
+	Recipe {
+		name: "proc_name_maps",
+		versions: FROM_515_1644,
+		anchor: Anchor::Signature(SignatureTreatment::NoOffset, TYPE_MAP_ACCESSOR),
+		hops: &[],
+		extract: Extract::AbsMem(OperandSelect::NthAbsMem(1))
+	},
+	Recipe {
+		name: "global_values",
+		versions: FROM_515_1644,
+		anchor: Anchor::Signature(SignatureTreatment::NoOffset, GLOBAL_VARS_SIG),
+		hops: &[],
+		extract: Extract::AbsMem(OperandSelect::NthAbsMem(1))
+	},
+	Recipe {
+		name: "global_vars",
+		versions: FROM_515_1644,
+		anchor: Anchor::Signature(
+			SignatureTreatment::NoOffset,
+			"66 D1 EA 0F B7 D2 E8 ?? ?? ?? ?? 59 58 0F B7 07 50 53 E8 ?? ?? ?? ?? 89 C7 89 1C 24 A3 ?? ?? ?? ??"
+		),
+		hops: &[],
+		extract: Extract::AbsMem(OperandSelect::NthAbsMem(0))
+	},
+	Recipe {
+		name: "AllocShared",
+		versions: EXPORTED,
+		anchor: Anchor::Export(c"_Z11AllocSharedm"),
+		hops: &[],
+		extract: Extract::Entry
+	},
+	Recipe {
+		name: "FreeShared",
+		versions: EXPORTED,
+		anchor: Anchor::Export(c"_Z10FreeSharedPv"),
+		hops: &[],
+		extract: Extract::Entry
+	},
+	Recipe {
+		name: "CopyShared",
+		versions: EXPORTED,
+		anchor: Anchor::Export(c"_Z10CopySharedPv"),
+		hops: &[],
+		extract: Extract::Entry
+	},
+	Recipe {
+		name: "type_preorder",
+		versions: FROM_515_1644,
+		anchor: Anchor::Signature(SignatureTreatment::NoOffset, TYPE_LOADER),
+		hops: &[],
+		extract: Extract::AbsMem(OperandSelect::NthAbsMem(4))
+	},
+	Recipe {
+		name: "type_preorder",
+		versions: EARLY_515,
+		anchor: Anchor::Signature(SignatureTreatment::NoOffset, TYPE_LOADER_EARLY),
+		hops: &[],
+		extract: Extract::AbsMem(OperandSelect::NthAbsMem(4))
+	},
+	Recipe {
+		name: "type_appearance_cache",
+		versions: FROM_515_1644,
+		anchor: Anchor::Signature(SignatureTreatment::NoOffset, TYPE_LOADER),
+		hops: &[],
+		extract: Extract::AbsMem(OperandSelect::NthAbsMem(6))
+	},
+	Recipe {
+		name: "type_appearance_cache",
+		versions: EARLY_515,
+		anchor: Anchor::Signature(SignatureTreatment::NoOffset, TYPE_LOADER_EARLY),
+		hops: &[],
+		extract: Extract::AbsMem(OperandSelect::NthAbsMem(8))
+	},
+	Recipe {
+		name: "in_list_count",
+		versions: FROM_515_1644,
+		anchor: Anchor::Signature(SignatureTreatment::NoOffset, IN_LIST_LOADER),
+		hops: &[],
+		extract: Extract::AbsMem(OperandSelect::NthAbsMem(1))
+	},
+	Recipe {
+		name: "in_list_procs",
+		versions: FROM_515_1644,
+		anchor: Anchor::Signature(SignatureTreatment::NoOffset, IN_LIST_LOADER),
+		hops: &[],
+		extract: Extract::AbsMem(OperandSelect::NthAbsMem(2))
+	},
+	Recipe {
+		name: "world_name_map",
+		versions: FROM_515_1644,
+		anchor: Anchor::Signature(
+			SignatureTreatment::NoOffset,
+			"0F B6 45 ?? 89 7D 0C C7 45 08 ?? ?? ?? ?? 89 45 14 89 F0 0F B6 F0 89 75 10 8D 65 F4 5B 5E 5F 5D E9"
+		),
+		hops: &[],
+		extract: Extract::Offset(10)
+	},
+	Recipe {
+		name: "mob_count",
+		versions: FROM_515_1644,
+		anchor: Anchor::Signature(SignatureTreatment::NoOffset, MOB_LOADER),
+		hops: &[],
+		extract: Extract::AbsMem(OperandSelect::NthAbsMem(0))
+	},
+	Recipe {
+		name: "mobs",
+		versions: FROM_515_1644,
+		anchor: Anchor::Signature(SignatureTreatment::NoOffset, MOB_LOADER),
+		hops: &[],
+		extract: Extract::AbsMem(OperandSelect::NthAbsMem(1))
+	},
+	Recipe {
+		name: "instance_count",
+		versions: FROM_515_1644,
+		anchor: Anchor::Signature(SignatureTreatment::NoOffset, INSTANCE_LOADER),
+		hops: &[],
+		extract: Extract::AbsMem(OperandSelect::NthAbsMem(0))
+	},
+	Recipe {
+		name: "instances",
+		versions: FROM_515_1644,
+		anchor: Anchor::Signature(SignatureTreatment::NoOffset, INSTANCE_LOADER),
+		hops: &[],
+		extract: Extract::AbsMem(OperandSelect::NthAbsMem(1))
+	},
+	Recipe {
+		name: "register_typepath",
+		versions: VersionRange { min: 1686, max: 1688 },
+		anchor: Anchor::Signature(
+			SignatureTreatment::NoOffset,
+			"53 83 EC 18 8B 44 24 20 3B 05 ?? ?? ?? ?? 73 ?? 3D FF FF 00 00 74 ?? 69 D8 94 00 00 00 03 1D ?? ?? ?? ?? 74 ?? 80 BB 8C 00 00 00 00 74 \
+			 ?? 8D 44 24 08 83 EC 04 6A 06"
+		),
+		hops: &[],
+		extract: Extract::Entry
+	},
+	Recipe {
+		name: "register_typepath",
+		versions: VersionRange { min: 1644, max: 1685 },
+		anchor: Anchor::Signature(
+			SignatureTreatment::NoOffset,
+			"53 83 EC 18 8B 44 24 20 3B 05 ?? ?? ?? ?? 73 ?? 69 D8 94 00 00 00 03 1D ?? ?? ?? ?? 74 ?? 80 BB 8C 00 00 00 00 74 ?? 8D 44 24 08 83 EC \
+			 04 6A 06"
+		),
+		hops: &[],
+		extract: Extract::Entry
+	},
+	Recipe {
+		name: "procdef_add",
+		versions: EARLY_515,
+		anchor: Anchor::Signature(
+			SignatureTreatment::NoOffset,
+			"55 31 C0 89 E5 57 56 53 83 EC 2C 8B 35 ?? ?? ?? ?? 8B 7D 08 85 F6 74 ?? 31 F6 31 DB"
+		),
+		hops: &[],
+		extract: Extract::Entry
+	},
+	Recipe {
+		name: "misc_intern",
+		versions: EARLY_515,
+		anchor: Anchor::Signature(
+			SignatureTreatment::NoOffset,
+			"55 B8 FF FF 00 00 89 E5 83 EC 68 89 5D F4 8B 5D 08 89 75 F8 89 7D FC 85 DB 74"
+		),
+		hops: &[],
+		extract: Extract::Entry
+	},
+	Recipe {
+		name: "obj_type_count",
+		versions: EARLY_515,
+		anchor: Anchor::Signature(SignatureTreatment::NoOffset, TYPE_LOADER_EARLY),
+		hops: &[],
+		extract: Extract::AbsMem(OperandSelect::NthAbsMem(0))
+	},
+	Recipe {
+		name: "proc_name_maps",
+		versions: EARLY_515,
+		anchor: Anchor::Signature(SignatureTreatment::NoOffset, TYPE_LOADER_EARLY),
+		hops: &[],
+		extract: Extract::AbsMem(OperandSelect::NthAbsMem(6))
+	},
+	Recipe {
+		name: "global_values",
+		versions: EARLY_515,
+		anchor: Anchor::Signature(SignatureTreatment::NoOffset, VAR_LOADER_EARLY),
+		hops: &[],
+		extract: Extract::AbsMem(OperandSelect::NthAbsMem(3))
+	},
+	Recipe {
+		name: "global_vars",
+		versions: EARLY_515,
+		anchor: Anchor::Signature(
+			SignatureTreatment::NoOffset,
+			"66 D1 E8 0F B7 C0 89 44 24 04 E8 ?? ?? ?? ?? 0F B7 06 89 3C 24 89 44 24 04 E8 ?? ?? ?? ?? 89 3C 24 A3 ?? ?? ?? ??"
+		),
+		hops: &[],
+		extract: Extract::AbsMem(OperandSelect::NthAbsMem(0))
+	},
+	Recipe {
+		name: "in_list_count",
+		versions: EARLY_515,
+		anchor: Anchor::Signature(SignatureTreatment::NoOffset, IN_LIST_LOADER_EARLY),
+		hops: &[],
+		extract: Extract::AbsMem(OperandSelect::NthAbsMem(0))
+	},
+	Recipe {
+		name: "in_list_procs",
+		versions: EARLY_515,
+		anchor: Anchor::Signature(SignatureTreatment::NoOffset, IN_LIST_LOADER_EARLY),
+		hops: &[],
+		extract: Extract::AbsMem(OperandSelect::NthAbsMem(1))
+	},
+	Recipe {
+		name: "mob_count",
+		versions: EARLY_515,
+		anchor: Anchor::Signature(SignatureTreatment::NoOffset, MOB_LOADER_EARLY),
+		hops: &[],
+		extract: Extract::AbsMem(OperandSelect::NthAbsMem(0))
+	},
+	Recipe {
+		name: "mobs",
+		versions: EARLY_515,
+		anchor: Anchor::Signature(SignatureTreatment::NoOffset, MOB_LOADER_EARLY),
+		hops: &[],
+		extract: Extract::AbsMem(OperandSelect::NthAbsMem(2))
+	},
+	Recipe {
+		name: "instance_count",
+		versions: EARLY_515,
+		anchor: Anchor::Signature(SignatureTreatment::NoOffset, INSTANCE_LOADER_EARLY),
+		hops: &[],
+		extract: Extract::AbsMem(OperandSelect::NthAbsMem(0))
+	},
+	Recipe {
+		name: "instances",
+		versions: EARLY_515,
+		anchor: Anchor::Signature(SignatureTreatment::NoOffset, INSTANCE_LOADER_EARLY),
+		hops: &[],
+		extract: Extract::AbsMem(OperandSelect::NthAbsMem(1))
+	},
+	Recipe {
+		name: "world_name_map",
+		versions: EARLY_515,
+		anchor: Anchor::Signature(
+			SignatureTreatment::NoOffset,
+			"89 7C 24 0C 89 5C 24 08 C7 04 24 ?? ?? ?? ?? 89 74 24 04 E8 ?? ?? ?? ?? E9"
+		),
+		hops: &[],
+		extract: Extract::Offset(11)
+	},
+	Recipe {
+		name: "register_typepath",
+		versions: VersionRange { min: 1641, max: 1643 },
+		anchor: Anchor::Signature(
+			SignatureTreatment::NoOffset,
+			"55 89 E5 53 83 EC 24 8B 45 08 3B 05 ?? ?? ?? ?? 73 ?? 69 D8 94 00 00 00 03 1D ?? ?? ?? ?? 74 ?? 80 BB 8C 00 00 00 00 74 ?? C7 44 24 08 \
+			 06 00 00 00"
+		),
+		hops: &[],
+		extract: Extract::Entry
 	}
 ];
