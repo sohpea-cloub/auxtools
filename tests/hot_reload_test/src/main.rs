@@ -1,7 +1,3 @@
-#[allow(dead_code)]
-#[path = "../../debug_test/src/client.rs"]
-mod client;
-
 use std::{
 	collections::HashSet,
 	path::{Path, PathBuf},
@@ -9,9 +5,11 @@ use std::{
 };
 
 use auxtools_protocol::*;
-use client::{Client, World};
 use dmasm::reload::{diff, Changes, ParseOptions, Snapshot};
-use test_support::paths;
+use test_support::{
+	debug::{Client, World},
+	paths
+};
 
 struct Source {
 	dir: PathBuf,

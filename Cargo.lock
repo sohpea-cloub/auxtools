@@ -306,7 +306,6 @@ dependencies = [
 name = "debug_test"
 version = "0.1.0"
 dependencies = [
- "auxtools-cli",
  "auxtools-protocol",
  "debug_server",
  "test_support",
@@ -930,6 +929,10 @@ dependencies = [
 [[package]]
 name = "test_support"
 version = "0.1.0"
+dependencies = [
+ "auxtools-cli",
+ "auxtools-protocol",
+]
 
 [[package]]
 name = "thiserror"

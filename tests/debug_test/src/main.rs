@@ -1,6 +1,3 @@
-#[allow(dead_code)]
-mod client;
-
 use std::{
 	path::PathBuf,
 	time::{Duration, Instant}
@@ -10,8 +7,10 @@ use auxtools_protocol::{
 	BreakpointReason, BreakpointSetResult, ContinueKind, InstructionRef, ProcRef, ProfileReply, ProfileRequest, ProfileTotals, ProfiledCode, Request,
 	Response, VariablesRef
 };
-use client::{Client, World};
-use test_support::paths;
+use test_support::{
+	debug::{Client, World},
+	paths
+};
 
 const BUSY: &str = "var/start = world.timeofday
 var/turns = 0

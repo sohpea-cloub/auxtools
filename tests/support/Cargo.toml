@@ -5,5 +5,9 @@ publish = false
 authors.workspace = true
 edition.workspace = true
 
+[dependencies]
+auxtools-cli = { path = "../../auxtools-cli" }
+auxtools-protocol = { path = "../../auxtools-protocol" }
+
 [lints]
 workspace = true
