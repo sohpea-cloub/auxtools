@@ -11,9 +11,12 @@ whose files aren't built is left out, with a warning.
 
 A .vsix is a zip: the extension under `extension/`, a manifest and a list of
 content types. This writes it directly, so there's nothing to install.
+
+Every file in this directory is packaged, apart from the names in NOT_PACKAGED.
 """
 
 import argparse
+import fnmatch
 import json
 import re
 import shutil
@@ -32,7 +35,20 @@ PLATFORMS = [
 	("linux", "i686-unknown-linux-gnu", ["auxtools", "libdebug_server.so"]),
 ]
 
-EXTENSION_FILES = ["package.json", "extension.js", "expression.js", "unsaved.js", "buildflags.js", "langclient.js", "README.md"]
+NOT_PACKAGED = ["*.test.js", "package.py", "*.vsix", ".*"]
+
+
+def extension_files():
+	"""The files of this directory that are packaged, by their path from it.
+	`bin` is left to the platforms' programs, which come from `target/`."""
+	found = []
+	for path in sorted(HERE.rglob("*")):
+		parts = path.relative_to(HERE).parts
+		if parts[0] == "bin" or any(fnmatch.fnmatch(part, pattern) for part in parts for pattern in NOT_PACKAGED):
+			continue
+		if path.is_file():
+			found.append("/".join(parts))
+	return found
 
 
 def manifest(package):
@@ -115,9 +131,11 @@ def main():
 	out = Path(args.out) if args.out else Path(f'{package["name"]}-{package["version"]}.vsix')
 
 	files = {}
-	for name in EXTENSION_FILES:
+	for name in extension_files():
 		files[f"extension/{name}"] = ((HERE / name).read_bytes(), False)
-	files["extension/LICENSE"] = ((HERE / "LICENSE").read_bytes(), False)
+	for name in ["package.json", "README.md", "LICENSE", package["main"]]:
+		if f"extension/{Path(name).as_posix()}" not in files:
+			sys.exit(f"{HERE / name} is missing or left out of the package by NOT_PACKAGED")
 
 	platforms = 0
 	for platform, target, names in PLATFORMS:
