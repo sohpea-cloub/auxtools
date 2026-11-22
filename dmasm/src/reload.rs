@@ -1660,23 +1660,12 @@ fn old_key(realigned: &Realigned, key: &ProcKey) -> Option<ProcKey> {
 }
 
 fn names_any(value: &ProcValue, names: &HashSet<&str>, defaults: &HashSet<&str>) -> bool {
-    use dreammaker::ast::{Follow, Term};
-    let quoted = |text: &str| {
-        names.iter().any(|name| {
-            text.strip_suffix(name)
-                .is_some_and(|rest| rest.is_empty() || rest.ends_with('"'))
-        })
-    };
+    use dreammaker::ast::Follow;
     let mut found = false;
     syntax::walk_proc(value, &mut |node| {
         found |= match node {
             syntax::Node::Name(name) => names.contains(name),
             syntax::Node::Follow(Follow::StaticField(name)) => defaults.contains(name.as_str()),
-            syntax::Node::Term(Term::String(text)) => quoted(text),
-            syntax::Node::Term(Term::InterpString(first, parts)) => {
-                quoted(first) || parts.iter().any(|(_, text)| quoted(text))
-            }
-            syntax::Node::Term(Term::Resource(name)) => quoted(name),
             _ => false,
         }
     });
@@ -3501,4 +3490,52 @@ fn names_after_scope(text: &str) -> Vec<(String, u32)> {
         }
     }
     found
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_strings_text_is_not_a_use_of_a_name() {
+        let code = "/proc/named()
+	return LIMIT + 1
+/proc/as_a_field(datum/d)
+	return d.LIMIT
+/proc/scoped()
+	return /datum/thing::size
+/proc/size()
+	return 1
+/proc/in_a_string()
+	return \"LIMIT\"
+/proc/in_a_strings_parts(x)
+	return \"LIMIT[x]LIMIT\"
+/proc/after_a_quote()
+	return \"is \\\"LIMIT\"
+/proc/in_a_resource()
+	return 'LIMIT'
+/proc/in_a_strings_code()
+	return \"is [LIMIT]\"
+";
+        let ctx = Context::default();
+        let pp = dreammaker::Preprocessor::from_buffer(&ctx, "code.dm".into(), code);
+        let mut parser = dreammaker::Parser::new(&ctx, pp);
+        parser.enable_procs();
+        let tree = parser.parse_object_tree_without_builtins();
+        let names: HashSet<&str> = vec!["LIMIT"].into_iter().collect();
+        let defaults: HashSet<&str> = vec!["size"].into_iter().collect();
+        let mut users: Vec<&str> = tree
+            .root()
+            .get()
+            .procs
+            .iter()
+            .filter(|(_, proc)| names_any(&proc.value[0], &names, &defaults))
+            .map(|(name, _)| name.as_str())
+            .collect();
+        users.sort();
+        assert_eq!(
+            users,
+            ["as_a_field", "in_a_strings_code", "named", "scoped"]
+        );
+    }
 }
