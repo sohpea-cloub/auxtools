@@ -558,6 +558,7 @@ pub struct Snapshot {
     default_lines: std::sync::Mutex<HashMap<ProcKey, Vec<(Vec<u8>, u32)>>>,
     folded: std::collections::BTreeSet<dreammaker::Location>,
     mended: HashSet<FileId>,
+    moved_defaults: Vec<(FileId, String, u32)>,
     skin: Option<PathBuf>,
     maps: Vec<PathBuf>,
     resource_index: std::sync::OnceLock<resources::Index>,
@@ -567,6 +568,7 @@ pub struct FileReload {
     pub changes: Changes,
     patched: Vec<(ProcKey, ProcValue)>,
     file: FileId,
+    moved: Vec<(FileId, String, u32)>,
 }
 
 impl Snapshot {
@@ -764,33 +766,48 @@ impl Snapshot {
                 )
             })
             .collect();
-        for (key, old_value, new_value) in &pairs {
-            let recompiled = |snapshot: &Snapshot| {
-                snapshot.compile_code(key).and_then(|mut reload| {
-                    snapshot.compile_in_lists(key, &mut reload, |_, _| false)?;
-                    Ok(reload)
-                })
-            };
-            let reload = if old_value.code != new_value.code {
-                recompiled(self)
-            } else if let Some(old_code) = before.remove(key) {
-                match line_change(old_code, self.compile(key), old_value, new_value) {
-                    LineChange::Same => continue,
-                    LineChange::Moved(lines) => {
-                        changes.plan.line_moves.push(LineMove {
-                            proc: key.clone(),
-                            lines,
-                        });
-                        continue;
+        let moved: Vec<(FileId, String, u32)> = moved
+            .into_iter()
+            .map(|(name, line)| (id, name.clone(), line))
+            .collect();
+        let reader = {
+            let all: Vec<&(FileId, String, u32)> =
+                moved.iter().chain(&self.moved_defaults).collect();
+            let changed = pairs
+                .iter()
+                .filter(|(_, old_value, new_value)| old_value.code != new_value.code)
+                .map(|(key, ..)| key);
+            self.records_moved_default(&all, changed)
+        };
+        if reader.is_none() {
+            for (key, old_value, new_value) in &pairs {
+                let recompiled = |snapshot: &Snapshot| {
+                    snapshot.compile_code(key).and_then(|mut reload| {
+                        snapshot.compile_in_lists(key, &mut reload, |_, _| false)?;
+                        Ok(reload)
+                    })
+                };
+                let reload = if old_value.code != new_value.code {
+                    recompiled(self)
+                } else if let Some(old_code) = before.remove(key) {
+                    match line_change(old_code, self.compile(key), old_value, new_value) {
+                        LineChange::Same => continue,
+                        LineChange::Moved(lines) => {
+                            changes.plan.line_moves.push(LineMove {
+                                proc: key.clone(),
+                                lines,
+                            });
+                            continue;
+                        }
+                        LineChange::Recompile => recompiled(self),
                     }
-                    LineChange::Recompile => recompiled(self),
+                } else {
+                    continue;
+                };
+                match reload {
+                    Ok(reload) => changes.plan.reloads.push(reload),
+                    Err(e) => changes.refused.push(self.uncompiled(key, &e)),
                 }
-            } else {
-                continue;
-            };
-            match reload {
-                Ok(reload) => changes.plan.reloads.push(reload),
-                Err(e) => changes.refused.push(self.uncompiled(key, &e)),
             }
         }
         for (key, value) in previous {
@@ -798,6 +815,9 @@ impl Snapshot {
                 Some(value) => self.patched.insert(key, value),
                 None => self.patched.remove(&key),
             };
+        }
+        if let Some(key) = reader {
+            return Err(format!("{key} reads a var default with :: that moved"));
         }
         changes.collect_warnings();
         Ok(FileReload {
@@ -807,6 +827,7 @@ impl Snapshot {
                 .map(|(key, _, new_value)| (key, new_value))
                 .collect(),
             file: id,
+            moved,
         })
     }
 
@@ -817,6 +838,11 @@ impl Snapshot {
         }
         self.patched.extend(reload.patched);
         self.mended.insert(reload.file);
+        for moved in reload.moved {
+            if !self.moved_defaults.contains(&moved) {
+                self.moved_defaults.push(moved);
+            }
+        }
         self.resource_index = Default::default();
     }
 
@@ -830,6 +856,7 @@ impl Snapshot {
     pub fn clear_patches(&mut self) {
         self.patched.clear();
         self.mended.clear();
+        self.moved_defaults.clear();
         self.resource_index = Default::default();
     }
 
@@ -895,6 +922,7 @@ impl Snapshot {
             default_lines: std::sync::Mutex::new(HashMap::new()),
             folded: Default::default(),
             mended: Default::default(),
+            moved_defaults: vec![],
             skin: None,
             maps: vec![],
             resource_index: Default::default(),
@@ -1446,6 +1474,44 @@ impl Snapshot {
             }
         }
         None
+    }
+
+    fn records_moved_default<'k>(
+        &self,
+        moved: &[&(FileId, String, u32)],
+        mut keys: impl Iterator<Item = &'k ProcKey>,
+    ) -> Option<ProcKey> {
+        if moved.is_empty() {
+            return None;
+        }
+        let names: HashSet<&str> = moved.iter().map(|(_, name, _)| name.as_str()).collect();
+        let places: Vec<(Vec<u8>, u32)> = moved
+            .iter()
+            .map(|(file, _, line)| (self.debug_file_name(*file).into_bytes(), *line))
+            .collect();
+        keys.find(|key| {
+            let Some((_, value)) = self.find(key) else {
+                return false;
+            };
+            if !names_any(value, &HashSet::new(), &names) {
+                return false;
+            }
+            let Ok(code) = self.compile(key) else {
+                return false;
+            };
+            let mut at = self.debug_file_name(value.location.file).into_bytes();
+            code.nodes.iter().any(|node| match node {
+                Node::Instruction(Instruction::DbgFile(name), _) => {
+                    at = name.0.clone();
+                    false
+                }
+                Node::Instruction(Instruction::DbgLine(line), _) => places
+                    .iter()
+                    .any(|(file, moved)| *file == at && moved == line),
+                _ => false,
+            })
+        })
+        .cloned()
     }
 
     fn recorded_defaults(&self, key: &ProcKey) -> Vec<(Vec<u8>, u32)> {
@@ -3622,6 +3688,52 @@ mod tests {
         let reload = old.reload_file(&project.dir, Path::new("a.dm")).unwrap();
         assert_eq!(reloaded(&reload.changes), ["/f", "/g"]);
         assert!(reload.changes.plan.line_moves.is_empty());
+    }
+
+    #[test]
+    fn a_body_that_starts_reading_a_moved_default_needs_the_full_parse() {
+        let one = "/proc/g()\n\treturn 1\n\n/datum/u\n\tvar/x = 3\n";
+        let project = Project::new("moved-in-one", &[("a.dm", one)]);
+        let mut old = project.parse();
+        project.write(
+            "a.dm",
+            &one.replace("\treturn 1\n", "\tworld.log << 0\n\treturn /datum/u::x\n"),
+        );
+        match old.reload_file(&project.dir, Path::new("a.dm")) {
+            Ok(_) => panic!("reloaded on its own"),
+            Err(e) => assert!(
+                e.contains("/g reads a var default with :: that moved"),
+                "{}",
+                e
+            ),
+        }
+
+        let (a, b) = (
+            "/proc/g()\n\treturn 1\n/datum/u\n\tvar/x = 3\n",
+            "/proc/f()\n\treturn 1\n/proc/h()\n\treturn 2\n",
+        );
+        let reads = b.replace("return 1", "return /datum/u::x");
+        let project = Project::new("moved-kept", &[("a.dm", a), ("b.dm", b)]);
+        let mut old = project.parse();
+        project.write(
+            "a.dm",
+            &a.replace("\treturn 1\n", "\tworld.log << 0\n\treturn 1\n"),
+        );
+        let reload = old.reload_file(&project.dir, Path::new("a.dm")).unwrap();
+        old.keep(reload);
+        project.write("b.dm", &reads);
+        match old.reload_file(&project.dir, Path::new("b.dm")) {
+            Ok(_) => panic!("reloaded on its own"),
+            Err(e) => assert!(
+                e.contains("/f reads a var default with :: that moved"),
+                "{}",
+                e
+            ),
+        }
+        old.clear_patches();
+        project.write("a.dm", a);
+        let (own, full) = project.both(&mut old, "b.dm");
+        assert_eq!(own.unwrap(), full);
     }
 
     #[test]
