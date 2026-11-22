@@ -82,11 +82,11 @@ impl Source {
 		self.snapshot = Some(Snapshot::parse(&self.dme(), &self.options).unwrap());
 	}
 
-	fn edit(&mut self, file: &str, from: &str, to: &str) -> Changes {
+	fn edit(&mut self, file: &str, from: &str, to: &str) -> Edit {
 		self.edit_many(file, &[(from, to)])
 	}
 
-	fn edit_many(&mut self, file: &str, edits: &[(&str, &str)]) -> Changes {
+	fn edit_many(&mut self, file: &str, edits: &[(&str, &str)]) -> Edit {
 		let mut text = self.text(file);
 		for (from, to) in edits {
 			assert_eq!(text.matches(from).count(), 1, "{:?} should be in {} once", from, file);
@@ -99,7 +99,7 @@ impl Source {
 		let edited: HashSet<PathBuf> = [Path::new(file).to_owned()].into_iter().collect();
 		let changes = diff(&old, self.snapshot.as_ref().unwrap(), Some(&edited));
 		assert!(changes.refused.is_empty(), "the edit was refused: {:?}", changes.refused);
-		changes
+		Edit { changes, before: old }
 	}
 
 	fn edit_refused(&mut self, file: &str, from: &str, to: &str) -> Vec<String> {
@@ -114,7 +114,7 @@ impl Source {
 		changes.refused.iter().map(|refusal| format!("{:#}", refusal)).collect()
 	}
 
-	fn move_code(&mut self, code: &str, from: &str, to: &str) -> Changes {
+	fn move_code(&mut self, code: &str, from: &str, to: &str) -> Edit {
 		let text = self.text(from);
 		assert_eq!(text.matches(code).count(), 1, "{:?} should be in {} once", code, from);
 		std::fs::write(self.dir.join(from), text.replace(code, "")).unwrap();
@@ -124,7 +124,7 @@ impl Source {
 		let edited: HashSet<PathBuf> = [Path::new(from).to_owned(), Path::new(to).to_owned()].into_iter().collect();
 		let changes = diff(&old, self.snapshot.as_ref().unwrap(), Some(&edited));
 		assert!(changes.refused.is_empty(), "the edit was refused: {:?}", changes.refused);
-		changes
+		Edit { changes, before: old }
 	}
 }
 
@@ -134,76 +134,21 @@ impl Drop for Source {
 	}
 }
 
-fn proc_ref(key: &dmasm::reload::ProcKey) -> ProcRef {
-	ProcRef {
-		path: key.path.clone(),
-		override_id: key.override_id
+struct Edit {
+	changes: Changes,
+	before: Snapshot
+}
+
+impl std::ops::Deref for Edit {
+	type Target = Changes;
+
+	fn deref(&self) -> &Changes {
+		&self.changes
 	}
 }
 
-fn proc_code(r: &dmasm::reload::ProcReload) -> HotReloadProc {
-	HotReloadProc {
-		proc: proc_ref(&r.proc),
-		nodes: r.nodes.clone(),
-		locals: r.locals.clone(),
-		params: r.params.clone(),
-		settings: r.settings.clone(),
-		statics: r.statics.clone()
-	}
-}
-
-fn reload_request(changes: &Changes) -> Request {
-	Request::HotReload(HotReloadRequest {
-		new_types: changes.new_types.clone(),
-		procs: changes.reloads.iter().map(proc_code).collect(),
-		settings: changes.settings.clone(),
-		new_procs: changes
-			.new_procs
-			.iter()
-			.map(|p| HotReloadNewProc {
-				type_path: p.type_path.clone(),
-				name: p.name.clone(),
-				declared: p.declared,
-				verb: p.verb,
-				code: proc_code(&p.code)
-			})
-			.collect(),
-		removed_procs: changes.removed_procs.clone(),
-		builtin_defaults: changes.builtin_defaults.clone(),
-		new_vars: changes.new_vars.clone(),
-		redeclared: changes.redeclared.clone(),
-		init_procs: changes
-			.init_procs
-			.iter()
-			.map(|i| HotReloadInitProc {
-				type_path: i.type_path.clone(),
-				code: i.code.as_ref().map(proc_code)
-			})
-			.collect(),
-		var_defaults: changes
-			.var_defaults
-			.iter()
-			.map(|d| HotReloadVarDefault {
-				var: d.var.clone(),
-				value: d.value.clone(),
-				types: d.types.clone()
-			})
-			.collect(),
-		line_moves: changes
-			.line_moves
-			.iter()
-			.map(|m| HotReloadLines {
-				proc: proc_ref(&m.proc),
-				lines: m.lines.clone()
-			})
-			.collect(),
-		removed_vars: vec![],
-		builtin_inherited: changes.builtin_inherited.clone(),
-		reparented: changes.reparented.clone(),
-		resources: vec![],
-		resource_dirs: vec![],
-		global_init: None
-	})
+fn reload_request(edit: &Edit) -> Request {
+	Request::HotReload(auxtools_cli::reload::request(&edit.changes, &edit.before, false))
 }
 
 fn resource_id(reference: &str) -> u32 {
@@ -220,11 +165,10 @@ fn reload_resources(client: &mut Client, source: &Source, files: &[(&str, &str, 
 		std::fs::copy(source.dir.join(edited), source.dir.join(file)).unwrap();
 	}
 	let names: Vec<String> = files.iter().map(|(file, ..)| file.to_string()).collect();
-	let changes = source.snapshot.as_ref().unwrap().resource_users(&names);
+	let current = source.snapshot.as_ref().unwrap();
+	let changes = current.resource_users(&names);
 	assert!(changes.refused.is_empty(), "the resource reload was refused: {:?}", changes.refused);
-	let Request::HotReload(mut request) = reload_request(&changes) else {
-		unreachable!()
-	};
+	let mut request = auxtools_cli::reload::request(&changes, current, false);
 	request.resources = files
 		.iter()
 		.map(|(file, _, ids)| HotReloadResource {
@@ -244,7 +188,7 @@ fn expect_reload_result(response: Response) -> HotReloadResult {
 	}
 }
 
-fn reload(client: &mut Client, changes: &Changes) -> HotReloadResult {
+fn reload(client: &mut Client, changes: &Edit) -> HotReloadResult {
 	let result = expect_reload_result(client.request(reload_request(changes)));
 	assert!(result.applied, "reload rejected: {:?}", result.errors);
 	result
@@ -343,7 +287,7 @@ fn main() {
 
 	assert_eq!(eval(&mut client, "answer()"), "1");
 	let changes = source.edit("reload.dm", "/proc/answer()\n\treturn 1", "/proc/answer()\n\treturn 2");
-	assert_eq!(changes.reloads.len(), 1);
+	assert_eq!(changes.plan.reloads.len(), 1);
 	reload(&mut watcher, &changes);
 	assert_eq!(eval(&mut client, "answer()"), "2");
 	println!("ok: proc bytecode replacement");
@@ -373,7 +317,7 @@ fn main() {
 		"/proc/few_locals()\n\tvar/a = 1\n\treturn a",
 		"/proc/few_locals()\n\tvar/a = 1\n\tvar/b = 2\n\tvar/c = 3\n\tvar/d = 4\n\tvar/e = 5\n\tvar/f = 6\n\treturn a + b + c + d + e + f"
 	);
-	let few_locals = changes.reloads.iter().find(|r| r.proc.path == "/few_locals").unwrap();
+	let few_locals = changes.plan.reloads.iter().find(|r| r.proc.path == "/few_locals").unwrap();
 	assert_eq!(few_locals.locals.len(), 6);
 	reload(&mut watcher, &changes);
 	assert_eq!(eval(&mut client, "few_locals()"), "21");
@@ -411,7 +355,7 @@ fn main() {
 		"/proc/answer()\n\treturn 2",
 		"/proc/answer()\n\tvar/unused = 1\n\tunused++\n\treturn 3"
 	);
-	assert!(changes.line_moves.iter().any(|m| m.proc.path == "/breakpoint_target"));
+	assert!(changes.plan.line_moves.iter().any(|m| m.proc.path == "/breakpoint_target"));
 	let result = reload(&mut watcher, &changes);
 	assert!(result.warnings.is_empty(), "{:?}", result.warnings);
 	assert_eq!(paused_line(&mut client), ("/breakpoint_target".to_owned(), Some(line + 2)));
@@ -702,7 +646,7 @@ fn main() {
 		"/proc/uses_helper()\n\treturn 0",
 		"/proc/uses_helper()\n\treturn helper() + 1\n\n/proc/helper()\n\treturn 7"
 	);
-	assert_eq!(changes.new_procs.len(), 1);
+	assert_eq!(changes.plan.new_procs.len(), 1);
 	reload(&mut watcher, &changes);
 	assert_eq!(eval(&mut client, "uses_helper()"), "8");
 	assert_eq!(eval(&mut client, "helper()"), "7");
@@ -738,7 +682,7 @@ fn main() {
 
 	eval(&mut client, "write_legs()");
 	let changes = source.edit("reload.dm", "\tvar/legs = 4", "\tvar/legs = 3");
-	assert_eq!(changes.var_defaults.len(), 1);
+	assert_eq!(changes.plan.var_defaults.len(), 1);
 	reload(&mut watcher, &changes);
 	assert_eq!(eval(&mut client, "old_dog.legs"), "3");
 	assert_eq!(eval(&mut client, "new_dog_legs()"), "3");
@@ -754,7 +698,7 @@ fn main() {
 		 12\n\n/datum/animal/proc/join_herd()\n\therd++\n\treturn \"[herd] [mood] [tail] \
 		 [flock_size]\"\n\n/proc/new_bird_tail()\n\tvar/datum/animal/bird/b = new\n\treturn b.tail\n"
 	);
-	assert_eq!(changes.new_vars.len(), 4, "{:?}", changes.new_vars);
+	assert_eq!(changes.plan.new_vars.len(), 4, "{:?}", changes.plan.new_vars);
 	reload(&mut watcher, &changes);
 	assert_eq!(eval(&mut client, "old_dog.tail"), "1");
 	assert_eq!(eval(&mut client, "initial(old_dog.tail)"), "1");
@@ -848,10 +792,10 @@ fn main() {
 		 uppertext(..())\n\n/proc/cat_says()\n\tvar/datum/animal/cat/c = new\n\treturn c.speak()\n"
 	);
 	assert_eq!(
-		changes.new_procs.len(),
+		changes.plan.new_procs.len(),
 		4,
 		"{:?}",
-		changes.new_procs.iter().map(|p| p.code.proc.to_string()).collect::<Vec<_>>()
+		changes.plan.new_procs.iter().map(|p| p.code.proc.to_string()).collect::<Vec<_>>()
 	);
 	reload(&mut watcher, &changes);
 	assert_eq!(eval(&mut client, "old_dog.speak()"), "\"woof!!!\"");
@@ -860,7 +804,7 @@ fn main() {
 	println!("ok: additional proc definitions");
 
 	let changes = source.edit("reload.dm", "/datum/animal/dog/speak()\n\treturn \"[..()]!!\"\n", "");
-	assert_eq!(changes.removed_procs.len(), 1, "{:?}", changes.removed_procs);
+	assert_eq!(changes.plan.removed_procs.len(), 1, "{:?}", changes.plan.removed_procs);
 	reload(&mut watcher, &changes);
 	assert_eq!(eval(&mut client, "old_dog.speak()"), "\"woof!\"");
 	assert_eq!(eval(&mut client, "old_puppy.speak()"), "\"woof!?\"");
@@ -879,12 +823,12 @@ fn main() {
 	let mut removal = None;
 	for round in 0..2 {
 		let changes = source.edit("reload.dm", without, with);
-		assert_eq!(changes.new_procs.len(), 1, "round {}", round);
+		assert_eq!(changes.plan.new_procs.len(), 1, "round {}", round);
 		let result = reload(&mut watcher, &changes);
 		assert!(result.warnings.is_empty(), "round {}: {:?}", round, result.warnings);
 		assert_eq!(eval(&mut client, "again()"), "7");
 		let changes = source.edit("reload.dm", with, without);
-		assert_eq!(changes.removed_procs.len(), 1, "round {}", round);
+		assert_eq!(changes.plan.removed_procs.len(), 1, "round {}", round);
 		let result = reload(&mut watcher, &changes);
 		assert!(result.warnings.is_empty(), "round {}: {:?}", round, result.warnings);
 		removal = Some(changes);
@@ -905,10 +849,10 @@ fn main() {
 
 	let changes = source.edit("reload.dm", "\tvar/list/items = list(\"a\")", "\tvar/list/items = list(\"a\", \"b\")");
 	assert_eq!(
-		changes.init_procs.len(),
+		changes.plan.init_procs.len(),
 		2,
 		"{:?}",
-		changes.init_procs.iter().map(|i| &i.type_path).collect::<Vec<_>>()
+		changes.plan.init_procs.iter().map(|i| &i.type_path).collect::<Vec<_>>()
 	);
 	reload(&mut watcher, &changes);
 	assert_eq!(eval(&mut client, "new_items(/datum/bag)"), "\"a,b\"");
@@ -946,7 +890,7 @@ fn main() {
 		 entries\n\n/proc/ledger_test()\n\tvar/datum/ledger/l = new\n\tl.add()\n\treturn \"[l.add()] [istype(l, /datum/ledger)] [istype(l, /datum)] \
 		 [l.type]\"\n\n/obj/crate/proc/describe_crate()\n"
 	);
-	assert_eq!(changes.new_types.len(), 3, "{:?}", changes.new_types);
+	assert_eq!(changes.plan.new_types.len(), 3, "{:?}", changes.plan.new_types);
 	reload(&mut watcher, &changes);
 	assert_eq!(eval(&mut client, "crate_report(/obj/crate)"), "\"crate|||0|4|crate holds 4|empty|c\"");
 	assert_eq!(
@@ -974,7 +918,7 @@ fn main() {
 		"/datum/sought\n\tvar/found = 1\n\n/proc/sought_maker()\n\tvar/datum/sought/s = new /datum/sought\n\treturn \
 		 s.found\n\n/proc/crate_report(type)\n"
 	);
-	assert_eq!(changes.new_types.len(), 1, "{:?}", changes.new_types);
+	assert_eq!(changes.plan.new_types.len(), 1, "{:?}", changes.plan.new_types);
 	reload(&mut watcher, &changes);
 	assert_eq!(eval(&mut client, "sought_maker()"), "1");
 	assert_eq!(eval(&mut client, "istype(new /datum/sought, /datum/sought)"), "1");
@@ -1011,7 +955,7 @@ fn main() {
 		"\tset waitfor = FALSE\n\tsleep(1)\n\treturn 1",
 		"\tset waitfor = TRUE\n\tsleep(1)\n\treturn 1"
 	);
-	assert_eq!((changes.reloads.len(), changes.settings.len()), (1, 1));
+	assert_eq!((changes.plan.reloads.len(), changes.plan.settings.len()), (1, 1));
 	reload(&mut watcher, &changes);
 	assert!(sleeps(&mut client, "nap_skipped(/datum/napper/cat)"));
 	println!("ok: declaration settings inheritance");
@@ -1035,7 +979,7 @@ fn main() {
 	assert_eq!(eval(&mut client, "call(old_helper, \"wave\")()"), "\"wave\"");
 
 	let changes = source.edit("reload.dm", "\tset category = \"Helpers\"\n", "\tset category = \"Friends\"\n");
-	assert_eq!((changes.reloads.len(), changes.settings.len()), (1, 1));
+	assert_eq!((changes.plan.reloads.len(), changes.plan.settings.len()), (1, 1));
 	reload(&mut watcher, &changes);
 	assert_eq!(eval(&mut client, "verb_report(old_helper)"), "\"Greet:Friends\"");
 	assert_eq!(
@@ -1054,7 +998,7 @@ fn main() {
 		"/proc/first_def()\n\treturn \"first\"\n",
 		"/proc/first_def()\n\treturn \"first\"\n\n/first_def()\n\treturn \"second\"\n"
 	);
-	assert_eq!(changes.new_procs.len(), 1);
+	assert_eq!(changes.plan.new_procs.len(), 1);
 	reload(&mut watcher, &changes);
 	assert_eq!(eval(&mut client, "first_def()"), "\"first\"");
 	println!("ok: additional global definition");
@@ -1096,7 +1040,7 @@ fn main() {
 		"/obj/crate\n\tname = \"crate\"\n",
 		"/obj/crate\n\tname = \"box\"\n\tpixel_y = 3\n"
 	);
-	assert_eq!(changes.builtin_defaults.len(), 3, "{:?}", changes.builtin_defaults);
+	assert_eq!(changes.plan.builtin_defaults.len(), 3, "{:?}", changes.plan.builtin_defaults);
 	reload(&mut watcher, &changes);
 	assert_eq!(eval(&mut client, "builtin_report(/obj/crate)"), "\"box 255 0 3  32 neuter 0 1 \"");
 	assert_eq!(eval(&mut client, "(new /obj/crate).text"), "\"b\"");
@@ -1122,7 +1066,7 @@ fn main() {
 	reload(&mut watcher, &changes);
 	assert_eq!(eval(&mut client, "(new /obj/crate/big_crate).layer"), "7");
 	let changes = source.edit("reload.dm", "\tpixel_y = 3\n\tlayer = 7\n", "");
-	assert_eq!(changes.builtin_inherited.len(), 2, "{:?}", changes.builtin_inherited);
+	assert_eq!(changes.plan.builtin_inherited.len(), 2, "{:?}", changes.plan.builtin_inherited);
 	reload(&mut watcher, &changes);
 	assert_eq!(eval(&mut client, "(new /obj/crate).layer"), "3");
 	assert_eq!(eval(&mut client, "(new /obj/crate/big_crate).layer"), "3");
@@ -1158,7 +1102,7 @@ fn main() {
 		("\trepeat = 1\n", "\trepeat = 1\n\tchannel = 5\n\tfalloff = 2\n"),
 		("\"1,1 to 16,16\"", "\"1,1 to 8,24\"")
 	]);
-	assert_eq!(changes.var_defaults.len(), 3, "{:?}", changes.var_defaults);
+	assert_eq!(changes.plan.var_defaults.len(), 3, "{:?}", changes.plan.var_defaults);
 	reload(&mut watcher, &changes);
 	assert_eq!(eval(&mut client, "initial(/exception/hot_reload::name)"), "\"two\"");
 	assert_eq!(eval(&mut client, "initial(/sound/hot_reload::channel)"), "5");
@@ -1184,7 +1128,7 @@ fn main() {
 		("\tparent_type = /datum/hr_a\n", "\tparent_type = /datum/hr_b\n"),
 		("\tparent_type = /obj/hr_oa\n", "\tparent_type = /obj/hr_ob\n")
 	]);
-	assert_eq!(changes.reparented.len(), 2, "{:?}", changes.reparented);
+	assert_eq!(changes.plan.reparented.len(), 2, "{:?}", changes.plan.reparented);
 	reload(&mut watcher, &changes);
 	assert_eq!(eval(&mut client, "(new /datum/hr_t/sub).f()"), "\"tb\"");
 	assert_eq!(eval(&mut client, "istype(new /datum/hr_t/sub, /datum/hr_b)"), "1");
@@ -1244,7 +1188,7 @@ fn main() {
 	assert!(changes.refused.is_empty(), "{:?}", changes.refused);
 	let mut unmarked = reload_request(&changes);
 	if let Request::HotReload(request) = &mut unmarked {
-		for var in &mut request.new_vars {
+		for var in &mut request.plan.new_vars {
 			var.moved_from.clear();
 		}
 	}
@@ -1277,7 +1221,7 @@ fn main() {
 	let sound = "\"[(new /sound/hr_st).pan] [(new /sound/hr_st).frequency] [(new /sound/hr_st).priority]\"";
 	assert_eq!(eval(&mut client, sound), "\"10 3 0\"");
 	let changes = source.edit("main.dm", "\tparent_type = /sound/hr_sa\n", "\tparent_type = /sound/hr_sb\n");
-	assert_eq!(changes.reparented.len(), 1, "{:?}", changes.reparented);
+	assert_eq!(changes.plan.reparented.len(), 1, "{:?}", changes.plan.reparented);
 	reload(&mut watcher, &changes);
 	assert_eq!(eval(&mut client, sound), "\"0 3 5\"");
 	println!("ok: sound parent change");
@@ -1322,7 +1266,7 @@ fn main() {
 		"/mob/helper/tiny\n\tname = \"tiny\"\n\tsee_in_dark = 6\n\n/proc/mob_report(type)\n\tvar/mob/m = new type\n\treturn \"[m.type] [m.name] \
 		 [m.sight] [m.see_in_dark] [istype(m, /mob/helper)] [ismob(m)] [verb_report(m)]\"\n\n/proc/first_def()\n"
 	);
-	assert_eq!(changes.new_types.len(), 1, "{:?}", changes.refused);
+	assert_eq!(changes.plan.new_types.len(), 1, "{:?}", changes.refused);
 	reload(&mut watcher, &changes);
 	assert_eq!(
 		eval(&mut client, "mob_report(/mob/helper/tiny)"),
@@ -1340,10 +1284,10 @@ fn main() {
 	println!("ok: new mob types");
 
 	let mut request = reload_request(&source.edit("reload.dm", "\treturn 4", "\treturn 5"));
-	if let Request::HotReload(HotReloadRequest { procs, .. }) = &mut request {
-		let mut bad = procs[0].clone();
+	if let Request::HotReload(HotReloadRequest { plan, .. }) = &mut request {
+		let mut bad = plan.reloads[0].clone();
 		bad.proc.path = "/a_proc_the_world_doesnt_have".to_owned();
-		procs.push(bad);
+		plan.reloads.push(bad);
 	}
 	let result = expect_reload_result(client.request(request));
 	assert!(!result.applied);
@@ -1356,25 +1300,28 @@ fn main() {
 	println!("ok: rejected reload preserves existing code");
 
 	let request = Request::HotReload(HotReloadRequest {
-		removed_procs: vec![dmasm::reload::RemovedProc {
-			proc: dmasm::reload::ProcKey {
-				path: "/datum/declared/never_built".to_owned(),
-				override_id: 0
-			},
-			type_path: "/datum/declared".to_owned(),
-			name: "never_built".to_owned(),
-			verb: false
-		}],
-		removed_vars: [
-			("/datum/declared", "count"),
-			("/datum/declared", "never_built"),
-			("/datum/never_built", "count")
-		]
-		.map(|(type_path, var)| RemovedVar {
-			type_path: type_path.to_owned(),
-			var: var.to_owned()
-		})
-		.to_vec(),
+		plan: dmasm::reload::Plan {
+			removed_procs: vec![dmasm::reload::RemovedProc {
+				proc: dmasm::reload::ProcKey {
+					path: "/datum/declared/never_built".to_owned(),
+					override_id: 0
+				},
+				type_path: "/datum/declared".to_owned(),
+				name: "never_built".to_owned(),
+				verb: false
+			}],
+			removed_vars: [
+				("/datum/declared", "count"),
+				("/datum/declared", "never_built"),
+				("/datum/never_built", "count")
+			]
+			.map(|(type_path, var)| dmasm::reload::RemovedVar {
+				type_path: type_path.to_owned(),
+				var: var.to_owned()
+			})
+			.to_vec(),
+			..Default::default()
+		},
 		..Default::default()
 	});
 	let result = expect_reload_result(client.request(request));
@@ -1393,7 +1340,7 @@ fn main() {
 		"/datum/chain/say()\n\treturn ..() + \"3\"",
 		"/datum/chain/say()\n\treturn ..() + \"2\"\n\n/datum/chain/say()\n\treturn ..() + \"3\""
 	);
-	assert_eq!(changes.new_procs.len(), 1);
+	assert_eq!(changes.plan.new_procs.len(), 1);
 	let result = reload(&mut watcher, &changes);
 	assert!(result.warnings.is_empty(), "{:?}", result.warnings);
 	assert_eq!(eval(&mut client, "the_chain.say()"), "\"123\"");
@@ -1415,7 +1362,7 @@ fn main() {
 	reload(&mut watcher, &changes);
 	assert_eq!(eval(&mut client, "the_chain.say()"), "\"124\"");
 	let changes = source.edit("main.dm", "/datum/chain/say()\n\treturn ..() + \"2\"\n\n", "");
-	assert_eq!(changes.removed_procs.len(), 1);
+	assert_eq!(changes.plan.removed_procs.len(), 1);
 	reload(&mut watcher, &changes);
 	assert_eq!(eval(&mut client, "the_chain.say()"), "\"14\"");
 	assert!(definition_at(&mut client, 1, source.line_of("main.dm", "\treturn ..() + \"4\"")));
@@ -1423,7 +1370,7 @@ fn main() {
 
 	assert_eq!(eval(&mut client, "declared_one.read_count()"), "1");
 	let changes = source.edit("main.dm", "\tvar/count = 1", "\tvar/static/count = 7");
-	assert_eq!(changes.redeclared.len(), 1);
+	assert_eq!(changes.plan.redeclared.len(), 1);
 	reload(&mut watcher, &changes);
 	assert_eq!(eval(&mut client, "declared_one.read_count()"), "7");
 	eval(&mut client, "declared_one.count = 8");
@@ -1490,7 +1437,7 @@ fn main() {
 			"/solo()\n\treturn \"between\"\n\n/solo()\n\treturn \"another\""
 		)
 	]);
-	assert_eq!(changes.new_procs.len(), 3);
+	assert_eq!(changes.plan.new_procs.len(), 3);
 	let result = reload(&mut watcher, &changes);
 	assert_eq!(eval(&mut client, "(new /mob/chain_verbs).speak()"), "\"abc\"");
 	assert_eq!(eval(&mut client, "verb_names(new /mob/chain_verbs)"), "\"speak,speak,other,speak\"");
@@ -1510,7 +1457,7 @@ fn main() {
 		("/world/chant()\n\treturn ..() + \"y\"\n\n", ""),
 		("/solo()\n\treturn \"between\"\n\n", "")
 	]);
-	assert_eq!(changes.removed_procs.len(), 3);
+	assert_eq!(changes.plan.removed_procs.len(), 3);
 	reload(&mut watcher, &changes);
 	assert_eq!(eval(&mut client, "(new /mob/chain_verbs).speak()"), "\"ac\"");
 	assert_eq!(eval(&mut client, "world.chant()"), "\"xz\"");
@@ -1530,8 +1477,8 @@ fn main() {
 		"var/datum/limits/kept_limits = new\n",
 		"var/datum/limits/kept_limits = new\n\n/world/Del()\n\tworld.log << \"world/Del says bye\"\n\t..()\n"
 	);
-	assert_eq!(changes.new_procs.len(), 1);
-	assert_eq!(changes.new_procs[0].code.proc.override_id, 0);
+	assert_eq!(changes.plan.new_procs.len(), 1);
+	assert_eq!(changes.plan.new_procs[0].code.proc.override_id, 0);
 	let result = reload(&mut watcher, &changes);
 	assert!(result.warnings.is_empty(), "{:?}", result.warnings);
 	offset_of(

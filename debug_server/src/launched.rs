@@ -7,8 +7,8 @@ use std::{
 };
 
 use auxtools::{byond_string, Proc, Value, WorldLoad};
-use auxtools_protocol::{HotReloadNewProc, HotReloadProc, HotReloadRequest, ProcRef, HELPER_FILE};
-use dmasm::reload::{ProcKey, Snapshot};
+use auxtools_protocol::{HotReloadRequest, HELPER_FILE};
+use dmasm::reload::{NewProc, ProcKey, Snapshot};
 
 use crate::{connection, hot_reload, server::Server, waker};
 
@@ -179,6 +179,7 @@ fn add_helper_procs() -> Result<(), String> {
 	let request = helper_procs()?;
 	KEEPALIVE_OURS.store(
 		request
+			.plan
 			.new_procs
 			.iter()
 			.any(|proc| proc.type_path.is_empty() && proc.name == "auxtools_keepalive"),
@@ -217,24 +218,14 @@ fn helper_procs() -> Result<HotReloadRequest, String> {
 			continue;
 		}
 
-		let code = snapshot.compile_reload(&key).map_err(|e| format!("{}: {}", key.path, e))?;
-		let override_id = if declared { 0 } else { overrides(&key.path) };
-		request.new_procs.push(HotReloadNewProc {
+		let mut code = snapshot.compile_reload(&key).map_err(|e| format!("{}: {}", key.path, e))?;
+		code.proc.override_id = if declared { 0 } else { overrides(&key.path) };
+		request.plan.new_procs.push(NewProc {
 			type_path,
 			name,
 			declared,
 			verb: false,
-			code: HotReloadProc {
-				proc: ProcRef {
-					path: key.path.clone(),
-					override_id
-				},
-				nodes: code.nodes,
-				locals: code.locals,
-				params: code.params,
-				settings: code.settings,
-				statics: code.statics
-			}
+			code
 		});
 	}
 	Ok(request)

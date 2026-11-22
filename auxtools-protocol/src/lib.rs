@@ -8,4 +8,4 @@ pub use hello::{old_socket_name, world_socket_name, Hello, LAST_NAMED_PROTOCOL};
 pub use ids::{ClientMessage, Pending, RequestId, ServerMessage, Sorted};
 pub use messages::*;
 
-pub const PROTOCOL_VERSION: u32 = 13;
+pub const PROTOCOL_VERSION: u32 = 14;

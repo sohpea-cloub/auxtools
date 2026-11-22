@@ -7,11 +7,9 @@ use std::{
 	time::{Duration, Instant, SystemTime}
 };
 
-use auxtools_protocol::{
-	HotReloadInitProc, HotReloadLines, HotReloadNewProc, HotReloadProc, HotReloadRequest, HotReloadResource, HotReloadVarDefault, Macro, ProcRef,
-	ReloadedResource, RemovedVar, ScriptRequest, SkinRequest
-};
-use dmasm::reload::{diff, Changes, ParseOptions, ProcKey, Refusal, Snapshot, Until};
+use auxtools_cli::reload::{self, merge, refuse_hidden, refuse_other_maps};
+use auxtools_protocol::{HotReloadRequest, HotReloadResource, Macro, ReloadedResource, ScriptRequest, SkinRequest};
+use dmasm::reload::{diff, Changes, ParseOptions, Refusal, Snapshot, Until};
 
 use crate::{adapter::Input, dap::Output, resources::Resources, script::Script, skin::Skin};
 
@@ -635,11 +633,10 @@ impl Code {
 		read_with: Option<Vec<(String, Option<String>)>>
 	) -> Option<bool> {
 		let applies_now = |deferred: &&Refusal| restarted && deferred.until == Until::Reboot;
-		let mut request = reload_request(changes);
 		let changes_nothing = changes.refused.is_empty()
 			&& changes.deferred.is_empty()
-			&& request.is_empty()
-			&& request.removed_vars.is_empty()
+			&& changes.plan.is_empty()
+			&& changes.plan.removed_vars.is_empty()
 			&& resources.is_empty();
 		let defines = self
 			.defines_refusal()
@@ -667,17 +664,14 @@ impl Code {
 			};
 			return (self.send(event) && self.refused_by(refused, whole)).then_some(false);
 		}
-		if restarted {
-			request.global_init = changes.global_init.clone();
-		}
-		without_existing_statics(&mut request, before);
-		*self.named_resources.borrow_mut() = resource_names(&request);
+		let mut request = reload::request(changes, before, restarted);
+		*self.named_resources.borrow_mut() = reload::resource_names(&request);
 		let files: Vec<String> = resources.iter().map(|r| r.path.clone()).collect();
 		request.resources = resources;
 		request.resource_dirs = self.resource_dirs.borrow().clone();
-		let removed: Vec<String> = changes.removed_vars.iter().map(|var| var.warning()).collect();
+		let removed: Vec<String> = changes.plan.removed_vars.iter().map(|var| var.warning()).collect();
 		let notes: Vec<String> = changes.warnings.iter().filter(|note| !removed.contains(note)).cloned().collect();
-		if request.is_empty() && request.removed_vars.is_empty() {
+		if request.is_empty() && request.plan.removed_vars.is_empty() {
 			for why in &notes {
 				self.out.console(format!("    note: {}", why));
 			}
@@ -845,171 +839,6 @@ impl Code {
 	}
 }
 
-fn resource_names(request: &HotReloadRequest) -> Vec<String> {
-	#[derive(Default)]
-	struct Named(Vec<String>);
-
-	impl Named {
-		fn value(&mut self, value: &dmasm::reload::ConstValue) {
-			if let dmasm::reload::ConstValue::Resource(name) = value {
-				self.add(name);
-			}
-		}
-
-		fn add(&mut self, name: &str) {
-			if !self.0.iter().any(|had| had == name) {
-				self.0.push(name.to_owned());
-			}
-		}
-
-		fn code(&mut self, nodes: &[dmasm::Node], statics: &[dmasm::reload::StaticVar]) {
-			let _ = dmasm::assembler::assemble(nodes, self);
-			for local in statics {
-				if let Some(value) = &local.value {
-					self.value(value);
-				}
-				if let Some(init) = &local.init {
-					self.code(&init.nodes, &init.statics);
-				}
-			}
-		}
-	}
-
-	impl dmasm::assembler::AssembleEnv for Named {
-		fn get_string_index(&mut self, _: &[u8]) -> Option<u32> {
-			Some(0)
-		}
-
-		fn get_variable_name_index(&mut self, _: &[u8]) -> Option<u32> {
-			Some(0)
-		}
-
-		fn get_proc_index(&mut self, _: &str) -> Option<u32> {
-			Some(0)
-		}
-
-		fn get_type(&mut self, _: &str) -> Option<(u8, u32)> {
-			Some((0x20, 0))
-		}
-
-		fn get_global_index(&mut self, _: &[u8], _: Option<&str>) -> Option<u32> {
-			Some(0)
-		}
-
-		fn get_resource_index(&mut self, path: &str) -> Option<u32> {
-			self.add(path);
-			Some(0)
-		}
-
-		fn get_instance(&mut self, _: &str, _: &[u32]) -> Option<u32> {
-			Some(0)
-		}
-	}
-
-	let mut named = Named::default();
-	for code in request.procs.iter().chain(request.new_procs.iter().map(|new| &new.code)) {
-		named.code(&code.nodes, &code.statics);
-	}
-	for code in request.init_procs.iter().filter_map(|init| init.code.as_ref()) {
-		named.code(&code.nodes, &code.statics);
-	}
-	for default in request
-		.var_defaults
-		.iter()
-		.map(|d| &d.value)
-		.chain(request.builtin_defaults.iter().map(|d| &d.value))
-	{
-		named.value(default);
-	}
-	for new in &request.new_types {
-		for (_, field) in &new.fields {
-			named.value(field);
-		}
-	}
-	for var in &request.new_vars {
-		named.value(&var.value);
-		if let Some(init) = &var.init {
-			named.code(&init.nodes, &init.statics);
-		}
-	}
-	for var in &request.redeclared {
-		if let Some(value) = &var.value {
-			named.value(value);
-		}
-		if let Some(init) = &var.init {
-			named.code(&init.nodes, &init.statics);
-		}
-	}
-	if let Some(init) = &request.global_init {
-		named.code(&init.code.nodes, &init.code.statics);
-	}
-	named.0
-}
-
-fn merge(changes: &mut Changes, more: Changes) {
-	for reload in more.reloads {
-		if !changes.reloads.iter().any(|r| r.proc == reload.proc) {
-			changes.reloads.push(reload);
-		}
-	}
-	changes.var_defaults.extend(more.var_defaults);
-	changes.builtin_defaults.extend(more.builtin_defaults);
-	for init in more.init_procs {
-		if !changes.init_procs.iter().any(|i| i.type_path == init.type_path) {
-			changes.init_procs.push(init);
-		}
-	}
-	changes.warnings.extend(more.warnings);
-	changes.refused.extend(more.refused);
-}
-
-fn refuse_hidden(old: &Snapshot, new: &Snapshot, changes: &mut Changes) {
-	if changes.new_types.is_empty() && changes.new_procs.is_empty() && changes.new_vars.is_empty() {
-		return;
-	}
-	let mut fixed = old.parse_errors();
-	for error in new.parse_errors() {
-		if let Some(at) = fixed.iter().position(|e| e.key() == error.key()) {
-			fixed.remove(at);
-		}
-	}
-	for error in fixed {
-		changes.refused.push(Refusal {
-			file: Some(error.file),
-			line: Some(error.line),
-			..Refusal::new(
-				"",
-				format!(
-					"fixed parse error may have hidden definitions: {}. Rebuild and reboot before reloading",
-					error.description
-				)
-			)
-		});
-	}
-}
-
-fn refuse_other_maps(built: &Snapshot, new: &Snapshot, changes: &mut Changes) {
-	let listed = |maps: &[PathBuf], others: &[PathBuf]| {
-		maps.iter()
-			.filter(|map| !others.contains(map))
-			.map(|map| map.display().to_string())
-			.collect::<Vec<_>>()
-	};
-	let (added, removed) = (listed(new.maps(), built.maps()), listed(built.maps(), new.maps()));
-	let mut changed = vec![];
-	if !added.is_empty() {
-		changed.push(format!("added {}", added.join(", ")));
-	}
-	if !removed.is_empty() {
-		changed.push(format!("removed {}", removed.join(", ")));
-	}
-	if !changed.is_empty() {
-		changes
-			.refused
-			.push(Refusal::new("", format!("compiled maps changed ({})", changed.join("; "))));
-	}
-}
-
 pub struct Summary {
 	parts: Vec<(&'static str, Vec<(String, Option<String>)>, &'static str)>,
 	line_moves: usize
@@ -1020,11 +849,12 @@ impl Summary {
 		let named = |names: Vec<String>| names.into_iter().map(|name| (name, None)).collect();
 		let var = |type_path: &str, var: &str| format!("{}/var/{}", type_path, var);
 		let parts = vec![
-			("added", named(changes.new_types.iter().map(|t| t.path.clone()).collect()), "types"),
+			("added", named(changes.plan.new_types.iter().map(|t| t.path.clone()).collect()), "types"),
 			(
 				"reparented",
 				named(
 					changes
+						.plan
 						.reparented
 						.iter()
 						.map(|r| format!("{} (now under {})", r.type_path, r.parent))
@@ -1037,20 +867,25 @@ impl Summary {
 				named(changes.consts.iter().chain(&changes.retyped).cloned().collect()),
 				"vars"
 			),
-			("reloaded", named(changes.reloads.iter().map(|r| r.proc.to_string()).collect()), "procs"),
+			(
+				"reloaded",
+				named(changes.plan.reloads.iter().map(|r| r.proc.to_string()).collect()),
+				"procs"
+			),
 			(
 				"updated settings for",
-				named(changes.settings.iter().map(|c| c.proc.to_string()).collect()),
+				named(changes.plan.settings.iter().map(|c| c.proc.to_string()).collect()),
 				"procs"
 			),
 			(
 				"added",
-				named(changes.new_procs.iter().map(|p| p.code.proc.to_string()).collect()),
+				named(changes.plan.new_procs.iter().map(|p| p.code.proc.to_string()).collect()),
 				"procs"
 			),
 			(
 				"unlinked",
 				changes
+					.plan
 					.removed_procs
 					.iter()
 					.map(|p| (p.proc.to_string(), Some(p.proc.path.clone())))
@@ -1059,21 +894,22 @@ impl Summary {
 			),
 			(
 				"added",
-				named(changes.new_vars.iter().map(|v| var(&v.type_path, &v.var)).collect()),
+				named(changes.plan.new_vars.iter().map(|v| var(&v.type_path, &v.var)).collect()),
 				"vars"
 			),
 			(
 				"updated declarations for",
-				named(changes.redeclared.iter().map(|v| var(&v.type_path, &v.var)).collect()),
+				named(changes.plan.redeclared.iter().map(|v| var(&v.type_path, &v.var)).collect()),
 				"vars"
 			),
 			(
 				"set the default of",
 				named(
 					changes
+						.plan
 						.var_defaults
 						.iter()
-						.chain(&changes.builtin_defaults)
+						.chain(&changes.plan.builtin_defaults)
 						.map(|d| var(&d.types[0], &d.var))
 						.collect()
 				),
@@ -1081,18 +917,18 @@ impl Summary {
 			),
 			(
 				"restored inherited defaults for",
-				named(changes.builtin_inherited.iter().map(|d| var(&d.types[0], &d.var)).collect()),
+				named(changes.plan.builtin_inherited.iter().map(|d| var(&d.types[0], &d.var)).collect()),
 				"vars"
 			),
 			(
 				"rebuilt the init procs of",
-				named(changes.init_procs.iter().map(|i| i.type_path.clone()).collect()),
+				named(changes.plan.init_procs.iter().map(|i| i.type_path.clone()).collect()),
 				"types"
 			),
 		];
 		Summary {
 			parts,
-			line_moves: changes.line_moves.len()
+			line_moves: changes.plan.line_moves.len()
 		}
 	}
 
@@ -1128,102 +964,6 @@ impl Summary {
 			return "no runtime changes".to_owned();
 		}
 		said.join("; ")
-	}
-}
-
-fn proc_ref(key: &ProcKey) -> ProcRef {
-	ProcRef {
-		path: key.path.clone(),
-		override_id: key.override_id
-	}
-}
-
-fn proc_code(r: &dmasm::reload::ProcReload) -> HotReloadProc {
-	HotReloadProc {
-		proc: proc_ref(&r.proc),
-		nodes: r.nodes.clone(),
-		locals: r.locals.clone(),
-		params: r.params.clone(),
-		settings: r.settings.clone(),
-		statics: r.statics.clone()
-	}
-}
-
-fn without_existing_statics(request: &mut HotReloadRequest, before: &Snapshot) {
-	for code in &mut request.procs {
-		if code.statics.is_empty() {
-			continue;
-		}
-		let key = ProcKey {
-			path: code.proc.path.clone(),
-			override_id: code.proc.override_id
-		};
-		let Ok(old) = before.compile(&key) else {
-			continue;
-		};
-		code.statics
-			.retain(|local| !old.statics.iter().any(|had| had.name == local.name && had.scope == local.scope));
-	}
-}
-
-pub fn reload_request(changes: &Changes) -> HotReloadRequest {
-	HotReloadRequest {
-		new_types: changes.new_types.clone(),
-		procs: changes.reloads.iter().map(proc_code).collect(),
-		settings: changes.settings.clone(),
-		new_procs: changes
-			.new_procs
-			.iter()
-			.map(|p| HotReloadNewProc {
-				type_path: p.type_path.clone(),
-				name: p.name.clone(),
-				declared: p.declared,
-				verb: p.verb,
-				code: proc_code(&p.code)
-			})
-			.collect(),
-		removed_procs: changes.removed_procs.clone(),
-		builtin_defaults: changes.builtin_defaults.clone(),
-		new_vars: changes.new_vars.clone(),
-		redeclared: changes.redeclared.clone(),
-		init_procs: changes
-			.init_procs
-			.iter()
-			.map(|i| HotReloadInitProc {
-				type_path: i.type_path.clone(),
-				code: i.code.as_ref().map(proc_code)
-			})
-			.collect(),
-		var_defaults: changes
-			.var_defaults
-			.iter()
-			.map(|d| HotReloadVarDefault {
-				var: d.var.clone(),
-				value: d.value.clone(),
-				types: d.types.clone()
-			})
-			.collect(),
-		line_moves: changes
-			.line_moves
-			.iter()
-			.map(|m| HotReloadLines {
-				proc: proc_ref(&m.proc),
-				lines: m.lines.clone()
-			})
-			.collect(),
-		removed_vars: changes
-			.removed_vars
-			.iter()
-			.map(|removed| RemovedVar {
-				type_path: removed.type_path.clone(),
-				var: removed.var.clone()
-			})
-			.collect(),
-		builtin_inherited: changes.builtin_inherited.clone(),
-		reparented: changes.reparented.clone(),
-		resources: vec![],
-		resource_dirs: vec![],
-		global_init: None
 	}
 }
 

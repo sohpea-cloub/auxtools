@@ -3,6 +3,7 @@ pub mod game;
 #[cfg(windows)]
 mod inject;
 pub mod local;
+pub mod reload;
 
 #[path = "../../debug_server/src/dmb_tables.rs"]
 pub mod dmb_tables;

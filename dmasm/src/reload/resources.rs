@@ -109,7 +109,7 @@ impl Snapshot {
                 Ok(reload)
             });
             match reload {
-                Ok(reload) => changes.reloads.push(ProcReload {
+                Ok(reload) => changes.plan.reloads.push(ProcReload {
                     proc: key.clone(),
                     ..reload
                 }),
@@ -137,7 +137,7 @@ impl Snapshot {
                 continue;
             }
             match self.compile_init(ty, &list) {
-                Ok(code) => changes.init_procs.push(InitProc {
+                Ok(code) => changes.plan.init_procs.push(InitProc {
                     type_path: ty.get().path.clone(),
                     code: Some(code),
                 }),
@@ -200,10 +200,10 @@ impl Snapshot {
         };
         if is_builtin(ty, var) {
             if BUILTIN_VARS.contains(&var) {
-                changes.builtin_defaults.push(default);
+                changes.plan.builtin_defaults.push(default);
             }
         } else {
-            changes.var_defaults.push(default);
+            changes.plan.var_defaults.push(default);
         }
     }
 }

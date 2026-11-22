@@ -2576,7 +2576,7 @@ impl Server {
 				let mut waiting = request.clone();
 				let mut early = vec![];
 				if let Some(init) = &request.global_init {
-					let (globals, others) = request.new_vars.iter().cloned().partition(|var| var.type_path.is_empty());
+					let (globals, others) = request.plan.new_vars.iter().cloned().partition(|var| var.type_path.is_empty());
 					let (init, left) = crate::hot_reload::early_global_init(init, request);
 					if left > 0 {
 						early.push(format!(
@@ -2586,14 +2586,17 @@ impl Server {
 					}
 					let alone = HotReloadRequest {
 						global_init: Some(init),
-						new_vars: globals,
+						plan: dmasm::reload::Plan {
+							new_vars: globals,
+							..Default::default()
+						},
 						..Default::default()
 					};
 					if crate::world_resources::not_built(&alone).is_empty() {
 						let result = self.apply_hot_reload(&alone);
 						if result.applied {
 							waiting.global_init = None;
-							waiting.new_vars = others;
+							waiting.plan.new_vars = others;
 						}
 						early.extend(result.errors.into_iter().chain(result.warnings));
 					}
@@ -2664,7 +2667,7 @@ impl Server {
 
 		let mut warnings = id_warnings;
 		let mut skipped = vec![];
-		let prepared = hot_reload::add_types(&request.new_types).and_then(|added| {
+		let prepared = hot_reload::add_types(&request.plan.new_types).and_then(|added| {
 			hot_reload::prepare(request, &mut warnings, &mut skipped)
 				.and_then(|prepared| Ok((prepared, resource_reload::prepare(&request.resources)?)))
 				.map_err(|mut errors| {

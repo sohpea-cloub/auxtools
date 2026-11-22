@@ -86,24 +86,25 @@ fn world_dmb() -> Option<PathBuf> {
 
 pub fn not_built(request: &HotReloadRequest) -> Vec<String> {
 	let mut named = Named::default();
-	for new in &request.new_types {
+	let plan = &request.plan;
+	for new in &plan.new_types {
 		for (_, field) in &new.fields {
 			named.value(field);
 		}
 	}
-	for proc in request.procs.iter().chain(request.new_procs.iter().map(|new| &new.code)) {
+	for proc in plan.reloads.iter().chain(plan.new_procs.iter().map(|new| &new.code)) {
 		named.code(&proc.nodes, &proc.params, &proc.statics);
 	}
-	for init in request.init_procs.iter().filter_map(|init| init.code.as_ref()) {
+	for init in plan.init_procs.iter().filter_map(|init| init.code.as_ref()) {
 		named.code(&init.nodes, &init.params, &init.statics);
 	}
-	for var in &request.new_vars {
+	for var in &plan.new_vars {
 		named.value(&var.value);
 		if let Some(init) = &var.init {
 			named.code(&init.nodes, &init.params, &init.statics);
 		}
 	}
-	for var in &request.redeclared {
+	for var in &plan.redeclared {
 		if let Some(value) = &var.value {
 			named.value(value);
 		}
@@ -114,10 +115,10 @@ pub fn not_built(request: &HotReloadRequest) -> Vec<String> {
 	if let Some(init) = &request.global_init {
 		named.code(&init.code.nodes, &init.code.params, &init.code.statics);
 	}
-	for default in &request.var_defaults {
+	for default in &plan.var_defaults {
 		named.value(&default.value);
 	}
-	for default in &request.builtin_defaults {
+	for default in &plan.builtin_defaults {
 		named.value(&default.value);
 	}
 

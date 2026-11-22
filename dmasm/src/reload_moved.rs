@@ -107,8 +107,12 @@ pub(super) fn moved_users(
     if changes.moved_procs.is_empty() {
         return;
     }
-    let reloaded: std::collections::HashSet<ProcKey> =
-        changes.reloads.iter().map(|r| r.proc.clone()).collect();
+    let reloaded: std::collections::HashSet<ProcKey> = changes
+        .plan
+        .reloads
+        .iter()
+        .map(|r| r.proc.clone())
+        .collect();
     let mut reloads = vec![];
     let moved = changes.moved_procs.clone();
     for key in new.procs.keys().filter(|key| moved.contains(&key.path)) {
@@ -136,7 +140,8 @@ pub(super) fn moved_users(
         }
     }
     changes
+        .plan
         .line_moves
         .retain(|m| !reloads.iter().any(|r| r.proc == m.proc));
-    changes.reloads.extend(reloads);
+    changes.plan.reloads.extend(reloads);
 }

@@ -747,26 +747,9 @@ pub struct EvalResponse {
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct HotReloadRequest {
-	pub new_types: Vec<dmasm::reload::NewType>,
-	pub procs: Vec<HotReloadProc>,
-	pub settings: Vec<dmasm::reload::SettingsChange>,
-	pub new_procs: Vec<HotReloadNewProc>,
-	pub removed_procs: Vec<dmasm::reload::RemovedProc>,
-	pub new_vars: Vec<dmasm::reload::NewVar>,
-	#[serde(default)]
-	pub redeclared: Vec<dmasm::reload::Redeclared>,
-	pub var_defaults: Vec<HotReloadVarDefault>,
-	pub builtin_defaults: Vec<dmasm::reload::VarDefault>,
-	pub init_procs: Vec<HotReloadInitProc>,
-	pub line_moves: Vec<HotReloadLines>,
-	pub removed_vars: Vec<RemovedVar>,
-	pub builtin_inherited: Vec<dmasm::reload::BuiltinInherited>,
-	pub reparented: Vec<dmasm::reload::Reparented>,
-	#[serde(default)]
+	pub plan: dmasm::reload::Plan,
 	pub resources: Vec<HotReloadResource>,
-	#[serde(default)]
 	pub resource_dirs: Vec<String>,
-	#[serde(default)]
 	pub global_init: Option<dmasm::reload::GlobalInit>
 }
 
@@ -783,72 +766,14 @@ pub struct ReloadedResource {
 	pub appearances: u32
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
-pub struct RemovedVar {
-	pub type_path: String,
-	pub var: String
-}
-
 impl HotReloadRequest {
-	pub const fn len(&self) -> usize {
-		self.new_types.len()
-			+ self.procs.len()
-			+ self.settings.len()
-			+ self.new_procs.len()
-			+ self.removed_procs.len()
-			+ self.new_vars.len()
-			+ self.redeclared.len()
-			+ self.var_defaults.len()
-			+ self.builtin_defaults.len()
-			+ self.init_procs.len()
-			+ self.line_moves.len()
-			+ self.builtin_inherited.len()
-			+ self.reparented.len()
-			+ self.resources.len()
-			+ self.global_init.is_some() as usize
+	pub fn len(&self) -> usize {
+		self.plan.len() + self.resources.len() + self.global_init.is_some() as usize
 	}
 
-	pub const fn is_empty(&self) -> bool {
+	pub fn is_empty(&self) -> bool {
 		self.len() == 0
 	}
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct HotReloadProc {
-	pub proc: ProcRef,
-	pub nodes: Vec<dmasm::Node>,
-	pub locals: Vec<String>,
-	pub params: Vec<dmasm::reload::Param>,
-	pub settings: Option<dmasm::reload::ProcSettings>,
-	pub statics: Vec<dmasm::reload::StaticVar>
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct HotReloadNewProc {
-	pub type_path: String,
-	pub name: String,
-	pub declared: bool,
-	pub verb: bool,
-	pub code: HotReloadProc
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct HotReloadVarDefault {
-	pub var: String,
-	pub value: dmasm::reload::ConstValue,
-	pub types: Vec<String>
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct HotReloadInitProc {
-	pub type_path: String,
-	pub code: Option<HotReloadProc>
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct HotReloadLines {
-	pub proc: ProcRef,
-	pub lines: Vec<(u32, u32)>
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]

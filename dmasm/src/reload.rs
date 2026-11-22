@@ -413,27 +413,55 @@ impl std::fmt::Display for Refusal {
     }
 }
 
-#[derive(Debug, Default)]
-pub struct Changes {
+#[derive(Debug, Clone, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct Plan {
     pub new_types: Vec<NewType>,
     pub reloads: Vec<ProcReload>,
     pub settings: Vec<SettingsChange>,
     pub new_procs: Vec<NewProc>,
     pub removed_procs: Vec<RemovedProc>,
     pub new_vars: Vec<NewVar>,
+    pub redeclared: Vec<Redeclared>,
     pub var_defaults: Vec<VarDefault>,
     pub builtin_defaults: Vec<VarDefault>,
     pub builtin_inherited: Vec<BuiltinInherited>,
+    pub init_procs: Vec<InitProc>,
+    pub reparented: Vec<Reparented>,
+    pub line_moves: Vec<LineMove>,
+    pub removed_vars: Vec<RemovedVar>,
+}
+
+impl Plan {
+    pub fn len(&self) -> usize {
+        self.new_types.len()
+            + self.reloads.len()
+            + self.settings.len()
+            + self.new_procs.len()
+            + self.removed_procs.len()
+            + self.new_vars.len()
+            + self.redeclared.len()
+            + self.var_defaults.len()
+            + self.builtin_defaults.len()
+            + self.builtin_inherited.len()
+            + self.init_procs.len()
+            + self.reparented.len()
+            + self.line_moves.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct Changes {
+    pub plan: Plan,
     pub consts: Vec<String>,
     pub defaults_changed: Vec<String>,
     pub defaults_moved: Vec<String>,
     pub retyped: Vec<String>,
-    pub redeclared: Vec<Redeclared>,
-    pub init_procs: Vec<InitProc>,
-    pub reparented: Vec<Reparented>,
     pub moved_procs: Vec<String>,
-    pub line_moves: Vec<LineMove>,
-    pub removed_vars: Vec<RemovedVar>,
     pub warnings: Vec<String>,
     pub refused: Vec<Refusal>,
     pub deferred: Vec<Refusal>,
@@ -464,7 +492,7 @@ impl Changes {
     }
 
     fn collect_warnings(&mut self) {
-        for reload in &self.reloads {
+        for reload in &self.plan.reloads {
             for warning in &reload.warnings {
                 self.warnings.push(format!("{}: {warning}", reload.proc));
             }
@@ -472,20 +500,7 @@ impl Changes {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.reloads.is_empty()
-            && self.settings.is_empty()
-            && self.new_types.is_empty()
-            && self.new_procs.is_empty()
-            && self.removed_procs.is_empty()
-            && self.new_vars.is_empty()
-            && self.redeclared.is_empty()
-            && self.var_defaults.is_empty()
-            && self.builtin_defaults.is_empty()
-            && self.builtin_inherited.is_empty()
-            && self.init_procs.is_empty()
-            && self.reparented.is_empty()
-            && self.line_moves.is_empty()
-            && self.refused.is_empty()
+        self.plan.is_empty() && self.refused.is_empty()
     }
 }
 
@@ -754,7 +769,7 @@ impl Snapshot {
                     Ok(reload)
                 });
                 match reload {
-                    Ok(reload) => changes.reloads.push(reload),
+                    Ok(reload) => changes.plan.reloads.push(reload),
                     Err(e) => changes.refused.push(self.uncompiled(key, &e)),
                 }
             } else if let Some(Ok(old_code)) = before.remove(key) {
@@ -767,7 +782,7 @@ impl Snapshot {
                 };
                 let lines: Vec<(u32, u32)> = lines.into_iter().collect();
                 if lines.iter().any(|(o, n)| o != n) {
-                    changes.line_moves.push(LineMove {
+                    changes.plan.line_moves.push(LineMove {
                         proc: key.clone(),
                         lines,
                     });
@@ -1503,7 +1518,10 @@ pub fn diff(old: &Snapshot, new: &Snapshot, changed_files: Option<&HashSet<PathB
         }
         depth
     };
-    changes.new_types.sort_by_cached_key(|t| depth(&t.path));
+    changes
+        .plan
+        .new_types
+        .sort_by_cached_key(|t| depth(&t.path));
     compare_inits(old, new, &mut changes);
     for (key, type_path, name, declared, verb) in new_procs {
         let code = new.compile_reload(&key).and_then(|mut code| {
@@ -1511,7 +1529,7 @@ pub fn diff(old: &Snapshot, new: &Snapshot, changed_files: Option<&HashSet<PathB
             Ok(code)
         });
         match code {
-            Ok(code) => changes.new_procs.push(NewProc {
+            Ok(code) => changes.plan.new_procs.push(NewProc {
                 type_path,
                 name,
                 declared,
@@ -1578,7 +1596,7 @@ pub fn diff(old: &Snapshot, new: &Snapshot, changed_files: Option<&HashSet<PathB
                 Ok(reload)
             });
             match reload {
-                Ok(reload) => changes.reloads.push(ProcReload {
+                Ok(reload) => changes.plan.reloads.push(ProcReload {
                     settings,
                     proc: old_key,
                     ..reload
@@ -1588,7 +1606,7 @@ pub fn diff(old: &Snapshot, new: &Snapshot, changed_files: Option<&HashSet<PathB
             continue;
         }
         if let Some(settings) = settings {
-            changes.settings.push(SettingsChange {
+            changes.plan.settings.push(SettingsChange {
                 proc: old_key.clone(),
                 settings,
             });
@@ -1597,7 +1615,7 @@ pub fn diff(old: &Snapshot, new: &Snapshot, changed_files: Option<&HashSet<PathB
         if in_changed_file(key) {
             match line_move(old, new, &old_key, key, old_value, new_value) {
                 LineChange::Same => {}
-                LineChange::Moved(lines) => changes.line_moves.push(LineMove {
+                LineChange::Moved(lines) => changes.plan.line_moves.push(LineMove {
                     proc: old_key,
                     lines,
                 }),
@@ -1605,7 +1623,7 @@ pub fn diff(old: &Snapshot, new: &Snapshot, changed_files: Option<&HashSet<PathB
                     new.compile_in_lists(key, &mut reload, |_, _| false)?;
                     Ok(reload)
                 }) {
-                    Ok(reload) => changes.reloads.push(ProcReload {
+                    Ok(reload) => changes.plan.reloads.push(ProcReload {
                         settings: None,
                         proc: old_key,
                         ..reload
@@ -1673,7 +1691,12 @@ fn const_users(old: &Snapshot, new: &Snapshot, realigned: &Realigned, changes: &
         .chain(&changes.defaults_moved)
         .map(String::as_str)
         .collect();
-    let reloaded: HashSet<ProcKey> = changes.reloads.iter().map(|r| r.proc.clone()).collect();
+    let reloaded: HashSet<ProcKey> = changes
+        .plan
+        .reloads
+        .iter()
+        .map(|r| r.proc.clone())
+        .collect();
     for key in new.procs.keys() {
         let Some(old_key) = old_key(realigned, key) else {
             continue;
@@ -1701,10 +1724,15 @@ fn const_users(old: &Snapshot, new: &Snapshot, realigned: &Realigned, changes: &
             match line_map(&before.nodes, &after.nodes) {
                 Some(lines) => {
                     let lines: Vec<(u32, u32)> = lines.into_iter().collect();
-                    match changes.line_moves.iter_mut().find(|m| m.proc == old_key) {
+                    match changes
+                        .plan
+                        .line_moves
+                        .iter_mut()
+                        .find(|m| m.proc == old_key)
+                    {
                         Some(found) => found.lines = lines,
                         None if lines.iter().any(|(o, n)| o != n) => {
-                            changes.line_moves.push(LineMove {
+                            changes.plan.line_moves.push(LineMove {
                                 proc: old_key,
                                 lines,
                             })
@@ -1720,9 +1748,9 @@ fn const_users(old: &Snapshot, new: &Snapshot, realigned: &Realigned, changes: &
             new.compile_in_lists(key, &mut reload, |_, _| false)?;
             Ok(reload)
         });
-        changes.line_moves.retain(|m| m.proc != old_key);
+        changes.plan.line_moves.retain(|m| m.proc != old_key);
         match reload {
-            Ok(reload) => changes.reloads.push(ProcReload {
+            Ok(reload) => changes.plan.reloads.push(ProcReload {
                 proc: old_key,
                 ..reload
             }),
@@ -2287,7 +2315,7 @@ fn compare_inits(old: &Snapshot, new: &Snapshot, changes: &mut Changes) {
                 }
             }
         };
-        changes.init_procs.push(InitProc {
+        changes.plan.init_procs.push(InitProc {
             type_path: n.get().path.clone(),
             code,
         });
@@ -2362,7 +2390,7 @@ fn removed(
         .and_then(|o| o.get_proc_declaration(name))
         .is_some_and(|d| d.kind == dreammaker::ast::ProcDeclKind::Verb);
     for override_id in 0..old_values.len() {
-        changes.removed_procs.push(RemovedProc {
+        changes.plan.removed_procs.push(RemovedProc {
             proc: ProcKey {
                 path: path.clone(),
                 override_id: override_id as u32,
@@ -2517,7 +2545,7 @@ fn new_type(new: &Snapshot, n: TypeRef, changes: &mut Changes) {
         }
     }
 
-    changes.new_types.push(NewType {
+    changes.plan.new_types.push(NewType {
         path,
         parent: parent.get().path.clone(),
         fields,
@@ -2585,7 +2613,7 @@ fn compare_types(
                 }
                 None if var.declaration.is_some() => {
                     if new_var(new, n, name.as_str(), var, o.is_none(), changes) {
-                        if let Some(added) = changes.new_vars.last_mut() {
+                        if let Some(added) = changes.plan.new_vars.last_mut() {
                             added.moved_from = moved::moved_from(old, n, name.as_str());
                         }
                         var_default(old, new, path, name.as_str(), true, changes);
@@ -2653,7 +2681,7 @@ fn compare_types(
             } else if var.declaration.is_some() {
                 changes.warnings.push(var_retained(shown, name.as_str()));
                 if !n.is_root() {
-                    changes.removed_vars.push(RemovedVar {
+                    changes.plan.removed_vars.push(RemovedVar {
                         type_path: path.to_owned(),
                         var: name.to_string(),
                     });
@@ -2679,7 +2707,7 @@ fn compare_types(
                     if n.is_root() {
                         changes.warnings.push(definition_retained(&path));
                     }
-                    changes.removed_procs.push(RemovedProc {
+                    changes.plan.removed_procs.push(RemovedProc {
                         proc: ProcKey {
                             path: path.clone(),
                             override_id: override_id as u32,
@@ -2822,7 +2850,7 @@ fn new_var(
             }
         }
     };
-    changes.new_vars.push(NewVar {
+    changes.plan.new_vars.push(NewVar {
         type_path: n.get().path.clone(),
         var: name.to_owned(),
         flags: byond_flags(flags, n.is_root()),
@@ -3034,11 +3062,11 @@ fn redeclare(
                 }
             }
         }
-        changes.redeclared.push(redeclared);
+        changes.plan.redeclared.push(redeclared);
         return;
     }
 
-    changes.redeclared.push(redeclared);
+    changes.plan.redeclared.push(redeclared);
     if !is_static(old_flags) {
         return;
     }
@@ -3072,7 +3100,7 @@ fn redeclare(
             "{path}: var {name} has a computed default; existing instances retain null"
         ));
     }
-    changes.var_defaults.extend(defaults);
+    changes.plan.var_defaults.extend(defaults);
 }
 
 fn defined_on<'a>(t: TypeRef<'a>, name: &str) -> Option<TypeRef<'a>> {
@@ -3137,7 +3165,7 @@ fn var_default(
         }
         if let Some(var) = n.get().vars.get(name) {
             match static_initial(new, n, var) {
-                Ok((value, init)) => changes.redeclared.push(Redeclared {
+                Ok((value, init)) => changes.plan.redeclared.push(Redeclared {
                     type_path: String::new(),
                     var: name.to_owned(),
                     flags: byond_flags(flags, true),
@@ -3177,6 +3205,7 @@ fn var_default(
         let declaring = declaration.ty();
         let path = declaring.get().path.clone();
         if changes
+            .plan
             .redeclared
             .iter()
             .any(|r| r.type_path == path && r.var == name)
@@ -3187,7 +3216,7 @@ fn var_default(
             return;
         };
         match static_initial(new, declaring, var) {
-            Ok((value, init)) => changes.redeclared.push(Redeclared {
+            Ok((value, init)) => changes.plan.redeclared.push(Redeclared {
                 type_path: path,
                 var: name.to_owned(),
                 flags: byond_flags(flags, false),
@@ -3248,7 +3277,7 @@ fn var_default(
                 "{shown}: {name}: built-in default applies only to new instances"
             ));
         }
-        changes.builtin_inherited.push(BuiltinInherited {
+        changes.plan.builtin_inherited.push(BuiltinInherited {
             var: name.to_owned(),
             types: inheriting(new, n, name),
         });
@@ -3303,14 +3332,14 @@ fn var_default(
             builtin_names(new, n, value, types, changes);
             return;
         }
-        changes.builtin_defaults.push(VarDefault {
+        changes.plan.builtin_defaults.push(VarDefault {
             var: name.to_owned(),
             value,
             types,
         });
         return;
     }
-    changes.var_defaults.push(VarDefault {
+    changes.plan.var_defaults.push(VarDefault {
         var: name.to_owned(),
         value,
         types,
@@ -3406,12 +3435,13 @@ fn builtin_names(
     }
     for (path, name) in &names {
         let push = |changes: &mut Changes, var: &str, value: ConstValue| match changes
+            .plan
             .builtin_defaults
             .iter_mut()
             .find(|d| d.var == var && d.value == value)
         {
             Some(d) => d.types.push(path.clone()),
-            None => changes.builtin_defaults.push(VarDefault {
+            None => changes.plan.builtin_defaults.push(VarDefault {
                 var: var.to_owned(),
                 value,
                 types: vec![path.clone()],

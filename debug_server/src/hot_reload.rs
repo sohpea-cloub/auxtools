@@ -8,10 +8,13 @@ use auxtools::{
 	runtime_tables::{self, type_fields, ProcEntryWords, NONE},
 	shutdown, Proc, StringRef
 };
-use auxtools_protocol::{HotReloadInitProc, HotReloadNewProc, HotReloadProc, HotReloadRequest, HotReloadVarDefault, ProcRef, Reloaded, RemovedVar};
+use auxtools_protocol::{HotReloadRequest, Reloaded};
 use dmasm::{
 	assembler::AssembleEnv as _,
-	reload::{BuiltinInherited, ConstValue, InList, NewType, NewVar, ProcSettings, Redeclared, RemovedProc, Reparented},
+	reload::{
+		BuiltinInherited, ConstValue, InList, InitProc, NewProc, NewType, NewVar, Plan, ProcKey, ProcReload, ProcSettings, Redeclared, RemovedProc,
+		RemovedVar, Reparented, VarDefault
+	},
 	Instruction, Node, Opcode
 };
 
@@ -58,7 +61,7 @@ struct AddedVars {
 	first: u32,
 	vars: Vec<PreparedNewVar>,
 	param_names: HashMap<String, u32>,
-	run_once: Vec<(u32, String, dmasm::reload::ProcReload)>,
+	run_once: Vec<(u32, String, ProcReload)>,
 	in_lists_before: u32,
 	in_lists: Vec<(u32, ProcEntryWords)>,
 	instances: StagedInstances,
@@ -278,7 +281,7 @@ struct PreparedInitProc {
 struct PreparedNewProc {
 	entry: ProcEntryWords,
 	id: u32,
-	place: ProcRef,
+	place: ProcKey,
 	local_names: Vec<String>,
 	on_type: Option<NewProcOnType>,
 	on_world: Option<WorldEdit>
@@ -319,15 +322,11 @@ enum WorldEdit {
 
 pub type MovedBreakpoints<K> = HashMap<(raw_types::procs::ProcId, u32, K), u32>;
 
-fn describe(proc: &ProcRef) -> String {
-	if proc.override_id == 0 {
-		proc.path.clone()
-	} else {
-		format!("{} (override {})", proc.path, proc.override_id)
-	}
+fn describe(proc: &ProcKey) -> String {
+	proc.to_string()
 }
 
-fn find(proc: &ProcRef) -> Result<Proc, String> {
+fn find(proc: &ProcKey) -> Result<Proc, String> {
 	Proc::find_override(&proc.path, proc.override_id).ok_or_else(|| format!("{}: there's no such proc in the running world", describe(proc)))
 }
 
@@ -337,8 +336,14 @@ fn strip_path(path: &str) -> String {
 
 pub fn prepare(request: &HotReloadRequest, warnings: &mut Vec<String>, skipped: &mut Vec<String>) -> Result<Prepared, Vec<String>> {
 	let HotReloadRequest {
+		plan,
+		resources: _,
+		resource_dirs: _,
+		global_init
+	} = request;
+	let Plan {
 		new_types: _,
-		procs,
+		reloads,
 		settings,
 		new_procs,
 		removed_procs,
@@ -346,15 +351,12 @@ pub fn prepare(request: &HotReloadRequest, warnings: &mut Vec<String>, skipped: 
 		redeclared,
 		var_defaults,
 		builtin_defaults,
-		init_procs,
-		line_moves,
-		removed_vars,
 		builtin_inherited,
+		init_procs,
 		reparented,
-		resources: _,
-		resource_dirs: _,
-		global_init
-	} = request;
+		line_moves,
+		removed_vars
+	} = plan;
 	runtime_tables::available().map_err(|e| vec![format!("hot reloading isn't available on this build of BYOND: {}", e)])?;
 
 	for var in removed_vars {
@@ -446,7 +448,7 @@ pub fn prepare(request: &HotReloadRequest, warnings: &mut Vec<String>, skipped: 
 		}
 	}
 
-	for reload in procs {
+	for reload in reloads {
 		match prepare_code(reload, &pending, &mut world_globals, &mut added, warnings) {
 			Ok(p) => prepared.code.push(p),
 			Err(e) => errors.push(e)
@@ -474,12 +476,9 @@ pub fn prepare(request: &HotReloadRequest, warnings: &mut Vec<String>, skipped: 
 	}
 
 	for change in settings {
-		let proc_ref = ProcRef {
-			path: change.proc.path.clone(),
-			override_id: change.proc.override_id
-		};
-		let words = find(&proc_ref).and_then(|proc| {
-			let entry = runtime_tables::proc_entry(proc.id).ok_or_else(|| format!("{}: couldn't read its table entry", describe(&proc_ref)))?;
+		let proc_ref = &change.proc;
+		let words = find(proc_ref).and_then(|proc| {
+			let entry = runtime_tables::proc_entry(proc.id).ok_or_else(|| format!("{}: couldn't read its table entry", describe(proc_ref)))?;
 			let words = settings_words(&entry, &change.settings, &proc_ref.path)?;
 			prepared.renames.extend(renamed(&proc, &entry, &words));
 			Ok(words.into_iter().map(move |(word, value)| (proc.id.0, word, value)))
@@ -570,6 +569,7 @@ pub fn prepare(request: &HotReloadRequest, warnings: &mut Vec<String>, skipped: 
 		.map(|((_, name), id)| {
 			let name = String::from_utf8_lossy(name).into_owned();
 			let flags = request
+				.plan
 				.new_vars
 				.iter()
 				.find(|new| new.type_path.is_empty() && new.var == name)
@@ -603,7 +603,7 @@ pub fn prepare(request: &HotReloadRequest, warnings: &mut Vec<String>, skipped: 
 
 fn assemble(
 	name: &str,
-	code: &HotReloadProc,
+	code: &ProcReload,
 	original: &[u32],
 	pending: &Pending,
 	world_globals: &mut WorldGlobals,
@@ -614,7 +614,7 @@ fn assemble(
 
 fn assemble_with(
 	name: &str,
-	code: &HotReloadProc,
+	code: &ProcReload,
 	original: &[u32],
 	known: HashMap<(String, Vec<u8>), u32>,
 	pending: &Pending,
@@ -653,7 +653,7 @@ fn assemble_with(
 }
 
 fn prepare_code(
-	reload: &HotReloadProc,
+	reload: &ProcReload,
 	pending: &Pending,
 	world_globals: &mut WorldGlobals,
 	added: &mut AddedVars,
@@ -672,7 +672,7 @@ fn prepare_code(
 fn prepared_code(
 	proc: Proc,
 	name: String,
-	reload: &HotReloadProc,
+	reload: &ProcReload,
 	bytecode: Vec<u32>,
 	pending: &Pending,
 	world_globals: &mut WorldGlobals,
@@ -754,12 +754,14 @@ fn prepare_global_init(
 
 pub fn early_global_init(init: &dmasm::reload::GlobalInit, rest: &HotReloadRequest) -> (dmasm::reload::GlobalInit, usize) {
 	let later: HashSet<(String, Vec<u8>)> = rest
-		.procs
+		.plan
+		.reloads
 		.iter()
-		.chain(rest.new_procs.iter().map(|new| &new.code))
+		.chain(rest.plan.new_procs.iter().map(|new| &new.code))
 		.flat_map(|code| code.statics.iter().map(|s| (s.scope.clone(), s.name.as_bytes().to_vec())))
 		.chain(
-			rest.new_vars
+			rest.plan
+				.new_vars
 				.iter()
 				.filter(|var| !var.type_path.is_empty())
 				.map(|var| (var.type_path.clone(), var.var.as_bytes().to_vec()))
@@ -788,7 +790,7 @@ pub fn early_global_init(init: &dmasm::reload::GlobalInit, rest: &HotReloadReque
 }
 
 fn global_slots(
-	code: &HotReloadProc,
+	code: &ProcReload,
 	counts: &BTreeMap<String, BTreeMap<String, usize>>,
 	pending: &Pending,
 	added: &AddedVars,
@@ -972,9 +974,9 @@ pub(crate) fn locals_table(names: &[String], empty: u32) -> Result<u32, String> 
 	runtime_tables::intern_misc(&words)
 }
 
-fn value_code(code: dmasm::reload::ProcReload) -> HotReloadProc {
-	HotReloadProc {
-		proc: ProcRef {
+fn value_code(code: ProcReload) -> ProcReload {
+	ProcReload {
+		proc: ProcKey {
 			path: code.proc.path,
 			override_id: 0
 		},
@@ -982,17 +984,12 @@ fn value_code(code: dmasm::reload::ProcReload) -> HotReloadProc {
 		locals: code.locals,
 		params: vec![],
 		settings: code.settings,
-		statics: vec![]
+		statics: vec![],
+		warnings: vec![]
 	}
 }
 
-fn in_list_proc(
-	param: &str,
-	code: &dmasm::reload::ProcReload,
-	pending: &Pending,
-	world_globals: &mut WorldGlobals,
-	added: &mut AddedVars
-) -> Result<u32, String> {
+fn in_list_proc(param: &str, code: &ProcReload, pending: &Pending, world_globals: &mut WorldGlobals, added: &mut AddedVars) -> Result<u32, String> {
 	let shown = format!("parameter {}'s `in` list", param);
 	let template = proc_template()?;
 	let code = value_code(code.clone());
@@ -1128,7 +1125,7 @@ fn type_and_ancestors(type_id: u32) -> Vec<u32> {
 }
 
 fn prepare_init_proc(
-	init: &HotReloadInitProc,
+	init: &InitProc,
 	pending: &Pending,
 	world_globals: &mut WorldGlobals,
 	added: &mut AddedVars
@@ -1170,13 +1167,9 @@ fn prepare_init_proc(
 }
 
 fn prepare_removal(removed: &RemovedProc, staged: &mut StagedProcs) -> Result<PreparedRemoval, String> {
-	let proc_ref = ProcRef {
-		path: removed.proc.path.clone(),
-		override_id: removed.proc.override_id
-	};
-	let shown = describe(&proc_ref);
+	let shown = describe(&removed.proc);
 	let fail = |e: String| format!("{}: {}", shown, e);
-	let id = find(&proc_ref)?.id.0;
+	let id = find(&removed.proc)?.id.0;
 	let entry = staged.entry(id).ok_or_else(|| fail("couldn't read its table entry".to_owned()))?;
 	let next = entry.0[ProcEntryWords::NEXT_OVERRIDE];
 
@@ -1184,7 +1177,7 @@ fn prepare_removal(removed: &RemovedProc, staged: &mut StagedProcs) -> Result<Pr
 		let on_world = if removed.type_path.is_empty() {
 			None
 		} else {
-			staged.world_definitions(&strip_path(&proc_ref.path)).retain(|&p| p != id);
+			staged.world_definitions(&strip_path(&removed.proc.path)).retain(|&p| p != id);
 			Some(WorldEdit::Remove {
 				id,
 				keys: world_keys(&entry)
@@ -1255,7 +1248,7 @@ fn prepare_removal(removed: &RemovedProc, staged: &mut StagedProcs) -> Result<Pr
 }
 
 fn prepare_new_proc(
-	new: &HotReloadNewProc,
+	new: &NewProc,
 	id: u32,
 	pending: &Pending,
 	world_globals: &mut WorldGlobals,
@@ -1500,7 +1493,7 @@ fn static_number(scope: &str) -> usize {
 }
 
 fn new_statics(
-	code: &HotReloadProc,
+	code: &ProcReload,
 	proc_globals: &HashMap<Vec<u8>, Vec<u32>>,
 	pending: &Pending,
 	added: &mut AddedVars
@@ -1924,7 +1917,7 @@ fn prepare_redeclared(
 	Ok(())
 }
 
-fn prepare_var_default(default: &HotReloadVarDefault, pending: &Pending, type_vars: &mut TypeVars, added: &mut AddedVars) -> Result<(), String> {
+fn prepare_var_default(default: &VarDefault, pending: &Pending, type_vars: &mut TypeVars, added: &mut AddedVars) -> Result<(), String> {
 	let fail = |e: String| format!("var {}: {}", default.var, e);
 
 	let value = const_value(&default.value, pending).map_err(fail)?;

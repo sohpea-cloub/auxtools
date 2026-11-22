@@ -43,21 +43,26 @@ fn main() {
             ),
             Ok(mut r) => {
                 let mut full = full;
-                r.changes.reloads.sort_by(|a, b| a.proc.cmp(&b.proc));
-                full.reloads.sort_by(|a, b| a.proc.cmp(&b.proc));
-                r.changes.line_moves.sort_by(|a, b| a.proc.cmp(&b.proc));
-                full.line_moves.sort_by(|a, b| a.proc.cmp(&b.proc));
-                let same_reloads = r.changes.reloads.len() == full.reloads.len()
+                r.changes.plan.reloads.sort_by(|a, b| a.proc.cmp(&b.proc));
+                full.plan.reloads.sort_by(|a, b| a.proc.cmp(&b.proc));
+                r.changes
+                    .plan
+                    .line_moves
+                    .sort_by(|a, b| a.proc.cmp(&b.proc));
+                full.plan.line_moves.sort_by(|a, b| a.proc.cmp(&b.proc));
+                let same_reloads = r.changes.plan.reloads.len() == full.plan.reloads.len()
                     && r.changes
+                        .plan
                         .reloads
                         .iter()
-                        .zip(&full.reloads)
+                        .zip(&full.plan.reloads)
                         .all(|(a, b)| a.proc == b.proc && a.nodes == b.nodes);
-                let same_moves = r.changes.line_moves == full.line_moves;
+                let same_moves = r.changes.plan.line_moves == full.plan.line_moves;
                 if !same_reloads {
                     println!(
                         "  on its own: {:?}",
                         r.changes
+                            .plan
                             .reloads
                             .iter()
                             .map(|r| r.proc.to_string())
@@ -65,13 +70,14 @@ fn main() {
                     );
                     println!(
                         "  full:       {:?}",
-                        full.reloads
+                        full.plan
+                            .reloads
                             .iter()
                             .map(|r| r.proc.to_string())
                             .collect::<Vec<_>>()
                     );
                 }
-                for (a, b) in r.changes.reloads.iter().zip(&full.reloads) {
+                for (a, b) in r.changes.plan.reloads.iter().zip(&full.plan.reloads) {
                     if a.nodes != b.nodes {
                         let fa: String = a.nodes.iter().map(|n| format!("{:?}\n", n)).collect();
                         let fb: String = b.nodes.iter().map(|n| format!("{:?}\n", n)).collect();
@@ -90,7 +96,7 @@ fn main() {
                 }
                 println!(
                     "{file}: on its own in {quick_time:?} ({} reloads, {} moved), full {full_time:?} ({} reloads, {} moved, {} refused): same reloads {same_reloads}, same moves {same_moves}",
-                    r.changes.reloads.len(), r.changes.line_moves.len(), full.reloads.len(), full.line_moves.len(), full.refused.len()
+                    r.changes.plan.reloads.len(), r.changes.plan.line_moves.len(), full.plan.reloads.len(), full.plan.line_moves.len(), full.refused.len()
                 );
             }
         }

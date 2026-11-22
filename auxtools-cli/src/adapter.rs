@@ -1151,6 +1151,7 @@ impl Adapter {
 	fn reload(&mut self, request: aux::HotReloadRequest, summary: &code::Summary, notes: Vec<String>) -> bool {
 		self.reload_started = Some(Instant::now());
 		let unlinked: Vec<(String, String)> = request
+			.plan
 			.removed_procs
 			.iter()
 			.filter_map(|removed| Some((removed.warning()?, removed.proc.path.clone())))

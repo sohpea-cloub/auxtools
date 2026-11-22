@@ -1483,11 +1483,12 @@ where
 
 pub(super) fn compare(old: &Snapshot, new: &Snapshot, changes: &mut super::Changes) {
     let statics = changes
+        .plan
         .reloads
         .iter()
         .map(|r| &r.proc)
-        .chain(changes.new_procs.iter().map(|p| &p.code.proc))
-        .chain(changes.removed_procs.iter().map(|r| &r.proc))
+        .chain(changes.plan.new_procs.iter().map(|p| &p.code.proc))
+        .chain(changes.plan.removed_procs.iter().map(|r| &r.proc))
         .any(|key| old.has_statics(key) || new.has_statics(key));
     if !statics && differences(&old.initializers(false), &new.initializers(false)).is_none() {
         return;

@@ -110,7 +110,7 @@ pub(super) fn reparent(
     let parent_path = parent.get().path.clone();
     let refusal =
         |why: String| Refusal::new(path.clone(), format!("parent type changed: {why}")).at(new, at);
-    let new_parent = changes.new_types.iter().any(|t| t.path == parent_path);
+    let new_parent = changes.plan.new_types.iter().any(|t| t.path == parent_path);
     let mut refuse = |why: String| changes.refused.push(refusal(why));
     if builtin_base(n).as_deref() == Some(path.as_str()) {
         return refuse("built-in types cannot change parents".to_owned());
@@ -207,7 +207,7 @@ pub(super) fn reparent(
         changes.refused.push(refusal(errors.join("; ")));
         return;
     }
-    changes.reparented.push(Reparented {
+    changes.plan.reparented.push(Reparented {
         type_path: path,
         parent: parent_path,
         types,
@@ -262,6 +262,7 @@ pub(super) fn reparented_users(
     changes: &mut Changes,
 ) {
     let types: HashSet<&str> = changes
+        .plan
         .reparented
         .iter()
         .flat_map(|r| r.types.iter().map(|t| t.path.as_str()))
@@ -272,7 +273,12 @@ pub(super) fn reparented_users(
     let (declared, defaults) = inherited_changes(old, new, &types);
     let named: HashSet<&str> = declared.iter().map(String::as_str).collect();
     let fields: HashSet<&str> = defaults.iter().map(String::as_str).collect();
-    let reloaded: HashSet<ProcKey> = changes.reloads.iter().map(|r| r.proc.clone()).collect();
+    let reloaded: HashSet<ProcKey> = changes
+        .plan
+        .reloads
+        .iter()
+        .map(|r| r.proc.clone())
+        .collect();
     let mut reloads = vec![];
     for key in new.procs.keys() {
         let Some((type_path, _)) = key.path.rsplit_once('/') else {
@@ -324,7 +330,8 @@ pub(super) fn reparented_users(
         }
     }
     changes
+        .plan
         .line_moves
         .retain(|m| !reloads.iter().any(|r| r.proc == m.proc));
-    changes.reloads.extend(reloads);
+    changes.plan.reloads.extend(reloads);
 }

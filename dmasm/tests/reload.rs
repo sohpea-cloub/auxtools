@@ -60,7 +60,12 @@ fn key(path: &str, override_id: u32) -> ProcKey {
 
 fn reloaded(changes: &Changes) -> Vec<ProcKey> {
     assert!(changes.refused.is_empty(), "refused: {:?}", changes.refused);
-    changes.reloads.iter().map(|r| r.proc.clone()).collect()
+    changes
+        .plan
+        .reloads
+        .iter()
+        .map(|r| r.proc.clone())
+        .collect()
 }
 
 #[test]
@@ -77,8 +82,8 @@ fn a_changed_body_is_compiled() {
         "/proc/a()\n\treturn 1\n/proc/b()\n\tvar/x = 3\n\treturn x\n",
     );
     assert_eq!(reloaded(&changes), [key("/b", 0)]);
-    assert!(changes.line_moves.is_empty());
-    let reload = &changes.reloads[0];
+    assert!(changes.plan.line_moves.is_empty());
+    let reload = &changes.plan.reloads[0];
     assert_eq!(reload.locals, ["x"]);
     assert_eq!(
         reload.nodes.first(),
@@ -128,7 +133,7 @@ fn files_of_an_included_environment_are_named_as_it_names_them() {
     let changes = diff(&old, &world.parse(), None);
     assert_eq!(reloaded(&changes), [key("/b", 0)]);
     assert_eq!(
-        changes.reloads[0].nodes.first(),
+        changes.plan.reloads[0].nodes.first(),
         Some(&Node::Instruction(
             Instruction::DbgFile(dmasm::DMString(b"std.dm".to_vec())),
             ()
@@ -170,9 +175,9 @@ fn procs_below_an_edit_move_lines() {
         "/proc/a()\n\tworld.log << 0\n\treturn 1\n\n/proc/b()\n\tworld.log << 1\n\treturn 2\n",
     );
     assert_eq!(reloaded(&changes), [key("/a", 0)]);
-    assert_eq!(changes.line_moves.len(), 1);
-    assert_eq!(changes.line_moves[0].proc, key("/b", 0));
-    assert_eq!(changes.line_moves[0].lines, [(5, 6), (6, 7)]);
+    assert_eq!(changes.plan.line_moves.len(), 1);
+    assert_eq!(changes.plan.line_moves[0].proc, key("/b", 0));
+    assert_eq!(changes.plan.line_moves[0].lines, [(5, 6), (6, 7)]);
 }
 
 #[test]
@@ -206,6 +211,7 @@ fn a_const_change_recompiles_its_users() {
     assert!(changes.refused.is_empty(), "{:?}", changes.refused);
     assert_eq!(changes.consts, ["LIMIT", "SIZE"]);
     let set: Vec<(&str, &str, Option<ConstValue>)> = changes
+        .plan
         .redeclared
         .iter()
         .map(|r| (r.type_path.as_str(), r.var.as_str(), r.value.clone()))
@@ -224,7 +230,12 @@ fn a_const_change_recompiles_its_users() {
         &after.replace("/datum/thing\n", "/datum/thing\n\n"),
     );
     assert_eq!(reloaded(&changes), [key("/datum/thing/c", 0)]);
-    let moved: Vec<ProcKey> = changes.line_moves.iter().map(|m| m.proc.clone()).collect();
+    let moved: Vec<ProcKey> = changes
+        .plan
+        .line_moves
+        .iter()
+        .map(|m| m.proc.clone())
+        .collect();
     assert_eq!(
         moved,
         [key("/a", 0), key("/b", 0), key("/datum/thing/d", 0)]
@@ -341,15 +352,16 @@ fn a_new_const_is_a_global() {
     let changes = changes("new-const", before, after);
     assert!(changes.refused.is_empty(), "{:?}", changes.refused);
     let new: Vec<(&str, &str, u32)> = changes
+        .plan
         .new_vars
         .iter()
         .map(|v| (v.type_path.as_str(), v.var.as_str(), v.flags))
         .collect();
     assert_eq!(new, [("/datum/other", "J", 3), ("/datum/thing", "K", 3)]);
     assert!(
-        changes.var_defaults.is_empty(),
+        changes.plan.var_defaults.is_empty(),
         "{:?}",
-        changes.var_defaults
+        changes.plan.var_defaults
     );
 }
 
@@ -369,6 +381,7 @@ fn vars_declared_another_way() {
     let redeclared = |changes: &Changes| -> Vec<(String, u32, Option<ConstValue>)> {
         assert!(changes.refused.is_empty(), "{:?}", changes.refused);
         changes
+            .plan
             .redeclared
             .iter()
             .map(|r| (r.var.clone(), r.flags, r.value.clone()))
@@ -385,7 +398,7 @@ fn vars_declared_another_way() {
         [("x".to_owned(), 1, Some(ConstValue::Number(2.0)))]
     );
     assert_eq!(reloaded(&changes), [key("/datum/a/g", 0), key("/f", 0)]);
-    assert!(changes.var_defaults.is_empty());
+    assert!(changes.plan.var_defaults.is_empty());
 
     let changes = changes_of(
         "to-const",
@@ -401,10 +414,15 @@ fn vars_declared_another_way() {
     let before = base.replace("var/x = 1", "var/static/x = 1");
     let after = base.replace("/datum/a/b\n", "/datum/a/b\n\tx = 5\n");
     let changes = changes_of("from-static", &before, &after);
-    assert!(changes.line_moves.is_empty(), "{:?}", changes.line_moves);
+    assert!(
+        changes.plan.line_moves.is_empty(),
+        "{:?}",
+        changes.plan.line_moves
+    );
     assert_eq!(redeclared(&changes), [("x".to_owned(), 0, None)]);
     assert_eq!(reloaded(&changes), [key("/datum/a/g", 0), key("/f", 0)]);
     let mut defaults: Vec<(ConstValue, Vec<String>)> = changes
+        .plan
         .var_defaults
         .iter()
         .map(|d| (d.value.clone(), d.types.clone()))
@@ -439,8 +457,8 @@ fn type_macro_in_an_inherited_default_is_the_declaring_type() {
     let after = "/datum/a\n\tvar/list/l = list(__TYPE__)\n/datum/a/b\n";
     let changes = changes("type-macro", before, after);
     assert!(changes.refused.is_empty(), "{:?}", changes.refused);
-    assert_eq!(changes.init_procs.len(), 2);
-    for init in &changes.init_procs {
+    assert_eq!(changes.plan.init_procs.len(), 2);
+    for init in &changes.plan.init_procs {
         let code = init.code.as_ref().unwrap();
         assert!(
             code.nodes.iter().any(|n| matches!(n, Node::Instruction(Instruction::PushVal(v), _) if format!("{:?}", v) == "Path(\"/datum/a\")")),
@@ -458,7 +476,7 @@ fn spaceman_dmm_is_not_defined() {
     };
     let changes = changes("spaceman", &code(1), &code(2));
     assert_eq!(reloaded(&changes), [key("/a", 0)]);
-    let code = dmasm::format(&changes.reloads[0].nodes);
+    let code = dmasm::format(&changes.plan.reloads[0].nodes);
     assert!(code.contains("PushInt 2"), "{}", code);
 }
 
@@ -531,6 +549,7 @@ fn builtin_var_defaults() {
     let changes = changes("builtin", before, &after);
     assert!(changes.refused.is_empty(), "{:?}", changes.refused);
     let mut defaults: Vec<(String, ConstValue, Vec<String>)> = changes
+        .plan
         .builtin_defaults
         .iter()
         .map(|d| (d.var.clone(), d.value.clone(), d.types.clone()))
@@ -567,7 +586,7 @@ fn builtin_var_defaults() {
             ("text".to_owned(), ConstValue::String("b".to_owned()), all),
         ]
     );
-    assert!(changes.var_defaults.is_empty());
+    assert!(changes.plan.var_defaults.is_empty());
 
     let refused = refusal("builtin-mob", "/mob/a\n", "/mob/a\n\tckey = \"someone\"\n");
     assert!(refused.contains("built-in default"), "{}", refused);
@@ -580,6 +599,7 @@ fn new_procs_are_compiled() {
     let changes = changes("new-procs", before, after);
     assert!(changes.refused.is_empty(), "{:?}", changes.refused);
     let mut new: Vec<(String, String, bool, String)> = changes
+        .plan
         .new_procs
         .iter()
         .map(|p| {
@@ -610,7 +630,12 @@ fn new_procs_are_compiled() {
             ),
         ]
     );
-    let h = changes.new_procs.iter().find(|p| p.name == "h").unwrap();
+    let h = changes
+        .plan
+        .new_procs
+        .iter()
+        .find(|p| p.name == "h")
+        .unwrap();
     let params: Vec<(String, u32)> = h
         .code
         .params
@@ -636,8 +661,8 @@ fn removed_procs_and_vars_stay() {
     assert!(changes.refused.is_empty(), "{:?}", changes.refused);
     let warnings = changes.warnings.join("\n");
     assert!(warnings.contains("var a was removed"), "{}", warnings);
-    assert_eq!(changes.removed_procs.len(), 1);
-    assert_eq!(changes.removed_procs[0].proc, key("/datum/thing/f", 0));
+    assert_eq!(changes.plan.removed_procs.len(), 1);
+    assert_eq!(changes.plan.removed_procs[0].proc, key("/datum/thing/f", 0));
     assert_eq!(reloaded(&changes), [key("/g", 0)]);
 }
 
@@ -649,16 +674,22 @@ fn what_was_removed_is_listed_with_its_warning() {
     let changes = changes("removed-listed", before, after);
     assert!(changes.refused.is_empty(), "{:?}", changes.refused);
     let vars: Vec<(&str, &str)> = changes
+        .plan
         .removed_vars
         .iter()
         .map(|v| (v.type_path.as_str(), v.var.as_str()))
         .collect();
     assert_eq!(vars, [("/datum/thing", "a")]);
-    let procs: Vec<Option<String>> = changes.removed_procs.iter().map(|p| p.warning()).collect();
-    assert_eq!(procs.len(), 1, "{:?}", changes.removed_procs);
+    let procs: Vec<Option<String>> = changes
+        .plan
+        .removed_procs
+        .iter()
+        .map(|p| p.warning())
+        .collect();
+    assert_eq!(procs.len(), 1, "{:?}", changes.plan.removed_procs);
     let mut expected = vec![
         "(global): var total was removed from source but retained in the running world".to_owned(),
-        changes.removed_vars[0].warning(),
+        changes.plan.removed_vars[0].warning(),
         procs[0].clone().unwrap(),
     ];
     expected.sort();
@@ -666,7 +697,7 @@ fn what_was_removed_is_listed_with_its_warning() {
     warnings.sort();
     assert_eq!(warnings, expected);
     assert_eq!(
-        changes.removed_vars[0].warning(),
+        changes.plan.removed_vars[0].warning(),
         "/datum/thing: var a was removed from source but retained in the running world"
     );
     assert_eq!(
@@ -680,8 +711,8 @@ fn what_was_removed_is_listed_with_its_warning() {
         before,
         "/datum/thing/proc/k()\n\treturn 1\n",
     );
-    assert_eq!(changes.removed_procs.len(), 1);
-    assert_eq!(changes.removed_procs[0].warning(), None);
+    assert_eq!(changes.plan.removed_procs.len(), 1);
+    assert_eq!(changes.plan.removed_procs[0].warning(), None);
     assert!(changes.warnings.is_empty(), "{:?}", changes.warnings);
 }
 
@@ -697,9 +728,9 @@ fn a_removed_var_a_subtype_overrode_stays() {
         changes.warnings
     );
     assert!(
-        changes.var_defaults.is_empty(),
+        changes.plan.var_defaults.is_empty(),
         "{:?}",
-        changes.var_defaults
+        changes.plan.var_defaults
     );
 }
 
@@ -713,6 +744,7 @@ fn removed_overrides_are_unlinked() {
     );
     assert!(changes.refused.is_empty(), "{:?}", changes.refused);
     let removed: Vec<(ProcKey, &str)> = changes
+        .plan
         .removed_procs
         .iter()
         .map(|r| (r.proc.clone(), r.type_path.as_str()))
@@ -728,7 +760,7 @@ fn removed_overrides_are_unlinked() {
         ),
     );
     assert!(changes.refused.is_empty(), "{:?}", changes.refused);
-    assert_eq!(changes.removed_procs.len(), 2);
+    assert_eq!(changes.plan.removed_procs.len(), 2);
 
     let changes = changes_of(
         "removed-first",
@@ -737,6 +769,7 @@ fn removed_overrides_are_unlinked() {
     );
     assert!(changes.refused.is_empty(), "{:?}", changes.refused);
     let removed: Vec<ProcKey> = changes
+        .plan
         .removed_procs
         .iter()
         .map(|r| r.proc.clone())
@@ -750,6 +783,7 @@ fn removed_overrides_are_unlinked() {
         &before.replace("/proc/g()\n\treturn 1\n", ""),
     );
     let removed: Vec<(ProcKey, &str)> = changes
+        .plan
         .removed_procs
         .iter()
         .map(|r| (r.proc.clone(), r.type_path.as_str()))
@@ -773,14 +807,20 @@ fn definitions_come_among_the_others() {
     let changes = changes_of("inserted", before, &after);
     assert!(changes.refused.is_empty(), "{:?}", changes.refused);
     let added: Vec<ProcKey> = changes
+        .plan
         .new_procs
         .iter()
         .map(|p| p.code.proc.clone())
         .collect();
     assert_eq!(added, [key("/datum/a/f", 1)]);
-    assert!(changes.removed_procs.is_empty());
+    assert!(changes.plan.removed_procs.is_empty());
     assert!(reloaded(&changes).is_empty(), "{:?}", reloaded(&changes));
-    let moved: Vec<ProcKey> = changes.line_moves.iter().map(|m| m.proc.clone()).collect();
+    let moved: Vec<ProcKey> = changes
+        .plan
+        .line_moves
+        .iter()
+        .map(|m| m.proc.clone())
+        .collect();
     assert_eq!(moved, [key("/datum/a/f", 1), key("/datum/a/f", 2)]);
 
     let changes = changes_of(
@@ -790,6 +830,7 @@ fn definitions_come_among_the_others() {
     );
     assert!(changes.refused.is_empty(), "{:?}", changes.refused);
     let added: Vec<ProcKey> = changes
+        .plan
         .new_procs
         .iter()
         .map(|p| p.code.proc.clone())
@@ -803,8 +844,9 @@ fn definitions_come_among_the_others() {
     );
     let changes = changes_of("swapped", before, &after);
     assert!(changes.refused.is_empty(), "{:?}", changes.refused);
-    assert!(changes.removed_procs.is_empty());
+    assert!(changes.plan.removed_procs.is_empty());
     let added: Vec<ProcKey> = changes
+        .plan
         .new_procs
         .iter()
         .map(|p| p.code.proc.clone())
@@ -849,6 +891,7 @@ fn definitions_come_among_the_others() {
             changes.refused
         );
         let added: Vec<(ProcKey, bool, bool)> = changes
+            .plan
             .new_procs
             .iter()
             .map(|p| (p.code.proc.clone(), p.declared, p.verb))
@@ -865,6 +908,7 @@ fn definitions_come_among_the_others() {
 
         let changes = changes_of(name, &after, before);
         let removed: Vec<(ProcKey, bool)> = changes
+            .plan
             .removed_procs
             .iter()
             .map(|r| (r.proc.clone(), r.verb))
@@ -884,6 +928,7 @@ fn var_defaults_go_to_the_subtypes_that_inherit_them() {
     let changes = changes("defaults", before, &after);
     assert!(changes.refused.is_empty(), "{:?}", changes.refused);
     let mut defaults: Vec<(String, ConstValue, Vec<String>)> = changes
+        .plan
         .var_defaults
         .iter()
         .map(|d| (d.var.clone(), d.value.clone(), d.types.clone()))
@@ -918,7 +963,7 @@ fn var_defaults_go_to_the_subtypes_that_inherit_them() {
 fn global_var_values_are_left_for_a_reboot() {
     let changes = changes("globals", "var/g = 1\n", "var/g = 2\n");
     assert!(changes.refused.is_empty(), "{:?}", changes.refused);
-    assert!(changes.var_defaults.is_empty());
+    assert!(changes.plan.var_defaults.is_empty());
     assert_eq!(
         deferred(&changes),
         ["(global): g: changed initializer (reboot)"]
@@ -931,7 +976,7 @@ fn parameters_and_waitfor_can_change() {
     let after = "/proc/f(a, mob/b)\n\tset waitfor = 0\n\tset background = 1\n\treturn a\n";
     let changes = changes("signature", before, after);
     assert_eq!(reloaded(&changes), [key("/f", 0)]);
-    let reload = &changes.reloads[0];
+    let reload = &changes.plan.reloads[0];
     let params: Vec<(String, u32)> = reload
         .params
         .iter()
@@ -954,7 +999,7 @@ fn new_vars_and_their_overrides() {
     let after = "var/g = 3\n/datum/a\n\tvar/x = 1\n\tvar/static/s = \"t\"\n\tvar/tmp/t\n/datum/a/b\n\tx = 2\n/datum/a/c\n/datum/a/b/d\n";
     let changes = changes("new-vars", before, after);
     assert!(changes.refused.is_empty(), "{:?}", changes.refused);
-    let mut vars = changes.new_vars.clone();
+    let mut vars = changes.plan.new_vars.clone();
     vars.sort_by(|a, b| a.var.cmp(&b.var));
     let var = |type_path: &str, var: &str, flags: u32, value: ConstValue| NewVar {
         type_path: type_path.to_owned(),
@@ -974,6 +1019,7 @@ fn new_vars_and_their_overrides() {
         ]
     );
     let mut defaults: Vec<(String, ConstValue, Vec<String>)> = changes
+        .plan
         .var_defaults
         .iter()
         .map(|d| (d.var.clone(), d.value.clone(), d.types.clone()))
@@ -1015,9 +1061,9 @@ fn removing_an_override_goes_back_to_the_inherited_default() {
     let after = "/datum/a\n\tvar/x = 1\n/datum/a/b\n";
     let changes = changes("unoverride", before, after);
     assert!(changes.refused.is_empty(), "{:?}", changes.refused);
-    assert_eq!(changes.var_defaults.len(), 1);
-    assert_eq!(changes.var_defaults[0].value, ConstValue::Number(1.0));
-    assert_eq!(changes.var_defaults[0].types, ["/datum/a/b"]);
+    assert_eq!(changes.plan.var_defaults.len(), 1);
+    assert_eq!(changes.plan.var_defaults[0].value, ConstValue::Number(1.0));
+    assert_eq!(changes.plan.var_defaults[0].types, ["/datum/a/b"]);
 }
 
 #[test]
@@ -1025,7 +1071,7 @@ fn static_locals_come_with_their_initial_values() {
     let before = "/datum/a/proc/f()\n\treturn 1\n";
     let after = "/datum/a/proc/f()\n\tvar/static/n = 3\n\tvar/static/list/l = list()\n\tif (n)\n\t\tvar/static/n = \"x\"\n\t\treturn n\n\treturn l\n";
     let changes = changes("statics", before, after);
-    let statics: Vec<(String, String, Option<ConstValue>)> = changes.reloads[0]
+    let statics: Vec<(String, String, Option<ConstValue>)> = changes.plan.reloads[0]
         .statics
         .iter()
         .map(|s| (s.name.clone(), s.scope.clone(), s.value.clone()))
@@ -1055,6 +1101,7 @@ fn another_definition_after_the_others_is_a_new_proc() {
     let changes = changes("second-definition", before, after);
     assert!(changes.refused.is_empty(), "{:?}", changes.refused);
     let added: Vec<(ProcKey, bool)> = changes
+        .plan
         .new_procs
         .iter()
         .map(|p| (p.code.proc.clone(), p.declared))
@@ -1075,6 +1122,7 @@ fn another_definition_of_a_global_proc_is_a_proc_of_its_own() {
     );
     assert!(changes.refused.is_empty(), "{:?}", changes.refused);
     let added: Vec<(ProcKey, &str, bool)> = changes
+        .plan
         .new_procs
         .iter()
         .map(|p| (p.code.proc.clone(), p.type_path.as_str(), p.declared))
@@ -1136,7 +1184,7 @@ fn in_list_expressions_are_kept_or_compiled() {
         "/mob/proc/f(obj/a in src.contents, b, c)\n\treturn 2\n",
     );
     assert!(changes.refused.is_empty(), "{:?}", changes.refused);
-    assert_eq!(changes.reloads[0].params[0].in_list, InList::Kept);
+    assert_eq!(changes.plan.reloads[0].params[0].in_list, InList::Kept);
 
     let changes = changes_of(
         "in-list-changed",
@@ -1144,16 +1192,16 @@ fn in_list_expressions_are_kept_or_compiled() {
         "/mob/proc/f(obj/a in src.loc, b)\n\treturn 1\n/mob/proc/g(n in list(1, 2))\n\treturn n\n",
     );
     assert!(changes.refused.is_empty(), "{:?}", changes.refused);
-    let InList::New(code) = &changes.reloads[0].params[0].in_list else {
-        panic!("{:?}", changes.reloads[0].params[0].in_list);
+    let InList::New(code) = &changes.plan.reloads[0].params[0].in_list else {
+        panic!("{:?}", changes.plan.reloads[0].params[0].in_list);
     };
     assert!(
         dmasm::format(&code.nodes).contains("cache = src; cache[\"loc\"]"),
         "{}",
         dmasm::format(&code.nodes)
     );
-    let InList::New(code) = &changes.new_procs[0].code.params[0].in_list else {
-        panic!("{:?}", changes.new_procs[0].code.params[0].in_list);
+    let InList::New(code) = &changes.plan.new_procs[0].code.params[0].in_list else {
+        panic!("{:?}", changes.plan.new_procs[0].code.params[0].in_list);
     };
     assert!(
         dmasm::format(&code.nodes).contains("NewList 2"),
@@ -1175,23 +1223,25 @@ fn defaults_that_arent_constants_change_the_init_procs() {
     let first = changes("init-procs", before, &after);
     assert!(first.refused.is_empty(), "{:?}", first.refused);
     let mut types: Vec<&str> = first
+        .plan
         .init_procs
         .iter()
         .map(|i| i.type_path.as_str())
         .collect();
     types.sort();
     assert_eq!(types, ["/datum/a", "/datum/a/b", "/datum/a/d"]);
-    assert!(first.init_procs.iter().all(|i| i.code.is_some()));
-    assert!(first.var_defaults.is_empty());
+    assert!(first.plan.init_procs.iter().all(|i| i.code.is_some()));
+    assert!(first.plan.var_defaults.is_empty());
 
     let after = before
         .replace("\tvar/n = 2\n", "\tvar/n = 2\n\tvar/list/k = list(\"k\")\n")
         .replace("l = list(3)", "l = null");
     let second = changes("init-procs-2", before, &after);
     assert!(second.refused.is_empty(), "{:?}", second.refused);
-    assert_eq!(second.new_vars.len(), 1);
-    assert_eq!(second.new_vars[0].value, ConstValue::Null);
+    assert_eq!(second.plan.new_vars.len(), 1);
+    assert_eq!(second.plan.new_vars[0].value, ConstValue::Null);
     let mut types: Vec<&str> = second
+        .plan
         .init_procs
         .iter()
         .map(|i| i.type_path.as_str())
@@ -1201,8 +1251,13 @@ fn defaults_that_arent_constants_change_the_init_procs() {
         types,
         ["/datum/a", "/datum/a/b", "/datum/a/c", "/datum/a/d"]
     );
-    assert_eq!(second.var_defaults.len(), 1, "{:?}", second.var_defaults);
-    assert_eq!(second.var_defaults[0].types, ["/datum/a/c"]);
+    assert_eq!(
+        second.plan.var_defaults.len(),
+        1,
+        "{:?}",
+        second.plan.var_defaults
+    );
+    assert_eq!(second.plan.var_defaults[0].types, ["/datum/a/c"]);
     assert!(
         second
             .warnings
@@ -1225,6 +1280,7 @@ fn new_types_with_their_vars_and_procs() {
     assert!(changes.refused.is_empty(), "{:?}", changes.refused);
     type Fields = Vec<(String, ConstValue)>;
     let types: Vec<(&str, &str, Fields)> = changes
+        .plan
         .new_types
         .iter()
         .map(|t| {
@@ -1265,10 +1321,16 @@ fn new_types_with_their_vars_and_procs() {
             ),
         ]
     );
-    let mut vars: Vec<&str> = changes.new_vars.iter().map(|v| v.var.as_str()).collect();
+    let mut vars: Vec<&str> = changes
+        .plan
+        .new_vars
+        .iter()
+        .map(|v| v.var.as_str())
+        .collect();
     vars.sort();
     assert_eq!(vars, ["b", "c"]);
     let mut defaults: Vec<(&str, Vec<String>)> = changes
+        .plan
         .var_defaults
         .iter()
         .map(|d| (d.var.as_str(), d.types.clone()))
@@ -1294,6 +1356,7 @@ fn new_types_with_their_vars_and_procs() {
         ]
     );
     let mut procs: Vec<(String, bool)> = changes
+        .plan
         .new_procs
         .iter()
         .map(|p| (p.code.proc.path.clone(), p.declared))
@@ -1307,6 +1370,7 @@ fn new_types_with_their_vars_and_procs() {
         ]
     );
     let mut inits: Vec<&str> = changes
+        .plan
         .init_procs
         .iter()
         .map(|i| i.type_path.as_str())
@@ -1321,7 +1385,7 @@ fn globals_and_statics_that_arent_constants_come_with_code_to_run_once() {
     let after = "var/list/g = list(1, 2)\n/datum/a\n\tvar/static/list/s = list(3)\n/datum/a/proc/f()\n\tvar/static/datum/a/l = new\n\treturn l\n";
     let changes = changes("run-once", before, after);
     assert!(changes.refused.is_empty(), "{:?}", changes.refused);
-    for var in &changes.new_vars {
+    for var in &changes.plan.new_vars {
         assert_eq!(var.value, ConstValue::Null);
         let init = var
             .init
@@ -1332,8 +1396,8 @@ fn globals_and_statics_that_arent_constants_come_with_code_to_run_once() {
             .iter()
             .any(|n| matches!(n, Node::Instruction(Instruction::Ret, _))));
     }
-    assert_eq!(changes.new_vars.len(), 2);
-    let statics = &changes.reloads[0].statics;
+    assert_eq!(changes.plan.new_vars.len(), 2);
+    let statics = &changes.plan.reloads[0].statics;
     assert_eq!(statics.len(), 1);
     assert!(statics[0].value.is_none() && statics[0].init.is_some());
 }
@@ -1396,6 +1460,7 @@ fn new_verbs_and_changed_settings() {
     let changes = changes("new-verbs", before, after);
     assert!(changes.refused.is_empty(), "{:?}", changes.refused);
     let mut added: Vec<(String, bool, bool)> = changes
+        .plan
         .new_procs
         .iter()
         .map(|p| (p.code.proc.path.clone(), p.declared, p.verb))
@@ -1408,9 +1473,9 @@ fn new_verbs_and_changed_settings() {
             ("/mob/sub/a".to_owned(), false, true)
         ]
     );
-    assert_eq!(changes.reloads.len(), 1);
+    assert_eq!(changes.plan.reloads.len(), 1);
     assert_eq!(
-        changes.reloads[0]
+        changes.plan.reloads[0]
             .settings
             .as_ref()
             .unwrap()
@@ -1449,8 +1514,9 @@ fn settings_come_from_the_declaration() {
     );
     assert!(changes.refused.is_empty(), "{:?}", changes.refused);
     assert_eq!(reloaded(&changes), [key("/mob/a", 0)]);
-    assert!(changes.reloads[0].settings.as_ref().unwrap().waitfor);
+    assert!(changes.plan.reloads[0].settings.as_ref().unwrap().waitfor);
     let mut changed: Vec<(String, bool)> = changes
+        .plan
         .settings
         .iter()
         .map(|c| (c.proc.path.clone(), c.settings.waitfor))
@@ -1470,7 +1536,7 @@ fn settings_come_from_the_declaration() {
         &code("").replace("/mob/sub/sub/a()\n\treturn", "/mob/sub/sub/a()\n\treturn 1"),
     );
     assert_eq!(reloaded(&changes), [key("/mob/sub/sub/a", 0)]);
-    assert_eq!(changes.reloads[0].settings, None);
+    assert_eq!(changes.plan.reloads[0].settings, None);
 }
 
 #[test]
@@ -1491,16 +1557,19 @@ fn one_file_parsed_again_on_its_own() {
         reload.changes.refused
     );
     assert_eq!(reloaded(&reload.changes), [key("/datum/a/f", 0)]);
-    assert_eq!(reload.changes.reloads[0].nodes, full.reloads[0].nodes);
-    assert_eq!(reload.changes.line_moves, full.line_moves);
-    assert_eq!(reload.changes.line_moves[0].proc, key("/datum/a/g", 0));
+    assert_eq!(
+        reload.changes.plan.reloads[0].nodes,
+        full.plan.reloads[0].nodes
+    );
+    assert_eq!(reload.changes.plan.line_moves, full.plan.line_moves);
+    assert_eq!(reload.changes.plan.line_moves[0].proc, key("/datum/a/g", 0));
     old.keep(reload);
 
     let again = after.replace("return 3", "return 4");
     world.write(&again);
     let reload = old.reload_file(&world.dir, file).unwrap();
     assert_eq!(reloaded(&reload.changes), [key("/datum/a/g", 0)]);
-    assert!(reload.changes.line_moves.is_empty());
+    assert!(reload.changes.plan.line_moves.is_empty());
     old.keep(reload);
 
     for (name, code, why) in [
@@ -1601,7 +1670,12 @@ fn a_changed_default_recompiles_a_proc_that_reads_it_through_a_macro() {
     let before = "#define DEFAULT_OF(T, V) T::V\n/datum/a\n\tvar/size = 1\n/datum/b\n\tvar/size = 2\n/datum/a/c\n/mob/proc/sized()\n\treturn DEFAULT_OF(/datum/a/c, size)\n";
     let after = before.replace("/datum/a/c\n", "/datum/a/c\n\tparent_type = /datum/b\n");
     let changes = changes_of("parent-type-macro", before, &after);
-    assert_eq!(changes.reparented.len(), 1, "{:?}", changes.reparented);
+    assert_eq!(
+        changes.plan.reparented.len(),
+        1,
+        "{:?}",
+        changes.plan.reparented
+    );
     assert_eq!(reloaded(&changes), [key("/mob/sized", 0)]);
 }
 
@@ -1611,13 +1685,22 @@ fn a_new_parent_type_is_a_reparent_and_nothing_else() {
     let after = "/datum/a\n/datum/b\n/datum/a/c\n\tparent_type = /datum/b\n\tvar/x = 1\n";
     let changes = changes("parent-type", before, after);
     assert!(changes.refused.is_empty(), "{:?}", changes.refused);
-    assert_eq!(changes.reparented.len(), 1, "{:?}", changes.reparented);
+    assert_eq!(
+        changes.plan.reparented.len(),
+        1,
+        "{:?}",
+        changes.plan.reparented
+    );
     assert!(
-        changes.var_defaults.is_empty() && changes.builtin_defaults.is_empty(),
+        changes.plan.var_defaults.is_empty() && changes.plan.builtin_defaults.is_empty(),
         "{:?}",
         changes
     );
-    assert!(changes.redeclared.is_empty(), "{:?}", changes.redeclared);
+    assert!(
+        changes.plan.redeclared.is_empty(),
+        "{:?}",
+        changes.plan.redeclared
+    );
 }
 
 #[test]
@@ -1630,7 +1713,12 @@ fn a_new_parent_type_recompiles_other_procs_that_hold_what_it_inherits() {
                   /mob/proc/other(datum/a/thing)\n\treturn thing.limit + /datum/a::size\n";
     let after = before.replace("/datum/a/c\n", "/datum/a/c\n\tparent_type = /datum/b\n");
     let changes = changes("parent-type-users", before, &after);
-    assert_eq!(changes.reparented.len(), 1, "{:?}", changes.reparented);
+    assert_eq!(
+        changes.plan.reparented.len(),
+        1,
+        "{:?}",
+        changes.plan.reparented
+    );
     let mut procs = reloaded(&changes);
     procs.sort();
     assert_eq!(procs, [key("/mob/capped", 0), key("/mob/sized", 0)]);
@@ -1665,7 +1753,12 @@ fn what_a_new_parent_changes_is_found_wherever_a_proc_names_it() {
 ";
     let after = before.replace("/datum/a/c\n", "/datum/a/c\n\tparent_type = /datum/b\n");
     let changes = changes("parent-type-places", before, &after);
-    assert_eq!(changes.reparented.len(), 1, "{:?}", changes.reparented);
+    assert_eq!(
+        changes.plan.reparented.len(),
+        1,
+        "{:?}",
+        changes.plan.reparented
+    );
     let mut procs: Vec<String> = reloaded(&changes).iter().map(|k| k.to_string()).collect();
     procs.sort();
     assert_eq!(
@@ -1687,7 +1780,12 @@ fn a_new_parent_with_the_same_default_written_elsewhere_names_its_file() {
         "/datum/b\n\tvar/x = 5\n/datum/a/c\n",
         "/datum/b\n\tvar/x = 5\n/datum/a/c\n\tparent_type = /datum/b\n",
     );
-    assert_eq!(changes.reparented.len(), 1, "{:?}", changes.reparented);
+    assert_eq!(
+        changes.plan.reparented.len(),
+        1,
+        "{:?}",
+        changes.plan.reparented
+    );
     assert_eq!(reloaded(&changes), [key("/f", 0)]);
 }
 
@@ -1699,6 +1797,7 @@ fn a_removed_name_goes_back_to_each_types_own() {
     let changes = changes("removed-name", before, after);
     assert!(changes.refused.is_empty(), "{:?}", changes.refused);
     let mut set: Vec<(String, String, ConstValue)> = changes
+        .plan
         .builtin_defaults
         .iter()
         .flat_map(|d| {
@@ -1744,10 +1843,15 @@ fn a_type_scope_default_that_moves_moves_its_users_lines() {
         "/datum/u\n\tvar/x = 3\n",
         "\n/datum/u\n\tvar/x = 3\n",
     );
-    assert!(changes.reloads.is_empty(), "{:?}", reloaded(&changes));
-    assert_eq!(changes.line_moves.len(), 1, "{:?}", changes.line_moves);
-    assert_eq!(changes.line_moves[0].proc, key("/f", 0));
-    assert_eq!(changes.line_moves[0].lines, [(2, 3), (5, 5)]);
+    assert!(changes.plan.reloads.is_empty(), "{:?}", reloaded(&changes));
+    assert_eq!(
+        changes.plan.line_moves.len(),
+        1,
+        "{:?}",
+        changes.plan.line_moves
+    );
+    assert_eq!(changes.plan.line_moves[0].proc, key("/f", 0));
+    assert_eq!(changes.plan.line_moves[0].lines, [(2, 3), (5, 5)]);
 }
 
 #[test]
@@ -1759,7 +1863,11 @@ fn a_type_scope_default_whose_lines_clash_is_compiled_again() {
         "\n/datum/u\n\tvar/x = 3\n",
     );
     assert_eq!(reloaded(&changes), [key("/f", 0)]);
-    assert!(changes.line_moves.is_empty(), "{:?}", changes.line_moves);
+    assert!(
+        changes.plan.line_moves.is_empty(),
+        "{:?}",
+        changes.plan.line_moves
+    );
 }
 
 #[test]
@@ -1848,6 +1956,7 @@ fn a_static_local_s_initializer_names_its_own_proc() {
     let changes = changes("static-proc", before, after);
     assert!(changes.refused.is_empty(), "{:?}", changes.refused);
     let reload = changes
+        .plan
         .reloads
         .iter()
         .find(|r| r.proc.path == "/datum/a/proc/f" || r.proc.path == "/datum/a/f")
@@ -2177,6 +2286,7 @@ fn a_new_type_doesnt_keep_the_init_proc_its_parent_loses() {
     let reloaded = changes("new-type-init", before, after);
     assert!(reloaded.refused.is_empty(), "{:?}", reloaded.refused);
     let mut inits: Vec<(String, bool)> = reloaded
+        .plan
         .init_procs
         .iter()
         .map(|i| (i.type_path.clone(), i.code.is_some()))
@@ -2196,7 +2306,11 @@ fn a_new_type_doesnt_keep_the_init_proc_its_parent_loses() {
         "/datum/a\n\tvar/x = 1\n",
         "/datum/a\n\tvar/x = 1\n/datum/a/b\n",
     );
-    assert!(fresh.init_procs.is_empty(), "{:?}", fresh.init_procs);
+    assert!(
+        fresh.plan.init_procs.is_empty(),
+        "{:?}",
+        fresh.plan.init_procs
+    );
 }
 
 #[test]
@@ -2206,11 +2320,12 @@ fn a_built_in_a_type_stops_setting_comes_from_its_parent() {
     let changes = changes("builtin-inherited", before, after);
     assert!(changes.refused.is_empty(), "{:?}", changes.refused);
     assert!(
-        changes.builtin_defaults.is_empty(),
+        changes.plan.builtin_defaults.is_empty(),
         "{:?}",
-        changes.builtin_defaults
+        changes.plan.builtin_defaults
     );
     let mut inherited: Vec<(String, Vec<String>)> = changes
+        .plan
         .builtin_inherited
         .iter()
         .map(|i| (i.var.clone(), i.types.clone()))
@@ -2241,9 +2356,9 @@ fn a_built_in_a_built_in_type_stops_setting_needs_a_rebuild() {
         ["code/code.dm:1: /mob: layer: cannot restore this built-in type's original default"]
     );
     assert!(
-        own.builtin_inherited.is_empty(),
+        own.plan.builtin_inherited.is_empty(),
         "{:?}",
-        own.builtin_inherited
+        own.plan.builtin_inherited
     );
     let table = changes(
         "builtin-inherited-var-table",
@@ -2301,9 +2416,9 @@ fn world_and_client_settings_apply_after_a_restart() {
     let changes = changes("world-settings", before, after);
     assert!(changes.refused.is_empty(), "{:?}", changes.refused);
     assert!(
-        changes.builtin_defaults.is_empty(),
+        changes.plan.builtin_defaults.is_empty(),
         "{:?}",
-        changes.builtin_defaults
+        changes.plan.builtin_defaults
     );
     assert_eq!(
         deferred(&changes),
@@ -2338,6 +2453,7 @@ fn built_ins_a_sound_keeps_in_its_var_table_are_var_defaults() {
     let changes = changes("sound-defaults", before, after);
     assert!(changes.refused.is_empty(), "{:?}", changes.refused);
     let mut defaults: Vec<(String, Vec<String>)> = changes
+        .plan
         .var_defaults
         .iter()
         .map(|d| {
@@ -2357,20 +2473,21 @@ fn built_ins_a_sound_keeps_in_its_var_table_are_var_defaults() {
         ]
     );
     let mut builtins: Vec<&str> = changes
+        .plan
         .builtin_defaults
         .iter()
         .map(|d| d.var.as_str())
         .collect();
     builtins.sort();
     assert_eq!(builtins, ["bounds", "fps"]);
-    assert_eq!(changes.new_types.len(), 1);
+    assert_eq!(changes.plan.new_types.len(), 1);
     assert!(
-        changes.new_types[0]
+        changes.plan.new_types[0]
             .fields
             .iter()
             .all(|(f, _)| f != "channel"),
         "{:?}",
-        changes.new_types
+        changes.plan.new_types
     );
 }
 
@@ -2387,6 +2504,7 @@ fn a_parent_change_comes_with_its_subtree() {
         String,
         Vec<(String, Vec<String>, Vec<String>, Vec<String>, ConstValue)>,
     )> = changes
+        .plan
         .reparented
         .iter()
         .map(|r| {
@@ -2575,33 +2693,39 @@ fn a_resource_file_names_the_code_and_defaults_that_use_it() {
     assert!(lamp.refused.is_empty(), "{:?}", lamp.refused);
     assert_eq!(reloaded(&lamp), vec![key("/states", 0)]);
     assert_eq!(
-        lamp.builtin_defaults.len(),
+        lamp.plan.builtin_defaults.len(),
         1,
         "{:?}",
-        lamp.builtin_defaults
+        lamp.plan.builtin_defaults
     );
-    assert_eq!(lamp.builtin_defaults[0].var, "icon");
+    assert_eq!(lamp.plan.builtin_defaults[0].var, "icon");
     assert_eq!(
-        lamp.builtin_defaults[0].value,
+        lamp.plan.builtin_defaults[0].value,
         ConstValue::Resource("icons/lamp.dmi".to_owned())
     );
-    let mut types = lamp.builtin_defaults[0].types.clone();
+    let mut types = lamp.plan.builtin_defaults[0].types.clone();
     types.sort();
     assert_eq!(types, vec!["/obj/lamp", "/obj/lamp/red"]);
     let mut inits: Vec<&str> = lamp
+        .plan
         .init_procs
         .iter()
         .map(|i| i.type_path.as_str())
         .collect();
     inits.sort();
     assert_eq!(inits, vec!["/datum/holder", "/datum/holder/sub"]);
-    assert!(lamp.init_procs.iter().all(|i| i.code.is_some()));
+    assert!(lamp.plan.init_procs.iter().all(|i| i.code.is_some()));
 
     let beep = snapshot.resource_users(&["beep.ogg".to_owned()]);
     assert_eq!(reloaded(&beep), vec![key("/play", 0)]);
-    assert_eq!(beep.var_defaults.len(), 1, "{:?}", beep.var_defaults);
-    assert_eq!(beep.var_defaults[0].var, "sound_file");
-    assert!(beep.builtin_defaults.is_empty() && beep.init_procs.is_empty());
+    assert_eq!(
+        beep.plan.var_defaults.len(),
+        1,
+        "{:?}",
+        beep.plan.var_defaults
+    );
+    assert_eq!(beep.plan.var_defaults[0].var, "sound_file");
+    assert!(beep.plan.builtin_defaults.is_empty() && beep.plan.init_procs.is_empty());
 
     assert!(snapshot
         .resource_users(&["missing.dmi".to_owned()])
@@ -2663,6 +2787,7 @@ fn a_resource_is_found_wherever_code_or_a_default_names_it() {
         ]
     );
     let inits: Vec<&str> = users
+        .plan
         .init_procs
         .iter()
         .map(|i| i.type_path.as_str())
@@ -2681,7 +2806,7 @@ fn a_resource_is_found_wherever_code_or_a_default_names_it() {
             );
         let world = World::new("resource-default", &code);
         let users = world.parse().resource_users(&["a.dmi".to_owned()]);
-        assert_eq!(users.init_procs.len(), 1, "{}: {:?}", var, users);
+        assert_eq!(users.plan.init_procs.len(), 1, "{}: {:?}", var, users);
     }
     let world = World::new(
         "resource-evaluated",
@@ -2692,9 +2817,19 @@ fn a_resource_is_found_wherever_code_or_a_default_names_it() {
 ",
     );
     let users = world.parse().resource_users(&["a.dmi".to_owned()]);
-    assert_eq!(users.var_defaults.len(), 1, "{:?}", users.var_defaults);
-    assert_eq!(users.var_defaults[0].var, "kept");
-    assert_eq!(users.init_procs.len(), 1, "{:?}", users.init_procs);
+    assert_eq!(
+        users.plan.var_defaults.len(),
+        1,
+        "{:?}",
+        users.plan.var_defaults
+    );
+    assert_eq!(users.plan.var_defaults[0].var, "kept");
+    assert_eq!(
+        users.plan.init_procs.len(),
+        1,
+        "{:?}",
+        users.plan.init_procs
+    );
     assert_eq!(users.warnings.len(), 1, "{:?}", users.warnings);
     assert!(
         users.warnings[0].contains("const ICON"),
@@ -2717,7 +2852,12 @@ fn a_resource_named_with_a_combining_character_is_found() {
     );
     let users = world.parse().resource_users(&[name.to_owned()]);
     assert_eq!(reloaded(&users), [key("/play", 0)]);
-    assert_eq!(users.var_defaults.len(), 1, "{:?}", users.var_defaults);
+    assert_eq!(
+        users.plan.var_defaults.len(),
+        1,
+        "{:?}",
+        users.plan.var_defaults
+    );
 }
 
 #[test]
@@ -2770,12 +2910,18 @@ fn a_declaration_moved_up_to_a_parent_is_taken() {
     let after = "/datum/hud\n\tvar/list/sue = null\n/datum/hud/human\n/datum/hud/robot\n\tsue = list(1)\n/datum/open/proc/upd()\n\treturn 0\n/datum/open/river/upd()\n\treturn ..() + 1\n";
     let changes = changes("moved-up", before, after);
     assert!(changes.refused.is_empty(), "{:?}", changes.refused);
-    assert_eq!(changes.new_vars.len(), 1, "{:?}", changes.new_vars);
-    assert_eq!(changes.new_vars[0].type_path, "/datum/hud");
-    let mut moved_from = changes.new_vars[0].moved_from.clone();
+    assert_eq!(
+        changes.plan.new_vars.len(),
+        1,
+        "{:?}",
+        changes.plan.new_vars
+    );
+    assert_eq!(changes.plan.new_vars[0].type_path, "/datum/hud");
+    let mut moved_from = changes.plan.new_vars[0].moved_from.clone();
     moved_from.sort();
     assert_eq!(moved_from, ["/datum/hud/human", "/datum/hud/robot"]);
     let redeclared: Vec<&str> = changes
+        .plan
         .redeclared
         .iter()
         .map(|r| r.type_path.as_str())
@@ -2789,9 +2935,10 @@ fn a_declaration_moved_up_to_a_parent_is_taken() {
         "{:?}",
         changes.warnings
     );
-    assert_eq!(changes.new_procs.len(), 1);
-    assert_eq!(changes.new_procs[0].type_path, "/datum/open");
+    assert_eq!(changes.plan.new_procs.len(), 1);
+    assert_eq!(changes.plan.new_procs[0].type_path, "/datum/open");
     assert!(changes
+        .plan
         .reloads
         .iter()
         .any(|r| r.proc.path == "/datum/open/river/upd"));
@@ -2808,11 +2955,16 @@ fn a_declaration_moved_up_to_a_parent_is_taken() {
         "/datum/a\n\tvar/s = 1\n/datum/a/b\n",
     );
     assert!(unstatic.refused.is_empty(), "{:?}", unstatic.refused);
-    assert_eq!(unstatic.redeclared.len(), 1, "{:?}", unstatic.redeclared);
+    assert_eq!(
+        unstatic.plan.redeclared.len(),
+        1,
+        "{:?}",
+        unstatic.plan.redeclared
+    );
     assert_eq!(
         (
-            unstatic.redeclared[0].type_path.as_str(),
-            unstatic.redeclared[0].flags
+            unstatic.plan.redeclared[0].type_path.as_str(),
+            unstatic.plan.redeclared[0].flags
         ),
         ("/datum/a/b", 0)
     );
@@ -2832,6 +2984,7 @@ fn a_moved_up_proc_that_names_itself_is_compiled_again() {
     assert!(changes.refused.is_empty(), "{:?}", changes.refused);
     assert_eq!(changes.moved_procs, ["/datum/a/b/f"]);
     let reload = changes
+        .plan
         .reloads
         .iter()
         .find(|r| r.proc.path == "/datum/a/b/f")
