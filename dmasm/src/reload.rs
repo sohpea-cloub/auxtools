@@ -7,6 +7,7 @@ use dreammaker::preprocessor::DefineHistory;
 use dreammaker::{Context, FileId, Severity};
 
 use crate::compiler::{compile_proc, CompiledProc, ProcSource};
+use crate::syntax;
 
 #[path = "reload_moved.rs"]
 mod moved;
@@ -1658,6 +1659,30 @@ fn old_key(realigned: &Realigned, key: &ProcKey) -> Option<ProcKey> {
     }
 }
 
+fn names_any(value: &ProcValue, names: &HashSet<&str>, defaults: &HashSet<&str>) -> bool {
+    use dreammaker::ast::{Follow, Term};
+    let quoted = |text: &str| {
+        names.iter().any(|name| {
+            text.strip_suffix(name)
+                .is_some_and(|rest| rest.is_empty() || rest.ends_with('"'))
+        })
+    };
+    let mut found = false;
+    syntax::walk_proc(value, &mut |node| {
+        found |= match node {
+            syntax::Node::Name(name) => names.contains(name),
+            syntax::Node::Follow(Follow::StaticField(name)) => defaults.contains(name.as_str()),
+            syntax::Node::Term(Term::String(text)) => quoted(text),
+            syntax::Node::Term(Term::InterpString(first, parts)) => {
+                quoted(first) || parts.iter().any(|(_, text)| quoted(text))
+            }
+            syntax::Node::Term(Term::Resource(name)) => quoted(name),
+            _ => false,
+        }
+    });
+    found
+}
+
 fn const_users(old: &Snapshot, new: &Snapshot, realigned: &Realigned, changes: &mut Changes) {
     if changes.consts.is_empty()
         && changes.retyped.is_empty()
@@ -1666,17 +1691,17 @@ fn const_users(old: &Snapshot, new: &Snapshot, realigned: &Realigned, changes: &
     {
         return;
     }
-    let names: Vec<String> = changes
+    let names: HashSet<&str> = changes
         .consts
         .iter()
         .chain(&changes.retyped)
-        .map(|c| format!("{c:?}"))
+        .map(String::as_str)
         .collect();
-    let moved: Vec<String> = changes
+    let moved: HashSet<&str> = changes
         .defaults_changed
         .iter()
         .chain(&changes.defaults_moved)
-        .map(|c| format!("StaticField({c:?})"))
+        .map(String::as_str)
         .collect();
     let reloaded: HashSet<ProcKey> = changes.reloads.iter().map(|r| r.proc.clone()).collect();
     let mut files = HashMap::new();
@@ -1693,10 +1718,7 @@ fn const_users(old: &Snapshot, new: &Snapshot, realigned: &Realigned, changes: &
         if names.is_empty() && !new.source_has(new_value, "::", &mut files) {
             continue;
         }
-        let text = format!("{:?}{:?}", new_value.code, new_value.parameters);
-        if !names.iter().any(|name| text.contains(name.as_str()))
-            && !moved.iter().any(|name| text.contains(name.as_str()))
-        {
+        if !names_any(new_value, &names, &moved) {
             continue;
         }
         let (Ok(before), Ok(after)) = (old.compile(&old_key), new.compile(key)) else {

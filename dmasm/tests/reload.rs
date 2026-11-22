@@ -233,6 +233,99 @@ fn a_const_change_recompiles_its_users() {
 }
 
 #[test]
+fn a_changed_const_is_found_wherever_a_proc_names_it() {
+    let before = "var/const/LIMIT = 3
+/datum/thing
+	var/const/SIZE = 2
+/proc/in_default(x = LIMIT + 1)
+	return x
+/proc/in_condition(x)
+	if(x > LIMIT + 1)
+		return 1
+	else if(x < LIMIT - 9)
+		return 2
+/proc/in_loops(x)
+	while(x < LIMIT + 1)
+		x++
+	do
+		x--
+	while(x > LIMIT + 2)
+	for(x = LIMIT + 3, x < LIMIT + 9, x += LIMIT + 4)
+		world.log << x
+/proc/in_switch(x)
+	switch(x)
+		if(LIMIT)
+			return 1
+		if(10 to LIMIT + 20)
+			return 2
+/proc/in_range()
+	for(var/i in 1 to LIMIT + 1)
+		world.log << i
+/proc/in_text()
+	return \"up to [LIMIT + 1]\"
+/proc/in_list()
+	return list(1, \"key\" = LIMIT + 1)
+/proc/in_argument()
+	return in_condition(LIMIT + 1)
+/proc/in_new()
+	return new /datum/thing(LIMIT + 1)
+/proc/in_field(datum/thing/t)
+	return t.SIZE * 2
+/proc/in_index(list/l)
+	return l[LIMIT + 1]
+/proc/in_call_of(datum/thing/t)
+	return t.in_method(LIMIT + 1)
+/datum/thing/proc/in_method(x)
+	return x ? SIZE * 2 : 0
+/proc/in_spawn()
+	spawn(LIMIT + 1)
+		return
+/proc/in_local()
+	var/x = LIMIT + 1
+	return x
+/proc/in_try()
+	try
+		throw LIMIT + 1
+	catch(var/e)
+		return e
+/proc/in_label()
+	again:
+		return LIMIT + 1
+/proc/unrelated(x)
+	return x + 3
+";
+    let after = before
+        .replace("LIMIT = 3", "LIMIT = 4")
+        .replace("SIZE = 2", "SIZE = 5");
+    let changes = changes("const-places", before, &after);
+    assert_eq!(changes.consts, ["LIMIT", "SIZE"]);
+    let mut procs: Vec<String> = reloaded(&changes).iter().map(|k| k.to_string()).collect();
+    procs.sort();
+    assert_eq!(
+        procs,
+        [
+            "/datum/thing/in_method",
+            "/in_argument",
+            "/in_call_of",
+            "/in_condition",
+            "/in_default",
+            "/in_field",
+            "/in_index",
+            "/in_label",
+            "/in_list",
+            "/in_local",
+            "/in_loops",
+            "/in_new",
+            "/in_range",
+            "/in_spawn",
+            "/in_switch",
+            "/in_text",
+            "/in_try",
+        ]
+    );
+}
+
+#[test]
 fn a_new_const_is_a_global() {
     let before = "/datum/thing
 	var/x = 1
@@ -1415,6 +1508,36 @@ fn a_changed_default_recompiles_type_scope_users() {
 }
 
 #[test]
+fn a_changed_default_is_found_wherever_a_proc_reads_it_with_scope() {
+    let before = "/datum/thing
+	var/size = 2
+/datum/thing/big
+/proc/in_default(x = /datum/thing/big::size)
+	return x
+/proc/in_argument()
+	return max(1, /datum/thing/big::size)
+/proc/in_block(x)
+	if(x)
+		for(var/i in 1 to 2)
+			return list(i, /datum/thing/big::size)
+/proc/in_text()
+	return \"is [/datum/thing/big::size]\"
+/proc/named_alike(datum/thing/big/b)
+	var/size = b.size
+	return size
+";
+    let after = before.replace("/datum/thing/big\n", "/datum/thing/big\n\tsize = 9\n");
+    let changes = changes("type-scope-places", before, &after);
+    assert_eq!(changes.defaults_changed, ["size"]);
+    let mut procs: Vec<String> = reloaded(&changes).iter().map(|k| k.to_string()).collect();
+    procs.sort();
+    assert_eq!(
+        procs,
+        ["/in_argument", "/in_block", "/in_default", "/in_text"]
+    );
+}
+
+#[test]
 fn a_new_parent_type_is_a_reparent_and_nothing_else() {
     let before = "/datum/a\n/datum/b\n/datum/a/c\n\tvar/x = 1\n";
     let after = "/datum/a\n/datum/b\n/datum/a/c\n\tparent_type = /datum/b\n\tvar/x = 1\n";
@@ -1443,6 +1566,49 @@ fn a_new_parent_type_recompiles_other_procs_that_hold_what_it_inherits() {
     let mut procs = reloaded(&changes);
     procs.sort();
     assert_eq!(procs, [key("/mob/capped", 0), key("/mob/sized", 0)]);
+}
+
+#[test]
+fn what_a_new_parent_changes_is_found_wherever_a_proc_names_it() {
+    let before = "/datum/x
+	var/const/n = 1
+/datum/y
+	var/const/n = 2
+/datum/a
+	var/size = 1
+	var/const/limit = 3
+	var/datum/x/held
+/datum/b
+	var/size = 2
+	var/const/limit = 7
+	var/datum/y/held
+/datum/a/c
+/mob/proc/in_default(x = /datum/a/c::size)
+	return x
+/mob/proc/in_argument(datum/a/c/thing)
+	return max(thing.limit, 1)
+/mob/proc/in_block(datum/a/c/thing, x)
+	if(x)
+		return list(thing.limit, /datum/a/c::size)
+/mob/proc/through_its_type(datum/a/c/thing)
+	return thing.held.n
+/mob/proc/other(datum/a/thing)
+	return thing.limit + /datum/a::size + thing.held.n
+";
+    let after = before.replace("/datum/a/c\n", "/datum/a/c\n\tparent_type = /datum/b\n");
+    let changes = changes("parent-type-places", before, &after);
+    assert_eq!(changes.reparented.len(), 1, "{:?}", changes.reparented);
+    let mut procs: Vec<String> = reloaded(&changes).iter().map(|k| k.to_string()).collect();
+    procs.sort();
+    assert_eq!(
+        procs,
+        [
+            "/mob/in_argument",
+            "/mob/in_block",
+            "/mob/in_default",
+            "/mob/through_its_type"
+        ]
+    );
 }
 
 #[test]

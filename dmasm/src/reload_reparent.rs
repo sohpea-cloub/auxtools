@@ -275,11 +275,8 @@ pub(super) fn reparented_users(
         return;
     }
     let (declared, defaults) = inherited_changes(old, new, &types);
-    let named: Vec<String> = declared.iter().map(|name| format!("{name:?}")).collect();
-    let fields: Vec<String> = defaults
-        .iter()
-        .map(|name| format!("StaticField({name:?})"))
-        .collect();
+    let named: HashSet<&str> = declared.iter().map(String::as_str).collect();
+    let fields: HashSet<&str> = defaults.iter().map(String::as_str).collect();
     let mut files = HashMap::new();
     let reloaded: HashSet<ProcKey> = changes.reloads.iter().map(|r| r.proc.clone()).collect();
     let mut reloads = vec![];
@@ -298,12 +295,7 @@ pub(super) fn reparented_users(
             if named.is_empty() && !new.source_has(value, "::", &mut files) {
                 continue;
             }
-            let text = format!("{:?}{:?}", value.code, value.parameters);
-            if !named
-                .iter()
-                .chain(&fields)
-                .any(|name| text.contains(name.as_str()))
-            {
+            if !names_any(value, &named, &fields) {
                 continue;
             }
         }
