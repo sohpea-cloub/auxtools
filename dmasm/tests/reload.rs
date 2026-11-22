@@ -160,9 +160,9 @@ fn a_file_included_earlier_moves_no_defaults() {
         .collect();
     let changes = diff(&old, &world.parse(), Some(&edited));
     assert!(
-        changes.defaults_moved.is_empty(),
+        changes.plan.line_moves.is_empty(),
         "{:?}",
-        changes.defaults_moved
+        changes.plan.line_moves
     );
     assert!(reloaded(&changes).is_empty(), "{:?}", reloaded(&changes));
 }
@@ -1626,7 +1626,6 @@ fn a_changed_default_recompiles_type_scope_users() {
     let after = before.replace("/datum/thing/big\n", "/datum/thing/big\n\tsize = 9\n");
     let changes = changes("type-scope-default", before, &after);
     assert!(changes.refused.is_empty(), "{:?}", changes.refused);
-    assert_eq!(changes.defaults_changed, ["size"]);
     assert_eq!(reloaded(&changes), [key("/a", 0)]);
 }
 
@@ -1651,7 +1650,6 @@ fn a_changed_default_is_found_wherever_a_proc_reads_it_with_scope() {
 ";
     let after = before.replace("/datum/thing/big\n", "/datum/thing/big\n\tsize = 9\n");
     let changes = changes("type-scope-places", before, &after);
-    assert_eq!(changes.defaults_changed, ["size"]);
     let mut procs: Vec<String> = reloaded(&changes).iter().map(|k| k.to_string()).collect();
     procs.sort();
     assert_eq!(
@@ -1665,7 +1663,6 @@ fn a_changed_default_recompiles_a_proc_that_reads_it_through_a_macro() {
     let before = "#define DEFAULT_OF(T, V) T::V\n/datum/thing\n\tvar/size = 2\n/datum/thing/big\n/proc/a()\n\treturn DEFAULT_OF(/datum/thing/big, size)\n/proc/b()\n\treturn 2\n";
     let after = before.replace("/datum/thing/big\n", "/datum/thing/big\n\tsize = 9\n");
     let changes = changes("type-scope-macro", before, &after);
-    assert_eq!(changes.defaults_changed, ["size"]);
     assert_eq!(reloaded(&changes), [key("/a", 0)]);
     let before = "#define DEFAULT_OF(T, V) T::V\n/datum/a\n\tvar/size = 1\n/datum/b\n\tvar/size = 2\n/datum/a/c\n/mob/proc/sized()\n\treturn DEFAULT_OF(/datum/a/c, size)\n";
     let after = before.replace("/datum/a/c\n", "/datum/a/c\n\tparent_type = /datum/b\n");
@@ -2385,12 +2382,11 @@ fn a_setting_back_as_built_waits_for_nothing() {
     let back = world.parse();
     let mut changes = diff(&changed, &back, Some(&edited));
     assert_eq!(
-        changes.restart_settings,
-        [("/world".to_owned(), "fps".to_owned())]
+        deferred(&changes),
+        ["/world: fps: changed setting (rebuild)"]
     );
     changes.settings_as_built(&built, &back);
     assert!(changes.deferred.is_empty(), "{:?}", changes.deferred);
-    assert!(changes.restart_settings.is_empty());
 }
 
 fn deferred(changes: &Changes) -> Vec<String> {
@@ -2982,7 +2978,6 @@ fn a_moved_up_proc_that_names_itself_is_compiled_again() {
     let after = "/datum/a/proc/f()\n\treturn 0\n/datum/a/b/f()\n\treturn __PROC__\n";
     let changes = changes("moved-up-proc-name", before, after);
     assert!(changes.refused.is_empty(), "{:?}", changes.refused);
-    assert_eq!(changes.moved_procs, ["/datum/a/b/f"]);
     let reload = changes
         .plan
         .reloads

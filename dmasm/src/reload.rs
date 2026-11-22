@@ -458,15 +458,15 @@ impl Plan {
 pub struct Changes {
     pub plan: Plan,
     pub consts: Vec<String>,
-    pub defaults_changed: Vec<String>,
-    pub defaults_moved: Vec<String>,
     pub retyped: Vec<String>,
-    pub moved_procs: Vec<String>,
     pub warnings: Vec<String>,
     pub refused: Vec<Refusal>,
     pub deferred: Vec<Refusal>,
-    pub restart_settings: Vec<(String, String)>,
     pub global_init: Option<GlobalInit>,
+    restart_settings: Vec<(String, String)>,
+    defaults_changed: Vec<String>,
+    defaults_moved: Vec<String>,
+    moved_procs: Vec<String>,
 }
 
 impl Changes {
