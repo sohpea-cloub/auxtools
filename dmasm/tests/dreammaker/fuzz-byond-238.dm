@@ -1,5 +1,4 @@
 // Guards: the code of a reduced fuzz case: byond mode on 516.1689, seed 238, "515.1647: new: globals differ"
-// Known: /datum/fzo/o4/proc/operator>>=  not by design: DreamMaker starts an assignment operator with `. = src` and dmasm doesn't, so one that returns nothing gives null
 #define DEBUG
 
 #define FZD6 0

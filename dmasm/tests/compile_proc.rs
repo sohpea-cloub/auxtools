@@ -1406,24 +1406,25 @@ fn initial_of_a_static_or_const_is_its_globals() {
 }
 
 fn compile_with_lines(src: &str) -> Vec<String> {
+    compile_with_lines_of(src, "", "f")
+}
+
+fn compile_with_lines_of(src: &str, ty: &str, name: &str) -> Vec<String> {
     let ctx = dreammaker::Context::default();
     let pp = dreammaker::Preprocessor::from_buffer(&ctx, "test.dm".into(), src.to_owned());
     let mut parser = dreammaker::Parser::new(&ctx, pp);
     parser.enable_procs();
     let tree = parser.parse_object_tree();
-    let value = tree
-        .root()
-        .get()
-        .procs
-        .get("f")
-        .unwrap()
-        .value
-        .last()
-        .unwrap();
+    let ty = if ty.is_empty() {
+        tree.root()
+    } else {
+        tree.find(ty).expect("type")
+    };
+    let value = ty.get().procs.get(name).unwrap().value.last().unwrap();
     let source = ProcSource {
         tree: &tree,
-        ty: tree.root(),
-        name: "f",
+        ty,
+        name,
         value,
         file: "test.dm",
         debug_info: true,
@@ -2161,6 +2162,80 @@ fn the_first_line_is_the_first_with_anything_on_it() {
 fn a_return_type_records_the_header_after_the_first_line() {
     let src = "/proc/f() as num\n\t// comment\n\treturn 1\n";
     assert_eq!(dbg_lines(src), ["DbgLine 3", "DbgLine 1", "DbgLine 3"]);
+}
+
+#[test]
+fn an_assignment_operator_begins_with_dot_src() {
+    let assigning = [
+        "+=", "-=", "*=", "/=", "%=", "%%=", "&=", "|=", "^=", "<<=", ">>=", ":=", "++", "--",
+    ];
+    let others = [
+        "+", "-", "*", "/", "%", "%%", "**", "&", "|", "^", "~", "<<", ">>", "<", ">", "<=", ">=",
+        "~=", "~!", "[]", "[]=", "\"\"",
+    ];
+    let mut code = "/datum/d\n\tvar/n\n".to_owned();
+    for op in assigning.iter().chain(&others) {
+        code += &format!("/datum/d/proc/operator{op}(b = 1)\n\tn = b\n");
+    }
+    for op in assigning {
+        let compiled = compile(&code, "/datum/d", &format!("operator{op}"));
+        assert_has(
+            &compiled,
+            &[
+                "SetVar arg(0)",
+                "LAB_0000:",
+                "GetVar src",
+                "SetVar dot",
+                "GetVar arg(0)",
+            ],
+        );
+    }
+    for op in others {
+        let compiled = compile(&code, "/datum/d", &format!("operator{op}"));
+        assert!(
+            !compiled.contains("SetVar dot"),
+            "operator{op}:\n{compiled}"
+        );
+    }
+}
+
+#[test]
+fn an_assignment_operator_records_the_header_for_dot_src() {
+    let lines = |header: &str, body: &str| {
+        let src = format!("/datum/d\n\tvar/n\n/datum/d/proc/{header}\n{body}/datum/d/proc/g()\n");
+        let name = header.split('(').next().unwrap();
+        compile_with_lines_of(&src, "/datum/d", name)
+            .into_iter()
+            .filter(|l| l.starts_with("DbgLine") || l.starts_with("SetVar dot"))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        lines("operator+=(b)", "\tn = b\n"),
+        ["DbgLine 4", "DbgLine 3", "SetVar dot", "DbgLine 4"]
+    );
+    assert_eq!(
+        lines("operator+=(b = 1)", "\tn = b\n"),
+        [
+            "DbgLine 4",
+            "DbgLine 3",
+            "DbgLine 4",
+            "DbgLine 3",
+            "SetVar dot",
+            "DbgLine 4"
+        ]
+    );
+    assert_eq!(
+        lines("operator+=(b = 1) as num", "\tn = b\n"),
+        ["DbgLine 4", "DbgLine 3", "SetVar dot", "DbgLine 4"]
+    );
+    assert_eq!(
+        lines("operator-=(b) as num", "\tn = b\n"),
+        ["DbgLine 4", "DbgLine 3", "SetVar dot", "DbgLine 4"]
+    );
+    assert_eq!(
+        lines("operator++()", ""),
+        ["DbgLine 4", "DbgLine 3", "SetVar dot"]
+    );
 }
 
 #[test]

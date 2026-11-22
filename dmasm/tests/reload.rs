@@ -95,6 +95,45 @@ fn a_changed_body_is_compiled() {
 }
 
 #[test]
+fn a_reloaded_assignment_operator_returns_src_by_default() {
+    let changes = changes(
+        "assignment-operator",
+        "/datum/d/proc/operator+=(b)\n\treturn src\n/datum/d/proc/operator+(b)\n\treturn src\n",
+        "/datum/d/proc/operator+=(b)\n\tworld.log << b\n/datum/d/proc/operator+(b)\n\tworld.log << b\n",
+    );
+    let mut reloaded = reloaded(&changes);
+    reloaded.sort_by(|a, b| a.path.cmp(&b.path));
+    assert_eq!(
+        reloaded,
+        [key("/datum/d/operator+", 0), key("/datum/d/operator+=", 0)]
+    );
+    let prologue = |path: &str| -> Vec<Instruction> {
+        let reload = changes
+            .plan
+            .reloads
+            .iter()
+            .find(|r| r.proc.path == path)
+            .unwrap();
+        reload
+            .nodes
+            .iter()
+            .filter_map(|node| match node {
+                Node::Instruction(Instruction::DbgFile(_) | Instruction::DbgLine(_), ()) => None,
+                Node::Instruction(ins, ()) => Some(ins.clone()),
+                _ => None,
+            })
+            .take(2)
+            .collect()
+    };
+    let dot_src = [
+        Instruction::GetVar(dmasm::Variable::Src),
+        Instruction::SetVar(dmasm::Variable::Dot),
+    ];
+    assert_eq!(prologue("/datum/d/operator+="), dot_src);
+    assert_ne!(prologue("/datum/d/operator+"), dot_src);
+}
+
+#[test]
 fn files_of_an_included_environment_are_named_as_it_names_them() {
     let world = World::new("names", "/proc/a()\n\treturn 1\n");
     let dir = &world.dir;

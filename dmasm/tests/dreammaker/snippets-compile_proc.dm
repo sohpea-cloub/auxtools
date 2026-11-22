@@ -870,3 +870,78 @@ var/datum/a/A
 	return n
 /proc/g(datum/d/a, b)
 	return (a?.f(1)[2] &&= b)
+// Guards: an_assignment_operator_begins_with_dot_src (compile_proc.rs)
+/datum/d
+	var/n
+/datum/d/proc/operator+=(b = 1)
+	n = b
+/datum/d/proc/operator-=(b = 1)
+	n = b
+/datum/d/proc/operator*=(b = 1)
+	n = b
+/datum/d/proc/operator/=(b = 1)
+	n = b
+/datum/d/proc/operator%=(b = 1)
+	n = b
+/datum/d/proc/operator%%=(b = 1)
+	n = b
+/datum/d/proc/operator&=(b = 1)
+	n = b
+/datum/d/proc/operator|=(b = 1)
+	n = b
+/datum/d/proc/operator^=(b = 1)
+	n = b
+/datum/d/proc/operator<<=(b = 1)
+	n = b
+/datum/d/proc/operator>>=(b = 1)
+	n = b
+/datum/d/proc/operator:=(b = 1)
+	n = b
+/datum/d/proc/operator++(b = 1)
+	n = b
+/datum/d/proc/operator--(b = 1)
+	n = b
+/datum/d/proc/operator+(b = 1)
+	n = b
+/datum/d/proc/operator-(b = 1)
+	n = b
+/datum/d/proc/operator*(b = 1)
+	n = b
+/datum/d/proc/operator/(b = 1)
+	n = b
+/datum/d/proc/operator%(b = 1)
+	n = b
+/datum/d/proc/operator%%(b = 1)
+	n = b
+/datum/d/proc/operator**(b = 1)
+	n = b
+/datum/d/proc/operator&(b = 1)
+	n = b
+/datum/d/proc/operator|(b = 1)
+	n = b
+/datum/d/proc/operator^(b = 1)
+	n = b
+/datum/d/proc/operator~(b = 1)
+	n = b
+/datum/d/proc/operator<<(b = 1)
+	n = b
+/datum/d/proc/operator>>(b = 1)
+	n = b
+/datum/d/proc/operator<(b = 1)
+	n = b
+/datum/d/proc/operator>(b = 1)
+	n = b
+/datum/d/proc/operator<=(b = 1)
+	n = b
+/datum/d/proc/operator>=(b = 1)
+	n = b
+/datum/d/proc/operator~=(b = 1)
+	n = b
+/datum/d/proc/operator~!(b = 1)
+	n = b
+/datum/d/proc/operator[](b = 1)
+	n = b
+/datum/d/proc/operator[]=(b = 1)
+	n = b
+/datum/d/proc/operator""(b = 1)
+	n = b

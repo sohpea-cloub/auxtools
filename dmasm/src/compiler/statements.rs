@@ -85,9 +85,40 @@ pub(super) fn emit_proc_body(
         compiler.emit_ins(Instruction::DbgLine(source.value.location.line));
     }
 
+    let assigns = assignment_operator(source.name);
+    if assigns {
+        if !return_type {
+            compiler.emit_ins(Instruction::DbgLine(first_line));
+        }
+        compiler.emit_ins(Instruction::DbgLine(source.value.location.line));
+        compiler.emit_ins(Instruction::GetVar(Variable::Src));
+        compiler.emit_ins(Instruction::SetVar(Variable::Dot));
+    }
+
     let has_defaults = source.value.parameters.iter().any(|p| p.default.is_some());
-    let skip_first_line = !has_defaults && !return_type && first_statement == Some(first_line);
+    let skip_first_line =
+        !has_defaults && !return_type && !assigns && first_statement == Some(first_line);
     emit_block_inner(compiler, code, skip_first_line)
+}
+
+fn assignment_operator(name: &str) -> bool {
+    matches!(
+        name,
+        "operator+="
+            | "operator-="
+            | "operator*="
+            | "operator/="
+            | "operator%="
+            | "operator%%="
+            | "operator&="
+            | "operator|="
+            | "operator^="
+            | "operator<<="
+            | "operator>>="
+            | "operator:="
+            | "operator++"
+            | "operator--"
+    )
 }
 
 fn emit_block(compiler: &mut Compiler, block: &Block) -> Result<(), CompileError> {
