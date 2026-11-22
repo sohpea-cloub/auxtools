@@ -1,26 +1,18 @@
 use std::{
 	collections::VecDeque,
 	io::{BufRead, BufReader, Read, Write},
-	path::{Path, PathBuf},
+	path::Path,
 	process::{Child, ChildStdin, Command, Stdio},
 	sync::mpsc,
 	time::{Duration, Instant}
 };
 
 use serde_json::{json, Value};
+use test_support::{cli, paths::library_path};
 
 pub const TIMEOUT: Duration = Duration::from_secs(15);
 
 pub const START_TIMEOUT: Duration = Duration::from_secs(90);
-
-#[track_caller]
-pub fn next_to_us(name: &str) -> PathBuf {
-	let mut path = std::env::current_exe().unwrap();
-	path.pop();
-	path.push(name);
-	assert!(path.is_file(), "couldn't find {}; build it first", path.display());
-	path
-}
 
 pub fn launch_arguments(byond: &Path, dme: &Path, more: Value) -> Value {
 	let mut arguments = json!({
@@ -37,14 +29,6 @@ pub fn launch_arguments(byond: &Path, dme: &Path, more: Value) -> Value {
 	arguments
 }
 
-pub fn launcher_path() -> PathBuf {
-	next_to_us(if cfg!(windows) { "auxtools.exe" } else { "auxtools" })
-}
-
-pub fn library_path() -> PathBuf {
-	next_to_us(if cfg!(windows) { "debug_server.dll" } else { "libdebug_server.so" })
-}
-
 pub fn server() -> String {
 	std::env::var("LAUNCHER_TEST_SERVER").unwrap_or_else(|_| "dreamdaemon".to_owned())
 }
@@ -53,39 +37,6 @@ pub fn test_args() -> Option<Vec<String>> {
 	std::env::var("LAUNCHER_TEST_ARGS")
 		.ok()
 		.map(|args| args.split_whitespace().map(str::to_owned).collect())
-}
-
-pub fn launcher_command(args: &[&str]) -> (i32, String) {
-	let out = Command::new(launcher_path()).args(args).output().unwrap();
-	let printed = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
-	(out.status.code().unwrap_or(-1), printed)
-}
-
-pub fn listed_worlds() -> Vec<Value> {
-	let list = Command::new(launcher_path()).args(["list", "--json"]).output().unwrap();
-	let worlds: Value = serde_json::from_slice(&list.stdout).unwrap();
-	let plain = |path: &str| path.replace('\\', "/").to_lowercase();
-	let here = plain(&std::env::current_dir().unwrap().to_string_lossy());
-	let made = format!("-{}/", std::process::id());
-	worlds
-		.as_array()
-		.unwrap()
-		.iter()
-		.filter(|world| {
-			let dmb = plain(world["dmb"].as_str().unwrap_or_default());
-			dmb.starts_with(&here) || dmb.contains(&made)
-		})
-		.cloned()
-		.collect()
-}
-
-#[track_caller]
-pub fn listed_world(dmb: &str) -> u64 {
-	let worlds = listed_worlds();
-	match worlds.iter().find(|world| world["dmb"].as_str().is_some_and(|path| path.ends_with(dmb))) {
-		Some(world) => world["pid"].as_u64().unwrap(),
-		None => panic!("--list didn't list the world: {:?}", worlds)
-	}
 }
 
 #[track_caller]
@@ -126,8 +77,7 @@ impl Launcher {
 	}
 
 	pub fn start_with(env: &[(&str, &str)]) -> Self {
-		let mut child = Command::new(launcher_path())
-			.arg("dap")
+		let mut child = cli::auxtools(["dap"])
 			.envs(env.iter().copied())
 			.stdin(Stdio::piped())
 			.stdout(Stdio::piped())

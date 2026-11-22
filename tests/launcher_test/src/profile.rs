@@ -3,10 +3,9 @@ use std::{
 	time::{Duration, Instant}
 };
 
-use crate::{
-	journal::{run, Background},
-	line_of
-};
+use test_support::cli::{launcher_command, Background};
+
+use crate::{journal::run, line_of};
 
 pub fn profile(pid: u64, dir: &Path, code: &Path) {
 	let tally = line_of(code, "\ttick(1)");
@@ -142,7 +141,7 @@ pub fn profile(pid: u64, dir: &Path, code: &Path) {
 	let deadline = Instant::now() + Duration::from_secs(20);
 	loop {
 		let pid = pid.to_string();
-		let (code, printed) = crate::client::launcher_command(&["--pid", &pid, "profile", "--for", "1"]);
+		let (code, printed) = launcher_command(&["--pid", &pid, "profile", "--for", "1"]);
 		if code == 0 {
 			break;
 		}

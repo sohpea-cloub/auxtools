@@ -1,6 +1,6 @@
 use std::{
 	io::{Read, Write},
-	path::{Path, PathBuf},
+	path::Path,
 	sync::{mpsc, Arc, Mutex},
 	time::{Duration, Instant}
 };
@@ -37,7 +37,7 @@ impl World {
 				dmb,
 				args: &args,
 				env: &env,
-				debug: Some((find_debug_server(), true))
+				debug: Some((crate::paths::library_path(), true))
 			},
 			move |_, line| {
 				print!("  | {}", line);
@@ -119,20 +119,6 @@ impl Drop for World {
 	fn drop(&mut self) {
 		self.game.kill();
 	}
-}
-
-fn find_debug_server() -> PathBuf {
-	let mut path = std::env::current_exe().unwrap();
-	path.pop();
-
-	#[cfg(unix)]
-	path.push("libdebug_server.so");
-
-	#[cfg(windows)]
-	path.push("debug_server.dll");
-
-	assert!(path.is_file(), "couldn't find debug_server");
-	path
 }
 
 pub struct Client {

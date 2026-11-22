@@ -1,5 +1,7 @@
 use serde_json::{json, Value};
 
+use test_support::cli;
+
 use crate::{client, ok, paths, world::World};
 
 fn free_port() -> u16 {
@@ -48,7 +50,7 @@ pub fn run() {
 	world.request("restart", json!({}));
 	world.wait_count("dap: world/New", 2);
 	assert!(!world.has_event("process"), "reboot unexpectedly replaced the process");
-	assert_eq!(client::listed_world("dap_test_host.dmb"), pid);
+	assert_eq!(cli::listed_world("dap_test_host.dmb"), pid);
 	assert_eq!(world.eval_global("world.port"), port.to_string());
 	announced(&mut world, &address, false);
 	breaks_at_leaf(&mut world);

@@ -17,9 +17,12 @@ use std::{
 	time::{Duration, Instant}
 };
 
-use client::{launcher_command, launcher_path, library_path, test_args, Launcher};
+use client::{test_args, Launcher};
 use serde_json::json;
-use test_support::paths::{self, ByondCommand};
+use test_support::{
+	cli::{auxtools, launcher_command, listed_world, listed_worlds, ran, Background, Cli},
+	paths::{self, library_path, ByondCommand}
+};
 
 const TARGET_LINE: u64 = 28;
 
@@ -227,7 +230,7 @@ fn launch(server: &str, library: &Path) {
 
 fn command_line(pid: u64, code: &Path) {
 	let pid = pid.to_string();
-	let cli = Cli(pid.clone());
+	let cli = Cli::new(&pid);
 
 	assert_eq!(
 		cli.run(&["status"], 0).lines().next().unwrap_or_default(),
@@ -812,7 +815,7 @@ fn no_debugger() {
 
 fn command_line_more(pid: u64, dir: &Path) {
 	let pid = pid.to_string();
-	let cli = Cli(pid.clone());
+	let cli = Cli::new(&pid);
 
 	let printed = cli.run(&["wait", "pause", "--break", "/proc/value", "--timeout", "15"], 0);
 	assert!(
@@ -1027,7 +1030,7 @@ fn command_line_more(pid: u64, dir: &Path) {
 
 fn command_line_trace(pid: u64, code: &Path) {
 	let pid = pid.to_string();
-	let cli = Cli(pid.clone());
+	let cli = Cli::new(&pid);
 	let value = line_of(code, "\treturn 2");
 	let called = line_of(code, "\t\tworld.log << \"attach test: [value()]\"");
 	let every = line_of(code, "\ttick(1)");
@@ -1135,8 +1138,8 @@ fn command_line_trace(pid: u64, code: &Path) {
 	);
 	println!("ok: trace JSON Lines");
 
-	let mut tracing = Command::new(client::launcher_path())
-		.args(["--pid", &pid, "trace", "/proc/value"])
+	let mut tracing = cli
+		.command(&["trace", "/proc/value"])
 		.stdout(Stdio::piped())
 		.stderr(Stdio::piped())
 		.spawn()
@@ -1155,8 +1158,8 @@ fn command_line_trace(pid: u64, code: &Path) {
 	);
 	println!("ok: trace handles closed output pipe");
 
-	let mut evaluating = Command::new(client::launcher_path())
-		.args(["--pid", &pid, "eval", "jointext(new/list(100000), \"xxxxxxxx\")"])
+	let mut evaluating = cli
+		.command(&["eval", "jointext(new/list(100000), \"xxxxxxxx\")"])
 		.stdout(Stdio::piped())
 		.stderr(Stdio::piped())
 		.spawn()
@@ -1178,7 +1181,7 @@ fn command_line_trace(pid: u64, code: &Path) {
 
 	#[cfg(unix)]
 	{
-		let mut tracing = journal::Background::start(pid.parse().unwrap(), &["trace", "/proc/tick", "--by", "n"]);
+		let mut tracing = Background::start(pid.parse().unwrap(), &["trace", "/proc/tick", "--by", "n"]);
 		tracing.line_with("tracing /tick");
 		journal::rounds_pass(pid.parse().unwrap(), 2);
 		Command::new("kill").args(["-INT", &tracing.id().to_string()]).status().unwrap();
@@ -1263,18 +1266,6 @@ fn edited_after_build(server: &str) {
 	let _ = std::fs::remove_dir_all(&dir);
 }
 
-struct Cli(String);
-
-impl Cli {
-	#[track_caller]
-	fn run(&self, args: &[&str], code: i32) -> String {
-		let args: Vec<&str> = ["--pid", self.0.as_str()].iter().chain(args).copied().collect();
-		let (got, printed) = launcher_command(&args);
-		assert_eq!(got, code, "`{}` gave {}, not {}: {}", args.join(" "), got, code, printed);
-		printed
-	}
-}
-
 #[track_caller]
 fn line_of(file: &Path, text: &str) -> u64 {
 	let source = std::fs::read_to_string(file).unwrap();
@@ -1311,7 +1302,7 @@ fn attach_and_reload(server: &str, library: &Path) -> Attached {
 	runner.wait_output("Hot reload active");
 	println!("ok: noDebug launch with source watching");
 
-	let pid = client::listed_world("attach_host.dmb");
+	let pid = listed_world("attach_host.dmb");
 	println!("ok: world discovered with PID {}", pid);
 
 	let mut first = Launcher::start();
@@ -1377,7 +1368,7 @@ impl Attached {
 		println!("ok: CLI resume");
 
 		let waiting = journal::wait_for_reboot(pid);
-		let mut tracing = journal::Background::start(pid, &["trace", "/proc/value", "--by", "caller"]);
+		let mut tracing = Background::start(pid, &["trace", "/proc/value", "--by", "caller"]);
 		tracing.line_with("tracing /value");
 		let seen = runner.output.matches("attach test: 2").count();
 		runner.wait_count("attach test: 2", seen + 2);
@@ -1442,7 +1433,7 @@ impl Drop for Started {
 			let _ = child.wait();
 		}
 		if std::thread::panicking() {
-			let list = Command::new(launcher_path()).args(["list", "--json"]).output().ok();
+			let list = auxtools(["list", "--json"]).output().ok();
 			let worlds: serde_json::Value = list.and_then(|list| serde_json::from_slice(&list.stdout).ok()).unwrap_or_default();
 			let ours = format!("launcher_test_launch-{}", std::process::id());
 			for world in worlds.as_array().into_iter().flatten() {
@@ -1517,8 +1508,7 @@ fn launch_args(dmb: &Path, server: &str, more: &[&str]) -> Vec<String> {
 }
 
 fn launch_here(dmb: &Path, server: &str, started: &mut Started) -> Arc<Mutex<String>> {
-	let mut child = Command::new(launcher_path())
-		.args(launch_args(dmb, server, &[]))
+	let mut child = auxtools(launch_args(dmb, server, &[]))
 		.stdin(Stdio::null())
 		.stdout(Stdio::piped())
 		.stderr(Stdio::piped())
@@ -1610,10 +1600,8 @@ fn dmb_elsewhere(server: &str) {
 	let (pid, launcher) = (up["pid"].as_u64().unwrap(), up["launcher"].as_u64().unwrap());
 	started.pids.extend([pid, launcher]);
 	let pid = pid.to_string();
-	let run = |args: &[&str]| {
-		let args: Vec<&str> = ["--pid", pid.as_str()].iter().chain(args).copied().collect();
-		launcher_command(&args).1
-	};
+	let cli = Cli::new(&pid);
+	let run = |args: &[&str]| cli.ran(args, None).printed();
 
 	let code = dir.join("attach_host.dm");
 	let source = std::fs::read_to_string(&code).unwrap();
@@ -1724,7 +1712,7 @@ fn launch_from_the_command_line(server: &str) {
 		"the world was up before its code was watched:\n{}",
 		read_log()
 	);
-	let listed = client::listed_worlds();
+	let listed = listed_worlds();
 	assert!(
 		listed
 			.iter()
@@ -1733,7 +1721,7 @@ fn launch_from_the_command_line(server: &str) {
 		listed
 	);
 	let pid_text = pid.to_string();
-	let cli = Cli(pid_text.clone());
+	let cli = Cli::new(&pid_text);
 	assert_eq!(
 		cli.run(&["status"], 0).lines().next().unwrap_or_default(),
 		format!("pid {}: running", pid)
@@ -1745,7 +1733,7 @@ fn launch_from_the_command_line(server: &str) {
 	#[cfg(unix)]
 	{
 		let mine = |listed: Vec<serde_json::Value>| listed.into_iter().find(|world| world["pid"] == pid);
-		let listed = mine(client::listed_worlds()).unwrap_or_else(|| panic!("list doesn't show the world"));
+		let listed = mine(listed_worlds()).unwrap_or_else(|| panic!("list doesn't show the world"));
 		assert_eq!(listed["responsive"], json!(true), "{}", listed);
 		assert!(Command::new("kill").args(["-STOP", &pid_text]).status().unwrap().success());
 		let asked: Vec<_> = [
@@ -1759,13 +1747,8 @@ fn launch_from_the_command_line(server: &str) {
 			std::thread::spawn({
 				let args: Vec<String> = args.iter().map(|arg| (*arg).to_owned()).collect();
 				move || {
-					let out = Command::new(launcher_path())
-						.args(&args)
-						.env("AUXTOOLS_TEST_PATIENCE", "1000")
-						.output()
-						.unwrap();
-					let printed = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
-					(out.status.code().unwrap_or(-1), printed)
+					let ran = ran(auxtools(&args).env("AUXTOOLS_TEST_PATIENCE", "1000"), None);
+					(ran.code, ran.printed())
 				}
 			})
 		})
@@ -1962,7 +1945,7 @@ fn launch_from_the_command_line(server: &str) {
 	started.pids.extend([pid, launcher]);
 	std::fs::write(dir.join("refuse_del"), "yes").unwrap();
 	let pid_text = pid.to_string();
-	let cli = Cli(pid_text.clone());
+	let cli = Cli::new(&pid_text);
 	let printed = cli.run(&["eval", "DOUBLE_IT(1)"], 1);
 	assert!(
 		printed.starts_with("error: proc not found: /proc/DOUBLE_IT (if that's a #define: source macros unavailable"),
@@ -2077,7 +2060,7 @@ fn unread_statics(server: &str) {
 	let pid = launched["pid"].as_u64().unwrap();
 	started.pids.extend([pid, launched["launcher"].as_u64().unwrap()]);
 	let pid_text = pid.to_string();
-	let cli = Cli(pid_text.clone());
+	let cli = Cli::new(&pid_text);
 	assert_eq!(cli.run(&["eval", "inits"], 0).trim(), "2");
 
 	for (n, edited) in ["1 + 1", "3"].iter().enumerate() {

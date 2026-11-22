@@ -5,6 +5,8 @@ use std::{
 
 use serde_json::{json, Value};
 
+use test_support::cli;
+
 use crate::{
 	client::{self, Launcher},
 	ok, paths,
@@ -91,7 +93,7 @@ fn asked_to_end() {
 	let mut world = World::launch(json!({ "noDebug": true }));
 	world.configure();
 	evaluate_when_connected(&mut world, "global_number");
-	let mut other = World::attach(client::listed_world("dap_test_host.dmb"));
+	let mut other = World::attach(cli::listed_world("dap_test_host.dmb"));
 	other.request("configurationDone", json!({}));
 	let asked = std::time::Instant::now();
 	other.request("terminate", json!({}));
@@ -146,7 +148,7 @@ fn told_along_the_way() {
 	ok("launch and parse progress events");
 
 	let process = world.event("process");
-	let pid = client::listed_world("dap_test_host.dmb");
+	let pid = cli::listed_world("dap_test_host.dmb");
 	assert_eq!(process["body"]["systemProcessId"], pid);
 	assert_eq!(process["body"]["startMethod"], "launch");
 	assert!(process["body"]["name"].as_str().unwrap().ends_with("dap_test_host.dmb"), "{}", process);
@@ -428,7 +430,7 @@ fn output_and_exit() {
 		ok("socket reuse workaround");
 	}
 
-	let pid = client::listed_world("dap_test_host.dmb");
+	let pid = cli::listed_world("dap_test_host.dmb");
 	world.run("quit");
 	world.event("terminated");
 	let exited = world.event("exited");
@@ -443,10 +445,10 @@ fn output_and_exit() {
 	world.end();
 
 	let world = World::start();
-	let pid_again = client::listed_world("dap_test_host.dmb");
+	let pid_again = cli::listed_world("dap_test_host.dmb");
 	assert_ne!(pid, pid_again, "the first world is still there");
 	world.end();
-	let list = client::listed_worlds();
+	let list = cli::listed_worlds();
 	assert!(list.is_empty(), "the world outlived its session: {:?}", list);
 	ok("launched world exits on disconnect");
 
@@ -457,7 +459,7 @@ fn output_and_exit() {
 		"the launcher didn't say the world would end"
 	);
 	assert!(world.launcher.child.wait().unwrap().success());
-	let list = client::listed_worlds();
+	let list = cli::listed_worlds();
 	assert!(list.is_empty(), "the world outlived its session: {:?}", list);
 	ok("launched world cannot outlive its session");
 }

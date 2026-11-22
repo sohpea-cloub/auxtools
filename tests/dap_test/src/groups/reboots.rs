@@ -1,5 +1,7 @@
 use serde_json::json;
 
+use test_support::cli;
+
 use crate::{client, ok, world::World};
 
 fn rebooted(world: &mut World, worlds: usize) {
@@ -43,7 +45,7 @@ fn told_after_reboot() {
 
 pub fn run() {
 	let mut a = World::start();
-	let pid = client::listed_world("dap_test_host.dmb");
+	let pid = cli::listed_world("dap_test_host.dmb");
 	let mut b = World::attach(pid);
 	b.catch_runtimes(false);
 
@@ -119,7 +121,7 @@ pub fn run() {
 	b.end();
 
 	let mut a = World::start();
-	let pid = client::listed_world("dap_test_host.dmb");
+	let pid = cli::listed_world("dap_test_host.dmb");
 	let mut b = World::attach(pid);
 	a.run("quit");
 	a.event("terminated");

@@ -932,6 +932,7 @@ version = "0.1.0"
 dependencies = [
  "auxtools-cli",
  "auxtools-protocol",
+ "serde_json",
 ]
 
 [[package]]

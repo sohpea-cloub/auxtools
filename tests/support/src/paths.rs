@@ -77,6 +77,25 @@ pub fn find_dreamdaemon() -> PathBuf {
 	path
 }
 
+#[track_caller]
+pub fn next_to_us(name: &str) -> PathBuf {
+	let mut path = std::env::current_exe().unwrap();
+	path.pop();
+	path.push(name);
+	assert!(path.is_file(), "couldn't find {}; build it first", path.display());
+	path
+}
+
+#[track_caller]
+pub fn launcher_path() -> PathBuf {
+	next_to_us(if cfg!(windows) { "auxtools.exe" } else { "auxtools" })
+}
+
+#[track_caller]
+pub fn library_path() -> PathBuf {
+	next_to_us(if cfg!(windows) { "debug_server.dll" } else { "libdebug_server.so" })
+}
+
 pub fn dreammaker() -> Command {
 	let mut dm = Command::new(find_dm());
 	dm.with_byond_paths();

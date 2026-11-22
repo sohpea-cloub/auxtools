@@ -111,7 +111,7 @@ pub fn run() {
 	assert_eq!(logged(&mut world, from, 2)[1], "y is 9\n");
 	ok("Step Over ignores logpoint stops");
 
-	let pid = crate::client::listed_world("dap_test_host.dmb");
+	let pid = test_support::cli::listed_world("dap_test_host.dmb");
 	let mut other = World::attach(pid);
 	other.catch_runtimes(false);
 	other.break_on(&["leaf_2"]);

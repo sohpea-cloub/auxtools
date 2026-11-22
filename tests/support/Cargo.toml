@@ -8,6 +8,7 @@ edition.workspace = true
 [dependencies]
 auxtools-cli = { path = "../../auxtools-cli" }
 auxtools-protocol = { path = "../../auxtools-protocol" }
+serde_json = "1"
 
 [lints]
 workspace = true

@@ -302,7 +302,7 @@ fn behind_the_clients_back() {
 	world.set_breakpoints(&stepping, json!([]));
 	ok("reload before save notification");
 
-	let pid = crate::client::listed_world("dap_test_host.dmb");
+	let pid = test_support::cli::listed_world("dap_test_host.dmb");
 	let mut other = World::attach_in(dir.clone(), pid);
 	other.catch_runtimes(false);
 	other.break_on(&["sc_middle_2"]);

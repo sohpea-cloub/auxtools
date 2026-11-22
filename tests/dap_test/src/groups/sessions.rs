@@ -1,10 +1,12 @@
 use serde_json::json;
 
-use crate::{client, ok, world::World};
+use test_support::cli;
+
+use crate::{ok, world::World};
 
 pub fn run() {
 	let mut a = World::start();
-	let pid = client::listed_world("dap_test_host.dmb");
+	let pid = cli::listed_world("dap_test_host.dmb");
 	let mut b = World::attach(pid);
 	b.catch_runtimes(false);
 
@@ -141,7 +143,7 @@ pub fn run() {
 fn last_one_leaves() {
 	let mut runner = World::launch(json!({ "noDebug": true }));
 	runner.configure();
-	let pid = client::listed_world("dap_test_host.dmb");
+	let pid = cli::listed_world("dap_test_host.dmb");
 
 	let mut session = World::attach(pid);
 	session.request("pause", json!({ "threadId": 0 }));

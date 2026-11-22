@@ -1,134 +1,13 @@
 use std::{
-	io::{BufRead, BufReader, Read},
 	path::Path,
-	process::{Child, Command, Stdio},
-	sync::mpsc,
 	time::{Duration, Instant}
 };
 
-use crate::client::{launcher_command, launcher_path};
-
-const TIMEOUT: Duration = Duration::from_secs(20);
+use test_support::cli::{Background, Cli, TIMEOUT};
 
 #[track_caller]
 pub fn run(pid: u64, args: &[&str], code: i32) -> String {
-	let pid = pid.to_string();
-	let args: Vec<&str> = ["--pid", pid.as_str()].iter().chain(args).copied().collect();
-	let (got, printed) = launcher_command(&args);
-	assert_eq!(got, code, "`{}` gave {}, not {}: {}", args.join(" "), got, code, printed);
-	printed
-}
-
-pub struct Background {
-	child: Child,
-	lines: mpsc::Receiver<String>,
-	errors: mpsc::Receiver<String>,
-	pub printed: String,
-	said: String
-}
-
-fn lines_of(stream: impl Read + Send + 'static) -> mpsc::Receiver<String> {
-	let (sender, lines) = mpsc::channel();
-	std::thread::spawn(move || {
-		for line in BufReader::new(stream).lines().map_while(Result::ok) {
-			if sender.send(line).is_err() {
-				return;
-			}
-		}
-	});
-	lines
-}
-
-fn next_line(lines: &mpsc::Receiver<String>, read: &mut String, deadline: Instant) -> Option<String> {
-	let line = lines.recv_timeout(deadline.saturating_duration_since(Instant::now())).ok()?;
-	*read += &line;
-	*read += "\n";
-	Some(line)
-}
-
-impl Background {
-	pub fn start(pid: u64, args: &[&str]) -> Self {
-		let mut child = Command::new(launcher_path())
-			.arg("--pid")
-			.arg(pid.to_string())
-			.args(args)
-			.stdout(Stdio::piped())
-			.stderr(Stdio::piped())
-			.spawn()
-			.unwrap();
-		Self {
-			lines: lines_of(child.stdout.take().unwrap()),
-			errors: lines_of(child.stderr.take().unwrap()),
-			child,
-			printed: String::new(),
-			said: String::new()
-		}
-	}
-
-	#[track_caller]
-	pub fn line_with(&mut self, text: &str) -> String {
-		let deadline = Instant::now() + TIMEOUT;
-		loop {
-			match next_line(&self.lines, &mut self.printed, deadline) {
-				Some(line) if line.contains(text) => return line,
-				Some(_) => {}
-				None => {
-					self.read_errors();
-					panic!("no line with {:?} came; it printed {}{}", text, self.printed, self.said)
-				}
-			}
-		}
-	}
-
-	#[track_caller]
-	pub fn error_with(&mut self, text: &str) -> String {
-		let deadline = Instant::now() + TIMEOUT;
-		loop {
-			match next_line(&self.errors, &mut self.said, deadline) {
-				Some(line) if line.contains(text) => return line,
-				Some(_) => {}
-				None => panic!("no line with {:?} came on stderr; it printed {}{}", text, self.printed, self.said)
-			}
-		}
-	}
-
-	fn read_errors(&mut self) {
-		while next_line(&self.errors, &mut self.said, Instant::now()).is_some() {}
-	}
-
-	#[track_caller]
-	pub fn finish(self) -> (i32, String) {
-		let (code, printed, said) = self.finish_apart();
-		(code, printed + &said)
-	}
-
-	#[track_caller]
-	pub fn finish_apart(mut self) -> (i32, String, String) {
-		let deadline = Instant::now() + TIMEOUT;
-		let code = loop {
-			if let Some(status) = self.child.try_wait().unwrap() {
-				break status.code().unwrap_or(-1);
-			}
-			if Instant::now() >= deadline {
-				self.read_errors();
-				panic!("timed out waiting for process exit; output: {}{}", self.printed, self.said);
-			}
-			std::thread::sleep(Duration::from_millis(50));
-		};
-		while next_line(&self.lines, &mut self.printed, deadline).is_some() {}
-		while next_line(&self.errors, &mut self.said, deadline).is_some() {}
-		(code, self.printed, self.said)
-	}
-
-	#[cfg(unix)]
-	pub fn id(&self) -> u32 {
-		self.child.id()
-	}
-
-	pub fn stop(mut self) {
-		let _ = self.child.kill();
-		let _ = self.child.wait();
-	}
+	Cli::new(pid).run(args, code)
 }
 
 #[track_caller]
@@ -458,11 +337,7 @@ pub fn hold_max(pid: u64) {
 	);
 	println!("ok: held-pause expiry journal");
 
-	let out = Command::new(launcher_path())
-		.args(["--pid", &pid.to_string(), "pause"])
-		.env("AUXTOOLS_HOLD_MAX", "0.5")
-		.output()
-		.unwrap();
+	let out = Cli::new(pid).command(&["pause"]).env("AUXTOOLS_HOLD_MAX", "0.5").output().unwrap();
 	assert!(out.status.success(), "unexpected pause output: {}", String::from_utf8_lossy(&out.stderr));
 	until_running(pid);
 	run(pid, &["pause"], 0);

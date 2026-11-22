@@ -1,57 +1,13 @@
-use std::{
-	io::Write,
-	path::Path,
-	process::{Command, Stdio}
-};
+use std::path::Path;
 
 use serde_json::{json, Value};
+use test_support::cli::{Background, Cli, Ran};
 
-use super::{
-	client::launcher_path,
-	journal::{paused_at, Background},
-	line_of
-};
-
-struct Ran {
-	code: i32,
-	out: String,
-	err: String
-}
-
-fn auxtools(pid: &str, args: &[&str], input: Option<&str>) -> Ran {
-	let mut child = Command::new(launcher_path())
-		.args(["--pid", pid])
-		.args(args)
-		.stdin(if input.is_some() { Stdio::piped() } else { Stdio::null() })
-		.stdout(Stdio::piped())
-		.stderr(Stdio::piped())
-		.spawn()
-		.unwrap();
-	if let Some(input) = input {
-		child.stdin.take().unwrap().write_all(input.as_bytes()).unwrap();
-	}
-	let out = child.wait_with_output().unwrap();
-	Ran {
-		code: out.status.code().unwrap_or(-1),
-		out: String::from_utf8_lossy(&out.stdout).into_owned(),
-		err: String::from_utf8_lossy(&out.stderr).into_owned()
-	}
-}
+use super::{journal::paused_at, line_of};
 
 #[track_caller]
 fn run(pid: &str, args: &[&str], code: i32) -> Ran {
-	let ran = auxtools(pid, args, None);
-	assert_eq!(
-		ran.code,
-		code,
-		"`{}` gave {}, not {}: {}{}",
-		args.join(" "),
-		ran.code,
-		code,
-		ran.out,
-		ran.err
-	);
-	ran
+	Cli::new(pid).run_apart(args, code)
 }
 
 #[track_caller]
@@ -190,7 +146,7 @@ fn from_files(pid: &str, dir: &Path) {
 	let expression = file("expression.txt", "\"[\"a b\"] /datum/x\" + \"!\"\n");
 	assert_eq!(run(pid, &["eval", "-f", &expression], 0).out.trim(), "\"a b /datum/x!\"");
 	assert_eq!(run(pid, &["eval", "--file", &expression], 0).out.trim(), "\"a b /datum/x!\"");
-	let ran = auxtools(pid, &["eval", "-"], Some("6 * 7\n"));
+	let ran = Cli::new(pid).ran(&["eval", "-"], Some("6 * 7\n"));
 	assert_eq!((ran.code, ran.out.trim()), (0, "42"), "unexpected eval - output: {}{}", ran.out, ran.err);
 	let said = fails(pid, &["eval", "-f", "no such file.txt"]);
 	assert!(said.starts_with("cannot read no such file.txt: "), "unexpected eval -f output: {}", said);
@@ -662,7 +618,7 @@ fn on_an_object(pid: &str) {
 fn eval_becomes(pid: &str, expression: &str, wanted: &str) {
 	let mut got = String::new();
 	for _ in 0..100 {
-		got = auxtools(pid, &["eval", expression], None).out;
+		got = Cli::new(pid).ran(&["eval", expression], None).out;
 		if got.trim() == wanted {
 			return;
 		}

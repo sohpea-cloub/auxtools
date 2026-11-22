@@ -1,8 +1,7 @@
-use std::{path::PathBuf, process::Command};
+use std::path::PathBuf;
 
 use serde_json::{json, Value};
-
-use crate::client::launcher_path;
+use test_support::cli;
 
 const CODE: &str = "\
 #ifdef LOOPS
@@ -28,9 +27,8 @@ fn project() -> PathBuf {
 }
 
 fn check(dir: &PathBuf, args: &[&str]) -> (i32, String, String) {
-	let ran = Command::new(launcher_path()).arg("check").args(args).current_dir(dir).output().unwrap();
-	let text = |bytes: &[u8]| String::from_utf8_lossy(bytes).into_owned();
-	(ran.status.code().unwrap_or(-1), text(&ran.stdout), text(&ran.stderr))
+	let ran = cli::ran(cli::auxtools(["check"]).args(args).current_dir(dir), None);
+	(ran.code, ran.out, ran.err)
 }
 
 pub fn checks() {
