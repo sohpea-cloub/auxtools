@@ -2,7 +2,6 @@ var/scenario
 var/ticks = 0
 var/idle_ticks = 0
 var/global_number = 5
-var/on_shutdown
 var/list/global_list = list(1, "two", 3)
 var/early_global = early_value()
 
@@ -26,8 +25,6 @@ var/early_global = early_value()
 
 /world/Del()
 	world.log << "dap: world/Del"
-	if (on_shutdown == "refuse")
-		return
 	..()
 
 /proc/main_loop()

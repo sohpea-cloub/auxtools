@@ -156,12 +156,7 @@ impl World {
 
 	#[track_caller]
 	pub fn start() -> Self {
-		Self::start_with(&[])
-	}
-
-	#[track_caller]
-	pub fn start_with(env: &[(&str, &str)]) -> Self {
-		let mut world = Self::launch_from(Launcher::start_with(env), json!({}), host_file(""), json!({}));
+		let mut world = Self::launch_from(Launcher::start(), json!({}), host_file(""), json!({}));
 		world.catch_runtimes(false);
 		world.configure();
 		world

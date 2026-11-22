@@ -83,19 +83,5 @@ pub fn run() {
 	announced(&mut world, &address, true);
 	breaks_at_leaf(&mut world);
 	ok("relaunch after configuration changes");
-	world.break_on(&[]);
-
-	assert_eq!(world.eval_global("on_shutdown = \"refuse\""), "\"refuse\"");
-	let changed_again = dap::launch_arguments(
-		&paths::find_byond(),
-		&world.marks.file("dap_test_host.dme"),
-		json!({ "port": port, "env": { "AUXTOOLS_RESTART_TEST": "2" } })
-	);
-	world.request("restart", json!({ "arguments": changed_again }));
-	world.request("terminate", json!({}));
-	world.wait_output("Restart cancelled: the world is stopping");
-	world.event("terminated");
-	assert!(!world.has_event("process"), "the world started again after Stop");
-	ok("stop cancels a pending relaunch");
 	world.end();
 }

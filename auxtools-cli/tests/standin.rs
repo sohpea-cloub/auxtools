@@ -1,4 +1,5 @@
 mod standin {
+	pub mod ending;
 	pub mod flags;
 	pub mod hold;
 	pub mod world;
