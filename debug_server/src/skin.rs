@@ -1,86 +1,13 @@
 use std::sync::OnceLock;
 
 use auxtools::{
-	byond_scan::{Anchor, Extract, OperandSelect, Recipe, RegMemDispSelect, Register, SignatureTreatment, VersionRange},
 	raw_types::values::{ValueData, ValueTag},
-	Proc, Value
+	registry, Proc, Value
 };
 
 use crate::server_types::{Reconnected, SkinReloaded, SkinRequest};
 
 const NO_SKIN: u32 = 0xFFFF;
-
-#[cfg(unix)]
-mod recipes {
-	use super::*;
-
-	const EARLY: &str = "C7 44 24 04 AF 00 00 00 89 1C 24 E8 ?? ?? ?? ?? 89 B5 ?? ?? ?? ?? 89 34 24 E8 ?? ?? ?? ?? 85 C0 89 C7 74 ?? A1 ?? ?? ?? ?? \
-	                     8B 40 0C 8B 50 ?? 81 FA FF FF 00 00";
-	const LATER: &str = "68 AF 00 00 00 53 0F B7 FF E8 ?? ?? ?? ?? 89 3C 24 E8 ?? ?? ?? ?? 89 C6 83 C4 10 85 C0 74 ?? A1 ?? ?? ?? ?? 8B 40 0C 8B 50 \
-	                     ?? 81 FA FF FF 00 00";
-	const EARLY_BUILDS: VersionRange = VersionRange { min: 1637, max: 1643 };
-	const LATER_BUILDS: VersionRange = VersionRange { min: 1644, max: 1688 };
-
-	const fn recipe(versions: VersionRange, signature: &'static str, extract: Extract) -> Recipe {
-		Recipe {
-			name: "world_skin",
-			versions,
-			anchor: Anchor::Signature(SignatureTreatment::NoOffset, signature),
-			hops: &[],
-			extract
-		}
-	}
-
-	pub const GLOBAL: &[Recipe] = &[
-		recipe(EARLY_BUILDS, EARLY, Extract::AbsMem(OperandSelect::FirstAbsMem)),
-		recipe(LATER_BUILDS, LATER, Extract::AbsMem(OperandSelect::FirstAbsMem))
-	];
-	pub const DATA: &[Recipe] = &[
-		recipe(EARLY_BUILDS, EARLY, Extract::RegMemDisp(RegMemDispSelect::First { base: Register::EAX })),
-		recipe(LATER_BUILDS, LATER, Extract::RegMemDisp(RegMemDispSelect::First { base: Register::EAX }))
-	];
-	pub const FIELD: &[Recipe] = &[
-		recipe(
-			EARLY_BUILDS,
-			EARLY,
-			Extract::RegMemDisp(RegMemDispSelect::Nth {
-				base: Register::EAX,
-				index: 1
-			})
-		),
-		recipe(
-			LATER_BUILDS,
-			LATER,
-			Extract::RegMemDisp(RegMemDispSelect::Nth {
-				base: Register::EAX,
-				index: 1
-			})
-		)
-	];
-}
-
-#[cfg(windows)]
-mod recipes {
-	use super::*;
-
-	const SIGNATURE: &str = "68 AF 00 00 00 8D 8D ?? ?? ?? ?? E8 ?? ?? ?? ?? 56 C7 45 FC ?? ?? ?? ?? E8 ?? ?? ?? ?? 8B D8 83 C4 04 85 DB 0F 84 ?? \
-	                         ?? ?? ?? A1 ?? ?? ?? ?? 8B 48 0C 8B 41 ?? 3D FF FF 00 00";
-	const BUILDS: VersionRange = VersionRange { min: 1637, max: 1688 };
-
-	const fn recipe(extract: Extract) -> Recipe {
-		Recipe {
-			name: "world_skin",
-			versions: BUILDS,
-			anchor: Anchor::Signature(SignatureTreatment::NoOffset, SIGNATURE),
-			hops: &[],
-			extract
-		}
-	}
-
-	pub const GLOBAL: &[Recipe] = &[recipe(Extract::AbsMem(OperandSelect::FirstAbsMem))];
-	pub const DATA: &[Recipe] = &[recipe(Extract::RegMemDisp(RegMemDispSelect::First { base: Register::EAX }))];
-	pub const FIELD: &[Recipe] = &[recipe(Extract::RegMemDisp(RegMemDispSelect::First { base: Register::ECX }))];
-}
 
 struct Place {
 	global: usize,
@@ -93,9 +20,9 @@ fn place() -> Result<&'static Place, String> {
 	PLACE
 		.get_or_init(|| {
 			Ok(Place {
-				global: auxtools::find_recipe_of(recipes::GLOBAL)?,
-				data: auxtools::find_recipe_of(recipes::DATA)?,
-				field: auxtools::find_recipe_of(recipes::FIELD)?
+				global: registry::find!("world_skin")?,
+				data: registry::find!("world_skin_data")?,
+				field: registry::find!("world_skin_field")?
 			})
 		})
 		.as_ref()

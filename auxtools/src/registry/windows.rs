@@ -1,4 +1,4 @@
-use byond_scan::{Anchor, Extract, OperandSelect, Recipe, SignatureTreatment, VersionRange};
+use byond_scan::{Anchor, Extract, OperandSelect, Recipe, RegMemDispSelect, Register, SignatureTreatment, VersionRange};
 
 use super::builds::{since, until, FIRST_515, FIRST_516, TYPEPATHS, TYPEPATH_NONE_CHECK};
 
@@ -62,6 +62,12 @@ const APPEARANCE_BOUNDS: &str =
 
 const APPEARANCE_RELEASE: &str =
 	"68 ?? ?? ?? ?? E8 ?? ?? ?? ?? 83 C4 0C 8D 4F 14 56 E8 ?? ?? ?? ?? B8 FF FF 00 00 EB 50 8B 47 44 8B 5E 14 89 85 F8 FE FF";
+
+const SKIN: &str = "68 AF 00 00 00 8D 8D ?? ?? ?? ?? E8 ?? ?? ?? ?? 56 C7 45 FC ?? ?? ?? ?? E8 ?? ?? ?? ?? 8B D8 83 C4 04 85 DB 0F 84 ?? ?? ?? ?? \
+                    A1 ?? ?? ?? ?? 8B 48 0C 8B 41 ?? 3D FF FF 00 00";
+const SCRIPT: &str = "55 8B EC 6A FF 68 ?? ?? ?? ?? 64 A1 00 00 00 00 50 81 EC ?? ?? ?? ?? A1 ?? ?? ?? ?? 33 C5 89 45 F0 53 56 57 50 8D 45 F4 64 A3 \
+                      00 00 00 00 68 8D 00 00 00 8D 8D ?? ?? ?? ?? E8 ?? ?? ?? ?? 8B 15 ?? ?? ?? ?? 33 C0 33 DB C7 45 FC 00 00 00 00 33 FF 8B 4A 0C \
+                      66 3B 41 ?? 0F 83";
 
 pub(super) const RECIPES: &[Recipe] = &[
 	Recipe {
@@ -649,5 +655,47 @@ pub(super) const RECIPES: &[Recipe] = &[
 		anchor: Anchor::Export(c"Byond_ReadPointer"),
 		hops: &[],
 		extract: Extract::Entry
+	},
+	Recipe {
+		name: "world_skin",
+		versions: EVERY_BUILD,
+		anchor: Anchor::Signature(SignatureTreatment::NoOffset, SKIN),
+		hops: &[],
+		extract: Extract::AbsMem(OperandSelect::FirstAbsMem)
+	},
+	Recipe {
+		name: "world_skin_data",
+		versions: EVERY_BUILD,
+		anchor: Anchor::Signature(SignatureTreatment::NoOffset, SKIN),
+		hops: &[],
+		extract: Extract::RegMemDisp(RegMemDispSelect::First { base: Register::EAX })
+	},
+	Recipe {
+		name: "world_skin_field",
+		versions: EVERY_BUILD,
+		anchor: Anchor::Signature(SignatureTreatment::NoOffset, SKIN),
+		hops: &[],
+		extract: Extract::RegMemDisp(RegMemDispSelect::First { base: Register::ECX })
+	},
+	Recipe {
+		name: "client_script_send",
+		versions: EVERY_BUILD,
+		anchor: Anchor::Signature(SignatureTreatment::OffsetByInt(64), SCRIPT),
+		hops: &[],
+		extract: Extract::Entry
+	},
+	Recipe {
+		name: "client_script_data",
+		versions: EVERY_BUILD,
+		anchor: Anchor::Signature(SignatureTreatment::NoOffset, SCRIPT),
+		hops: &[],
+		extract: Extract::RegMemDisp(RegMemDispSelect::First { base: Register::EDX })
+	},
+	Recipe {
+		name: "client_script_count",
+		versions: EVERY_BUILD,
+		anchor: Anchor::Signature(SignatureTreatment::NoOffset, SCRIPT),
+		hops: &[],
+		extract: Extract::RegMemDisp(RegMemDispSelect::First { base: Register::ECX })
 	}
 ];

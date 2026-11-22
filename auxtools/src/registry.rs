@@ -131,22 +131,6 @@ pub fn find_recipe(recipe: &Recipe) -> Result<usize, String> {
 	resolve_checked(&module, build, recipe)
 }
 
-pub fn find_recipe_of(recipes: &[Recipe]) -> Result<usize, String> {
-	let (module, build) = module_and_build()?;
-	let recipe = recipes
-		.iter()
-		.find(|recipe| recipe.versions.contains(build.1))
-		.or_else(|| {
-			recipes
-				.iter()
-				.filter(|recipe| recipe.versions.max < build.1)
-				.max_by_key(|recipe| recipe.versions.max)
-		})
-		.or(recipes.first())
-		.ok_or("Couldn't find a pattern (none given)")?;
-	resolve_checked(&module, build, recipe)
-}
-
 pub fn byond_build() -> Result<u32, String> {
 	Ok(module_and_build()?.1 .1)
 }

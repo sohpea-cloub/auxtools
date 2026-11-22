@@ -1,86 +1,13 @@
 use std::sync::{Mutex, OnceLock};
 
 use auxtools::{
-	byond_scan::{Anchor, Extract, OperandSelect, Recipe, RegMemDispSelect, Register, SignatureTreatment, VersionRange},
 	raw_types::values::{ValueData, ValueTag},
-	shutdown, StringRef, Value
+	registry, shutdown, StringRef, Value
 };
 
 use crate::server_types::{ScriptReloaded, ScriptRequest};
 
 const NO_TEXT: u32 = 0xFFFF;
-
-#[cfg(unix)]
-mod recipes {
-	use super::*;
-
-	const EARLY: &str = "55 89 E5 57 56 53 81 EC ?? ?? ?? ?? 0F B7 45 08 8D 95 ?? ?? ?? ?? 89 14 24 C7 44 24 04 8D 00 00 00 66 89 85 ?? ?? ?? ?? E8 \
-	                     ?? ?? ?? ?? 8B 15 ?? ?? ?? ?? 8B 42 0C 66 83 78 ?? 00 0F 84";
-	const LATER: &str = "55 89 E5 57 56 8D BD ?? ?? ?? ?? 53 81 EC ?? ?? ?? ?? 8B 45 08 68 8D 00 00 00 57 89 85 ?? ?? ?? ?? E8 ?? ?? ?? ?? A1 ?? ?? \
-	                     ?? ?? 83 C4 10 8B 40 0C 66 83 78 ?? 00 0F 84";
-	const EARLY_BUILDS: VersionRange = VersionRange { min: 1637, max: 1643 };
-	const LATER_BUILDS: VersionRange = VersionRange { min: 1644, max: 1688 };
-
-	const fn recipe(versions: VersionRange, signature: &'static str, extract: Extract) -> Recipe {
-		Recipe {
-			name: "client_script_send",
-			versions,
-			anchor: Anchor::Signature(SignatureTreatment::NoOffset, signature),
-			hops: &[],
-			extract
-		}
-	}
-
-	pub const GLOBAL: &[Recipe] = &[
-		recipe(EARLY_BUILDS, EARLY, Extract::AbsMem(OperandSelect::FirstAbsMem)),
-		recipe(LATER_BUILDS, LATER, Extract::AbsMem(OperandSelect::FirstAbsMem))
-	];
-	pub const DATA: &[Recipe] = &[
-		recipe(EARLY_BUILDS, EARLY, Extract::RegMemDisp(RegMemDispSelect::First { base: Register::EDX })),
-		recipe(LATER_BUILDS, LATER, Extract::RegMemDisp(RegMemDispSelect::First { base: Register::EAX }))
-	];
-	pub const COUNT: &[Recipe] = &[
-		recipe(EARLY_BUILDS, EARLY, Extract::RegMemDisp(RegMemDispSelect::First { base: Register::EAX })),
-		recipe(
-			LATER_BUILDS,
-			LATER,
-			Extract::RegMemDisp(RegMemDispSelect::Nth {
-				base: Register::EAX,
-				index: 1
-			})
-		)
-	];
-}
-
-#[cfg(windows)]
-mod recipes {
-	use super::*;
-
-	const SIGNATURE: &str = "55 8B EC 6A FF 68 ?? ?? ?? ?? 64 A1 00 00 00 00 50 81 EC ?? ?? ?? ?? A1 ?? ?? ?? ?? 33 C5 89 45 F0 53 56 57 50 8D 45 \
-	                         F4 64 A3 00 00 00 00 68 8D 00 00 00 8D 8D ?? ?? ?? ?? E8 ?? ?? ?? ?? 8B 15 ?? ?? ?? ?? 33 C0 33 DB C7 45 FC 00 00 00 \
-	                         00 33 FF 8B 4A 0C 66 3B 41 ?? 0F 83";
-	const BUILDS: VersionRange = VersionRange { min: 1637, max: 1688 };
-
-	const fn recipe(anchor: SignatureTreatment, extract: Extract) -> Recipe {
-		Recipe {
-			name: "client_script_send",
-			versions: BUILDS,
-			anchor: Anchor::Signature(anchor, SIGNATURE),
-			hops: &[],
-			extract
-		}
-	}
-
-	pub const GLOBAL: &[Recipe] = &[recipe(SignatureTreatment::OffsetByInt(64), Extract::Entry)];
-	pub const DATA: &[Recipe] = &[recipe(
-		SignatureTreatment::NoOffset,
-		Extract::RegMemDisp(RegMemDispSelect::First { base: Register::EDX })
-	)];
-	pub const COUNT: &[Recipe] = &[recipe(
-		SignatureTreatment::NoOffset,
-		Extract::RegMemDisp(RegMemDispSelect::First { base: Register::ECX })
-	)];
-}
 
 struct Place {
 	global: usize,
@@ -93,9 +20,9 @@ fn place() -> Result<&'static Place, String> {
 	PLACE
 		.get_or_init(|| {
 			Ok(Place {
-				global: auxtools::find_recipe_of(recipes::GLOBAL)?,
-				data: auxtools::find_recipe_of(recipes::DATA)?,
-				count: auxtools::find_recipe_of(recipes::COUNT)?
+				global: registry::find!("client_script_send")?,
+				data: registry::find!("client_script_data")?,
+				count: registry::find!("client_script_count")?
 			})
 		})
 		.as_ref()

@@ -42,7 +42,7 @@ pub use inventory;
 pub use list::List;
 pub use proc::Proc;
 pub use raw_types::variables::VariableNameIdTable;
-pub use registry::{byond_build, find_recipe, find_recipe_of};
+pub use registry::{byond_build, find_recipe};
 pub use runtime::{DMResult, Runtime};
 pub use string::{text_of, StringRef};
 pub use string_intern::InternedString;
