@@ -2630,6 +2630,21 @@ fn a_resource_is_found_wherever_code_or_a_default_names_it() {
 }
 
 #[test]
+fn a_resource_named_with_a_combining_character_is_found() {
+    let name = "sounds/cafe\u{301}.ogg";
+    let world = World::new(
+        "resource-accent",
+        &format!(
+            "/proc/play()\n\tworld << sound('{}')\n/datum/d\n\tvar/s = '{}'\n",
+            name, name
+        ),
+    );
+    let users = world.parse().resource_users(&[name.to_owned()]);
+    assert_eq!(reloaded(&users), [key("/play", 0)]);
+    assert_eq!(users.var_defaults.len(), 1, "{:?}", users.var_defaults);
+}
+
+#[test]
 fn the_client_script_is_left_to_the_launcher() {
     for (before, after) in [
         (

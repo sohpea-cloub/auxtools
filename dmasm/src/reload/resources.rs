@@ -26,19 +26,6 @@ fn normalized(name: &str) -> String {
     name.replace('\\', "/").to_ascii_lowercase()
 }
 
-fn as_printed(name: &str) -> String {
-    let text = format!("{:?}", name);
-    let mut read = String::new();
-    let mut chars = text[1..text.len() - 1].chars();
-    while let Some(c) = chars.next() {
-        match c {
-            '\\' => read.extend(chars.next()),
-            c => read.push(c),
-        }
-    }
-    read
-}
-
 impl Index {
     pub(super) fn build(snapshot: &Snapshot) -> Index {
         let mut index = Index::default();
@@ -50,7 +37,7 @@ impl Index {
             names.clear();
             syntax::walk_proc(value, &mut |node| {
                 if let syntax::Node::Term(Term::Resource(name)) = node {
-                    names.push(normalized(&as_printed(name)));
+                    names.push(normalized(name));
                 }
             });
             names.sort();
@@ -68,14 +55,14 @@ impl Index {
                 if let Some(expression) = &value.value.expression {
                     syntax::walk_expression(expression, &mut |node| {
                         if let syntax::Node::Term(Term::Resource(name)) = node {
-                            names.push(normalized(&as_printed(name)));
+                            names.push(normalized(name));
                         }
                     });
                 }
                 if let Some(constant) = &value.value.constant {
                     syntax::walk_constant(constant, &mut |constant| {
                         if let Constant::Resource(name) = constant {
-                            names.push(normalized(&as_printed(name)));
+                            names.push(normalized(name));
                         }
                     });
                 }
