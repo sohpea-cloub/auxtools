@@ -27,7 +27,7 @@ interprocess = "=2.4.7"
 libc = "0.2"
 
 [target.'cfg(windows)'.dependencies]
-winapi = { version = "0.3", features = ["errhandlingapi", "handleapi", "jobapi2", "libloaderapi", "memoryapi", "minwindef", "ntdef", "processthreadsapi", "synchapi", "tlhelp32", "winbase", "winerror", "winnt", "winreg"] }
+winapi = { version = "0.3", features = ["handleapi", "jobapi2", "libloaderapi", "memoryapi", "minwindef", "ntdef", "processthreadsapi", "synchapi", "tlhelp32", "winbase", "winerror", "winnt", "winreg"] }
 
 [lints]
 workspace = true

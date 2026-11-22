@@ -23,7 +23,7 @@ interprocess = "=2.4.7"
 
 [target.'cfg(windows)'.dependencies]
 region = "3"
-winapi = { version = "0.3", features = ["libloaderapi", "errhandlingapi", "ioapiset"] }
+winapi = { version = "0.3", features = ["libloaderapi", "errhandlingapi"] }
 
 [lints]
 workspace = true
