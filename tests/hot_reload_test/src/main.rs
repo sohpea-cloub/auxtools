@@ -1081,6 +1081,8 @@ fn definitions(built: Built) {
 	assert_eq!(eval(&mut client, "global.vars[\"flock_size\"]"), "12");
 	assert_eq!(eval(&mut client, "global.vars[\"flock_size\"] = 13"), "13");
 	assert_eq!(eval(&mut client, "flock_size"), "13");
+	assert_eq!(eval(&mut client, "flock_size = old_dog ? flock_size + 1 : 0"), "14");
+	assert_eq!(eval(&mut client, "global.flock_size + 1"), "15");
 	assert_eq!(eval(&mut client, "(\"herd\" in global.vars)"), "0");
 	println!("ok: new global in global.vars");
 
@@ -1247,6 +1249,17 @@ fn definitions(built: Built) {
 	assert_eq!(eval(&mut client, "new_items(/datum/bag/fixed)"), "\"z\"");
 	assert_eq!(eval(&mut client, "new_tags()"), "2");
 	println!("ok: computed default becomes constant");
+
+	let changes = source.edit(
+		"reload.dm",
+		"/proc/cat_says()\n",
+		"/datum/animal/named\n\tsound = /client/proc/named_verb\n\n/client/proc/named_verb()\n\tset name = \"Named\"\n\treturn \
+		 5\n\n/proc/cat_says()\n"
+	);
+	let result = reload(&mut watcher, &changes);
+	assert!(result.failures.is_empty(), "{:?}", result.failures);
+	assert_eq!(eval(&mut client, "(new /datum/animal/named).sound == /client/proc/named_verb"), "1");
+	println!("ok: new proc references in type defaults");
 }
 
 fn types(built: Built) {

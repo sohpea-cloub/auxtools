@@ -732,36 +732,7 @@ fn nothing_to_run() {
 	world.end();
 }
 
-fn default_names_a_new_proc() {
-	let dir = copy_of_the_world("default_names_a_new_proc");
-	std::fs::write(dir.join("named.dm"), "/datum/rl_named\n\tvar/verb_path\n").unwrap();
-	let dme = dir.join("dap_test_host.dme");
-	let text = std::fs::read_to_string(&dme).unwrap() + "#include \"named.dm\"\n";
-	std::fs::write(&dme, text).unwrap();
-	paths::compile(&dme);
-
-	let mut world = World::launch_in(dir.to_path_buf(), json!({ "hotReload": true }));
-	world.catch_runtimes(false);
-	world.configure();
-	world.wait_output("Hot reload active");
-	edit(
-		&mut world,
-		"named.dm",
-		"\tvar/verb_path\n",
-		"\tvar/verb_path\n\n/datum/rl_named/one\n\tverb_path = /client/proc/rl_named_verb\n\n/client/proc/rl_named_verb()\n\tset name = \
-		 \"Named\"\n\treturn 5\n"
-	);
-	assert!(!world.output.contains("Hot reload failed"), "{}", world.output);
-	assert_eq!(
-		world.eval_global("\"[(new /datum/rl_named/one).verb_path == /client/proc/rl_named_verb]\""),
-		"\"1\""
-	);
-	ok("new proc references in type defaults");
-	world.end();
-}
-
 pub fn edits() {
-	default_names_a_new_proc();
 	saved_without_reloading();
 	behind_the_clients_back();
 	starting_at_world_new();
@@ -966,12 +937,6 @@ pub fn run() {
 	world.set_breakpoints(&file, json!([]));
 	world.resume_through("recurse");
 	ok("unrelated reload preserves hit counts");
-
-	edit(&mut world, "main.dm", "var/ticks = 0\n", "var/ticks = 0\nvar/added_later = 12\n");
-	assert_eq!(world.eval_global("added_later"), "12");
-	assert_eq!(world.eval_global("added_later = ticks > 0 ? 13 : 0"), "13");
-	assert_eq!(world.eval_global("global.added_later + 1"), "14");
-	ok("new global evaluation and assignment");
 
 	let set = world.function_breakpoints(&["/proc/leaf"]);
 	assert_eq!(set[0]["verified"], true);
