@@ -3370,7 +3370,7 @@ fn in_world_record(t: TypeRef, name: &str) -> bool {
     }
 }
 
-const VAR_TABLE_BUILTINS: &[&str] = &["/sound", "/particles", "/exception", "/regex", "/icon"];
+pub const VAR_TABLE_BUILTINS: &[&str] = &["/sound", "/particles", "/exception", "/regex", "/icon"];
 
 fn builtin_in_var_table(t: TypeRef, name: &str) -> bool {
     t.get_var_declaration(name).is_some_and(|d| {

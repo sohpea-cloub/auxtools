@@ -54,12 +54,10 @@ fn keep_string(id: u32) {
 	}
 }
 
-const VAR_TABLE_BUILTINS: &[&str] = &["/sound", "/particles", "/exception", "/regex", "/icon"];
-
 pub(super) fn builtin_in_table(type_id: u32, _var: &str) -> bool {
 	type_and_ancestors(type_id)
 		.into_iter()
-		.any(|t| VAR_TABLE_BUILTINS.contains(&type_path(t).as_str()))
+		.any(|t| dmasm::reload::VAR_TABLE_BUILTINS.contains(&type_path(t).as_str()))
 }
 
 fn copy_table_entry(type_id: u32, from: u32, var: &str) -> Result<(), String> {
