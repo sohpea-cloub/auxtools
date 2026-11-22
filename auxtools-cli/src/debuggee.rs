@@ -365,7 +365,7 @@ mod tests {
 	use std::sync::{mpsc, Arc};
 
 	use auxtools_cli::local::Stream;
-	use auxtools_protocol::{ClientMessage, Request, Response, ServerMessage};
+	use auxtools_protocol::{ClientMessage, EvalError, Request, Response, ServerMessage};
 	use interprocess::local_socket::{prelude::*, GenericNamespaced, ListenerOptions};
 
 	use super::Debuggee;
@@ -398,7 +398,11 @@ mod tests {
 			let pause = read_request(&mut world);
 			assert!(matches!(pause.request, Request::Pause));
 			assert_ne!(eval.id, pause.id);
-			answer(&mut world, &eval, &Response::Eval(Err("world/Del() slept".to_owned())));
+			let slept = EvalError {
+				message: "world/Del() slept".to_owned(),
+				still_running: true
+			};
+			answer(&mut world, &eval, &Response::Eval(Err(slept)));
 			answer(&mut world, &pause, &Response::Ack);
 			let status = read_request(&mut world);
 			assert!(matches!(status.request, Request::Status));

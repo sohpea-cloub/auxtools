@@ -156,7 +156,7 @@ pub struct Macro {
 pub enum Response {
 	Ack,
 	StdDef(Option<String>),
-	Eval(Result<EvalResponse, String>),
+	Eval(Result<EvalResponse, EvalError>),
 	BreakpointSet {
 		result: BreakpointSetResult
 	},
@@ -736,6 +736,12 @@ pub struct Variable {
 	pub kind: Option<String>,
 	pub expr: Option<String>,
 	pub entries: Option<u32>
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct EvalError {
+	pub message: String,
+	pub still_running: bool
 }
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]

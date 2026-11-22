@@ -41,7 +41,7 @@ fn ended_by(world: &mut World, until: Instant) -> Result<bool> {
 			return Ok(false);
 		}
 		match world.next(Some(until.min(now + INTERVAL))) {
-			Ok(Some(Response::Eval(Err(error)))) if !error.starts_with(RUNTIME_ERROR) => {}
+			Ok(Some(Response::Eval(Err(error)))) if !error.message.starts_with(RUNTIME_ERROR) => {}
 			Ok(Some(Response::Eval(_))) => {
 				return Err(format!(
 					"world.Del() failed with a runtime error (see the world's log), so the world (pid {}) is still running. Fix world/Del() or \

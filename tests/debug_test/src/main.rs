@@ -305,7 +305,7 @@ fn protocol(world: &World, mut client: Client) -> Client {
 		ending: false
 	});
 	assert!(
-		matches!(&response, Response::Eval(Err(why)) if why.starts_with("parser error: ")),
+		matches!(&response, Response::Eval(Err(why)) if why.message.starts_with("parser error: ") && !why.still_running),
 		"an expression that doesn't parse got {:?}",
 		response
 	);

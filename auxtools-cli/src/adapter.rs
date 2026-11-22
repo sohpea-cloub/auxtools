@@ -2204,7 +2204,7 @@ impl Adapter {
 				indexedVariables: result.entries.map(|entries| entries as usize),
 				..Default::default()
 			}),
-			AuxResponse::Eval(Err(why)) => Err(why),
+			AuxResponse::Eval(Err(why)) => Err(why.message),
 			other => Err(unexpected(other))
 		}
 	}
@@ -2293,7 +2293,7 @@ impl Adapter {
 				"variablesReference": result.variables.map_or(0, |vars| vars.0),
 				"indexedVariables": result.entries
 			})),
-			AuxResponse::Eval(Err(why)) => Err(why),
+			AuxResponse::Eval(Err(why)) => Err(why.message),
 			other => Err(unexpected(other))
 		}
 	}

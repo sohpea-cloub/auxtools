@@ -863,7 +863,7 @@ impl World {
 			command: expression.to_owned(),
 			ending: false
 		})? {
-			Response::Eval(result) => result,
+			Response::Eval(result) => result.map_err(|error| error.message),
 			other => return Err(unexpected(&other))
 		};
 		for note in std::mem::take(&mut self.notes) {
@@ -885,7 +885,7 @@ impl World {
 		}
 		match response {
 			Response::Render(result) => say!("{}", json::value(&result?)),
-			Response::Eval(result) => say!("{}", result?.value),
+			Response::Eval(result) => say!("{}", result.map_err(|error| error.message)?.value),
 			other => return Err(unexpected(&other))
 		}
 		Ok(())

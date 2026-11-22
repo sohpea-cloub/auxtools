@@ -71,8 +71,6 @@ const SLEEPING_FRAMES: u32 = 1 << 30;
 
 const ENDING_LIMIT: Duration = Duration::from_secs(60);
 
-const EVAL_ABORTED: &str = "evaluation aborted";
-
 #[derive(Clone, Copy, Hash, PartialEq, Eq)]
 struct SleepingFrame {
 	thread: u32,
@@ -236,6 +234,7 @@ pub struct Server {
 	state: Option<State>,
 	in_eval: bool,
 	eval_error: Option<String>,
+	eval_still_running: bool,
 	eval_callee_errors: Vec<String>,
 	eval_callee_more: usize,
 	reloader: Option<(ClientId, String)>,
@@ -286,6 +285,7 @@ impl Server {
 			state: None,
 			in_eval: false,
 			eval_error: None,
+			eval_still_running: false,
 			eval_callee_errors: vec![],
 			eval_callee_more: 0,
 			reloader: None,
@@ -1990,6 +1990,7 @@ impl Server {
 		self.eval_callee_more = 0;
 		self.eval_warnings.clear();
 		self.eval_ran = std::ptr::null_mut();
+		self.eval_still_running = false;
 
 		let result = self.compile_and_run_expr(frame_id, command);
 		self.eval_given.clear();
@@ -2211,6 +2212,7 @@ impl Server {
 
 					Ok(list.get(1).unwrap())
 				} else if !self.eval_ran.is_null() && background_known() && unsafe { *(*self.eval_ran).background() } != 0 {
+					self.eval_still_running = true;
 					Err(
 						"evaluation aborted: BYOND moved the code to the background, so its result is unavailable. This can happen after about a \
 						 million loop iterations (world.loop_checks), or with `set background = 1`. The code is still running. Use `eval --spawn \
@@ -2218,6 +2220,7 @@ impl Server {
 							.to_owned()
 					)
 				} else if !background_known() {
+					self.eval_still_running = true;
 					Err(
 						"evaluation aborted because the code slept or BYOND moved it to the background, so its result is unavailable. BYOND does \
 						 that after about a million loop iterations (world.loop_checks), or with `set background = 1`. Use `eval --spawn --wait` to \
@@ -2225,6 +2228,7 @@ impl Server {
 							.to_owned()
 					)
 				} else {
+					self.eval_still_running = true;
 					Err("evaluation aborted because the code slept".to_owned())
 				}
 			}
@@ -2339,31 +2343,46 @@ impl Server {
 		}
 
 		let reached = (!dmasm::compiler::is_body(command)).then(|| format!("({})", command));
-		let response = self.eval_expr(frame_id, command).map(|result| EvalResponse {
-			value: Self::stringify(&result),
-			variables: self.value_to_variables_ref(&result, reached),
-			kind: Self::kind(&result),
-			entries: Self::entries(&result)
-		});
-		let still_running = matches!(&response, Err(error) if error.starts_with(EVAL_ABORTED));
+		let response = self
+			.eval_expr(frame_id, command)
+			.map(|result| EvalResponse {
+				value: Self::stringify(&result),
+				variables: self.value_to_variables_ref(&result, reached),
+				kind: Self::kind(&result),
+				entries: Self::entries(&result)
+			})
+			.map_err(|message| self.eval_failed(message));
+		let still_running = matches!(&response, Err(error) if error.still_running);
 		self.send_callee_errors();
 		self.answer(Response::Eval(response));
 		still_running
 	}
 
+	fn eval_failed(&self, message: String) -> EvalError {
+		EvalError {
+			message,
+			still_running: self.eval_still_running
+		}
+	}
+
 	fn handle_eval_on(&mut self, object: &str, expression: &str, depth: Option<u32>) {
+		self.eval_still_running = false;
 		let value = self.object_of(object).and_then(|object| {
 			self.eval_src = Some(object);
 			self.eval_expr(None, expression)
 		});
 		let response = match depth {
 			Some(depth) => Response::Render(value.map(|value| Self::render(&value, depth))),
-			None => Response::Eval(value.map(|result| EvalResponse {
-				value: Self::stringify(&result),
-				variables: self.value_to_variables_ref(&result, None),
-				kind: Self::kind(&result),
-				entries: Self::entries(&result)
-			}))
+			None => Response::Eval(
+				value
+					.map(|result| EvalResponse {
+						value: Self::stringify(&result),
+						variables: self.value_to_variables_ref(&result, None),
+						kind: Self::kind(&result),
+						entries: Self::entries(&result)
+					})
+					.map_err(|message| self.eval_failed(message))
+			)
 		};
 		self.send_callee_errors();
 		self.answer(response);

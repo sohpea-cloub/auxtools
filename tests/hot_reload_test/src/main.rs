@@ -268,7 +268,7 @@ fn sleeps(client: &mut Client, command: &str) -> bool {
 		ending: false
 	}) {
 		Response::Eval(Ok(_)) => false,
-		Response::Eval(Err(why)) if why.starts_with("evaluation aborted because the code slept") => true,
+		Response::Eval(Err(why)) if why.still_running && why.message.starts_with("evaluation aborted because the code slept") => true,
 		other => panic!("expected the result of {:?}, got {:?}", command, other)
 	}
 }
