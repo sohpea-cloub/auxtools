@@ -170,43 +170,40 @@ pub(super) fn emit(
     let kind = match op {
         BinaryOp::And | BinaryOp::Or => {
             let mut operands = vec![];
-            let in_proc = compiler.proc.is_some();
-            let rhs_parens = in_proc && !std::mem::take(&mut compiler.condition_chain);
+            let rhs_parens = !std::mem::take(&mut compiler.condition_chain);
             let chain = Expression::BinaryOp {
                 op,
                 lhs: Box::new(lhs),
                 rhs: Box::new(rhs),
             };
-            flatten(op, chain, rhs_parens, in_proc, &mut operands);
+            flatten(op, chain, rhs_parens, true, &mut operands);
 
             let mut forget = vec![false; operands.len()];
-            if compiler.proc.is_some() {
-                let mut i = 0;
-                while i + 1 < operands.len() {
-                    let Some(c) = super::fold::choice(compiler, &operands[i]) else {
-                        i += 1;
-                        continue;
-                    };
-                    if c.truthy() == matches!(op, BinaryOp::Or) {
-                        operands.truncate(i + 1);
-                        forget.truncate(i + 1);
-                        if i == 0 && !matches!(c, super::fold::Constant::Number(_)) {
-                            forget[0] = true;
-                        }
-                    } else {
-                        operands.remove(i);
-                        forget.remove(i);
-                        forget[i] = true;
+            let mut i = 0;
+            while i + 1 < operands.len() {
+                let Some(c) = super::fold::choice(compiler, &operands[i]) else {
+                    i += 1;
+                    continue;
+                };
+                if c.truthy() == matches!(op, BinaryOp::Or) {
+                    operands.truncate(i + 1);
+                    forget.truncate(i + 1);
+                    if i == 0 && !matches!(c, super::fold::Constant::Number(_)) {
+                        forget[0] = true;
                     }
+                } else {
+                    operands.remove(i);
+                    forget.remove(i);
+                    forget[i] = true;
                 }
-                if operands.len() == 1 {
-                    if forget[0] {
-                        compiler.cache = None;
-                    }
-                    let only = operands.pop().unwrap();
-                    let kind = compiler.emit_expr(only)?;
-                    return compiler.emit_move_to_stack(kind);
+            }
+            if operands.len() == 1 {
+                if forget[0] {
+                    compiler.cache = None;
                 }
+                let only = operands.pop().unwrap();
+                let kind = compiler.emit_expr(only)?;
+                return compiler.emit_move_to_stack(kind);
             }
 
             let label = format!("LAB_{:0>4X}", compiler.label_count);

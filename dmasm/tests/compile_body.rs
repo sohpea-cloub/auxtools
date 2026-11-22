@@ -627,3 +627,28 @@ fn a_result_is_regrouped_alone_as_in_a_body() {
         same_alone_and_in_a_body(code);
     }
 }
+
+#[test]
+fn a_chain_of_and_or_or_is_the_same_alone_as_in_a_body() {
+    for code in [
+        "by || (hp || ticks)",
+        "(by && hp) && (ticks && by)",
+        "by && (hp || ticks)",
+        "0 || by",
+        "\"a\" || by",
+        "null && by",
+        "by || 0 || hp",
+        "by.hp || by.hp.len || 0",
+        "bump(1 && by)",
+    ] {
+        same_alone_and_in_a_body(code);
+    }
+    let chain = same_alone_and_in_a_body("(by || hp) || ticks");
+    assert_eq!(
+        chain.iter().filter(|l| l.ends_with(':')).count(),
+        1,
+        "{chain:?}"
+    );
+    let folded = same_alone_and_in_a_body("1 && by");
+    assert!(!folded.iter().any(|l| l.starts_with("Jmp")), "{folded:?}");
+}
