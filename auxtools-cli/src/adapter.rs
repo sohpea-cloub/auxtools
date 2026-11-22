@@ -484,7 +484,7 @@ impl Adapter {
 			}
 			Input::CodeChanged { generation } => {
 				if self.debuggee.as_ref().is_some_and(|d| d.generation == generation) {
-					self.reapply_breakpoints();
+					self.reapply_breakpoints(None);
 				}
 			}
 			Input::WatchEnded { generation, id, reason } => {
@@ -720,10 +720,10 @@ impl Adapter {
 			self.progress_end(READING);
 		}
 		match event {
-			code::Event::Changed => {
+			code::Event::Changed(texts) => {
 				self.world_as_of = self.reload_seen.take().or_else(|| Some(std::time::SystemTime::now()));
 				if self.code_read && !self.world.waiting_for_code && self.debuggee.is_some() && self.debugging {
-					self.reapply_breakpoints();
+					self.reapply_breakpoints(texts.as_ref());
 				}
 				self.code_read = true;
 			}
@@ -903,12 +903,26 @@ impl Adapter {
 		}
 	}
 
-	fn reapply_breakpoints(&mut self) {
+	fn reapply_breakpoints(&mut self, texts: Option<&code::Texts>) {
 		let files: Vec<String> = self.breakpoints.keys().cloned().collect();
 		for file in files {
-			let now = crate::lines::read(&file);
+			let reloaded = texts.map(|texts| reloaded_text(texts, &file));
+			let now = match reloaded {
+				Some(Some(text)) => text.clone(),
+				Some(None) if self.world_texts.contains_key(&file) => self.world_texts[&file].clone(),
+				_ => crate::lines::read(&file)
+			};
 			let had = self.world_texts.insert(file.clone(), now.clone());
 			if self.deferred.contains(&file) {
+				continue;
+			}
+			if self.waiting.contains(&file) && matches!(reloaded, Some(None)) {
+				continue;
+			}
+			if matches!(reloaded, Some(Some(None))) {
+				let breakpoints = Self::waiting_for_the_world(&self.breakpoints[&file]);
+				self.tell(breakpoints, true);
+				self.waiting.insert(file);
 				continue;
 			}
 			let then = self.breakpoint_texts.get(&file).cloned().flatten();
@@ -2125,13 +2139,41 @@ impl Asks for Adapter {
 	}
 }
 
+fn reloaded_text<'a>(texts: &'a code::Texts, file: &str) -> Option<&'a Option<Vec<String>>> {
+	if let Some(text) = texts.get(Path::new(file)) {
+		return Some(text);
+	}
+	let file = std::fs::canonicalize(file).ok()?;
+	texts
+		.iter()
+		.find(|(path, _)| std::fs::canonicalize(path).is_ok_and(|path| path == file))
+		.map(|(_, text)| text)
+}
+
 #[cfg(test)]
 mod tests {
 	use std::path::Path;
 
 	use auxtools_protocol::{HitCondition, LogPart, RuntimeFilter};
 
-	use super::{changes_things, completion_place, hover_refuses, instruction_window, named_proc, parse_address, runtime_place, shown};
+	use super::{
+		changes_things, completion_place, hover_refuses, instruction_window, named_proc, parse_address, reloaded_text, runtime_place, shown
+	};
+
+	#[test]
+	fn a_reloaded_file_is_found_by_another_spelling_of_its_path() {
+		let dir = std::env::temp_dir().join(format!("auxtools-reloaded-{}", std::process::id()));
+		std::fs::create_dir_all(dir.join("code")).unwrap();
+		std::fs::write(dir.join("code/a.dm"), "").unwrap();
+		std::fs::write(dir.join("code/b.dm"), "").unwrap();
+		let text = Some(vec!["/proc/a()".to_owned()]);
+		let texts = crate::code::Texts::from([(dir.join("code/a.dm"), text.clone())]);
+		let spelled = |path: &Path| path.to_string_lossy().into_owned();
+		assert_eq!(reloaded_text(&texts, &spelled(&dir.join("code/a.dm"))), Some(&text));
+		assert_eq!(reloaded_text(&texts, &spelled(&dir.join("code/../code/a.dm"))), Some(&text));
+		assert_eq!(reloaded_text(&texts, &spelled(&dir.join("code/b.dm"))), None);
+		let _ = std::fs::remove_dir_all(&dir);
+	}
 
 	#[test]
 	fn a_disconnect_is_known_as_it_is_read() {

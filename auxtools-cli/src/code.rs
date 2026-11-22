@@ -33,8 +33,10 @@ pub struct Options {
 	pub hot_reload: bool
 }
 
+pub type Texts = HashMap<PathBuf, Option<Vec<String>>>;
+
 pub enum Event {
-	Changed,
+	Changed(Option<Texts>),
 	Failed(String),
 	Ready,
 	Watching,
@@ -211,7 +213,7 @@ impl Code {
 				return;
 			}
 		};
-		if !self.send(Event::Changed) || !self.send(Event::Ready) || !self.options.hot_reload {
+		if !self.send(Event::Changed(None)) || !self.send(Event::Ready) || !self.options.hot_reload {
 			return;
 		}
 
@@ -317,6 +319,7 @@ impl Code {
 	}
 
 	fn reload_code(&self, watching: &mut Watching, changed: HashSet<PathBuf>) -> bool {
+		let read = self.read_texts(&changed);
 		let selected = self.selected_defines();
 		let other_defines = selected != *self.running_defines.borrow();
 		let held = !self.outstanding().is_empty();
@@ -329,6 +332,7 @@ impl Code {
 			let mut files: Vec<&Path> = changed.iter().map(PathBuf::as_path).collect();
 			files.sort();
 			if let Ok(reload) = current.reload_files(&self.root, &files) {
+				let texts = self.still_read(read);
 				watching.edited_since_built.extend(changed);
 				return match self.reload(&reload.changes, current, vec![], false, true, None) {
 					None => false,
@@ -339,7 +343,7 @@ impl Code {
 						};
 						current.keep(reload);
 						self.watch_named(watching);
-						self.send(Event::Changed);
+						self.send(Event::Changed(Some(texts)));
 						true
 					}
 					Some(false) => true
@@ -354,6 +358,7 @@ impl Code {
 				return self.not_reloaded(e);
 			}
 		};
+		let texts = self.still_read(read);
 		watching.skin.parsed(new.skin());
 		watching.script.parsed(new.client_script());
 		let current = watching.applied.as_ref().unwrap_or(&watching.built);
@@ -379,7 +384,7 @@ impl Code {
 			None => false,
 			Some(true) => {
 				self.watch_named(watching);
-				self.send(Event::Changed);
+				self.send(Event::Changed(Some(texts)));
 				let given = self.give_macros(Some(&new));
 				watching.applied = Some(new);
 				watching.applied_as = Some(selected);
@@ -388,6 +393,26 @@ impl Code {
 			}
 			Some(false) => true
 		}
+	}
+
+	fn read_texts(&self, files: &HashSet<PathBuf>) -> Texts {
+		files
+			.iter()
+			.map(|file| {
+				let path = self.root.join(file);
+				let text = crate::lines::read(&path.to_string_lossy());
+				(path, text)
+			})
+			.collect()
+	}
+
+	fn still_read(&self, mut read: Texts) -> Texts {
+		for (path, text) in &mut read {
+			if text.is_some() && crate::lines::read(&path.to_string_lossy()) != *text {
+				*text = None;
+			}
+		}
+		read
 	}
 
 	fn catch_up(&self, watching: &mut Watching) -> bool {
@@ -433,7 +458,7 @@ impl Code {
 			watching.applied = None;
 			watching.applied_as = None;
 			watching.edited_since_built.clear();
-			return self.send(Event::Changed) && self.give_macros(read.then_some(&watching.built));
+			return self.send(Event::Changed(None)) && self.give_macros(read.then_some(&watching.built));
 		}
 
 		let applied = watching.applied.take();
@@ -567,7 +592,7 @@ impl Code {
 						None => watching.resources.shown(path, *crc)
 					}
 				}
-				self.send(Event::Changed)
+				self.send(Event::Changed(Some(Texts::new())))
 			}
 			Some(false) => true
 		}
@@ -1338,6 +1363,15 @@ mod tests {
 			}
 		}
 
+		fn changed(&self) -> Texts {
+			self.commands.send(Command::Reloaded(true)).unwrap();
+			self.next("changed", |event| match event {
+				Event::Changed(Some(texts)) => Some(texts.clone()),
+				Event::Changed(None) => panic!("changed without the texts reloaded"),
+				_ => None
+			})
+		}
+
 		fn nothing_changed(&self) {
 			self.next("no changes", |event| match event {
 				Event::NothingChanged { .. } => Some(()),
@@ -1472,6 +1506,21 @@ mod tests {
 		assert_eq!(worker.prepared().summary, "reloaded /b, /c");
 		worker.applied(false);
 		assert_eq!(worker.parses(), 6);
+	}
+
+	#[test]
+	fn a_reload_says_what_text_it_read() {
+		let worker = Worker::start("texts");
+		let path = worker.project.root.join("code/a.dm");
+		let lines = |text: &str| Some(text.lines().map(str::to_owned).collect::<Vec<_>>());
+		let read = body("a", "world.log << 2\n\treturn 2");
+		worker.write("a", &read);
+		worker.prepared();
+		let again = body("a", "world.log << 3\n\tworld.log << 3\n\treturn 3");
+		worker.write("a", &again);
+		assert_eq!(worker.changed(), Texts::from([(path.clone(), lines(&read))]));
+		worker.prepared();
+		assert_eq!(worker.changed(), Texts::from([(path, lines(&again))]));
 	}
 
 	#[test]
