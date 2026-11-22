@@ -23,11 +23,13 @@ mod trace;
 
 use std::{
 	io,
-	sync::mpsc::{self, Receiver, RecvTimeoutError},
 	time::{Duration, Instant}
 };
 
-use auxtools_cli::local::{self, Shared};
+use auxtools_cli::{
+	client::{Client, Heard, Lost},
+	local
+};
 use auxtools_protocol::*;
 use serde_json::{json, Map, Value};
 
@@ -304,17 +306,9 @@ enum Stepped {
 	TimedOut
 }
 
-enum Received {
-	Hello(Hello),
-	Message(ServerMessage)
-}
-
 pub struct World {
 	pid: u32,
-	stream: Shared,
-	received: Receiver<io::Result<Received>>,
-	greeted: bool,
-	requests: Pending,
+	client: Client,
 	events: Vec<Response>,
 	reloaded: bool,
 	notes: Vec<String>,
@@ -328,29 +322,10 @@ pub struct World {
 
 impl World {
 	fn connect(pid: u32) -> Result<Self> {
-		let stream = Shared::new(local::open(pid).map_err(|e| cannot_connect(pid, &e))?);
-		let (sender, received) = mpsc::channel();
-		let mut reader = stream.clone();
-		std::thread::spawn(move || {
-			let hello = auxtools_protocol::read(&mut reader).map(Received::Hello);
-			let failed = hello.is_err();
-			if sender.send(hello).is_err() || failed {
-				return;
-			}
-			loop {
-				let message = auxtools_protocol::read(&mut reader).map(Received::Message);
-				let failed = message.is_err();
-				if sender.send(message).is_err() || failed {
-					break;
-				}
-			}
-		});
+		let client = Client::open(pid).map_err(|e| cannot_connect(pid, &e))?;
 		Ok(Self {
 			pid,
-			stream,
-			received,
-			greeted: false,
-			requests: Pending::new(),
+			client,
 			events: vec![],
 			reloaded: false,
 			notes: vec![],
@@ -472,57 +447,26 @@ impl World {
 	}
 
 	fn leave(&mut self) {
-		if self.greeted {
-			let _ = self.tell(&Request::Disconnect);
-		}
+		let _ = self.client.leave();
 	}
 
-	fn take(&mut self, received: io::Result<Received>) -> Result<Option<ServerMessage>> {
-		match received.map_err(|_| hung_up())? {
-			Received::Hello(hello) if hello.protocol == PROTOCOL_VERSION => {
-				self.greeted = true;
-				Ok(None)
-			}
-			Received::Hello(hello) => Err(cannot_connect(self.pid, &local::incompatible(hello.protocol)).into()),
-			Received::Message(message) => Ok(Some(message))
+	fn lost(&self, lost: Lost) -> Failure {
+		match lost {
+			Lost::Incompatible(theirs) => cannot_connect(self.pid, &local::incompatible(theirs)).into(),
+			Lost::Unsent(_) | Lost::Closed => hung_up()
 		}
-	}
-
-	fn greeted_by(&mut self, until: Option<Instant>) -> Result<bool> {
-		while !self.greeted {
-			let received = match until {
-				Some(until) => match self.received.recv_timeout(until.saturating_duration_since(Instant::now())) {
-					Ok(received) => received,
-					Err(RecvTimeoutError::Timeout) => return Ok(false),
-					Err(RecvTimeoutError::Disconnected) => return Err(hung_up())
-				},
-				None => self.received.recv().map_err(|_| hung_up())?
-			};
-			self.take(received)?;
-		}
-		Ok(true)
 	}
 
 	fn send(&mut self, request: &Request, until: Option<Instant>) -> Result<Option<RequestId>> {
-		if !self.greeted_by(until)? {
-			return Ok(None);
-		}
-		let id = self.requests.ask();
-		match auxtools_protocol::write(&mut self.stream, &ClientMessage { id, request }) {
-			Ok(()) => Ok(Some(id)),
-			Err(_) => {
-				self.requests.give_up(id);
-				Err(hung_up())
-			}
-		}
+		self.client.ask(request, until).map_err(|lost| self.lost(lost))
 	}
 
 	fn tell(&mut self, request: &Request) -> Result<()> {
-		if !self.greeted_by(Some(Instant::now() + self.patience))? {
-			return Err(self.unresponsive("respond"));
+		match self.client.tell(request, Some(Instant::now() + self.patience)) {
+			Ok(true) => Ok(()),
+			Ok(false) => Err(self.unresponsive("respond")),
+			Err(lost) => Err(self.lost(lost))
 		}
-		let id = self.requests.tell();
-		auxtools_protocol::write(&mut self.stream, &ClientMessage { id, request }).map_err(|_| hung_up())
 	}
 
 	fn next(&mut self, until: Option<Instant>) -> Result<Option<Response>> {
@@ -531,21 +475,10 @@ impl World {
 
 	fn hear(&mut self, until: Option<Instant>) -> Result<Option<(Option<RequestId>, Response)>> {
 		loop {
-			let received = match until {
-				Some(until) => match self.received.recv_timeout(until.saturating_duration_since(Instant::now())) {
-					Ok(received) => received,
-					Err(RecvTimeoutError::Timeout) => return Ok(None),
-					Err(RecvTimeoutError::Disconnected) => return Err(hung_up())
-				},
-				None => self.received.recv().map_err(|_| hung_up())?
-			};
-			let Some(message) = self.take(received)? else {
-				continue;
-			};
-			let response = match self.requests.sort(message) {
-				Sorted::Answer(id, response) => return Ok(Some((Some(id), response))),
-				Sorted::Late(..) => continue,
-				Sorted::Event(response) => response
+			let response = match self.client.hear(until).map_err(|lost| self.lost(lost))? {
+				None => return Ok(None),
+				Some(Heard::Answer { to, response, .. }) => return Ok(Some((Some(to), response))),
+				Some(Heard::Event(response)) => response
 			};
 			match response {
 				Response::Disconnect => return Err(hung_up()),
@@ -585,7 +518,7 @@ impl World {
 		loop {
 			match self.hear(Some(until))? {
 				None => {
-					self.requests.give_up(id);
+					self.client.give_up(id);
 					return Ok(None);
 				}
 				Some((Some(to), response)) if to == id => return Ok(Some(response)),

@@ -4,7 +4,7 @@ use std::{
 	time::{Duration, Instant}
 };
 
-use auxtools_cli::local;
+use auxtools_cli::{client::Client, local};
 use auxtools_protocol::*;
 use serde_json::json;
 
@@ -195,11 +195,8 @@ const RECONNECT_INTERVAL: Duration = Duration::from_millis(100);
 impl World {
 	pub fn reconnect(&mut self, until: Option<Instant>) -> Result<()> {
 		loop {
-			if let Ok(world) = World::connect(self.pid) {
-				self.stream = world.stream;
-				self.received = world.received;
-				self.greeted = world.greeted;
-				self.requests = world.requests;
+			if let Ok(client) = Client::open(self.pid) {
+				self.client = client;
 				self.events.clear();
 				return Ok(());
 			}
