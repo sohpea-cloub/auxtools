@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 
-use dreammaker::ast::{Expression, Spanned, Statement, Term, VarStatement};
+use dreammaker::ast::{Expression, Follow, Spanned, Statement, Term, VarStatement};
 use dreammaker::objtree::TypeRef;
 use std::path::{Path, PathBuf};
 
@@ -8,7 +8,7 @@ use dreammaker::{FileId, Location};
 
 use super::{const_value, value_location, var_constant, ConstValue, ProcReload, Refusal, Snapshot};
 use crate::operands::{DMString, GlobalVar, Label, Variable};
-use crate::{Instruction, Node};
+use crate::{syntax, Instruction, Node};
 
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -1033,6 +1033,14 @@ impl<'a> Walk<'a> {
         terms(expression, &mut |seen| {
             let term = match seen {
                 Seen::Term(term) => term,
+                Seen::GlobalCall(name) => {
+                    ready &= call(name, true);
+                    return;
+                }
+                Seen::GlobalVar(name) => {
+                    ready &= self.value_set(init, name, true, finishing);
+                    return;
+                }
                 Seen::StaticFieldOf(Term::Ident(name))
                     if ["type", "src"].contains(&name.as_str()) =>
                 {
@@ -1226,127 +1234,45 @@ fn literal(expression: &Expression) -> bool {
 
 enum Seen<'e> {
     Term(&'e Term),
+    GlobalCall(&'e str),
+    GlobalVar(&'e str),
     StaticFieldOf(&'e Term),
     MemberOf(&'e str, Option<&'e str>),
 }
 
-fn terms(expression: &Expression, each: &mut dyn FnMut(Seen)) {
-    match expression {
-        Expression::Base { term, follow } => {
-            if let (Term::Ident(name), Some(dreammaker::ast::Follow::Call(_, proc, args))) =
-                (&term.elem, follow.first().map(|f| &f.elem))
-            {
-                if name.as_str() == "global" {
-                    each(Seen::Term(&Term::GlobalCall(proc.clone(), args.clone())));
+fn terms<'e>(expression: &'e Expression, each: &mut dyn FnMut(Seen<'e>)) {
+    syntax::walk_expression(expression, &mut |node| match node {
+        syntax::Node::Expression(Expression::Base { term, follow }) => {
+            let (name, first) = match &term.elem {
+                Term::Ident(name) => (Some(name.as_str()), follow.first().map(|f| &f.elem)),
+                _ => (None, None),
+            };
+            match first {
+                Some(Follow::Call(_, proc, _)) if name == Some("global") => {
+                    each(Seen::GlobalCall(proc.as_str()))
                 }
-            }
-            if let (Term::Ident(name), Some(dreammaker::ast::Follow::Field(_, field))) =
-                (&term.elem, follow.first().map(|f| &f.elem))
-            {
-                if name.as_str() == "global" {
-                    each(Seen::Term(&Term::GlobalIdent(field.clone())));
+                Some(Follow::Field(_, field)) if name == Some("global") => {
+                    each(Seen::GlobalVar(field.as_str()))
                 }
+                _ => {}
             }
-            if follow.iter().any(|f| {
-                matches!(
-                    f.elem,
-                    dreammaker::ast::Follow::StaticField(_)
-                        | dreammaker::ast::Follow::ProcReference(_)
-                )
-            }) {
+            if follow
+                .iter()
+                .any(|f| matches!(f.elem, Follow::StaticField(_) | Follow::ProcReference(_)))
+            {
                 each(Seen::StaticFieldOf(&term.elem));
             }
-            if let Term::Ident(name) = &term.elem {
-                match follow.first().map(|f| &f.elem) {
-                    Some(dreammaker::ast::Follow::Field(..)) => {
-                        each(Seen::MemberOf(name.as_str(), None))
-                    }
-                    Some(dreammaker::ast::Follow::Call(_, proc, _)) => {
-                        each(Seen::MemberOf(name.as_str(), Some(proc.as_str())))
-                    }
-                    _ => {}
+            match (name, first) {
+                (Some(name), Some(Follow::Field(..))) => each(Seen::MemberOf(name, None)),
+                (Some(name), Some(Follow::Call(_, proc, _))) => {
+                    each(Seen::MemberOf(name, Some(proc.as_str())))
                 }
-            }
-            term_and_within(&term.elem, each);
-            for f in follow.iter() {
-                match &f.elem {
-                    dreammaker::ast::Follow::Index(_, e) => terms(e, each),
-                    dreammaker::ast::Follow::Call(_, _, args) => {
-                        args.iter().for_each(|e| terms(e, each))
-                    }
-                    _ => {}
-                }
+                _ => {}
             }
         }
-        Expression::BinaryOp { lhs, rhs, .. } | Expression::AssignOp { lhs, rhs, .. } => {
-            terms(lhs, each);
-            terms(rhs, each);
-        }
-        Expression::TernaryOp { cond, if_, else_ } => {
-            terms(cond, each);
-            terms(if_, each);
-            terms(else_, each);
-        }
-    }
-}
-
-fn term_and_within(term: &Term, each: &mut dyn FnMut(Seen)) {
-    each(Seen::Term(term));
-    let all =
-        |list: &[Expression], each: &mut dyn FnMut(Seen)| list.iter().for_each(|e| terms(e, each));
-    match term {
-        Term::Expr(e) => terms(e, each),
-        Term::Prefab(prefab) => prefab.vars.iter().for_each(|(_, e)| terms(e, each)),
-        Term::InterpString(_, parts) => parts
-            .iter()
-            .filter_map(|(e, _)| e.as_ref())
-            .for_each(|e| terms(e, each)),
-        Term::Call(_, args)
-        | Term::SelfCall(args)
-        | Term::ParentCall(args)
-        | Term::List(args)
-        | Term::Alist(args)
-        | Term::GlobalCall(_, args) => all(args, each),
-        Term::NewImplicit { args } | Term::NewMiniExpr { args, .. } => {
-            if let Some(args) = args {
-                all(args, each);
-            }
-        }
-        Term::NewPrefab { prefab, args } => {
-            prefab.vars.iter().for_each(|(_, e)| terms(e, each));
-            if let Some(args) = args {
-                all(args, each);
-            }
-        }
-        Term::Input { args, in_list, .. } | Term::Locate { args, in_list } => {
-            all(args, each);
-            if let Some(e) = in_list {
-                terms(e, each);
-            }
-        }
-        Term::Pick(args) => args.iter().for_each(|(w, e)| {
-            if let Some(w) = w {
-                terms(w, each);
-            }
-            terms(e, each);
-        }),
-        Term::DynamicCall(a, b) => {
-            all(a, each);
-            all(b, each);
-        }
-        Term::ExternalCall {
-            library,
-            function,
-            args,
-        } => {
-            if let Some(l) = library {
-                terms(l, each);
-            }
-            terms(function, each);
-            all(args, each);
-        }
+        syntax::Node::Term(term) => each(Seen::Term(term)),
         _ => {}
-    }
+    });
 }
 
 fn normal(path: &Path) -> String {
