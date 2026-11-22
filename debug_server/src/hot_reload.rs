@@ -2229,6 +2229,7 @@ fn apply_code<K: Ord + std::hash::Hash + Copy, T>(
 
 	let (new_ptr, _) = unsafe { p.proc.bytecode_mut_ptr() };
 	auxtools::debug::set_local_names(new_ptr, local_names);
+	crate::code_index::proc_changed(p.proc.id);
 
 	for (old_offset, line, known) in hooked {
 		let line = match &p.lines {

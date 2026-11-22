@@ -4,7 +4,7 @@ use std::{
 	io::Write,
 	sync::{
 		atomic::{AtomicU64, Ordering},
-		mpsc, Mutex
+		mpsc, Arc, Mutex
 	},
 	thread,
 	time::{Duration, Instant}
@@ -19,6 +19,7 @@ use instruction_hooking::disassemble_env;
 
 use super::instruction_hooking::{hook_instruction, original_bytecode, unhook_all, unhook_instruction};
 use crate::{
+	code_index::{self, Code},
 	connection::{self, Connection},
 	console, hot_reload, journal, resource_reload, unnamed, waker
 };
@@ -142,12 +143,6 @@ impl State {
 }
 
 type ClientId = u32;
-
-enum Mark {
-	File(String),
-	Line(u32),
-	Other
-}
 
 enum Event {
 	Connected(ClientId, Connection),
@@ -513,7 +508,7 @@ impl Server {
 			None => "a proc the world doesn't have".to_owned()
 		};
 		let line = unsafe { (*ctx).filename().valid().then(|| *(*ctx).line()) };
-		match (proc.as_ref().and_then(Self::file_of), line) {
+		match (proc.as_ref().and_then(code_index::file_of), line) {
 			(Some(file), Some(line)) => place += &format!("  {}:{}", file, line),
 			(None, Some(line)) => place += &format!("  line {}", line),
 			_ => {}
@@ -527,13 +522,12 @@ impl Server {
 		if !names.iter().any(shared) {
 			return names.into_iter().map(Some).collect();
 		}
-		let code = Self::old_code_of(frame).unwrap_or_else(|| original_bytecode(&frame.proc));
-		let used = local_uses(&code);
+		let code = Self::old_code_of(frame).unwrap_or_else(|| code_index::of(&frame.proc));
 		let at = frame.offset as u32;
 		let rank = |slot: usize| {
-			used.get(&(slot as u32))
+			code.local_use(slot as u32)
 				.filter(|(first, _)| *first <= at)
-				.map(|(first, last)| (at <= *last, *first))
+				.map(|(first, last)| (at <= last, first))
 		};
 		names
 			.iter()
@@ -554,35 +548,12 @@ impl Server {
 			.collect()
 	}
 
-	fn old_code_of(frame: &debug::StackFrame) -> Option<Vec<u32>> {
+	fn old_code_of(frame: &debug::StackFrame) -> Option<Arc<Code>> {
 		Self::old_code_running(&frame.proc, frame.context)
 	}
 
-	fn old_code_running(proc: &Proc, context: *mut raw_types::procs::ExecutionContext) -> Option<Vec<u32>> {
-		let running = unsafe { *(*context).bytecode() };
-		let (current, _) = unsafe { proc.bytecode_mut_ptr() };
-		if running == current {
-			return None;
-		}
-		let old = auxtools::bytecode_at(running)?;
-
-		let instructions = |bytecode: &[u32]| -> Vec<dmasm::Instruction> {
-			let mut env = disassemble_env::DisassembleEnv;
-			let (nodes, _error) = dmasm::disassembler::disassemble(bytecode, &mut env);
-			nodes
-				.into_iter()
-				.filter_map(|node| match node {
-					dmasm::Node::Instruction(dmasm::Instruction::DbgLine(_), _) => Some(dmasm::Instruction::DbgLine(0)),
-					dmasm::Node::Instruction(ins, _) => Some(ins),
-					_ => None
-				})
-				.collect()
-		};
-		let now = original_bytecode(proc);
-		if old.len() == now.len() && instructions(&old) == instructions(&now) {
-			return None;
-		}
-		Some(old)
+	fn old_code_running(proc: &Proc, context: *mut raw_types::procs::ExecutionContext) -> Option<Arc<Code>> {
+		code_index::running(proc, unsafe { *(*context).bytecode() })
 	}
 
 	fn code_of(&self, frame: &debug::StackFrame, old: bool) -> CodeRef {
@@ -656,7 +627,7 @@ impl Server {
 
 		Ok(Disassembly {
 			proc: unnamed::proc_ref(&proc),
-			file: Self::file_of(&proc),
+			file: code_index::file_of(&proc),
 			instructions,
 			error: error.map(|error| format!("{:?}", error))
 		})
@@ -681,7 +652,7 @@ impl Server {
 		Ok(ProcInfo {
 			proc: unnamed::proc_ref(&proc),
 			code: CodeRef { proc: proc.id.0, old: 0 },
-			file: Self::file_of(&proc),
+			file: code_index::file_of(&proc),
 			line: Self::lines_of(&proc).into_iter().next(),
 			definitions,
 			reloaded: hot_reload::reloaded(proc.id.0)
@@ -695,10 +666,10 @@ impl Server {
 	fn place_running(proc: &Proc, context: *mut raw_types::procs::ExecutionContext, offset: u16, asleep: bool) -> (Option<String>, Option<u32>) {
 		let offset = if asleep { (offset as u32).saturating_sub(1) } else { offset as u32 };
 
-		if let Some(bytecode) = Self::old_code_running(proc, context) {
-			return match Self::place_in(&bytecode, offset, false) {
-				Some((file, line)) => (file.or_else(|| Self::file_of(proc)), Some(line)),
-				None => (Self::file_of(proc), None)
+		if let Some(code) = Self::old_code_running(proc, context) {
+			return match code.place(offset, false) {
+				Some((file, line)) => (file.map(str::to_owned).or_else(|| code_index::file_of(proc)), Some(line)),
+				None => (code_index::file_of(proc), None)
 			};
 		}
 		Self::place_of(proc, offset)
@@ -720,21 +691,6 @@ impl Server {
 		}
 	}
 
-	fn file_of(proc: &Proc) -> Option<String> {
-		let dbg_file = dmasm::Opcode::DbgFile.word();
-		let bytecode = unsafe { proc.bytecode() };
-		let id = match bytecode {
-			[op, id, ..] if *op == dbg_file => *id,
-			[_, ..] => match crate::instruction_hooking::original_bytecode(proc).as_slice() {
-				[op, id, ..] if *op == dbg_file => *id,
-				_ => return None
-			},
-			[] => return None
-		};
-		let name = unsafe { StringRef::from_id(raw_types::strings::StringId(id)) };
-		Some(String::from_utf8_lossy(name.data()).into_owned())
-	}
-
 	fn file_index(&mut self) -> &HashMap<String, Vec<u32>> {
 		let count = auxtools::runtime_tables::proc_count();
 		if self.procs_by_file.as_ref().is_none_or(|(counted, _)| *counted != count) {
@@ -744,7 +700,7 @@ impl Server {
 				let Some(proc) = Proc::from_id(raw_types::procs::ProcId(id)) else {
 					continue;
 				};
-				let Some(file) = Self::file_of(&proc) else { continue };
+				let Some(file) = code_index::file_of(&proc) else { continue };
 				if unsafe { proc.bytecode() }.iter().skip(2).any(|&word| word == dbg_file) {
 					for other in Self::files_of(&proc) {
 						if other != file {
@@ -871,100 +827,20 @@ impl Server {
 			.collect()
 	}
 
-	fn place_in(bytecode: &[u32], offset: u32, before: bool) -> Option<(Option<String>, u32)> {
-		let mut current_line_number = None;
-		let mut current_file = None;
-		let mut reached_offset = false;
-
-		for (at, mark) in Self::marks(bytecode).iter() {
-			if *at > offset && !reached_offset {
-				reached_offset = true;
-				if current_line_number.is_some() {
-					break;
-				}
-			}
-
-			match mark {
-				Mark::File(name) if !((reached_offset || *at == offset) && current_line_number.is_some()) => {
-					current_file = Some(name.clone());
-				}
-				Mark::Line(_) if before && *at == offset => {}
-				Mark::Line(line) => {
-					current_line_number = Some(*line);
-					if reached_offset {
-						break;
-					}
-				}
-				_ => {}
-			}
-
-			if *at == offset {
-				reached_offset = true;
-				if current_line_number.is_some() {
-					break;
-				}
-			}
-		}
-
-		if reached_offset {
-			current_line_number.map(|line| (current_file, line))
-		} else {
-			None
-		}
-	}
-
-	fn marks(bytecode: &[u32]) -> std::sync::Arc<[(u32, Mark)]> {
-		use std::hash::{Hash, Hasher};
-		type Marks = std::sync::Arc<[(u32, Mark)]>;
-		static MARKS: std::sync::LazyLock<Mutex<HashMap<(u64, usize), Marks>>> = std::sync::LazyLock::new(Default::default);
-		const KEEP: usize = 8192;
-
-		let key = {
-			let mut hasher = std::collections::hash_map::DefaultHasher::new();
-			bytecode.hash(&mut hasher);
-			(hasher.finish(), bytecode.len())
-		};
-		if let Some(marks) = MARKS.lock().unwrap().get(&key) {
-			return marks.clone();
-		}
-
-		let mut env = disassemble_env::DisassembleEnv;
-		let (nodes, _error) = dmasm::disassembler::disassemble(bytecode, &mut env);
-		let marks: Marks = nodes
-			.into_iter()
-			.filter_map(|node| match node {
-				dmasm::Node::Instruction(ins, debug) => Some((debug.offset, match ins {
-					dmasm::Instruction::DbgFile(name) => Mark::File(String::from_utf8_lossy(&name.0).into_owned()),
-					dmasm::Instruction::DbgLine(line) => Mark::Line(line),
-					_ => Mark::Other
-				})),
-				_ => None
-			})
-			.collect();
-
-		let mut cache = MARKS.lock().unwrap();
-		if cache.len() >= KEEP {
-			cache.clear();
-		}
-		cache.insert(key, marks.clone());
-		marks
-	}
-
 	fn place_of(proc: &Proc, offset: u32) -> (Option<String>, Option<u32>) {
-		let original = original_bytecode(proc);
-		let here = offset as usize;
-		let breakpoint_here = unsafe { proc.bytecode() }.get(here) != original.get(here);
-		Self::place_at(proc, &original, offset, breakpoint_here)
+		let breakpoint_here = crate::instruction_hooking::hooked_at(proc, offset as usize);
+		Self::place_at(proc, offset, breakpoint_here)
 	}
 
 	fn breakpoint_place(proc: &Proc, offset: u32) -> (Option<String>, Option<u32>) {
-		Self::place_at(proc, &original_bytecode(proc), offset, true)
+		Self::place_at(proc, offset, true)
 	}
 
-	fn place_at(proc: &Proc, original: &[u32], offset: u32, before: bool) -> (Option<String>, Option<u32>) {
-		match Self::place_in(original, offset, before) {
-			Some((file, line)) => (file.or_else(|| Self::file_of(proc)), Some(line)),
-			None => (Self::file_of(proc), None)
+	fn place_at(proc: &Proc, offset: u32, before: bool) -> (Option<String>, Option<u32>) {
+		let code = code_index::of(proc);
+		match code.place(offset, before) {
+			Some((file, line)) => (file.or_else(|| code.file()).map(str::to_owned), Some(line)),
+			None => (code.file().map(str::to_owned), None)
 		}
 	}
 
@@ -3625,53 +3501,6 @@ impl ServerThread {
 		let _ = self.events.send(Event::Disconnected(id));
 		waker::event_sent();
 	}
-}
-
-fn local_uses(code: &[u32]) -> std::sync::Arc<HashMap<u32, (u32, u32)>> {
-	use std::hash::{Hash, Hasher};
-	type Uses = std::sync::Arc<HashMap<u32, (u32, u32)>>;
-	static USES: std::sync::LazyLock<Mutex<HashMap<(u64, usize), Uses>>> = std::sync::LazyLock::new(Default::default);
-	const KEEP: usize = 1024;
-
-	fn locals_in(var: &dmasm::Variable, found: &mut Vec<u32>) {
-		match var {
-			dmasm::Variable::Local(slot) => found.push(*slot),
-			dmasm::Variable::SetCache(a, b) => {
-				locals_in(a, found);
-				locals_in(b, found);
-			}
-			dmasm::Variable::Initial(inner) | dmasm::Variable::IsSaved(inner) => locals_in(inner, found),
-			_ => {}
-		}
-	}
-	let key = {
-		let mut hasher = std::collections::hash_map::DefaultHasher::new();
-		code.hash(&mut hasher);
-		(hasher.finish(), code.len())
-	};
-	if let Some(uses) = USES.lock().unwrap().get(&key) {
-		return uses.clone();
-	}
-	let (nodes, _) = dmasm::disassembler::disassemble(code, &mut disassemble_env::DisassembleEnv);
-	let mut uses: HashMap<u32, (u32, u32)> = HashMap::new();
-	for node in &nodes {
-		let dmasm::Node::Instruction(ins, debug) = node else { continue };
-		let mut found = vec![];
-		for var in ins.variables() {
-			locals_in(var, &mut found);
-		}
-		for slot in found {
-			let at = debug.offset as u32;
-			uses.entry(slot).and_modify(|(_, last)| *last = at).or_insert((at, at));
-		}
-	}
-	let uses = std::sync::Arc::new(uses);
-	let mut kept = USES.lock().unwrap();
-	if kept.len() >= KEEP {
-		kept.clear();
-	}
-	kept.insert(key, uses.clone());
-	uses
 }
 
 #[cfg(test)]
