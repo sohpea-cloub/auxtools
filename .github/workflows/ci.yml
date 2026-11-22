@@ -130,6 +130,9 @@ jobs:
       - name: Build the recipe checker
         run: cargo build --release --locked --target "$TARGET" -p auxtools --example check_recipes
 
+      - name: Build the DreamMaker comparison
+        run: cargo build --release --locked --target "$TARGET" -p dmasm --example compare_dreammaker
+
       - name: Unit tests
         run: cargo test --release --locked --target "$TARGET" -p auxtools-cli -p auxtools -p auxtools-protocol -p debug_server -p dmasm -p test_support
 
@@ -150,7 +153,7 @@ jobs:
           "$GITHUB_WORKSPACE/ci/split-debug.sh" auxtools libdebug_server.so
           "$GITHUB_WORKSPACE/ci/check-linux.sh" auxtools libdebug_server.so
           if grep -q 'asked for with #panic' libdebug_server.so; then echo "the debug library has the tests' console commands"; exit 1; fi
-          strip --strip-debug libauxtest.so test_runner debug_test hot_reload_test launcher_test dap_test examples/check_recipes
+          strip --strip-debug libauxtest.so test_runner debug_test hot_reload_test launcher_test dap_test examples/check_recipes examples/compare_dreammaker
           tar -czf "$RUNNER_TEMP/auxtools-linux.tar.gz" auxtools libdebug_server.so
           tar -czf "$RUNNER_TEMP/auxtools-linux-symbols.tar.gz" auxtools.debug libdebug_server.so.debug
           mkdir released
@@ -162,7 +165,7 @@ jobs:
           cd "target/$TARGET/release"
           strip --strip-debug libdebug_server.so
           grep -q 'asked for with #panic' libdebug_server.so
-          tar -cf "$RUNNER_TEMP/bundle-linux.tar" auxtools libdebug_server.so released/libdebug_server.so libauxtest.so test_runner debug_test hot_reload_test launcher_test dap_test -C examples check_recipes
+          tar -cf "$RUNNER_TEMP/bundle-linux.tar" auxtools libdebug_server.so released/libdebug_server.so libauxtest.so test_runner debug_test hot_reload_test launcher_test dap_test -C examples check_recipes compare_dreammaker
 
       - name: Upload the launcher and the debug library
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -342,6 +345,44 @@ jobs:
 
       - name: Test
         run: ci/run-tests.sh programs .byond/byond
+
+  dmasm-dreammaker:
+    name: dmasm against DreamMaker
+    needs: build-linux
+    if: github.event_name != 'push' || github.event.head_commit.author.name != 'github-actions[bot]' || !startsWith(github.event.head_commit.message, 'Start development on ')
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    env:
+      BYOND: "516.1689"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install the 32-bit libraries BYOND needs
+        run: |
+          sudo dpkg --add-architecture i386
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libc6:i386 libstdc++6:i386 libgcc-s1:i386 libcurl4:i386
+
+      - name: Download the bundle
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: bundle-linux
+          path: bundle
+
+      - name: Restore BYOND
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .byond
+          key: byond-${{ env.BYOND }}-linux-${{ hashFiles('ci/byond.sha256') }}
+
+      - name: Fetch BYOND
+        run: ci/fetch-byond.sh "$BYOND" linux .byond
+
+      - name: Compare dmasm with DreamMaker
+        run: |
+          mkdir programs
+          tar -xf bundle/bundle-linux.tar -C programs compare_dreammaker
+          programs/compare_dreammaker .byond/byond/bin/DreamMaker dmasm/tests/dreammaker --out "$RUNNER_TEMP/dreammaker"
 
   test-windows:
     name: Windows, BYOND ${{ matrix.byond }}

@@ -35,7 +35,8 @@ out, a static call made by name, labels placed elsewhere), nor a known differenc
 cargo run --release -p dmasm --example compare_dreammaker -- BYOND/bin/DreamMaker
 ```
 
-It passes on every build from 515.1637 to 516.1689 that CI tests. A case starts with a `// Guards:` line saying what it is for, and runs to the next one.
+CI runs it with 516.1689 on Linux; it passes on every build from 515.1637 to 516.1689 that CI
+tests. A case starts with a `// Guards:` line saying what it is for, and runs to the next one.
 `// Builds: A-B` gives the builds whose DreamMaker accepts it, `// Known [A-B]: PATH  WHY` a
 proc that differs by design (or a finding not fixed yet, which says so). Debug line records
 and the global init proc are not compared.
