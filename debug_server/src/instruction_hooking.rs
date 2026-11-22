@@ -1,7 +1,7 @@
 use std::{borrow::Cow, cell::UnsafeCell, collections::HashMap, sync::Mutex};
 
 use auxtools::*;
-use instruction_hooking::{disassemble_env, InstructionHook};
+use instruction_hooking::InstructionHook;
 use lazy_static::lazy_static;
 
 use auxtools_protocol::{BreakpointReason, ContinueKind};
@@ -592,14 +592,7 @@ pub enum InstructionHookError {
 }
 
 fn instruction_length(proc: &Proc, offset: u32) -> Option<usize> {
-	let bytecode = original_bytecode(proc);
-	let mut env = disassemble_env::DisassembleEnv;
-	let (nodes, _error) = dmasm::disassembler::disassemble(&bytecode, &mut env);
-
-	nodes.into_iter().find_map(|node| match node {
-		dmasm::Node::Instruction(_, debug) if debug.offset == offset => Some(debug.bytecode.len()),
-		_ => None
-	})
+	crate::code_index::of(proc).instruction_length(offset)
 }
 
 pub fn hook_instruction(proc: &Proc, offset: u32) -> Result<(), InstructionHookError> {

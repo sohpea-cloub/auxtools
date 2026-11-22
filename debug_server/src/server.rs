@@ -653,7 +653,7 @@ impl Server {
 			proc: unnamed::proc_ref(&proc),
 			code: CodeRef { proc: proc.id.0, old: 0 },
 			file: code_index::file_of(&proc),
-			line: Self::lines_of(&proc).into_iter().next(),
+			line: code_index::of(&proc).lines().next(),
 			definitions,
 			reloaded: hot_reload::reloaded(proc.id.0)
 		})
@@ -757,7 +757,7 @@ impl Server {
 			.into_iter()
 			.filter_map(|id| Proc::from_id(raw_types::procs::ProcId(id)))
 			.map(|proc| {
-				let lines = Self::lines_in(&proc, &files);
+				let lines = code_index::of(&proc).lines_in(|file| files.contains(&Self::normalized(file)));
 				let proc = unnamed::proc_ref(&proc);
 				(proc, lines)
 			})
@@ -796,37 +796,6 @@ impl Server {
 		found
 	}
 
-	fn lines_in(proc: &Proc, files: &[String]) -> Vec<u32> {
-		let bytecode = crate::instruction_hooking::original_bytecode(proc);
-		let mut env = disassemble_env::DisassembleEnv;
-		let (nodes, _error) = dmasm::disassembler::disassemble(&bytecode, &mut env);
-		let mut inside = false;
-		let mut lines = vec![];
-		for node in nodes {
-			match node {
-				dmasm::Node::Instruction(dmasm::Instruction::DbgFile(name), _) => {
-					inside = files.contains(&Self::normalized(&String::from_utf8_lossy(&name.0)));
-				}
-				dmasm::Node::Instruction(dmasm::Instruction::DbgLine(line), _) if inside => lines.push(line),
-				_ => {}
-			}
-		}
-		lines
-	}
-
-	fn lines_of(proc: &Proc) -> Vec<u32> {
-		let bytecode = crate::instruction_hooking::original_bytecode(proc);
-		let mut env = disassemble_env::DisassembleEnv;
-		let (nodes, _error) = dmasm::disassembler::disassemble(&bytecode, &mut env);
-		nodes
-			.into_iter()
-			.filter_map(|node| match node {
-				dmasm::Node::Instruction(dmasm::Instruction::DbgLine(line), _) => Some(line),
-				_ => None
-			})
-			.collect()
-	}
-
 	fn place_of(proc: &Proc, offset: u32) -> (Option<String>, Option<u32>) {
 		let breakpoint_here = crate::instruction_hooking::hooked_at(proc, offset as usize);
 		Self::place_at(proc, offset, breakpoint_here)
@@ -850,43 +819,8 @@ impl Server {
 
 	fn offset_of(&self, proc: ProcRef, line: u32, files: Option<&[String]>) -> Option<u32> {
 		let proc = unnamed::find(&proc.path, proc.override_id)?;
-		let mut offset = None;
-		let mut at_offset = false;
-		let mut other_file = false;
-		let mut inside = files.is_none();
-
-		let bytecode = original_bytecode(&proc);
-
-		let mut env = disassemble_env::DisassembleEnv;
-		let (nodes, _error) = dmasm::disassembler::disassemble(&bytecode, &mut env);
-
-		for node in nodes {
-			if let dmasm::Node::Instruction(ins, debug) = node {
-				if at_offset {
-					match ins {
-						dmasm::Instruction::DbgFile(_) => {
-							other_file = true;
-							continue;
-						}
-						dmasm::Instruction::DbgLine(_) if other_file => continue,
-						_ => {
-							offset = Some(debug.offset);
-							break;
-						}
-					}
-				}
-
-				match ins {
-					dmasm::Instruction::DbgFile(name) => {
-						inside = files.is_none_or(|files| files.contains(&Self::normalized(&String::from_utf8_lossy(&name.0))));
-					}
-					dmasm::Instruction::DbgLine(current_line) if inside && current_line == line => at_offset = true,
-					_ => {}
-				}
-			}
-		}
-
-		offset
+		let wanted = |file: &str| files.is_some_and(|files| files.contains(&Self::normalized(file)));
+		code_index::of(&proc).offset_of(line, files.map(|_| &wanted as &dyn Fn(&str) -> bool))
 	}
 
 	const fn primitive_fields(value: &Value) -> Option<&'static [&'static str]> {
@@ -1282,27 +1216,9 @@ impl Server {
 		vars
 	}
 
-	fn entry_offset(proc: &Proc) -> u32 {
-		let bytecode = original_bytecode(proc);
-		let mut env = disassemble_env::DisassembleEnv;
-		let (nodes, _error) = dmasm::disassembler::disassemble(&bytecode, &mut env);
-
-		let mut has_line = false;
-		for node in nodes {
-			match node {
-				dmasm::Node::Instruction(dmasm::Instruction::DbgFile(_), _) => {}
-				dmasm::Node::Instruction(dmasm::Instruction::DbgLine(_), _) => has_line = true,
-				dmasm::Node::Instruction(_, debug) if has_line => return debug.offset,
-				dmasm::Node::Instruction(..) => return 0,
-				_ => {}
-			}
-		}
-		0
-	}
-
 	fn breakpoint_offset(proc: &Proc, offset: u32) -> u32 {
 		if offset == 0 {
-			Self::entry_offset(proc)
+			code_index::of(proc).entry_offset()
 		} else {
 			offset
 		}
