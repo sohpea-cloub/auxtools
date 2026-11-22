@@ -50,7 +50,7 @@ Usage: script
 ";
 
 #[cfg(feature = "test-commands")]
-const FAIL_RELOAD_USAGE: &str = "fail-reload <append>";
+const FAIL_RELOAD_USAGE: &str = "fail-reload <append|change>";
 
 const HELP_HELP: &str = "\
 Print this message or the help of the given subcommand(s)
@@ -95,7 +95,11 @@ pub fn parse(command: &str) -> Result<Command<'_>, String> {
 			at_most(&args, 1, FAIL_RELOAD_USAGE)?;
 			match args.first().copied() {
 				Some("append") => Ok(Command::FailReload(crate::hot_reload::FailAt::Append)),
-				_ => Err(format!("error: a step to fail is required: append\n\nUsage: {}\n", FAIL_RELOAD_USAGE))
+				Some("change") => Ok(Command::FailReload(crate::hot_reload::FailAt::Change)),
+				_ => Err(format!(
+					"error: a step to fail is required: append or change\n\nUsage: {}\n",
+					FAIL_RELOAD_USAGE
+				))
 			}
 		}
 		"help" => {
@@ -183,7 +187,7 @@ mod tests {
 		#[cfg(feature = "test-commands")]
 		assert_eq!(
 			parse("fail-reload").unwrap_err(),
-			"error: a step to fail is required: append\n\nUsage: fail-reload <append>\n"
+			"error: a step to fail is required: append or change\n\nUsage: fail-reload <append|change>\n"
 		);
 	}
 }

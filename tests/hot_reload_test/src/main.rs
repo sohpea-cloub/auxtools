@@ -988,6 +988,21 @@ fn debugger(built: Built) {
 	assert_eq!(eval(&mut client, "answer()"), "6");
 	assert_eq!(eval(&mut client, "global.vars[\"unadded_var\"]"), "6");
 	println!("ok: a reload stops before changing anything when an addition fails");
+
+	assert_eq!(eval(&mut client, "#fail-reload change"), "the next reload fails at Change");
+	let changes = source.edit_many("reload.dm", &[
+		("\treturn unadded()", "\treturn 7"),
+		("/obj/crate\n\tname = \"crate\"\n", "/obj/crate\n\tname = \"crate\"\n\tdensity = 1\n")
+	]);
+	assert_eq!(changes.plan.builtin_defaults.len(), 1, "{:?}", changes.plan.builtin_defaults);
+	let result = reload(&mut client, &changes);
+	assert_eq!(result.failures, ["couldn't set a built-in var: asked for with #fail-reload"]);
+	assert_eq!(result.warnings, [
+		"verb and built-in changes apply only to new instances; existing instances retain their values"
+	]);
+	assert_eq!(eval(&mut client, "answer()"), "7");
+	assert_eq!(eval(&mut client, "(new /obj/crate).density"), "0");
+	println!("ok: a step that fails after others changed the world is a failure, not a note");
 }
 
 fn definitions(built: Built) {

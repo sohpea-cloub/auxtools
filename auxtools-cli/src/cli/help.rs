@@ -429,7 +429,7 @@ Output:
 
 Exit codes:
   0  Reload was applied.
-  1  Reload was rejected or the command failed.
+  1  Reload was rejected or partly applied, or the command failed.
   2  Wait timed out.
   3  World exited before a reload result was received."
 	},

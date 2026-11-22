@@ -85,6 +85,7 @@ impl Server {
 				applied: false,
 				errors: vec![why],
 				warnings: vec![],
+				failures: vec![],
 				skipped: vec![],
 				resources: vec![]
 			};
@@ -107,6 +108,7 @@ impl Server {
 			if !files.is_empty() || !self.reloads.waiting_reloads.is_empty() {
 				let mut waiting = request.clone();
 				let mut early = vec![];
+				let mut failures = vec![];
 				if let Some(init) = &request.global_init {
 					let (globals, others) = request.plan.new_vars.iter().cloned().partition(|var| var.type_path.is_empty());
 					let (init, left) = crate::hot_reload::early_global_init(init, request);
@@ -131,6 +133,7 @@ impl Server {
 							waiting.plan.new_vars = others;
 						}
 						early.extend(result.errors.into_iter().chain(result.warnings));
+						failures = result.failures;
 					}
 				}
 				self.reloads.waiting_reloads.push((from, waiting));
@@ -146,6 +149,7 @@ impl Server {
 					applied: true,
 					errors: vec![],
 					warnings: std::iter::once(why).chain(early).collect(),
+					failures,
 					skipped: vec![],
 					resources: vec![]
 				};
@@ -199,11 +203,18 @@ impl Server {
 		self.eval.eval_error = None;
 
 		let mut warnings = id_warnings;
+		let mut failures = vec![];
 		let mut skipped = vec![];
 		let prepared = Self::prepare_hot_reload(request, &mut warnings, &mut skipped);
 		let result = match prepared {
 			Ok((appended, applied)) => {
-				hot_reload::apply(appended, &mut self.breakpoints.claims, &mut self.breakpoints.moved, &mut warnings);
+				hot_reload::apply(
+					appended,
+					&mut self.breakpoints.claims,
+					&mut self.breakpoints.moved,
+					&mut warnings,
+					&mut failures
+				);
 				warnings.extend(applied.warnings);
 				let resent = if applied.appearances.is_empty() {
 					Ok(0)
@@ -211,7 +222,7 @@ impl Server {
 					resource_reload::resend(&applied.appearances)
 				};
 				if let Err(e) = resent {
-					warnings.push(format!("resource reload: could not send updated appearances to clients: {}", e));
+					failures.push(format!("resource reload: could not send updated appearances to clients: {}", e));
 				}
 				self.reloads.record_resource_ids(&applied.reloaded, &mut warnings);
 				self.reloads.record_named_files(request);
@@ -219,6 +230,7 @@ impl Server {
 					applied: true,
 					errors: vec![],
 					warnings,
+					failures,
 					skipped,
 					resources: applied.reloaded
 				}
@@ -228,6 +240,7 @@ impl Server {
 				applied: false,
 				errors,
 				warnings,
+				failures,
 				skipped,
 				resources: vec![]
 			}
@@ -272,6 +285,12 @@ impl Server {
 			let result = self.hot_reload(&request, from);
 			if !result.applied {
 				self.notify(format!("Hot reload failed as world/New started: {}", result.errors.join("; ")));
+			}
+			if !result.failures.is_empty() {
+				self.notify(format!(
+					"Hot reload partly applied as world/New started; restart the world to be sure it runs the new code: {}",
+					result.failures.join("; ")
+				));
 			}
 			for warning in result.warnings {
 				self.notify(format!("Hot reload: {}", warning));

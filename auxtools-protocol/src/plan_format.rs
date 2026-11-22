@@ -10,7 +10,7 @@ use dmasm::{
 
 use crate::{HotReloadRequest, HotReloadResource, PROTOCOL_VERSION};
 
-const RECORDED: (u32, u64) = (14, 0x3266_2E27_70C9_3EA4);
+const RECORDED: (u32, u64) = (15, 0x3266_2E27_70C9_3EA4);
 
 fn key(path: &str, override_id: u32) -> ProcKey {
 	ProcKey {

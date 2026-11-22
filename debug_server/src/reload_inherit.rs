@@ -149,11 +149,11 @@ pub(super) fn prepare(inherited: &[BuiltinInherited], prepared: &mut Prepared, e
 	prepared.builtin_inherits = out.into_iter().map(|(_, t, var)| (t, var)).collect();
 }
 
-pub(super) fn apply(inherits: &[(u32, String)], warnings: &mut Vec<String>) {
+pub(super) fn apply(inherits: &[(u32, String)], failures: &mut Vec<String>) {
 	for (type_id, var) in inherits {
 		let copied = runtime_tables::type_field(*type_id, type_fields::PARENT).and_then(|parent| copy_builtin(*type_id, parent, var));
 		if let Err(e) = copied {
-			warnings.push(format!("{}: could not inherit built-in {}: {}", type_path(*type_id), var, e));
+			failures.push(format!("{}: could not inherit built-in {}: {}", type_path(*type_id), var, e));
 		}
 	}
 }

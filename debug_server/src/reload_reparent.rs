@@ -245,7 +245,7 @@ pub(super) fn apply_tree(prepared: &mut PreparedReparents) {
 	}
 }
 
-pub(super) fn apply_builtins(prepared: &PreparedReparents, warnings: &mut Vec<String>) {
+pub(super) fn apply_builtins(prepared: &PreparedReparents, warnings: &mut Vec<String>, failures: &mut Vec<String>) {
 	for inherited in &prepared.builtins {
 		match inherit_builtins(inherited) {
 			Ok(None) => {}
@@ -254,7 +254,7 @@ pub(super) fn apply_builtins(prepared: &PreparedReparents, warnings: &mut Vec<St
 				type_path(inherited.type_id),
 				bounds
 			)),
-			Err(e) => warnings.push(format!(
+			Err(e) => failures.push(format!(
 				"{}: could not inherit built-ins from the new parent: {}",
 				type_path(inherited.type_id),
 				e

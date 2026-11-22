@@ -66,6 +66,17 @@ impl Adapter {
 	}
 
 	pub(super) fn journal_reload(&mut self, applied: bool, summary: String, errors: Vec<String>, warnings: Vec<String>) {
+		self.journal_reload_failures(applied, summary, errors, warnings, vec![]);
+	}
+
+	pub(super) fn journal_reload_failures(
+		&mut self,
+		applied: bool,
+		summary: String,
+		errors: Vec<String>,
+		warnings: Vec<String>,
+		failures: Vec<String>
+	) {
 		let Some(debuggee) = &mut self.debuggee else {
 			return;
 		};
@@ -73,7 +84,8 @@ impl Adapter {
 			applied,
 			summary,
 			errors,
-			warnings
+			warnings,
+			failures
 		}));
 	}
 
@@ -92,12 +104,27 @@ impl Adapter {
 
 pub fn reload_by_another(entry: &aux::JournalEntry) -> Option<String> {
 	let aux::JournalEvent::Reload {
-		summary, errors, warnings, ..
+		summary,
+		errors,
+		warnings,
+		failures,
+		..
 	} = &entry.event
 	else {
 		return None;
 	};
-	let mut text = format!("Hot reload (by another launcher): {}", summary);
+	let mut text = if failures.is_empty() {
+		format!("Hot reload (by another launcher): {}", summary)
+	} else {
+		format!(
+			"Hot reload partly applied (by another launcher): {}; {}",
+			summary,
+			auxtools_cli::reload::RESTART
+		)
+	};
+	for f in failures {
+		text += &format!("\n    failed: {}", f);
+	}
 	for e in errors {
 		text += &format!("\n    {}", e);
 	}

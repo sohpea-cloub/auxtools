@@ -193,9 +193,19 @@ fn add_helper_procs() -> Result<(), String> {
 	let appended = hot_reload::prepare(&request, &mut warnings, &mut vec![])
 		.and_then(hot_reload::append)
 		.map_err(|errors| errors.join("; "))?;
-	hot_reload::apply(appended, &mut HashMap::<_, BTreeMap<(), ()>>::new(), &mut HashMap::new(), &mut warnings);
+	let mut failures = vec![];
+	hot_reload::apply(
+		appended,
+		&mut HashMap::<_, BTreeMap<(), ()>>::new(),
+		&mut HashMap::new(),
+		&mut warnings,
+		&mut failures
+	);
 	for warning in warnings {
 		eprintln!("auxtools: {}", warning);
+	}
+	for failure in failures {
+		eprintln!("auxtools: the debugger's helper procs are partly added: {}", failure);
 	}
 	Ok(())
 }

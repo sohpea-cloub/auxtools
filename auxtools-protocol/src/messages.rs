@@ -352,7 +352,8 @@ pub enum JournalEvent {
 		applied: bool,
 		summary: String,
 		errors: Vec<String>,
-		warnings: Vec<String>
+		warnings: Vec<String>,
+		failures: Vec<String>
 	},
 	Loaded {
 		load: u32
@@ -781,6 +782,8 @@ pub struct HotReloadResult {
 	pub applied: bool,
 	pub errors: Vec<String>,
 	pub warnings: Vec<String>,
+	#[serde(default)]
+	pub failures: Vec<String>,
 	pub skipped: Vec<String>,
 	#[serde(default)]
 	pub resources: Vec<ReloadedResource>

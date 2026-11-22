@@ -73,6 +73,7 @@ pub fn applied() -> Response {
 		applied: true,
 		errors: vec![],
 		warnings: vec![],
+		failures: vec![],
 		skipped: vec![],
 		resources: vec![]
 	})

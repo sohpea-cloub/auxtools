@@ -74,7 +74,8 @@ pub fn wait_reload(world: &mut World, since: Option<u64>, timeout: Option<Durati
 	};
 	print(&entry, json);
 	match entry.event {
-		JournalEvent::Reload { applied: true, .. } => Ok(()),
+		JournalEvent::Reload { applied: true, failures, .. } if failures.is_empty() => Ok(()),
+		JournalEvent::Reload { applied: true, .. } => Err(format!("the hot reload partly applied: {}.", auxtools_cli::reload::RESTART).into()),
 		_ => Err("the hot reload was rejected.".into())
 	}
 }
@@ -254,12 +255,18 @@ pub fn describe(event: &JournalEvent) -> (String, Vec<String>) {
 			applied,
 			summary,
 			errors,
-			warnings
+			warnings,
+			failures
 		} => (
-			format!("hot reload {}: {}", if *applied { "applied" } else { "not applied" }, summary),
-			errors
+			match (applied, failures.is_empty()) {
+				(true, true) => format!("hot reload applied: {}", summary),
+				(true, false) => format!("hot reload partly applied: {}; {}", summary, auxtools_cli::reload::RESTART),
+				(false, _) => format!("hot reload not applied: {}", summary)
+			},
+			failures
 				.iter()
-				.map(|e| format!("error: {}", e))
+				.map(|f| format!("failed: {}", f))
+				.chain(errors.iter().map(|e| format!("error: {}", e)))
 				.chain(warnings.iter().map(|w| format!("warning: {}", w)))
 				.collect()
 		),
@@ -346,8 +353,16 @@ pub fn to_json(entry: &JournalEntry) -> serde_json::Value {
 			applied,
 			summary,
 			errors,
-			warnings
-		} => json!({ "kind": "reload", "applied": applied, "summary": summary, "errors": errors, "warnings": warnings }),
+			warnings,
+			failures
+		} => json!({
+			"kind": "reload",
+			"applied": applied,
+			"summary": summary,
+			"errors": errors,
+			"warnings": warnings,
+			"failures": failures
+		}),
 		JournalEvent::Loaded { load } => json!({ "kind": "world", "event": "loaded", "load": load }),
 		JournalEvent::Output { lines } => json!({ "kind": "output", "lines": lines }),
 		JournalEvent::HoldEnded { seconds } => json!({ "kind": "world", "event": "hold_ended", "seconds": seconds }),
@@ -436,10 +451,34 @@ mod tests {
 				applied: false,
 				summary: "couldn't read the code".to_owned(),
 				errors: vec!["a.dm, line 3: bad".to_owned()],
-				warnings: vec!["careful".to_owned()]
+				warnings: vec!["careful".to_owned()],
+				failures: vec![]
 			},
 			..runtime()
 		};
 		assert!(block(&entry).ends_with("hot reload not applied: couldn't read the code\n  error: a.dm, line 3: bad\n  warning: careful"));
+	}
+
+	#[test]
+	fn a_reload_that_partly_applied_says_what_failed_and_to_restart() {
+		let entry = JournalEntry {
+			event: JournalEvent::Reload {
+				applied: true,
+				summary: "reloaded /answer".to_owned(),
+				errors: vec![],
+				warnings: vec!["careful".to_owned()],
+				failures: vec!["couldn't set a built-in var: no".to_owned()]
+			},
+			..runtime()
+		};
+		assert!(
+			block(&entry).ends_with(
+				"hot reload partly applied: reloaded /answer; restart the world to be sure it runs the new code\n  failed: couldn't set a built-in \
+				 var: no\n  warning: careful"
+			),
+			"{}",
+			block(&entry)
+		);
+		assert_eq!(to_json(&entry)["failures"][0], "couldn't set a built-in var: no");
 	}
 }

@@ -873,20 +873,32 @@ impl Adapter {
 		} else {
 			format!("reload failed ({})", summary)
 		};
-		self.journal_reload(
+		self.journal_reload_failures(
 			result.applied,
 			summary_of_outcome,
 			result.errors.clone(),
-			notes.into_iter().chain(result.warnings.iter().cloned()).collect()
+			notes.into_iter().chain(result.warnings.iter().cloned()).collect(),
+			result.failures.clone()
 		);
 
 		let took = self.reload_started.take().map_or(0, |started| started.elapsed().as_millis());
-		if result.applied {
-			self.out.console(format!("Hot reload: {} in {} ms", summary, took));
-			self.reload_state("reloaded", Some(summary.clone()));
-		} else {
+		if !result.applied {
 			self.out.console("Hot reload failed:");
 			self.reload_state("failed", Some(result.errors.first().cloned().unwrap_or_default()));
+		} else if let Some(failed) = result.failures.first() {
+			self.out.console(format!(
+				"Hot reload partly applied: {} in {} ms; {}",
+				summary,
+				took,
+				auxtools_cli::reload::RESTART
+			));
+			self.reload_state("failed", Some(format!("partly applied: {}", failed)));
+		} else {
+			self.out.console(format!("Hot reload: {} in {} ms", summary, took));
+			self.reload_state("reloaded", Some(summary.clone()));
+		}
+		for f in &result.failures {
+			self.out.console(format!("    failed: {}", f));
 		}
 		for e in &result.errors {
 			self.out.console(format!("    {}", e));

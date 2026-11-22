@@ -3,6 +3,8 @@ use std::path::PathBuf;
 use auxtools_protocol::HotReloadRequest;
 use dmasm::reload::{Changes, Plan, Refusal, Snapshot};
 
+pub const RESTART: &str = "restart the world to be sure it runs the new code";
+
 pub fn request(changes: &Changes, before: &Snapshot, restarted: bool) -> HotReloadRequest {
 	let mut plan = changes.plan.clone();
 	without_existing_statics(&mut plan, before);
