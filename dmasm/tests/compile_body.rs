@@ -589,3 +589,41 @@ fn null_is_read_alone_as_in_a_body() {
         &["GetVar null", "PushVal null", "PushInt 1"],
     );
 }
+
+#[test]
+fn parentheses_give_a_value_alone_as_in_a_body() {
+    for code in [
+        "(by)",
+        "(by).hp",
+        "(by.hp).len",
+        "&(by)",
+        "*(by)",
+        "*(&by)",
+        "-(by)",
+        "bump((by), (hp))",
+    ] {
+        same_alone_and_in_a_body(code);
+    }
+    assert_has(
+        &same_alone_and_in_a_body("(by).hp"),
+        &["GetVar arg(2)", "SetVar cache", "GetVar cache[\"hp\"]"],
+    );
+}
+
+#[test]
+fn a_result_is_regrouped_alone_as_in_a_body() {
+    assert_has(
+        &same_alone_and_in_a_body("by + (hp + 1) + 2"),
+        &["PushInt 1", "Add", "PushInt 2", "Add", "Add"],
+    );
+    for code in [
+        "(by + (hp + 1) + 2)",
+        "bump(by + (hp + 1) + 2)",
+        "by * (hp * 2) * 3",
+        "by | (hp | 1) | 2",
+        "by - (hp - 1) - 2",
+        "by ? by + (1 + hp) + 2 : 0",
+    ] {
+        same_alone_and_in_a_body(code);
+    }
+}

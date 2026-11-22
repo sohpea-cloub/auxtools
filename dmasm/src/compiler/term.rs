@@ -19,12 +19,11 @@ pub(super) fn emit(compiler: &mut Compiler<'_>, term: Term) -> Result<EvalKind, 
         _ => RelativeCall::Itself,
     };
     match term {
-        Term::Expr(expr) if compiler.proc.is_some() => {
+        Term::Expr(expr) => {
             compiler.regroup_root = true;
             let kind = compiler.emit_expr(*expr)?;
             compiler.emit_move_to_stack(kind)
         }
-        Term::Expr(expr) => compiler.emit_expr(*expr),
 
         Term::Null => Ok(EvalKind::Var(Variable::Null)),
         Term::Int(i) => {

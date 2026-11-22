@@ -157,7 +157,7 @@ pub(super) fn emit(
         BinaryOp::Add | BinaryOp::Mul | BinaryOp::BitAnd | BinaryOp::BitOr | BinaryOp::BitXor
     );
     let root = std::mem::take(&mut compiler.regroup_chain);
-    let (lhs, rhs) = if root && compiler.proc.is_some() {
+    let (lhs, rhs) = if root {
         let (lhs, rhs) = if associative {
             regroup(op, lhs, rhs)
         } else {

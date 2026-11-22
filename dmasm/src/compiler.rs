@@ -263,6 +263,7 @@ pub fn compile_expr_warned(
         }
     }
 
+    compiler.regroup_root = true;
     let kind = compiler.emit_expr(expr)?;
     compiler.emit_move_to_stack(kind)?;
 
@@ -1026,18 +1027,16 @@ impl<'a> Compiler<'a> {
                 })
             }
             Expression::Base { term, follow }
-                if self.proc.is_some()
-                    && match follow.first().map(|f| &f.elem) {
-                        Some(Follow::Unary(dreammaker::ast::UnaryOp::Reference)) => true,
-                        Some(Follow::Unary(dreammaker::ast::UnaryOp::Dereference)) => matches!(
-                            &term.elem,
-                            dreammaker::ast::Term::Expr(inner) if matches!(&**inner,
-                                Expression::Base { follow, .. }
-                                    if !follow.iter().any(|f| matches!(f.elem, Follow::Unary(_))))
-                        ),
-                        _ => false,
-                    }
-                    && matches!(&term.elem, dreammaker::ast::Term::Expr(inner)
+                if match follow.first().map(|f| &f.elem) {
+                    Some(Follow::Unary(dreammaker::ast::UnaryOp::Reference)) => true,
+                    Some(Follow::Unary(dreammaker::ast::UnaryOp::Dereference)) => matches!(
+                        &term.elem,
+                        dreammaker::ast::Term::Expr(inner) if matches!(&**inner,
+                            Expression::Base { follow, .. }
+                                if !follow.iter().any(|f| matches!(f.elem, Follow::Unary(_))))
+                    ),
+                    _ => false,
+                } && matches!(&term.elem, dreammaker::ast::Term::Expr(inner)
                         if matches!(**inner, Expression::Base { .. })) =>
             {
                 let dreammaker::ast::Term::Expr(inner) = term.elem else {
