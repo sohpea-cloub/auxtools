@@ -31,6 +31,7 @@ pub struct CompiledProc {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ByondBug {
+    pub id: crate::diagnostic::Id,
     pub line: Option<u32>,
     pub text: String,
 }

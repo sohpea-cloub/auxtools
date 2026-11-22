@@ -1846,7 +1846,10 @@ fn warnings_of(
             None => bug.text.clone(),
         };
         assert!(
-            warnings.iter().any(|w| w.starts_with(&text)),
+            compiled
+                .warnings
+                .iter()
+                .any(|w| w.id == bug.id && w.to_string().starts_with(&text)),
             "{:?}",
             warnings
         );

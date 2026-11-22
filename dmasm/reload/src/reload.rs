@@ -526,6 +526,7 @@ impl std::fmt::Display for ParseError {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KnownBug {
+    pub id: Id,
     pub file: String,
     pub line: Option<u32>,
     pub proc: ProcKey,
@@ -1372,6 +1373,7 @@ impl Snapshot {
                 Ok(compiled) => found
                     .bugs
                     .extend(compiled.byond_bugs.into_iter().map(|bug| KnownBug {
+                        id: bug.id,
                         file: file.clone(),
                         line: bug.line,
                         proc: key.clone(),

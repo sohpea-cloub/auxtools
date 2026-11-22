@@ -187,6 +187,10 @@ logical assignment before 516.1673, indexed pointers from 516.1668, `*(&x)`
 before 516.1668, the copied quirks, and zero-weight `pick()` endings before 516.1689.
 `Snapshot::known_bugs` collects these across the project for `auxtools check`.
 
+Each warning is a `diagnostic::Diagnostic` with its line and an id: one for each
+compatibility difference, and one for each of BYOND's bugs (the `Byond` ids), which a
+`byond_bugs` entry shares with its warning.
+
 Warnings cover parameter-default division, safe-call receivers, logical assignment
 before 516.1673, indexed pointer assignment from 516.1668, `*(&x)` before 516.1668,
 out-of-range bit operands, zero-weight `pick()` endings before 516.1689, and

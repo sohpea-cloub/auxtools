@@ -1296,6 +1296,7 @@ impl<'a> Compiler<'a> {
     fn record(&self, id: Id, line: Option<u32>, text: &str, byond_bug: Option<&str>) {
         if let Some(bug) = byond_bug {
             let bug = ByondBug {
+                id,
                 line,
                 text: bug.to_owned(),
             };

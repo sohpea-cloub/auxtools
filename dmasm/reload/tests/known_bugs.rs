@@ -1,5 +1,6 @@
+use dmasm_compiler::diagnostic::Id;
 use dmasm_compiler::ByondVersion;
-use dmasm_reload::reload::Snapshot;
+use dmasm_reload::reload::{KnownBugs, Snapshot};
 
 const CODE: &str = "\
 /datum/num/proc/operator<<=(b)
@@ -50,7 +51,7 @@ const CODE: &str = "\
 \ta?.me().n = 1
 ";
 
-fn found(byond: ByondVersion) -> (Vec<(u32, String, String)>, Vec<String>) {
+fn checked(byond: ByondVersion) -> KnownBugs {
     let ctx = dreammaker::Context::default();
     byond.read_as(&ctx);
     let pp = dreammaker::Preprocessor::from_buffer(&ctx, "code.dm".into(), CODE);
@@ -60,7 +61,11 @@ fn found(byond: ByondVersion) -> (Vec<(u32, String, String)>, Vec<String>) {
     assert!(ctx.errors().is_empty(), "{:?}", ctx.errors());
     let mut snapshot = Snapshot::from_tree(ctx, tree);
     snapshot.set_byond(byond);
-    let found = snapshot.known_bugs();
+    snapshot.known_bugs()
+}
+
+fn found(byond: ByondVersion) -> (Vec<(u32, String, String)>, Vec<String>) {
+    let found = checked(byond);
     assert!(
         found.bugs.iter().all(|bug| bug.file == "code.dm"),
         "{:?}",
@@ -178,6 +183,33 @@ fn only_the_bugs_of_the_build_are_found() {
             ),
             row(44, "/receiver", RECEIVER),
             row(45, "/receiver", RECEIVER),
+        ]
+    );
+}
+
+#[test]
+fn findings_have_their_bugs_ids() {
+    let ids: Vec<Id> = checked(ByondVersion::new(516, 1688))
+        .bugs
+        .iter()
+        .map(|bug| bug.id)
+        .collect();
+    assert_eq!(
+        ids,
+        [
+            Id::ByondShiftAssignDiscarded,
+            Id::ByondEquivalenceDiscarded,
+            Id::ByondAreaUncross,
+            Id::ByondContinueToDoWhile,
+            Id::ByondListLoopsAcrossTry,
+            Id::ByondPointerIndexDropped,
+            Id::ByondPointerIndexDropped,
+            Id::ByondPointerIndexDropped,
+            Id::ByondPointerIndexDropped,
+            Id::ByondDefaultDivisionDropped,
+            Id::ByondZeroWeightPick,
+            Id::ByondSafeChainReceiver,
+            Id::ByondSafeChainReceiver,
         ]
     );
 }
