@@ -1,6 +1,7 @@
 use std::{
 	collections::HashSet,
 	path::{Path, PathBuf},
+	sync::atomic::{AtomicBool, Ordering},
 	time::{Duration, Instant}
 };
 
@@ -19,9 +20,9 @@ struct Source {
 }
 
 impl Source {
-	fn copy_host() -> Source {
+	fn copy_host(section: &str) -> Source {
 		let source = Source {
-			dir: TempDir::new("hot_reload_test_host"),
+			dir: TempDir::new(&format!("hot_reload_test_{}", section)),
 			options: ParseOptions::default(),
 			snapshot: None
 		};
@@ -269,12 +270,61 @@ fn lines_with_code(client: &mut Client, file: &str, start: u32, end: u32) -> Vec
 	}
 }
 
+const SECTIONS: &[(&str, fn(Built))] = &[
+	("procs", procs),
+	("debugger", debugger),
+	("definitions", definitions),
+	("types", types),
+	("declarations", declarations),
+	("resources", resources)
+];
+
 fn main() {
-	let mut source = Source::copy_host();
+	let wanted: Vec<String> = std::env::args().skip(1).collect();
+	if wanted == ["--list"] {
+		for (section, _) in SECTIONS {
+			println!("{}", section);
+		}
+		return;
+	}
+	for name in &wanted {
+		assert!(
+			SECTIONS.iter().any(|(section, _)| section == name),
+			"there's no section {}; the sections are {:?}",
+			name,
+			SECTIONS.iter().map(|(section, _)| *section).collect::<Vec<_>>()
+		);
+	}
+	let chosen: Vec<_> = SECTIONS
+		.iter()
+		.filter(|(name, _)| wanted.is_empty() || wanted.iter().any(|w| w == name))
+		.collect();
+	let mut next = chosen.first().map(|(name, _)| build(name));
+	for (i, (name, run)) in chosen.iter().enumerate() {
+		let built = next.take().unwrap();
+		next = chosen.get(i + 1).map(|(name, _)| build(name));
+		println!("--- {}", name);
+		run(built);
+	}
+	println!("Hot reload tests succeeded");
+}
 
+struct Built {
+	world: World,
+	source: Source
+}
+
+fn build(section: &str) -> Built {
+	let source = Source::copy_host(section);
 	paths::compile(&source.dme());
-
 	let world = World::start(&source.dir.join("hot_reload_test_host.dmb"), &[]);
+	Built { world, source }
+}
+
+static VERSION_SHOWN: AtomicBool = AtomicBool::new(false);
+
+fn start(built: Built) -> (Source, World, Client, Client) {
+	let Built { world, mut source } = built;
 
 	let mut client = world.connect();
 	client.send(Request::CatchRuntimes {
@@ -287,17 +337,16 @@ fn main() {
 		Response::ByondVersion { version, build } => (version, build),
 		other => panic!("expected ByondVersion, got {:?}", other)
 	};
-	println!("ok: BYOND {}.{}", version, build);
+	if !VERSION_SHOWN.swap(true, Ordering::Relaxed) {
+		println!("ok: BYOND {}.{}", version, build);
+	}
 	source.options.byond = Some((version, build));
 	source.parse();
+	(source, world, client, watcher)
+}
 
-	let built_lines = [
-		lines_with_code(&mut client, "reload.dm", 1, 10_000),
-		lines_with_code(&mut client, "main.dm", 1, 10_000)
-	];
-	let built_line = source.line_of("reload.dm", "\tx += 1");
-	let built_place = located(&mut client, "reload.dm", built_line);
-	assert_eq!(built_place.len(), 1, "{:?}", built_place);
+fn procs(built: Built) {
+	let (mut source, _world, mut client, mut watcher) = start(built);
 
 	assert_eq!(eval(&mut client, "answer()"), "1");
 	let changes = source.edit("reload.dm", "/proc/answer()\n\treturn 1", "/proc/answer()\n\treturn 2");
@@ -343,6 +392,10 @@ fn main() {
 	reload(&mut watcher, &changes);
 	assert_eq!(eval(&mut client, "counter()"), "12");
 	println!("ok: static local value preservation");
+}
+
+fn debugger(built: Built) {
+	let (mut source, world, mut client, mut watcher) = start(built);
 
 	let line = source.line_of("reload.dm", "\tx += 1");
 	let old_offset = offset_of(&mut client, "/breakpoint_target", line);
@@ -366,7 +419,7 @@ fn main() {
 
 	let changes = source.edit(
 		"reload.dm",
-		"/proc/answer()\n\treturn 2",
+		"/proc/answer()\n\treturn 1",
 		"/proc/answer()\n\tvar/unused = 1\n\tunused++\n\treturn 3"
 	);
 	assert!(changes.plan.line_moves.iter().any(|m| m.proc.path == "/breakpoint_target"));
@@ -754,6 +807,62 @@ fn main() {
 	}
 	println!("ok: ordered reload and evaluation");
 
+	let mut request = reload_request(&source.edit("reload.dm", "\treturn 4", "\treturn 5"));
+	if let Request::HotReload(HotReloadRequest { plan, .. }) = &mut request {
+		let mut bad = plan.reloads[0].clone();
+		bad.proc.path = "/a_proc_the_world_doesnt_have".to_owned();
+		plan.reloads.push(bad);
+	}
+	let result = expect_reload_result(client.request(request));
+	assert!(!result.applied);
+	assert!(
+		result.errors.iter().any(|e| e.contains("a_proc_the_world_doesnt_have")),
+		"{:?}",
+		result.errors
+	);
+	assert_eq!(eval(&mut client, "answer()"), "4");
+	println!("ok: rejected reload preserves existing code");
+
+	let request = Request::HotReload(HotReloadRequest {
+		plan: dmasm::reload::Plan {
+			removed_procs: vec![dmasm::reload::RemovedProc {
+				proc: dmasm::reload::ProcKey {
+					path: "/datum/declared/never_built".to_owned(),
+					override_id: 0
+				},
+				type_path: "/datum/declared".to_owned(),
+				name: "never_built".to_owned(),
+				verb: false
+			}],
+			removed_vars: [
+				("/datum/declared", "count"),
+				("/datum/declared", "never_built"),
+				("/datum/never_built", "count")
+			]
+			.map(|(type_path, var)| dmasm::reload::RemovedVar {
+				type_path: type_path.to_owned(),
+				var: var.to_owned()
+			})
+			.to_vec(),
+			..Default::default()
+		},
+		..Default::default()
+	});
+	let result = expect_reload_result(client.request(request));
+	assert!(result.applied, "{:?}", result.errors);
+	assert_eq!(result.skipped, ["/datum/declared/never_built"]);
+	assert_eq!(result.warnings, [
+		"/datum/declared: var count was removed from source but retained in the running world",
+		"/datum/declared: var never_built was removed from source and isn't in the running world",
+		"/datum/never_built: var count was removed from source and isn't in the running world",
+		"/datum/declared/never_built: not found in the running world; skipping removal"
+	]);
+	println!("ok: removals the world never had");
+}
+
+fn definitions(built: Built) {
+	let (mut source, _world, mut client, mut watcher) = start(built);
+
 	let changes = source.edit(
 		"reload.dm",
 		"/proc/uses_helper()\n\treturn 0",
@@ -859,7 +968,7 @@ fn main() {
 	let before: u32 = eval(&mut client, "counter()").parse().unwrap();
 	let changes = source.edit(
 		"reload.dm",
-		"\tvar/static/count = 0\n\tcount += 10\n\treturn count",
+		"\tvar/static/count = 0\n\tcount++\n\treturn count",
 		"\tvar/static/count = 0\n\tvar/static/bonus = 100\n\tcount += 10\n\treturn count + bonus\n\n/proc/visits()\n\tvar/static/v = \
 		 10\n\tv++\n\treturn v"
 	);
@@ -993,6 +1102,10 @@ fn main() {
 	assert_eq!(eval(&mut client, "new_items(/datum/bag/fixed)"), "\"z\"");
 	assert_eq!(eval(&mut client, "new_tags()"), "2");
 	println!("ok: computed default becomes constant");
+}
+
+fn types(built: Built) {
+	let (mut source, _world, mut client, mut watcher) = start(built);
 
 	let changes = source.edit(
 		"reload.dm",
@@ -1105,6 +1218,29 @@ fn main() {
 	assert_eq!(eval(&mut client, "verb_report(new /mob/helper/small)"), "\"Wave Hello:,Greet:Friends\"");
 	assert_eq!(eval(&mut client, "helper_greets(new /mob/helper/small)"), "\"hi\"");
 	println!("ok: verb changes");
+
+	let changes = source.edit(
+		"reload.dm",
+		"/proc/first_def()\n",
+		"/mob/helper/tiny\n\tname = \"tiny\"\n\tsee_in_dark = 6\n\n/proc/mob_report(type)\n\tvar/mob/m = new type\n\treturn \"[m.type] [m.name] \
+		 [m.sight] [m.see_in_dark] [istype(m, /mob/helper)] [ismob(m)] [verb_report(m)]\"\n\n/proc/first_def()\n"
+	);
+	assert_eq!(changes.plan.new_types.len(), 1, "{:?}", changes.refused);
+	reload(&mut watcher, &changes);
+	assert_eq!(
+		eval(&mut client, "mob_report(/mob/helper/tiny)"),
+		"\"/mob/helper/tiny tiny 0 6 1 1 Wave Hello:,Greet:Friends\""
+	);
+	assert_eq!(eval(&mut client, "helper_greets(new /mob/helper/tiny)"), "\"hi\"");
+	assert_eq!(eval(&mut client, "text2path(\"/mob/helper/tiny\")"), "/mob/helper/tiny");
+	assert_eq!(eval(&mut client, "length(typesof(/mob/helper))"), "3");
+	let changes = source.edit("reload.dm", "/mob/helper/small\n", "/mob/helper/small\n\tsight = 4\n");
+	reload(&mut watcher, &changes);
+	assert_eq!(
+		eval(&mut client, "mob_report(/mob/helper/small)"),
+		"\"/mob/helper/small small 4 2 1 1 Wave Hello:,Greet:Friends\""
+	);
+	println!("ok: new mob types");
 
 	let changes = source.edit(
 		"reload.dm",
@@ -1224,6 +1360,10 @@ fn main() {
 	assert_eq!(eval(&mut client, "(new /obj/crate/bounded).bound_width"), "8");
 	assert_eq!(eval(&mut client, "(new /obj/crate/bounded).bound_height"), "24");
 	println!("ok: var-table built-ins and bounds");
+}
+
+fn declarations(built: Built) {
+	let (mut source, _world, mut client, mut watcher) = start(built);
 
 	let changes = source.edit(
 		"reload.dm",
@@ -1374,81 +1514,6 @@ fn main() {
 	println!("ok: proc rename");
 
 	let changes = source.edit(
-		"reload.dm",
-		"/proc/first_def()\n",
-		"/mob/helper/tiny\n\tname = \"tiny\"\n\tsee_in_dark = 6\n\n/proc/mob_report(type)\n\tvar/mob/m = new type\n\treturn \"[m.type] [m.name] \
-		 [m.sight] [m.see_in_dark] [istype(m, /mob/helper)] [ismob(m)] [verb_report(m)]\"\n\n/proc/first_def()\n"
-	);
-	assert_eq!(changes.plan.new_types.len(), 1, "{:?}", changes.refused);
-	reload(&mut watcher, &changes);
-	assert_eq!(
-		eval(&mut client, "mob_report(/mob/helper/tiny)"),
-		"\"/mob/helper/tiny tiny 0 6 1 1 Wave Hello:,Greet:Friends\""
-	);
-	assert_eq!(eval(&mut client, "helper_greets(new /mob/helper/tiny)"), "\"hi\"");
-	assert_eq!(eval(&mut client, "text2path(\"/mob/helper/tiny\")"), "/mob/helper/tiny");
-	assert_eq!(eval(&mut client, "length(typesof(/mob/helper))"), "3");
-	let changes = source.edit("reload.dm", "/mob/helper/small\n", "/mob/helper/small\n\tsight = 4\n");
-	reload(&mut watcher, &changes);
-	assert_eq!(
-		eval(&mut client, "mob_report(/mob/helper/small)"),
-		"\"/mob/helper/small small 4 2 1 1 Wave Hello:,Greet:Friends\""
-	);
-	println!("ok: new mob types");
-
-	let mut request = reload_request(&source.edit("reload.dm", "\treturn 4", "\treturn 5"));
-	if let Request::HotReload(HotReloadRequest { plan, .. }) = &mut request {
-		let mut bad = plan.reloads[0].clone();
-		bad.proc.path = "/a_proc_the_world_doesnt_have".to_owned();
-		plan.reloads.push(bad);
-	}
-	let result = expect_reload_result(client.request(request));
-	assert!(!result.applied);
-	assert!(
-		result.errors.iter().any(|e| e.contains("a_proc_the_world_doesnt_have")),
-		"{:?}",
-		result.errors
-	);
-	assert_eq!(eval(&mut client, "answer()"), "4");
-	println!("ok: rejected reload preserves existing code");
-
-	let request = Request::HotReload(HotReloadRequest {
-		plan: dmasm::reload::Plan {
-			removed_procs: vec![dmasm::reload::RemovedProc {
-				proc: dmasm::reload::ProcKey {
-					path: "/datum/declared/never_built".to_owned(),
-					override_id: 0
-				},
-				type_path: "/datum/declared".to_owned(),
-				name: "never_built".to_owned(),
-				verb: false
-			}],
-			removed_vars: [
-				("/datum/declared", "count"),
-				("/datum/declared", "never_built"),
-				("/datum/never_built", "count")
-			]
-			.map(|(type_path, var)| dmasm::reload::RemovedVar {
-				type_path: type_path.to_owned(),
-				var: var.to_owned()
-			})
-			.to_vec(),
-			..Default::default()
-		},
-		..Default::default()
-	});
-	let result = expect_reload_result(client.request(request));
-	assert!(result.applied, "{:?}", result.errors);
-	assert_eq!(result.skipped, ["/datum/declared/never_built"]);
-	assert_eq!(result.warnings, [
-		"/datum/declared: var count was removed from source but retained in the running world",
-		"/datum/declared: var never_built was removed from source and isn't in the running world",
-		"/datum/never_built: var count was removed from source and isn't in the running world",
-		"/datum/declared/never_built: not found in the running world; skipping removal"
-	]);
-	println!("ok: removals the world never had");
-
-	let changes = source.edit(
 		"main.dm",
 		"/datum/chain/say()\n\treturn ..() + \"3\"",
 		"/datum/chain/say()\n\treturn ..() + \"2\"\n\n/datum/chain/say()\n\treturn ..() + \"3\""
@@ -1584,6 +1649,18 @@ fn main() {
 		assert!(definition_at(&mut client, path, 1, line), "{} isn't numbered 1", path);
 	}
 	println!("ok: verb, world and global definition edits");
+}
+
+fn resources(built: Built) {
+	let (mut source, world, mut client, mut watcher) = start(built);
+
+	let built_lines = [
+		lines_with_code(&mut client, "reload.dm", 1, 10_000),
+		lines_with_code(&mut client, "main.dm", 1, 10_000)
+	];
+	let built_line = source.line_of("reload.dm", "\tx += 1");
+	let built_place = located(&mut client, "reload.dm", built_line);
+	assert_eq!(built_place.len(), 1, "{:?}", built_place);
 
 	let changes = source.edit(
 		"main.dm",
@@ -1664,6 +1741,21 @@ fn main() {
 	assert_eq!(eval(&mut client, "states_of(placed_lamp.icon)"), "\"on,off,new\"");
 	println!("ok: resource reload with restored built content");
 
+	let changes = source.edit_many("reload.dm", &[
+		("/proc/answer()\n\treturn 1", "/proc/answer()\n\treturn 2"),
+		(
+			"/proc/few_locals()\n\tvar/a = 1\n\treturn a",
+			"/proc/few_locals()\n\tvar/a = 1\n\tvar/b = 2\n\treturn a + b"
+		),
+		("\tcount++", "\tcount += 10"),
+		("\tvar/legs = 4", "\tvar/legs = 3")
+	]);
+	reload(&mut watcher, &changes);
+	assert_eq!(eval(&mut client, "answer()"), "2");
+	assert_eq!(eval(&mut client, "few_locals()"), "3");
+	assert_eq!(eval(&mut client, "counter()"), "10");
+	assert_eq!(eval(&mut client, "old_dog.legs"), "3");
+
 	assert_ne!(lines_with_code(&mut client, "reload.dm", 1, 10_000), built_lines[0]);
 	eval(&mut client, "request_reboot()");
 	client.wait_closed();
@@ -1711,6 +1803,4 @@ fn main() {
 		std::thread::sleep(Duration::from_millis(100));
 	}
 	println!("ok: reload without a debugger");
-
-	println!("Hot reload tests succeeded");
 }
