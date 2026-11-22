@@ -75,6 +75,12 @@ macro_rules! instructions {
         }
 
         impl Instruction {
+            pub const SHAPES: &'static [(&'static str, &'static [&'static str])] = &[
+                $(
+                    (stringify!($name), &[ $( $( stringify!($operand_type), )* )? ]),
+                )*
+            ];
+
             pub const fn opcode(&self) -> Opcode {
                 match self {
                     $(
