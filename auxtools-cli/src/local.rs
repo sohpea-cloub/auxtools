@@ -11,9 +11,9 @@ use interprocess::{
 	ConnectWaitMode
 };
 
-use auxtools_protocol::{
-	old_socket_name, read, world_socket_name, write, ClientMessage, Hello, Request, Response, ServerMessage, LAST_NAMED_PROTOCOL, PROTOCOL_VERSION
-};
+use auxtools_protocol::{old_socket_name, read, world_socket_name, Hello, Request, Response, LAST_NAMED_PROTOCOL, PROTOCOL_VERSION};
+
+use crate::client::{Client, Heard, Lost};
 
 pub fn world_name(pid: u32) -> String {
 	world_socket_name(pid)
@@ -180,37 +180,37 @@ pub fn worlds() -> Vec<World> {
 fn probe(stream: Stream) -> std::sync::mpsc::Receiver<io::Result<Probed>> {
 	let (sender, receiver) = std::sync::mpsc::channel();
 	std::thread::spawn(move || {
-		let mut stream = stream;
-		let mut greeted = false;
-		let answer = (|| {
-			let hello: Hello = read(&mut stream)?;
-			if hello.protocol != PROTOCOL_VERSION {
-				return Ok(Probed::Incompatible(hello.protocol));
-			}
-			greeted = true;
-			write(&mut stream, &ClientMessage {
-				id: 1,
-				request: &Request::WorldInfo
-			})?;
-			loop {
-				let message: ServerMessage = read(&mut stream)?;
-				match message.response {
-					Response::WorldInfo { args, cwd, .. } if message.reply_to == Some(1) => return Ok(Probed::Info(args, cwd)),
-					Response::Unavailable { reason } => return Ok(Probed::Unavailable(reason)),
-					Response::Disconnect => return Err(io::Error::other("it hung up")),
-					_ => {}
-				}
-			}
-		})();
-		if greeted {
-			let _ = write(&mut stream, &ClientMessage {
-				id: 2,
-				request: &Request::Disconnect
-			});
-		}
+		let answer = Client::on(stream).and_then(|mut client| {
+			let answer = probed(&mut client);
+			let _ = client.leave();
+			answer.map_err(|lost| match lost {
+				Lost::Unsent(e) => e,
+				Lost::Closed | Lost::Incompatible(_) => io::Error::other("it hung up")
+			})
+		});
 		let _ = sender.send(answer);
 	});
 	receiver
+}
+
+fn probed(client: &mut Client) -> Result<Probed, Lost> {
+	let asked = match client.ask(&Request::WorldInfo, None) {
+		Ok(asked) => asked,
+		Err(Lost::Incompatible(theirs)) => return Ok(Probed::Incompatible(theirs)),
+		Err(lost) => return Err(lost)
+	};
+	loop {
+		match client.hear(None)? {
+			Some(Heard::Answer {
+				to,
+				response: Response::WorldInfo { args, cwd, .. },
+				..
+			}) if Some(to) == asked => return Ok(Probed::Info(args, cwd)),
+			Some(Heard::Event(Response::Unavailable { reason })) => return Ok(Probed::Unavailable(reason)),
+			Some(Heard::Event(Response::Disconnect)) => return Err(Lost::Closed),
+			_ => {}
+		}
+	}
 }
 
 pub fn world_dmb(args: &[String], cwd: &str) -> Option<PathBuf> {
