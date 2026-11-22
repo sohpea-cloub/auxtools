@@ -406,13 +406,13 @@ impl Server {
 		let (assembly, locals, warnings) = compiled?;
 		self.eval.eval_warnings = warnings;
 		if let Some(number) = self.eval.spawning.take() {
-			self.spawns.push_back(Spawn {
+			self.spawns.queued.push_back(Spawn {
 				number,
 				bytecode: assembly,
 				locals,
 				args: arg_values.into_iter().cloned().collect()
 			});
-			if let Some(inbox) = self.spawn_inbox.as_ref().and_then(|inbox| List::from_value(inbox).ok()) {
+			if let Some(inbox) = self.spawns.spawn_inbox.as_ref().and_then(|inbox| List::from_value(inbox).ok()) {
 				inbox.append(Value::from(number as f32));
 			}
 			return Ok(Value::NULL);

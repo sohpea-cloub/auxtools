@@ -32,6 +32,7 @@ mod pause;
 mod profile;
 mod render;
 mod sessions;
+mod spawn;
 mod values;
 mod watches;
 
@@ -40,16 +41,8 @@ use code::Codes;
 pub(crate) use eval::{is_expression_frame, Evaluation};
 use pause::{Pausing, State};
 use sessions::{ClientId, Sessions, Wait};
+use spawn::{Spawn, Spawns};
 use values::Variables;
-
-static NEXT_SPAWN: AtomicU64 = AtomicU64::new(1);
-
-struct Spawn {
-	number: u64,
-	bytecode: Vec<u32>,
-	locals: Vec<String>,
-	args: Vec<Value>
-}
 
 const JOURNAL_FRAMES: usize = 64;
 
@@ -58,6 +51,7 @@ pub struct Server {
 	pause: Pausing,
 	breakpoints: Breakpoints,
 	eval: Evaluation,
+	spawns: Spawns,
 	watches: Vec<watches::Watched>,
 	next_watch: u32,
 	waiting_to_start: bool,
@@ -65,10 +59,6 @@ pub struct Server {
 	pending_script: Option<ScriptRequest>,
 	resource_ids: HashMap<String, Vec<u32>>,
 	resource_origins: HashMap<String, Vec<u32>>,
-	spawns: VecDeque<Spawn>,
-	spawn_inbox: Option<Value>,
-	spawn_stub_locals: Option<u32>,
-	spawned: HashMap<u64, (String, Option<String>)>,
 	codes: Codes,
 	waiting_reloads: Vec<HotReloadRequest>
 }
@@ -80,6 +70,7 @@ impl Server {
 			pause: Pausing::new(),
 			breakpoints: Breakpoints::new(),
 			eval: Evaluation::new(),
+			spawns: Spawns::new(),
 			watches: vec![],
 			next_watch: 0,
 			waiting_to_start: false,
@@ -87,10 +78,6 @@ impl Server {
 			pending_script: None,
 			resource_ids: HashMap::new(),
 			resource_origins: HashMap::new(),
-			spawns: VecDeque::new(),
-			spawn_inbox: None,
-			spawn_stub_locals: None,
-			spawned: HashMap::new(),
 			codes: Codes::new(),
 			waiting_reloads: vec![]
 		})
@@ -112,136 +99,16 @@ impl Server {
 		self.eval.set_eval_error(message, ctx);
 	}
 
-	pub fn give_up(&mut self, reason: String) {
-		self.sessions.give_up(reason);
-	}
-
 	pub fn spawn_runtime(&mut self, message: &str, ctx: *mut raw_types::procs::ExecutionContext) {
-		if self.spawned.is_empty() {
-			return;
-		}
-		let (Some(stub), Some(spawned)) = (Proc::find("/proc/auxtools_spawn_stub"), Proc::find("/proc/auxtools_spawned")) else {
-			return;
-		};
-		let proc_of = |at: *mut raw_types::procs::ExecutionContext| unsafe { (**(*at).proc_instance()).proc };
-		let mut at = ctx;
-		let mut in_stub = false;
-		while !at.is_null() {
-			let id = proc_of(at);
-			if id == stub.id {
-				if unsafe { *(*at).throw_handler() } != 0 {
-					return;
-				}
-				if at != ctx {
-					return;
-				}
-				in_stub = true;
-			} else if in_stub && id == spawned.id {
-				let number = unsafe { Value::from_raw(*(**(*at).proc_instance()).args()) }.as_number().ok();
-				if let Some((_, error @ None)) = number.and_then(|number| self.spawned.get_mut(&(number as u64))) {
-					*error = Some(format!("runtime error: {}", Evaluation::error_with_stack(message, ctx)));
-				}
-				return;
-			} else if !in_stub && unsafe { *(*at).throw_handler() } != 0 {
-				return;
-			}
-			at = unsafe { *(*at).parent_context() };
-		}
-	}
-
-	fn handle_spawn(&mut self, expression: &str, object: Option<&str>) {
-		let result = self.spawn(expression, object);
-		self.answer(Response::Spawned(result));
-	}
-
-	fn spawn(&mut self, expression: &str, object: Option<&str>) -> Result<u64, String> {
-		crate::launched::can_spawn()?;
-		let object = object.map(|object| self.object_of(object)).transpose()?;
-		let number = NEXT_SPAWN.fetch_add(1, Ordering::Relaxed);
-		self.eval.eval_src = object;
-		self.eval.spawning = Some(number);
-		let compiled = self.eval_expr(None, expression);
-		self.eval.spawning = None;
-		compiled?;
-		self.spawned.insert(number, (expression.to_owned(), None));
-		Ok(number)
+		self.spawns.spawn_runtime(message, ctx);
 	}
 
 	pub fn spawn_inbox(&mut self) -> Value {
-		let inbox = Value::from(List::new());
-		self.spawn_inbox = Some(inbox.clone());
-		inbox
+		self.spawns.spawn_inbox()
 	}
 
-	pub fn next_spawn(&mut self) -> DMResult {
-		let Some(spawn) = self.spawns.pop_front() else {
-			return Ok(Value::NULL);
-		};
-		let Some(stub) = Proc::find("/proc/auxtools_spawn_stub") else {
-			self.spawn_failed(spawn.number, "the world has no /proc/auxtools_spawn_stub to run it in".to_owned());
-			return Ok(Value::NULL);
-		};
-		if let Err(error) = self.set_stub_locals(&stub, &spawn.locals) {
-			self.spawn_failed(spawn.number, error);
-			return self.next_spawn();
-		}
-		stub.set_bytecode(spawn.bytecode);
-		let args = List::new();
-		for arg in &spawn.args {
-			args.append(arg);
-		}
-		let next = List::new();
-		next.append(Value::from(spawn.number as f32));
-		next.append(Value::from(args));
-		Ok(Value::from(next))
-	}
-
-	fn set_stub_locals(&mut self, stub: &Proc, locals: &[String]) -> Result<(), String> {
-		use auxtools::runtime_tables::{self, ProcEntryWords};
-		let now = runtime_tables::proc_entry(stub.id).ok_or("couldn't read the spawn stub's proc entry")?.0[ProcEntryWords::LOCALS];
-		let none = *self.spawn_stub_locals.get_or_insert(now);
-		let table = hot_reload::locals_table(locals, none)?;
-		if table != now {
-			runtime_tables::set_proc_entry_word(stub.id, ProcEntryWords::LOCALS, table);
-		}
-		Ok(())
-	}
-
-	pub fn spawn_done(&mut self, number: u64, returned: &Value) {
-		let Some((expression, error)) = self.spawned.remove(&number) else {
-			return;
-		};
-		let result = match (error, returned.as_list()) {
-			(Some(error), _) => Err(error),
-			(None, Ok(list)) => {
-				let value = list.get(1).unwrap_or(Value::NULL);
-				Ok(SpawnedValue {
-					text: values::stringify(&value),
-					rendered: render::render(&value, 1)
-				})
-			}
-			(None, Err(_)) => Err("evaluation ended without a value".to_owned())
-		};
-		self.journal(
-			JournalEvent::Spawned {
-				spawn: number,
-				expression,
-				result
-			},
-			None
-		);
-	}
-
-	fn spawn_failed(&mut self, number: u64, why: String) {
-		let expression = self.spawned.remove(&number).map(|(expression, _)| expression).unwrap_or_default();
-		self.journal(
-			JournalEvent::Spawned {
-				spawn: number,
-				expression,
-				result: Err(why)
-			},
-			None
-		);
+	pub fn give_up(&mut self, reason: String) {
+		self.sessions.give_up(reason);
 	}
 
 	fn apply_pending_skin(&mut self) {
