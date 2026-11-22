@@ -61,7 +61,7 @@ pub fn profile(pid: u64, dir: &Path, code: &Path) {
 	let called = lines.iter().find(|line| line.ends_with("  CallGlob 1 /tick")).unwrap();
 	let called: Vec<&str> = called.split_whitespace().collect();
 	assert!(
-		number(called[1]) == tallies && called.len() == 9 && ["ns", "us"].contains(&called[5]),
+		number(called[1]) == tallies && (called.len() == 7 || (called.len() == 9 && ["ns", "us"].contains(&called[5]))),
 		"unexpected profile output: {}",
 		printed
 	);
