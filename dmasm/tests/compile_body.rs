@@ -704,3 +704,16 @@ fn a_condition_that_sets_the_test_flag_is_not_tested_again_alone_either() {
         same_alone_and_in_a_body(code);
     }
 }
+
+#[test]
+fn a_pick_with_weights_ends_the_same_alone_as_in_a_body() {
+    let picked = same_alone_and_in_a_body("pick(by; 1, hp; 2)");
+    assert_eq!(
+        picked.iter().filter(|l| l.starts_with("Jmp ")).count(),
+        1,
+        "{picked:?}"
+    );
+    for code in ["pick(by; 1, 2)", "pick(by; 1, hp; pick(ticks; 2, 3))"] {
+        same_alone_and_in_a_body(code);
+    }
+}

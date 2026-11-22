@@ -447,7 +447,7 @@ pub(super) fn emit(compiler: &mut Compiler<'_>, term: Term) -> Result<EvalKind, 
                         let kind = compiler.emit_expr(expr)?;
                         compiler.emit_move_to_stack(kind)?;
 
-                        if i + 1 < count || compiler.proc.is_none() {
+                        if i + 1 < count {
                             compiler.emit_ins(Instruction::Jmp(Label::Named(label_end.clone())));
                         }
                     }
