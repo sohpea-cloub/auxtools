@@ -480,3 +480,14 @@ fn a_body_without_a_scope_is_the_debugger_s_code_too() {
         .to_string();
     assert!(error.contains("modified types"), "{error}");
 }
+
+#[test]
+fn a_body_refuses_calls_to_the_proc_itself_and_its_parent() {
+    for code in ["..()", "x = .(1)\nreturn x", "return ..(by)", "if (by) .()"] {
+        let error = body(code).unwrap_err().to_string();
+        assert!(
+            error.ends_with("relative calls are not supported"),
+            "{code}: {error}"
+        );
+    }
+}
