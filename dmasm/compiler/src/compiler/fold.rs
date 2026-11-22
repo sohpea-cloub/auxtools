@@ -223,10 +223,13 @@ fn static_const(
 fn warn_angle(c: &Compiler, what: &str, folded: f32, radians: f64) {
     let windows = super::versions::degrees_on_windows(radians) as f32;
     if windows != folded && !folded.is_nan() {
-        c.warn(&format!(
-            "{what} is folded to {folded}, matching Linux DreamMaker and runtime evaluation: \
+        c.warn(
+            crate::diagnostic::Id::FoldedAngle,
+            &format!(
+                "{what} is folded to {folded}, matching Linux DreamMaker and runtime evaluation: \
              Windows DreamMaker folds it to {windows}."
-        ));
+            ),
+        );
     }
 }
 
@@ -596,9 +599,12 @@ pub(super) fn wide(x: f32) -> bool {
 
 pub(super) fn warn_bits(c: &Compiler, x: f32) {
     if wide(x) {
-        c.warn(&format!(
+        c.warn(
+            crate::diagnostic::Id::BitOperandOutOfRange,
+            &format!(
             "bit operand {x} is outside the 32-bit range; its conversion differs from DreamMaker"
-        ));
+        ),
+        );
     }
 }
 

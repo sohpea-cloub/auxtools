@@ -25,7 +25,7 @@ pub struct CompiledProc {
     pub locals: Vec<String>,
     pub params: Vec<String>,
     pub statics: Vec<StaticLocal>,
-    pub warnings: Vec<String>,
+    pub warnings: Vec<crate::diagnostic::Diagnostic>,
     pub byond_bugs: Vec<ByondBug>,
 }
 
@@ -595,7 +595,7 @@ pub(super) fn resolve_proc_path(compiler: &Compiler, path: &str) -> Option<Strin
     let written_on_type = sep == '/' && !type_part.is_empty();
     let warn_elsewhere = |found: &str| {
         if written_on_type {
-            compiler.warn(&format!(
+            compiler.warn(crate::diagnostic::Id::ProcPathNotDeclared, &format!(
                 "{path}: DreamMaker refuses this path, since {name} isn't declared on {type_part}; this is {found}"
             ));
         }

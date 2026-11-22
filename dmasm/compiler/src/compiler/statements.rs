@@ -4,6 +4,7 @@ use dreammaker::ast::{
 
 use super::procs::{LoopLabels, ProcSource};
 use super::{CompileError, Compiler, EvalKind};
+use crate::diagnostic::Id;
 use crate::operands::{Label, Value, Variable};
 use crate::{ByondVersion, Instruction, Node};
 
@@ -49,6 +50,7 @@ pub(super) fn emit_proc_body(
         compiler.emit_ins(Instruction::DbgLine(param.location.line));
         if path_division(default) {
             compiler.warn_bug(
+                crate::diagnostic::Id::ByondDefaultDivisionDropped,
                 &format!(
                     "parameter {}'s default divides a var by a number: written without spaces \
                      (`a.b/10`), DreamMaker reads it as a path and leaves the division out",
@@ -1581,7 +1583,11 @@ fn call_after_cache_use(compiler: &Compiler, start: usize) -> Option<usize> {
 }
 
 fn restore_receiver(compiler: &mut Compiler, call: usize) {
-    compiler.warn_bug(SAFE_RECEIVER_BUG, SAFE_RECEIVER_OURS);
+    compiler.warn_bug(
+        Id::ByondSafeChainReceiver,
+        SAFE_RECEIVER_BUG,
+        SAFE_RECEIVER_OURS,
+    );
     compiler
         .nodes
         .insert(call, Node::Instruction(Instruction::PushCache, ()));
@@ -1664,7 +1670,11 @@ pub(super) fn emit_safe_chain_write(
             compiler.emit_ins(Instruction::PushTop);
         }
         if value_used_cache {
-            compiler.warn_bug(SAFE_RECEIVER_BUG, SAFE_RECEIVER_OURS);
+            compiler.warn_bug(
+                Id::ByondSafeChainReceiver,
+                SAFE_RECEIVER_BUG,
+                SAFE_RECEIVER_OURS,
+            );
             compiler.emit_ins(Instruction::PopCache);
             compiler.emit_ins(Instruction::PushCache);
         }
@@ -1709,7 +1719,11 @@ pub(super) fn emit_safe_chain_write(
             }
             SafeWrite::Logical { or } => {
                 if !compiler.byond.keeps_safe_logical_null_tests() {
-                    compiler.warn_bug(SAFE_LOGICAL_BUG, "; dmasm keeps them");
+                    compiler.warn_bug(
+                        Id::ByondSafeLogicalAssign,
+                        SAFE_LOGICAL_BUG,
+                        "; dmasm keeps them",
+                    );
                 }
                 let end = Label::Named(compiler.new_label());
                 compiler.emit_ins(Instruction::GetVar(var.clone()));
@@ -1798,7 +1812,11 @@ pub(super) fn emit_safe_chain_write(
         }
         (fields, SafeWrite::Logical { or }, index) => {
             if !compiler.byond.keeps_safe_logical_null_tests() {
-                compiler.warn_bug(SAFE_LOGICAL_BUG, "; dmasm keeps them");
+                compiler.warn_bug(
+                    Id::ByondSafeLogicalAssign,
+                    SAFE_LOGICAL_BUG,
+                    "; dmasm keeps them",
+                );
             }
             let restore_first = index.is_none() || compiler.byond.restores_cache_for_safe_element();
             if !restore_first {
@@ -2383,7 +2401,11 @@ pub(super) fn emit_safe_logical_assign(
         return Ok(false);
     }
     if !compiler.byond.keeps_safe_logical_null_tests() {
-        compiler.warn_bug(SAFE_LOGICAL_BUG, "; dmasm keeps them");
+        compiler.warn_bug(
+            Id::ByondSafeLogicalAssign,
+            SAFE_LOGICAL_BUG,
+            "; dmasm keeps them",
+        );
     }
     let mut builder = super::chain_builder::ChainBuilder::begin(Variable::Cache);
     for f in &fields[..fields.len() - 1] {
@@ -2450,6 +2472,7 @@ fn warn_list_from_cache(compiler: &Compiler) {
         .any(|n| matches!(n, Node::Instruction(i, _) if super::procs::touches_cache(i)))
     {
         compiler.warn_bug(
+            Id::ByondSafeListFromCache,
             "before 516.1685, safe list assignment resolves the list using the RHS cache value",
             ", matching DreamMaker",
         );
@@ -2478,7 +2501,11 @@ pub(super) fn warn_pointer_index(compiler: &Compiler, place: &Expression) {
                 .iter()
                 .any(|f| matches!(f.elem, Follow::Unary(UnaryOp::Dereference)))
         {
-            compiler.warn_bug(POINTER_INDEX_BUG, POINTER_INDEX_OURS);
+            compiler.warn_bug(
+                Id::ByondPointerIndexDropped,
+                POINTER_INDEX_BUG,
+                POINTER_INDEX_OURS,
+            );
         }
     }
 }

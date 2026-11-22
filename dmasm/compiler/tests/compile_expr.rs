@@ -524,6 +524,7 @@ fn a_proc_path_dreammaker_refuses_is_taken_with_a_warning() {
         ByondVersion::LATEST,
     )
     .unwrap();
+    let warnings: Vec<String> = warnings.iter().map(ToString::to_string).collect();
     assert_eq!(warnings, ["not declared on /datum/foo/bar"]);
 }
 

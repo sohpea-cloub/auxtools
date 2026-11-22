@@ -271,7 +271,7 @@ pub fn compile_expr_warned(
     params: &[&str],
     scope: Option<&ExprScope>,
     byond: ByondVersion,
-) -> Result<(Vec<Node>, Vec<String>), CompileError> {
+) -> Result<(Vec<Node>, Vec<Diagnostic>), CompileError> {
     use dreammaker::ast::{Spanned, Statement};
     let expr = parse_expr(code, byond)?;
     let value = proc_value(vec![Spanned::new(
@@ -343,7 +343,7 @@ fn parse_expr(code: &str, byond: ByondVersion) -> Result<Expression, CompileErro
 pub struct CompiledBody {
     pub nodes: Vec<Node>,
     pub locals: Vec<String>,
-    pub warnings: Vec<String>,
+    pub warnings: Vec<Diagnostic>,
 }
 
 const BODY_PROC: &str = "dmasm_body";
@@ -468,21 +468,13 @@ fn compile_statements(
         compiler.emit_ins(Instruction::End);
     }
     let locals = std::mem::take(&mut compiler.proc.locals);
-    let warnings = compiler
-        .warnings
-        .take()
-        .into_iter()
-        .map(|warning| {
-            let line = warning
-                .strip_prefix("line ")
-                .and_then(|rest| rest.split_once(": "))
-                .and_then(|(line, text)| Some((line.parse::<u32>().ok()?, text)));
-            match line {
-                Some((line, text)) => format!("line {}: {text}", line.saturating_sub(1)),
-                None => warning,
-            }
-        })
-        .collect();
+    let mut warnings = compiler.warnings.take();
+    for span in warnings
+        .iter_mut()
+        .filter_map(|warning| warning.span.as_mut())
+    {
+        span.line = span.line.saturating_sub(1);
+    }
 
     let count = params.len() as u32;
     let dot = match params.iter().rposition(|p| *p == ".") {
@@ -715,7 +707,7 @@ struct Compiler<'a> {
     proc_macro_ok: bool,
     no_fold: bool,
     live_only: bool,
-    warnings: std::cell::RefCell<Vec<String>>,
+    warnings: std::cell::RefCell<Vec<Diagnostic>>,
     byond_bugs: std::cell::RefCell<Vec<ByondBug>>,
     list_elem_type: Option<dreammaker::objtree::TypeRef<'a>>,
     safe_place: bool,
@@ -1281,7 +1273,7 @@ impl<'a> Compiler<'a> {
 
     fn emit_found_proc(&mut self, found: FoundProc) {
         if let Some(warning) = &found.warning {
-            self.warn(warning);
+            self.warn(Id::ProcPathNotDeclared, warning);
         }
         self.emit_ins(Instruction::PushVal(operands::Value::Raw {
             tag: found.tag,
@@ -1289,19 +1281,19 @@ impl<'a> Compiler<'a> {
         }));
     }
 
-    fn warn(&self, text: &str) {
-        self.record(self.last_line, text, None);
+    fn warn(&self, id: Id, text: &str) {
+        self.record(id, self.last_line, text, None);
     }
 
-    fn warn_bug(&self, bug: &str, ours: &str) {
-        self.record(self.last_line, &format!("{bug}{ours}"), Some(bug));
+    fn warn_bug(&self, id: Id, bug: &str, ours: &str) {
+        self.record(id, self.last_line, &format!("{bug}{ours}"), Some(bug));
     }
 
-    fn warn_at(&self, line: u32, text: &str) {
-        self.record(Some(line), text, Some(text));
+    fn warn_at(&self, id: Id, line: u32, text: &str) {
+        self.record(id, Some(line), text, Some(text));
     }
 
-    fn record(&self, line: Option<u32>, text: &str, byond_bug: Option<&str>) {
+    fn record(&self, id: Id, line: Option<u32>, text: &str, byond_bug: Option<&str>) {
         if let Some(bug) = byond_bug {
             let bug = ByondBug {
                 line,
@@ -1312,13 +1304,10 @@ impl<'a> Compiler<'a> {
                 bugs.push(bug);
             }
         }
-        let text = match line {
-            Some(line) => format!("line {line}: {text}"),
-            None => text.to_owned(),
-        };
+        let warning = Diagnostic::warning(id, text).at(line.map(Span::line));
         let mut warnings = self.warnings.borrow_mut();
-        if !warnings.contains(&text) {
-            warnings.push(text);
+        if !warnings.contains(&warning) {
+            warnings.push(warning);
         }
     }
 

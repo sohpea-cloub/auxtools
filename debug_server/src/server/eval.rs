@@ -189,10 +189,10 @@ impl Evaluation {
 		let byond = crate::world_byond();
 		if dmasm::compiler::is_body(command) {
 			let body = dmasm::compiler::compile_body_in(command, arg_names, Some(scope), byond).map_err(|e| e.to_string())?;
-			return Ok((body.nodes, body.locals, body.warnings));
+			return Ok((body.nodes, body.locals, texts(&body.warnings)));
 		}
 		match dmasm::compiler::compile_expr_warned(command, arg_names, Some(scope), byond) {
-			Ok((expr, warnings)) => Ok((expr, vec![], warnings)),
+			Ok((expr, warnings)) => Ok((expr, vec![], texts(&warnings))),
 			Err(_) if command.trim().contains(['\n', ';']) => {
 				let error = dmasm::compiler::compile_body_in(command, arg_names, Some(scope), byond).err();
 				Err(error.map_or_else(|| "invalid expression or proc body".to_owned(), |e| e.to_string()))
@@ -666,4 +666,8 @@ pub(crate) fn is_expression_frame(ctx: *mut raw_types::procs::ExecutionContext) 
 	["/proc/auxtools_expr_stub", "/proc/auxtools_spawn_stub"]
 		.into_iter()
 		.any(|path| Proc::find(path).is_some_and(|stub| stub.id == id))
+}
+
+fn texts(diagnostics: &[dmasm::diagnostic::Diagnostic]) -> Vec<String> {
+	diagnostics.iter().map(ToString::to_string).collect()
 }

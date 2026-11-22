@@ -1139,7 +1139,7 @@ impl Snapshot {
             params: params(value),
             settings: None,
             statics,
-            warnings: compiled.warnings,
+            warnings: compiled.warnings.iter().map(ToString::to_string).collect(),
         })
     }
 
@@ -1321,7 +1321,7 @@ impl Snapshot {
             params: vec![],
             settings: Some(ProcSettings::default()),
             statics: vec![],
-            warnings: compiled.warnings,
+            warnings: compiled.warnings.iter().map(ToString::to_string).collect(),
         })
     }
 

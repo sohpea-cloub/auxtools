@@ -62,6 +62,7 @@ fn emit_single(
                 EvalKind::ListRef => {
                     if op == UnaryOp::Dereference && compiler.byond.drops_pointer_index() {
                         compiler.warn_bug(
+                            crate::diagnostic::Id::ByondPointerIndexDropped,
                             super::statements::POINTER_INDEX_BUG,
                             super::statements::POINTER_INDEX_OURS,
                         );
@@ -104,6 +105,7 @@ pub(super) fn warn_made_pointer(compiler: &Compiler, term: &Term, follow: &[Foll
     });
     if derefs_reference {
         compiler.warn_bug(
+            crate::diagnostic::Id::ByondDerefOfReference,
             "`*(&x)`: before 516.1668 DreamMaker reads `*x`, which dereferences x's value, a \
              \"bad pointer\" error unless x holds a pointer",
             "; dmasm reads x",

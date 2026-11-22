@@ -113,6 +113,7 @@ fn emit_tests(
             compiler.emit_ins(Instruction::PushInt(result as i32));
             if !compiler.byond.folds_nan_tests_cleanly() {
                 compiler.warn_bug(
+                    crate::diagnostic::Id::ByondFoldedTestFlag,
                     &format!("{name}() of a constant returns the previous test flag on this build"),
                     ", matching DreamMaker",
                 );
@@ -202,7 +203,7 @@ pub(super) fn rgb_constant(compiler: &Compiler<'_>, args: &[Expression]) -> Opti
     };
     let (text, boundary) = super::fold::rgb_text(compiler.byond, space as u32, channels, alpha)?;
     if boundary {
-        compiler.warn(&format!(
+        compiler.warn(crate::diagnostic::Id::FoldedRgb, &format!(
             "rgb() is folded to {text}, matching Linux DreamMaker; Windows may round a channel differently"
         ));
     }

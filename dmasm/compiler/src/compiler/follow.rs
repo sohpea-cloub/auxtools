@@ -624,6 +624,7 @@ fn emit_safe_inner<'a>(
                 let pop = touched || it.as_slice().is_empty();
                 if touched && !it.as_slice().is_empty() {
                     compiler.warn_bug(
+                        crate::diagnostic::Id::ByondSafeChainReceiver,
                         super::statements::SAFE_RECEIVER_BUG,
                         super::statements::SAFE_RECEIVER_OURS,
                     );

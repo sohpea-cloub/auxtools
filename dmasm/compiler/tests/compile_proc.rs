@@ -1839,18 +1839,19 @@ fn warnings_of(
     byond: dmasm_compiler::ByondVersion,
 ) -> Vec<String> {
     let compiled = compiled_of(code, ty, name, byond);
+    let warnings: Vec<String> = compiled.warnings.iter().map(ToString::to_string).collect();
     for bug in &compiled.byond_bugs {
         let text = match bug.line {
             Some(line) => format!("line {}: {}", line, bug.text),
             None => bug.text.clone(),
         };
         assert!(
-            compiled.warnings.iter().any(|w| w.starts_with(&text)),
+            warnings.iter().any(|w| w.starts_with(&text)),
             "{:?}",
-            compiled.warnings
+            warnings
         );
     }
-    compiled.warnings
+    warnings
 }
 
 #[test]
@@ -1883,7 +1884,9 @@ fn warnings_about_byonds_bugs_are_told_from_the_rest() {
         "f",
         dmasm_compiler::ByondVersion::new(516, 1688),
     );
-    assert!(compiled.warnings[0].ends_with("leaves the division out; dmasm divides"));
+    assert!(compiled.warnings[0]
+        .to_string()
+        .ends_with("leaves the division out; dmasm divides"));
     assert!(compiled.byond_bugs[0]
         .text
         .ends_with("leaves the division out"));
@@ -2060,7 +2063,12 @@ fn warnings_for(code: &str, byond: dmasm_compiler::ByondVersion) -> Vec<String> 
         byond,
         file_names: None,
     };
-    compile_proc(&source).unwrap().warnings
+    compile_proc(&source)
+        .unwrap()
+        .warnings
+        .iter()
+        .map(ToString::to_string)
+        .collect()
 }
 
 #[test]

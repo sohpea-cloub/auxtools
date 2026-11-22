@@ -476,7 +476,9 @@ fn a_body_gives_its_warnings_with_its_own_lines() {
     )
     .unwrap();
     assert!(
-        warnings.iter().any(|w| w.contains("previous test flag")),
+        warnings
+            .iter()
+            .any(|w| w.to_string().contains("previous test flag")),
         "{:?}",
         warnings
     );
@@ -490,6 +492,7 @@ fn a_body_gives_its_warnings_with_its_own_lines() {
     assert_eq!(
         body.warnings
             .iter()
+            .map(ToString::to_string)
             .filter(|w| w.starts_with("line 2: ") && w.contains("previous test flag"))
             .count(),
         1,

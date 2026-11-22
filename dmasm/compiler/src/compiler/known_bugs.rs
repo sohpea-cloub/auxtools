@@ -1,11 +1,12 @@
 use dreammaker::ast::{Block, Statement};
 
 use super::{procs::ProcSource, Compiler};
+use crate::diagnostic::Id;
 
 pub(super) fn check(compiler: &Compiler, source: &ProcSource, code: &Block) {
     let line = source.value.location.line;
-    if let Some(text) = proc_warning(compiler, source) {
-        compiler.warn_at(line, &text);
+    if let Some((id, text)) = proc_warning(compiler, source) {
+        compiler.warn_at(id, line, &text);
     }
     let mut walk = Walk {
         compiler,
@@ -14,41 +15,51 @@ pub(super) fn check(compiler: &Compiler, source: &ProcSource, code: &Block) {
     walk.block(code, None);
 }
 
-fn proc_warning(compiler: &Compiler, source: &ProcSource) -> Option<String> {
+fn proc_warning(compiler: &Compiler, source: &ProcSource) -> Option<(Id, String)> {
     let byond = compiler.byond;
     let name = source.name;
-    let text = match name {
-        "operator<<=" | "operator>>=" => format!(
-            "`{name}`: BYOND discards the result, leaving the variable unchanged; \
+    let found = match name {
+        "operator<<=" | "operator>>=" => (
+            Id::ByondShiftAssignDiscarded,
+            format!(
+                "`{name}`: BYOND discards the result, leaving the variable unchanged; \
              modify src instead"
+            ),
         ),
-        "operator++" | "operator--" => format!(
+        "operator++" | "operator--" => (
+            Id::ByondIncrementOperator,
+            format!(
             "`{name}`: statements `a{op}` and `{op}a` pass no argument and discard the result; \
              in `b = a{op}`, `a{op}` passes 1 and assigns the result to `a`",
             op = &name["operator".len()..]
+            ),
         ),
-        "operator**" if source.ty.get_proc("operator*").is_some() => {
-            "`operator**`: `a ** 2` calls `operator*(a)` when both overloads exist".to_owned()
-        }
-        "operator<=>" if byond.find_calls_compare_operator() => {
+        "operator**" if source.ty.get_proc("operator*").is_some() => (
+            Id::ByondPowerCallsMultiply,
+            "`operator**`: `a ** 2` calls `operator*(a)` when both overloads exist".to_owned(),
+        ),
+        "operator<=>" if byond.find_calls_compare_operator() => (
+            Id::ByondCompareOperatorInFind,
             "`operator<=>`: from 516.1674 `list.Find(x)` and `list ^ x` call it for each item, \
              and from 516.1689 treat a result of 0 as a match"
-                .to_owned()
-        }
-        "operator~=" | "operator~!" if byond.discards_equivalence_result() => {
+                .to_owned(),
+        ),
+        "operator~=" | "operator~!" if byond.discards_equivalence_result() => (
+            Id::ByondEquivalenceDiscarded,
             format!(
                 "`{name}`: 516.1674–516.1688 discard the result and call the opposite \
                  equivalence overload when both exist"
-            )
-        }
-        "Uncross" if byond.area_exit_calls_uncross() && source.ty.get().is_subpath_of("/area") => {
+            ),
+        ),
+        "Uncross" if byond.area_exit_calls_uncross() && source.ty.get().is_subpath_of("/area") => (
+            Id::ByondAreaUncross,
             "`Uncross()` of an area: from 516.1683 BYOND calls it and ignores the result; \
              return 0 from `Exit()` to stop a move"
-                .to_owned()
-        }
+                .to_owned(),
+        ),
         _ => return None,
     };
-    Some(text)
+    Some(found)
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -148,6 +159,7 @@ impl Walk<'_, '_> {
                 .any(|(kind, seen_try)| kind == LoopKind::List && seen_try);
             if caught_outside {
                 self.compiler.warn_at(
+                    Id::ByondListLoopsAcrossTry,
                     line,
                     "nested list loops separated by `try`: catching an inner-loop error makes \
                      the outer loop use the inner iterator; it may end early, loop forever or \
@@ -176,6 +188,7 @@ impl Walk<'_, '_> {
             && self.loops[..at].iter().any(|l| l.kind == LoopKind::Counted)
         {
             self.compiler.warn_at(
+                Id::ByondContinueToDoWhile,
                 line,
                 &format!(
                     "`continue {name}` to a labelled `do` ... `while` inside a counted `for` \

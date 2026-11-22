@@ -33,6 +33,28 @@ pub enum Id {
     NoSuchProc,
     ImplicitNewUntyped,
     UnsupportedSetting,
+
+    FoldedAngle,
+    BitOperandOutOfRange,
+    FoldedRgb,
+    ProcPathNotDeclared,
+
+    ByondShiftAssignDiscarded,
+    ByondIncrementOperator,
+    ByondPowerCallsMultiply,
+    ByondCompareOperatorInFind,
+    ByondEquivalenceDiscarded,
+    ByondAreaUncross,
+    ByondListLoopsAcrossTry,
+    ByondContinueToDoWhile,
+    ByondDerefOfReference,
+    ByondPointerIndexDropped,
+    ByondSafeChainReceiver,
+    ByondSafeLogicalAssign,
+    ByondSafeListFromCache,
+    ByondFoldedTestFlag,
+    ByondZeroWeightPick,
+    ByondDefaultDivisionDropped,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
