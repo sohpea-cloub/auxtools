@@ -860,12 +860,12 @@ pub fn unparsed(error: &clap::Error, args: &[String], root: &clap::Command) -> U
 mod tests {
 	use std::time::Duration;
 
-	use auxtools_cli::byond::Server;
+	use auxtools_cli::{byond::Server, local::PROBE_PATIENCE};
 
 	use super::{command_path, overview, page, render, spec, PAGES};
 	use crate::cli::{
 		args::{self, Scope},
-		hold, json
+		check, hold, json, launch, HUNG_UP, TIMED_OUT
 	};
 
 	fn commands() -> Vec<(Vec<String>, clap::Command)> {
@@ -1179,6 +1179,37 @@ mod tests {
 			"{}",
 			first
 		);
+	}
+
+	#[test]
+	fn the_times_and_exit_codes_in_the_prose_are_the_commands() {
+		let sections = |name: &str| page(&[name]).unwrap().sections;
+		let within = |time: Duration| format!("within {} seconds", time.as_secs());
+		assert!(sections("launch").contains(&within(launch::COMING_UP)), "{}", sections("launch"));
+		assert!(sections("list").contains(&within(PROBE_PATIENCE)), "{}", sections("list"));
+
+		fn codes(text: &str) -> Vec<i32> {
+			let listed = text.split("Exit codes:\n").nth(1).unwrap_or_default();
+			listed
+				.lines()
+				.take_while(|line| !line.is_empty())
+				.filter_map(|line| line.strip_prefix("  ")?.split("  ").next()?.parse().ok())
+				.collect()
+		}
+		let first = codes(&overview());
+		assert_eq!(first, [0, 1, TIMED_OUT, HUNG_UP, launch::WORLD_FAILED, check::FOUND]);
+		for page in PAGES {
+			for code in codes(page.sections) {
+				assert!(first.contains(&code), "{}: {}", page.path.join(" "), code);
+				assert!(
+					code != launch::WORLD_FAILED || page.path == ["launch"],
+					"{}: {}",
+					page.path.join(" "),
+					code
+				);
+				assert!(code != check::FOUND || page.path == ["check"], "{}: {}", page.path.join(" "), code);
+			}
+		}
 	}
 
 	#[test]

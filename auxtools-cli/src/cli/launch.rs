@@ -20,7 +20,7 @@ use crate::{
 };
 
 pub const WORLD_FAILED: i32 = 4;
-const COMING_UP: Duration = Duration::from_secs(120);
+pub const COMING_UP: Duration = Duration::from_secs(120);
 const DETACHED: &str = "--detached";
 
 struct Options {
