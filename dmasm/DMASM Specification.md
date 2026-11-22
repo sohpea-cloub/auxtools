@@ -207,7 +207,7 @@ How to read the table:
 | `read` | The interpreter's handler was read in the BYOND binary, or the behavior was measured on a live world, or both |
 | `jit` | A JIT compiler built on `dmasm` compiles this instruction. It declares the stack effect and checks it on every compile, and its test suite compares results against the interpreter |
 | `asm` | The interpreter's handler was read once in disassembly on 2026-10-04 (516.1687 Windows) for this file, sometimes with the functions it calls. Where a row says what DM source compiles to, that came from compiling a throwaway world with `dm.exe` 516.1687 and disassembling it with `dmasm`. Nothing was run |
-| `dmasm` | `dmasm`'s own expression compiler emits it for that builtin with that many arguments (`src/compiler/builtin_procs.rs`). The single pushed result is assumed from the compiler treating it as a value. Nothing here has read the handler |
+| `dmasm` | `dmasm`'s own expression compiler emits it for that builtin with that many arguments (`compiler/src/compiler/builtin_procs.rs`). The single pushed result is assumed from the compiler treating it as a value. Nothing here has read the handler |
 | `dm` | `dm.exe` 516.1687 compiled a small proc that uses the builtin, and `dmasm` disassembled it (2026-10-04). **Taken** is how many values the compiler pushed just before the instruction. **Left** comes from what the compiler did next: `Ret` or `Pop` means one value, `GetFlag` means the result went to the test flag, nothing means zero. The handler was not read, so what the instruction does with its values is the builtin's documented behavior, not something checked here |
 | `name` | Only the name and the operand shape. Treat the behavior as a guess |
 

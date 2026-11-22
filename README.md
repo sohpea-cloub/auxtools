@@ -166,7 +166,8 @@ System libraries:
 ## Compiling
 
 [dmasm](dmasm), the DM compiler and assembler behind expression evaluation and hot reload, is
-a crate of this workspace. Cargo downloads and builds the other Rust dependencies. The
+four crates of this workspace: its bytecode, compiler and reload, and `dmasm`, which
+re-exports them. Cargo downloads and builds the other Rust dependencies. The
 lockfile pins two git dependencies:
 [auxtools/SpacemanDMM](https://github.com/auxtools/SpacemanDMM) for parser fixes, and
 [byond-scan](https://github.com/Absolucy/byond-scan) for finding BYOND's functions.
