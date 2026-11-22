@@ -567,8 +567,14 @@ pub struct Snapshot {
 pub struct FileReload {
     pub changes: Changes,
     patched: Vec<(ProcKey, ProcValue)>,
-    file: FileId,
+    files: Vec<FileId>,
     moved: Vec<(FileId, String, u32)>,
+}
+
+struct Reparsed {
+    file: FileId,
+    procs: Vec<(ProcKey, ProcValue, ProcValue)>,
+    moved: Vec<(String, u32)>,
 }
 
 impl Snapshot {
@@ -638,6 +644,112 @@ impl Snapshot {
     }
 
     pub fn reload_file(&mut self, root: &Path, file: &Path) -> Result<FileReload, String> {
+        self.reload_files(root, &[file])
+    }
+
+    pub fn reload_files(&mut self, root: &Path, files: &[&Path]) -> Result<FileReload, String> {
+        let mut reparsed: Vec<Reparsed> = vec![];
+        for file in files {
+            let file = self.reparse(root, file)?;
+            if !reparsed.iter().any(|had| had.file == file.file) {
+                reparsed.push(file);
+            }
+        }
+        let mut pairs: Vec<(&ProcKey, &ProcValue, &ProcValue)> = reparsed
+            .iter()
+            .flat_map(|file| &file.procs)
+            .map(|(key, old_value, new_value)| (key, old_value, new_value))
+            .collect();
+        pairs.sort_by(|a, b| a.0.cmp(b.0));
+
+        let mut changes = Changes::default();
+        let mut before = HashMap::new();
+        for (key, old_value, new_value) in &pairs {
+            if old_value.code == new_value.code {
+                before.insert((*key).clone(), self.compile(key));
+            }
+        }
+        let previous: Vec<(ProcKey, Option<ProcValue>)> = pairs
+            .iter()
+            .map(|(key, _, new_value)| {
+                (
+                    (*key).clone(),
+                    self.patched.insert((*key).clone(), (*new_value).clone()),
+                )
+            })
+            .collect();
+        let moved: Vec<(FileId, String, u32)> = reparsed
+            .iter()
+            .flat_map(|file| {
+                file.moved
+                    .iter()
+                    .map(move |(name, line)| (file.file, name.clone(), *line))
+            })
+            .collect();
+        let reader = {
+            let all: Vec<&(FileId, String, u32)> =
+                moved.iter().chain(&self.moved_defaults).collect();
+            let changed = pairs
+                .iter()
+                .filter(|(_, old_value, new_value)| old_value.code != new_value.code)
+                .map(|(key, ..)| *key);
+            self.records_moved_default(&all, changed)
+        };
+        if reader.is_none() {
+            for (key, old_value, new_value) in &pairs {
+                let recompiled = |snapshot: &Snapshot| {
+                    snapshot.compile_code(key).and_then(|mut reload| {
+                        snapshot.compile_in_lists(key, &mut reload, |_, _| false)?;
+                        Ok(reload)
+                    })
+                };
+                let reload = if old_value.code != new_value.code {
+                    recompiled(self)
+                } else if let Some(old_code) = before.remove(*key) {
+                    match line_change(old_code, self.compile(key), old_value, new_value) {
+                        LineChange::Same => continue,
+                        LineChange::Moved(lines) => {
+                            changes.plan.line_moves.push(LineMove {
+                                proc: (*key).clone(),
+                                lines,
+                            });
+                            continue;
+                        }
+                        LineChange::Recompile => recompiled(self),
+                    }
+                } else {
+                    continue;
+                };
+                match reload {
+                    Ok(reload) => changes.plan.reloads.push(reload),
+                    Err(e) => changes.refused.push(self.uncompiled(key, &e)),
+                }
+            }
+        }
+        for (key, value) in previous {
+            match value {
+                Some(value) => self.patched.insert(key, value),
+                None => self.patched.remove(&key),
+            };
+        }
+        if let Some(key) = reader {
+            return Err(format!("{key} reads a var default with :: that moved"));
+        }
+        changes.collect_warnings();
+        let files = reparsed.iter().map(|file| file.file).collect();
+        Ok(FileReload {
+            changes,
+            patched: reparsed
+                .into_iter()
+                .flat_map(|file| file.procs)
+                .map(|(key, _, new_value)| (key, new_value))
+                .collect(),
+            files,
+            moved,
+        })
+    }
+
+    fn reparse(&self, root: &Path, file: &Path) -> Result<Reparsed, String> {
         let history = self
             .defines
             .as_ref()
@@ -750,84 +862,13 @@ impl Snapshot {
             return Err("proc definitions were added".to_owned());
         }
 
-        let mut changes = Changes::default();
-        let mut before = HashMap::new();
-        for (key, old_value, new_value) in &pairs {
-            if old_value.code == new_value.code {
-                before.insert(key.clone(), self.compile(key));
-            }
-        }
-        let previous: Vec<(ProcKey, Option<ProcValue>)> = pairs
-            .iter()
-            .map(|(key, _, new_value)| {
-                (
-                    key.clone(),
-                    self.patched.insert(key.clone(), new_value.clone()),
-                )
-            })
-            .collect();
-        let moved: Vec<(FileId, String, u32)> = moved
-            .into_iter()
-            .map(|(name, line)| (id, name.clone(), line))
-            .collect();
-        let reader = {
-            let all: Vec<&(FileId, String, u32)> =
-                moved.iter().chain(&self.moved_defaults).collect();
-            let changed = pairs
-                .iter()
-                .filter(|(_, old_value, new_value)| old_value.code != new_value.code)
-                .map(|(key, ..)| key);
-            self.records_moved_default(&all, changed)
-        };
-        if reader.is_none() {
-            for (key, old_value, new_value) in &pairs {
-                let recompiled = |snapshot: &Snapshot| {
-                    snapshot.compile_code(key).and_then(|mut reload| {
-                        snapshot.compile_in_lists(key, &mut reload, |_, _| false)?;
-                        Ok(reload)
-                    })
-                };
-                let reload = if old_value.code != new_value.code {
-                    recompiled(self)
-                } else if let Some(old_code) = before.remove(key) {
-                    match line_change(old_code, self.compile(key), old_value, new_value) {
-                        LineChange::Same => continue,
-                        LineChange::Moved(lines) => {
-                            changes.plan.line_moves.push(LineMove {
-                                proc: key.clone(),
-                                lines,
-                            });
-                            continue;
-                        }
-                        LineChange::Recompile => recompiled(self),
-                    }
-                } else {
-                    continue;
-                };
-                match reload {
-                    Ok(reload) => changes.plan.reloads.push(reload),
-                    Err(e) => changes.refused.push(self.uncompiled(key, &e)),
-                }
-            }
-        }
-        for (key, value) in previous {
-            match value {
-                Some(value) => self.patched.insert(key, value),
-                None => self.patched.remove(&key),
-            };
-        }
-        if let Some(key) = reader {
-            return Err(format!("{key} reads a var default with :: that moved"));
-        }
-        changes.collect_warnings();
-        Ok(FileReload {
-            changes,
-            patched: pairs
-                .into_iter()
-                .map(|(key, _, new_value)| (key, new_value))
-                .collect(),
+        Ok(Reparsed {
             file: id,
-            moved,
+            procs: pairs,
+            moved: moved
+                .into_iter()
+                .map(|(name, line)| (name.clone(), line))
+                .collect(),
         })
     }
 
@@ -837,13 +878,17 @@ impl Snapshot {
             default_lines.remove(key);
         }
         self.patched.extend(reload.patched);
-        self.mended.insert(reload.file);
+        self.mended.extend(reload.files);
         for moved in reload.moved {
             if !self.moved_defaults.contains(&moved) {
                 self.moved_defaults.push(moved);
             }
         }
         self.resource_index = Default::default();
+    }
+
+    pub fn has_patches(&self) -> bool {
+        !self.patched.is_empty() || !self.mended.is_empty()
     }
 
     pub fn without_patches<R>(&mut self, f: impl FnOnce(&Snapshot) -> R) -> R {
@@ -3602,7 +3647,8 @@ mod tests {
             Snapshot::parse(&self.dir.join("world.dme"), &ParseOptions::default()).unwrap()
         }
 
-        fn both(&self, old: &mut Snapshot, file: &str) -> (Result<String, String>, String) {
+        fn both(&self, old: &mut Snapshot, files: &[&str]) -> (Result<String, String>, String) {
+            let paths: Vec<&Path> = files.iter().map(Path::new).collect();
             let shown = |changes: &Changes| {
                 format!(
                     "{:#?}\n{:#?}\n{:#?}",
@@ -3610,9 +3656,9 @@ mod tests {
                 )
             };
             let own = old
-                .reload_file(&self.dir, Path::new(file))
+                .reload_files(&self.dir, &paths)
                 .map(|reload| shown(&reload.changes));
-            let edited = HashSet::from([PathBuf::from(file)]);
+            let edited: HashSet<PathBuf> = files.iter().map(PathBuf::from).collect();
             let full = diff(old, &self.parse(), Some(&edited));
             (own, shown(&full))
         }
@@ -3649,7 +3695,7 @@ mod tests {
         .enumerate()
         {
             project.write("a.dm", edited);
-            let (own, full) = project.both(&mut old, "a.dm");
+            let (own, full) = project.both(&mut old, &["a.dm"]);
             assert_eq!(own.unwrap(), full);
             let reload = old.reload_file(&project.dir, Path::new("a.dm")).unwrap();
             assert!(reloaded(&reload.changes).is_empty());
@@ -3683,7 +3729,7 @@ mod tests {
             "a.dm",
             &a.replace("\treturn 1\n", "\tworld.log << 0\n\treturn 1\n"),
         );
-        let (own, full) = project.both(&mut old, "a.dm");
+        let (own, full) = project.both(&mut old, &["a.dm"]);
         assert_eq!(own.unwrap(), full);
         let reload = old.reload_file(&project.dir, Path::new("a.dm")).unwrap();
         assert_eq!(reloaded(&reload.changes), ["/f", "/g"]);
@@ -3732,7 +3778,196 @@ mod tests {
         }
         old.clear_patches();
         project.write("a.dm", a);
-        let (own, full) = project.both(&mut old, "b.dm");
+        let (own, full) = project.both(&mut old, &["b.dm"]);
+        assert_eq!(own.unwrap(), full);
+    }
+
+    const FILE_A: &str = "#define TWO 2
+/datum/a
+	var/x = 1
+/datum/a/proc/z()
+	return 1
+/datum/a/b/proc/c()
+	return TWO
+/proc/below()
+	return 3
+";
+    const FILE_B: &str = "/proc/first()
+	return 1
+/proc/second(n = 4)
+	return n
+/datum/a/proc/in_b()
+	return x
+";
+
+    #[test]
+    fn files_changed_together_reload_as_a_full_parse_has_them() {
+        let project = Project::new("together", &[("a.dm", FILE_A), ("b.dm", FILE_B)]);
+        let mut old = project.parse();
+        assert!(!old.has_patches());
+
+        let a = FILE_A
+            .replace("\treturn 1\n", "\tworld.log << 1\n\treturn 1\n")
+            .replace("return TWO", "return TWO + 1");
+        let b = FILE_B
+            .replace("return n", "return n + 1")
+            .replace("return x", "return x + 1");
+        project.write("a.dm", &a);
+        project.write("b.dm", &b);
+        for files in [["a.dm", "b.dm"], ["b.dm", "a.dm"]] {
+            let (own, full) = project.both(&mut old, &files);
+            assert_eq!(own.unwrap(), full);
+        }
+        let paths = [Path::new("a.dm"), Path::new("b.dm"), Path::new("a.dm")];
+        let reload = old.reload_files(&project.dir, &paths).unwrap();
+        assert_eq!(
+            reloaded(&reload.changes),
+            ["/datum/a/b/c", "/datum/a/in_b", "/datum/a/z", "/second"]
+        );
+        assert_eq!(reload.changes.plan.line_moves.len(), 1);
+        assert_eq!(reload.changes.plan.line_moves[0].proc.to_string(), "/below");
+        assert!(reload.changes.refused.is_empty());
+
+        assert!(!old.has_patches());
+        let (own, full) = project.both(&mut old, &["a.dm", "b.dm"]);
+        assert_eq!(own.unwrap(), full);
+
+        let reload = old.reload_files(&project.dir, &paths).unwrap();
+        old.keep(reload);
+        assert!(old.has_patches());
+        project.write("b.dm", &b.replace("return 1", "return 11"));
+        let reload = old.reload_files(&project.dir, &paths).unwrap();
+        assert_eq!(reloaded(&reload.changes), ["/first"]);
+        assert!(reload.changes.plan.line_moves.is_empty());
+        old.clear_patches();
+        assert!(!old.has_patches());
+    }
+
+    #[test]
+    fn a_body_that_doesnt_compile_is_refused_among_files_as_by_a_full_parse() {
+        let project = Project::new("refused", &[("a.dm", FILE_A), ("b.dm", FILE_B)]);
+        let mut old = project.parse();
+        project.write("a.dm", &FILE_A.replace("return 3", "return 33"));
+        project.write(
+            "b.dm",
+            &FILE_B.replace("\treturn x", "\tswitch(x)\n\t\tif(x)\n\t\t\treturn 1"),
+        );
+        let (own, full) = project.both(&mut old, &["a.dm", "b.dm"]);
+        let own = own.unwrap();
+        assert!(own.contains("doesn't compile"), "{}", own);
+        assert_eq!(own, full);
+    }
+
+    #[test]
+    fn one_file_that_needs_the_full_parse_takes_the_others_with_it() {
+        let a = FILE_A.replace("return 3", "return 33");
+        for (name, b, why) in [
+            ("var", format!("{FILE_B}/datum/a/var/y = 2\n"), "vars"),
+            ("macro", format!("{FILE_B}#define THREE 3\n"), "macros"),
+            (
+                "proc",
+                format!("{FILE_B}/datum/a/proc/more()\n\treturn 5\n"),
+                "declarations",
+            ),
+            (
+                "override",
+                format!("{FILE_B}/datum/a/b/z()\n\treturn 5\n"),
+                "added",
+            ),
+            (
+                "removed",
+                FILE_B.replace("/proc/first()\n\treturn 1\n", ""),
+                "declarations",
+            ),
+            ("type", format!("{FILE_B}/datum/new_one\n"), "new type"),
+            (
+                "parameters",
+                FILE_B.replace("second(n = 4)", "second(n = 5)"),
+                "parameters",
+            ),
+            (
+                "setting",
+                FILE_B.replace("\treturn 1\n", "\tset waitfor = FALSE\n\treturn 1\n"),
+                "`set`s",
+            ),
+            (
+                "static",
+                FILE_B.replace("\treturn 1\n", "\tvar/static/s = 1\n\treturn 1\n"),
+                "static initializers",
+            ),
+            (
+                "include",
+                format!("{FILE_B}#include \"c.dm\"\n"),
+                "includes",
+            ),
+            ("error", format!("{FILE_B})\n"), "expected"),
+        ] {
+            let project = Project::new(
+                &format!("with-{name}"),
+                &[("a.dm", FILE_A), ("b.dm", FILE_B)],
+            );
+            project.write("c.dm", "");
+            let mut old = project.parse();
+            project.write("a.dm", &a);
+            project.write("b.dm", &b);
+            for files in [["a.dm", "b.dm"], ["b.dm", "a.dm"]] {
+                let paths: Vec<&Path> = files.iter().map(Path::new).collect();
+                match old.reload_files(&project.dir, &paths) {
+                    Ok(_) => panic!("{}: reloaded on their own", name),
+                    Err(e) => assert!(e.contains(why), "{}: {}", name, e),
+                }
+            }
+            let reload = old
+                .reload_files(&project.dir, &[Path::new("a.dm")])
+                .unwrap();
+            assert_eq!(reloaded(&reload.changes), ["/below"], "{}", name);
+            assert!(!old.has_patches());
+        }
+
+        let project = Project::new("with-unread", &[("a.dm", FILE_A), ("b.dm", FILE_B)]);
+        let mut old = project.parse();
+        project.write("a.dm", &a);
+        project.write("c.dm", "/proc/unread()\n\treturn 1\n");
+        match old.reload_files(&project.dir, &[Path::new("a.dm"), Path::new("c.dm")]) {
+            Ok(_) => panic!("reloaded on their own"),
+            Err(e) => assert!(e.contains("not part of the snapshot"), "{}", e),
+        }
+    }
+
+    #[test]
+    fn a_body_that_reads_a_default_another_file_moves_needs_the_full_parse() {
+        let (a, b) = (
+            "/proc/g()\n\treturn 1\n/datum/u\n\tvar/x = 3\n",
+            "/proc/f()\n\treturn 1\n/proc/h()\n\treturn 2\n",
+        );
+        let moved = a.replace("\treturn 1\n", "\tworld.log << 0\n\treturn 1\n");
+        let reads = b.replace("return 1", "return /datum/u::x");
+        let project = Project::new("moved-across", &[("a.dm", a), ("b.dm", b)]);
+        let mut old = project.parse();
+        project.write("a.dm", &moved);
+        project.write("b.dm", &reads);
+        for files in [["a.dm", "b.dm"], ["b.dm", "a.dm"]] {
+            let paths: Vec<&Path> = files.iter().map(Path::new).collect();
+            match old.reload_files(&project.dir, &paths) {
+                Ok(_) => panic!("reloaded on their own"),
+                Err(e) => assert!(
+                    e.contains("/f reads a var default with :: that moved"),
+                    "{}",
+                    e
+                ),
+            }
+        }
+        assert!(!old.has_patches());
+        project.write("b.dm", b);
+        let (own, full) = project.both(&mut old, &["a.dm"]);
+        assert_eq!(own.unwrap(), full);
+        project.write("a.dm", a);
+        project.write("b.dm", &reads);
+        let (own, full) = project.both(&mut old, &["b.dm"]);
+        assert_eq!(own.unwrap(), full);
+        project.write("a.dm", &moved);
+        project.write("b.dm", &b.replace("return 2", "return 22"));
+        let (own, full) = project.both(&mut old, &["a.dm", "b.dm"]);
         assert_eq!(own.unwrap(), full);
     }
 

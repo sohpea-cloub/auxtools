@@ -18,6 +18,7 @@ const SETTLE: Duration = Duration::from_millis(200);
 const INTERVAL_VAR: &str = "AUXTOOLS_WATCH_INTERVAL";
 const LOOKING_SHARE: u32 = 5;
 const STAMP_LAG: Duration = Duration::from_millis(50);
+const MOST_ALONE: usize = 8;
 
 fn interval(usual: Duration) -> Duration {
 	static GIVEN: OnceLock<Option<Duration>> = OnceLock::new();
@@ -172,6 +173,8 @@ impl Code {
 	}
 
 	fn parse_with(&self, defines: Vec<(String, Option<String>)>) -> Result<Snapshot, String> {
+		#[cfg(test)]
+		tests::count_parse(&self.options.dme);
 		self.parsed.set(true);
 		self.parse_started.set(SystemTime::now());
 		let byond = self.parse_options.borrow().byond;
@@ -315,31 +318,29 @@ impl Code {
 		let selected = self.selected_defines();
 		let other_defines = selected != *self.running_defines.borrow();
 		let held = !self.outstanding().is_empty();
-		if let (false, false, [file]) = (held, other_defines, changed.iter().collect::<Vec<_>>().as_slice()) {
-			let file = (*file).clone();
+		if !held && !other_defines && (1..=MOST_ALONE).contains(&changed.len()) {
 			let current = match watching.applied.as_mut() {
 				Some(applied) => applied,
 				None => &mut watching.built
 			};
-			match current.reload_file(&self.root, &file) {
-				Ok(reload) => {
-					watching.edited_since_built.insert(file);
-					return match self.reload(&reload.changes, current, vec![], false, true, None) {
-						None => false,
-						Some(true) => {
-							let current = match watching.applied.as_mut() {
-								Some(applied) => applied,
-								None => &mut watching.built
-							};
-							current.keep(reload);
-							self.watch_named(watching);
-							self.send(Event::Changed);
-							true
-						}
-						Some(false) => true
-					};
-				}
-				Err(_) => {}
+			let mut files: Vec<&Path> = changed.iter().map(PathBuf::as_path).collect();
+			files.sort();
+			if let Ok(reload) = current.reload_files(&self.root, &files) {
+				watching.edited_since_built.extend(changed);
+				return match self.reload(&reload.changes, current, vec![], false, true, None) {
+					None => false,
+					Some(true) => {
+						let current = match watching.applied.as_mut() {
+							Some(applied) => applied,
+							None => &mut watching.built
+						};
+						current.keep(reload);
+						self.watch_named(watching);
+						self.send(Event::Changed);
+						true
+					}
+					Some(false) => true
+				};
 			}
 		}
 
@@ -1148,7 +1149,10 @@ pub fn parse_define(define: &str) -> (String, Option<String>) {
 
 #[cfg(test)]
 mod tests {
-	use std::time::{Duration, SystemTime};
+	use std::{
+		sync::Mutex,
+		time::{Duration, SystemTime}
+	};
 
 	use super::*;
 
@@ -1182,6 +1186,233 @@ mod tests {
 		fn drop(&mut self) {
 			let _ = std::fs::remove_dir_all(&self.root);
 		}
+	}
+
+	static PARSES: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
+
+	pub(super) fn count_parse(dme: &Path) {
+		PARSES.lock().unwrap().push(dme.to_owned());
+	}
+
+	struct Worker {
+		project: Project,
+		commands: mpsc::Sender<Command>,
+		events: mpsc::Receiver<Input>,
+		world: u64
+	}
+
+	struct Prepared {
+		summary: String,
+		plan: String
+	}
+
+	const BYOND: (u32, u32) = (516, 1689);
+	const FILES: [&str; 9] = ["a", "b", "c", "d", "e", "f", "g", "h", "i"];
+
+	impl Worker {
+		fn start(name: &str) -> Worker {
+			let project = Project::new(name, &[]);
+			let mut dme = String::new();
+			for file in FILES {
+				dme += &format!("#include \"code/{file}.dm\"\n");
+				project.write(&format!("code/{file}.dm"), &body(file, "return 1"));
+			}
+			project.write("world.dme", &dme);
+			let before = SystemTime::now() - Duration::from_secs(60);
+			for file in FILES.iter().map(|file| format!("code/{file}.dm")).chain(["world.dme".to_owned()]) {
+				let file = std::fs::File::options().write(true).open(project.root.join(file)).unwrap();
+				file.set_modified(before).unwrap();
+			}
+			let (inputs, events) = mpsc::channel();
+			let options = Options {
+				dme: project.dme(),
+				dmb: project.root.join("world.dmb"),
+				defines: vec![],
+				hot_reload: true
+			};
+			let commands = start(options, Arc::new(Output::plain(|_| {})), inputs, 1);
+			let worker = Worker {
+				project,
+				commands,
+				events,
+				world: 0
+			};
+			worker.connect();
+			worker.next("watching", |event| matches!(event, Event::Watching).then_some(()));
+			worker
+		}
+
+		fn connect(&self) {
+			self.commands
+				.send(Command::Connected {
+					byond: BYOND,
+					world: self.world
+				})
+				.unwrap();
+		}
+
+		fn next<T>(&self, what: &str, wanted: impl Fn(&Event) -> Option<T>) -> T {
+			loop {
+				match self.events.recv_timeout(Duration::from_secs(30)) {
+					Ok(Input::Code { event, .. }) => {
+						if let Event::Failed(why) = &event {
+							panic!("the worker failed waiting for {what}: {why}");
+						}
+						if let Some(found) = wanted(&event) {
+							return found;
+						}
+					}
+					Ok(_) => {}
+					Err(_) => panic!("no {what} from the worker")
+				}
+			}
+		}
+
+		fn prepared(&self) -> Prepared {
+			self.next("reload", |event| match event {
+				Event::Reload { request, summary, .. } => Some(Prepared {
+					summary: summary.text(&[]),
+					plan: format!("{:#?}", request.plan)
+				}),
+				Event::NotReloaded { summary, refused, .. } => panic!("not reloaded: {summary}: {refused:?}"),
+				Event::NothingChanged { .. } => panic!("nothing changed"),
+				_ => None
+			})
+		}
+
+		fn applied(&self, restored: bool) {
+			self.commands.send(Command::Reloaded(true)).unwrap();
+			if restored {
+				self.next("ready", |event| matches!(event, Event::Ready).then_some(()));
+			} else {
+				self.next("looked", |event| matches!(event, Event::Looked).then_some(()));
+			}
+		}
+
+		fn write(&self, file: &str, text: &str) {
+			self.project.write(&format!("code/{file}.dm"), text);
+		}
+
+		fn parses(&self) -> usize {
+			let dme = self.project.dme();
+			PARSES.lock().unwrap().iter().filter(|parsed| **parsed == dme).count()
+		}
+
+		fn full_plan(&self, before: &[(&str, &str)], changed: &[&str], restarted: bool) -> String {
+			let options = ParseOptions {
+				defines: vec![],
+				byond: Some(BYOND)
+			};
+			let now: Vec<(String, String)> = FILES
+				.iter()
+				.map(|file| {
+					(
+						file.to_string(),
+						std::fs::read_to_string(self.project.root.join(format!("code/{file}.dm"))).unwrap()
+					)
+				})
+				.collect();
+			let aside = Project::new(&format!("aside-{}", self.project.root.file_name().unwrap().to_string_lossy()), &[]);
+			aside.write("world.dme", &std::fs::read_to_string(self.project.dme()).unwrap());
+			for (file, text) in &now {
+				let was = before.iter().find(|(name, _)| name == file).map_or(text.as_str(), |(_, text)| text);
+				aside.write(&format!("code/{file}.dm"), was);
+			}
+			let old = Snapshot::parse(&aside.dme(), &options).unwrap();
+			for (file, text) in &now {
+				aside.write(&format!("code/{file}.dm"), text);
+			}
+			let new = Snapshot::parse(&aside.dme(), &options).unwrap();
+			let changed: HashSet<PathBuf> = changed.iter().map(|file| PathBuf::from(format!("code/{file}.dm"))).collect();
+			let changes = diff(&old, &new, Some(&changed));
+			format!("{:#?}", reload::request(&changes, &old, restarted).plan)
+		}
+	}
+
+	fn body(name: &str, statement: &str) -> String {
+		format!("/proc/{name}()\n\t{statement}\n/proc/below_{name}()\n\treturn 0\n")
+	}
+
+	#[test]
+	fn files_saved_together_are_each_parsed_on_their_own() {
+		let worker = Worker::start("together");
+		assert_eq!(worker.parses(), 1);
+		let original = body("a", "return 1");
+
+		worker.write("a", &body("a", "return 2"));
+		assert_eq!(worker.prepared().summary, "reloaded /a");
+		worker.write("b", &body("b", "world.log << 1\n\treturn 2"));
+		worker.write("c", &body("c", "return 2"));
+		worker.applied(false);
+		let reload = worker.prepared();
+		assert_eq!(reload.summary, "reloaded /b, /c; remapped lines in 1 additional procs");
+		assert_eq!(
+			reload.plan,
+			worker.full_plan(&[("b", &body("b", "return 1")), ("c", &body("c", "return 1"))], &["b", "c"], false)
+		);
+		assert_eq!(worker.parses(), 1);
+
+		worker.write("b", &body("b", "return 3"));
+		worker.write("c", &(body("c", "return 2") + "/proc/more()\n\treturn 1\n"));
+		worker.applied(false);
+		assert_eq!(
+			worker.prepared().summary,
+			"reloaded /b; added /more; remapped lines in 1 additional procs"
+		);
+		assert_eq!(worker.parses(), 2);
+
+		for file in FILES {
+			let more = if file == "c" { "/proc/more()\n\treturn 1\n" } else { "" };
+			worker.write(file, &(body(file, "return 4") + more));
+		}
+		worker.applied(false);
+		assert_eq!(worker.prepared().summary, "reloaded 9 procs");
+		assert_eq!(worker.parses(), 3);
+		for file in &FILES[..MOST_ALONE] {
+			let more = if *file == "c" { "/proc/more()\n\treturn 1\n" } else { "" };
+			worker.write(file, &(body(file, "return 5") + more));
+		}
+		worker.applied(false);
+		assert_eq!(worker.prepared().summary, "reloaded 8 procs");
+		assert_eq!(worker.parses(), 3);
+
+		worker.write("a", &body("a", "switch(1)\n\t\tif(rand())\n\t\t\treturn 1"));
+		worker.applied(false);
+		let refused = |worker: &Worker| {
+			worker.next("refusal", |event| match event {
+				Event::NotReloaded { refused, .. } => Some(refused.iter().map(|refusal| refusal.path.clone()).collect::<Vec<_>>()),
+				Event::Reload { summary, .. } => panic!("reloaded: {}", summary.text(&[])),
+				_ => None
+			})
+		};
+		assert_eq!(refused(&worker), ["/a"]);
+		worker.next("looked", |event| matches!(event, Event::Looked).then_some(()));
+		assert_eq!(worker.parses(), 3);
+		worker.write("b", &body("b", "return 6"));
+		assert_eq!(refused(&worker), ["/a"]);
+		worker.next("looked", |event| matches!(event, Event::Looked).then_some(()));
+		assert_eq!(worker.parses(), 4);
+		worker.write("a", &original);
+		assert_eq!(worker.prepared().summary, "reloaded /a, /b");
+		assert_eq!(worker.parses(), 5);
+
+		worker.commands.send(Command::Defines(vec![("FLAG".to_owned(), None)])).unwrap();
+		worker.applied(false);
+		let macros = worker.next("macros", |event| match event {
+			Event::Macros(macros) => Some(macros.iter().map(|define| define.name.clone()).collect::<Vec<_>>()),
+			_ => None
+		});
+		assert_eq!(macros, ["FLAG"]);
+		worker.next("looked", |event| matches!(event, Event::Looked).then_some(()));
+		assert_eq!(worker.parses(), 6);
+		worker.write("a", &body("a", "return 7"));
+		assert_eq!(worker.prepared().summary, "reloaded /a");
+		worker.write("b", &body("b", "return 7"));
+		worker.write("c", &(body("c", "return 7") + "/proc/more()\n\treturn 1\n"));
+		worker.applied(false);
+		assert_eq!(worker.prepared().summary, "reloaded /b, /c");
+		worker.applied(false);
+		assert_eq!(worker.parses(), 6);
 	}
 
 	#[test]
