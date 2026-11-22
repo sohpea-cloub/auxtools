@@ -858,8 +858,15 @@ pub fn unparsed(error: &clap::Error, args: &[String], root: &clap::Command) -> U
 
 #[cfg(test)]
 mod tests {
-	use super::{command_path, overview, page, render, PAGES};
-	use crate::cli::args::{self, Scope};
+	use std::time::Duration;
+
+	use auxtools_cli::byond::Server;
+
+	use super::{command_path, overview, page, render, spec, PAGES};
+	use crate::cli::{
+		args::{self, Scope},
+		hold, json
+	};
 
 	fn commands() -> Vec<(Vec<String>, clap::Command)> {
 		fn under(command: &clap::Command, path: &[String], found: &mut Vec<(Vec<String>, clap::Command)>) {
@@ -873,6 +880,68 @@ mod tests {
 		let mut found = vec![];
 		under(&args::command(), &[], &mut found);
 		found
+	}
+
+	fn names(path: &[String]) -> Vec<&str> {
+		path.iter().map(String::as_str).collect()
+	}
+
+	fn options_named(text: &str) -> Vec<(&str, &str)> {
+		let mut found = vec![];
+		let mut at = 0;
+		while let Some(offset) = text[at..].find('-') {
+			let start = at + offset;
+			let rest = &text[start..];
+			let hyphens = if rest.starts_with("--") { 2 } else { 1 };
+			let name = rest[hyphens..]
+				.split(|c: char| !c.is_ascii_alphanumeric() && c != '-')
+				.next()
+				.unwrap_or_default()
+				.trim_end_matches('-');
+			at = start + hyphens + name.len();
+			if text[..start].ends_with(|c: char| c.is_alphanumeric() || c == '-') {
+				continue;
+			}
+			let long = hyphens == 2 && name.starts_with(|c: char| c.is_ascii_lowercase());
+			let short = hyphens == 1 && name.len() == 1 && name.starts_with(|c: char| c.is_ascii_alphabetic());
+			if long || short {
+				let before = text[..start].split_whitespace().next_back().unwrap_or_default();
+				found.push((before.trim_matches(|c: char| !c.is_ascii_alphanumeric()), &rest[..hyphens + name.len()]));
+			}
+		}
+		found
+	}
+
+	fn takes(command: &clap::Command, option: &str) -> bool {
+		command.get_arguments().any(|arg| {
+			arg.get_long().is_some_and(|long| format!("--{}", long) == option) || arg.get_short().is_some_and(|short| format!("-{}", short) == option)
+		})
+	}
+
+	fn defaults_stated(text: &str) -> Vec<&str> {
+		text.split("[default: ")
+			.skip(1)
+			.map(|rest| rest.split(']').next().unwrap_or_default())
+			.collect()
+	}
+
+	fn default_in_code(path: &[&str], id: &str) -> Option<String> {
+		let seconds = |default: Duration| default.as_secs_f64().to_string();
+		Some(match (path, id) {
+			(_, "response_timeout") => seconds(args::DEFAULT_RESPONSE_TIMEOUT),
+			(["stop"], "timeout") => seconds(args::DEFAULT_STOP_TIMEOUT),
+			(["stop"], "kill_timeout") => seconds(args::DEFAULT_KILL_TIMEOUT),
+			(["reboot" | "reconnect"], "timeout") => seconds(args::DEFAULT_REBOOT_TIMEOUT),
+			(["vars" | "eval"], "depth") => json::DEFAULT_DEPTH.to_string(),
+			(["profile"], "top") => args::DEFAULT_TOP.to_string(),
+			(["check"], "byond_version") => {
+				let latest = dmasm::ByondVersion::LATEST;
+				format!("{}.{}", latest.major, latest.build)
+			}
+			(_, "hold_max") => hold::HOLD_MAX_VAR.to_owned(),
+			(["vars" | "eval"] | ["wait", "pause"], "frame") | (["wait", "pause"], "breaks") | (_, "#N") => "0".to_owned(),
+			_ => return None
+		})
 	}
 
 	#[test]
@@ -891,20 +960,40 @@ mod tests {
 	#[test]
 	fn the_first_page_lists_every_command_once() {
 		let help = overview();
-		let listed: Vec<&str> = args::GROUPS
-			.iter()
-			.flat_map(|(_, commands)| commands.iter().map(|(name, _)| *name))
-			.collect();
-		for page in PAGES.iter().filter(|page| page.path.len() == 1) {
-			assert_eq!(listed.iter().filter(|name| **name == page.path[0]).count(), 1, "{}", page.path[0]);
-			assert!(
-				help.contains(&format!("  {:11}  {}\n", page.path[0], page.brief)),
-				"{} isn't in the help",
-				page.path[0]
+		let root = args::command();
+		let width = root.get_subcommands().map(|command| command.get_name().len()).max().unwrap();
+		for command in root.get_subcommands() {
+			let name = command.get_name();
+			let page = page(&[name]).unwrap();
+			assert_eq!(
+				help.matches(&format!("\n  {:width$}  {}\n", name, page.brief)).count(),
+				1,
+				"{} isn't in the help once",
+				name
 			);
 			assert!(!page.brief.ends_with('.'), "{}", page.brief);
 		}
-		assert_eq!(listed.len(), PAGES.iter().filter(|page| page.path.len() == 1).count());
+	}
+
+	#[test]
+	fn a_command_with_commands_lists_each_as_its_page_does() {
+		for (path, command) in commands() {
+			let mut names = names(&path);
+			let text = render(page(&names).unwrap(), &command);
+			let width = command.get_subcommands().map(|sub| sub.get_name().len()).max().unwrap_or(0);
+			for sub in command.get_subcommands() {
+				names.push(sub.get_name());
+				let brief = page(&names).unwrap().brief;
+				names.pop();
+				assert!(
+					text.contains(&format!("\n  {:width$}  {}\n", sub.get_name(), brief)),
+					"{} doesn't list {}: {}",
+					path.join(" "),
+					sub.get_name(),
+					text
+				);
+			}
+		}
 	}
 
 	#[test]
@@ -933,34 +1022,163 @@ mod tests {
 	#[test]
 	fn every_option_is_in_its_commands_page_and_says_what_it_does() {
 		for (path, command) in commands() {
-			let names: Vec<&str> = path.iter().map(String::as_str).collect();
+			if command.has_subcommands() {
+				continue;
+			}
+			let names = names(&path);
 			let text = render(page(&names).unwrap(), &command);
-			for arg in command.get_arguments().filter(|arg| !arg.is_positional() && !arg.is_hide_set()) {
-				let global = |id: &str, spec: &str| arg.get_id() == id && !text.contains(spec);
-				if arg.get_id() == "help" || global("pid", "--pid PID ") || global("response_timeout", "--response-timeout SECONDS ") {
+			let scope = args::scope_of(names[0]);
+			for arg in command.get_arguments().filter(|arg| !arg.is_positional()) {
+				let id = arg.get_id().as_str();
+				let spec = spec(arg);
+				let listed = match id {
+					"pid" => scope != Some(Scope::Local),
+					"response_timeout" => scope == Some(Scope::World),
+					_ => !arg.is_hide_set()
+				};
+				let row = format!("  {}  ", spec);
+				assert_eq!(
+					text.lines().filter(|line| line.starts_with(&row)).count(),
+					usize::from(listed),
+					"{} {}: {}",
+					path.join(" "),
+					spec,
+					text
+				);
+				if !listed || id == "help" {
 					continue;
 				}
-				let long = arg.get_long().map(|long| format!("--{}", long));
-				let short = arg.get_short().map(|short| format!("-{}", short));
-				let name = long.or(short).unwrap();
-				assert!(
-					text.lines()
-						.any(|line| line.trim_start().starts_with(&name) || line.contains(&format!(", {} ", name))),
-					"{} {}",
-					path.join(" "),
-					name
-				);
 				let help = arg.get_help().map(ToString::to_string).unwrap_or_default();
+				for line in help.lines() {
+					assert!(text.contains(&format!("  {}\n", line)), "{} {}: {:?}", path.join(" "), spec, line);
+				}
 				assert!(
 					help.chars().next().is_some_and(char::is_uppercase),
 					"{} {}: {:?}",
 					path.join(" "),
-					name,
+					spec,
 					help
 				);
-				assert!(help.ends_with('.') || help.ends_with(']'), "{} {}: {:?}", path.join(" "), name, help);
+				assert!(help.ends_with('.') || help.ends_with(']'), "{} {}: {:?}", path.join(" "), spec, help);
 			}
 		}
+	}
+
+	#[test]
+	fn a_usage_line_names_every_option_or_says_options() {
+		for (path, command) in commands() {
+			let page = page(&names(&path)).unwrap();
+			if command.has_subcommands() || page.usage.contains("[OPTIONS]") {
+				continue;
+			}
+			let own = command
+				.get_arguments()
+				.filter(|arg| !arg.is_positional() && !arg.is_hide_set() && !matches!(arg.get_id().as_str(), "help" | "pid" | "response_timeout"));
+			for arg in own {
+				let spec = spec(arg);
+				assert!(
+					page.usage.contains(&format!("[{}]", spec)) || page.usage.contains(&format!("[{} [", spec)),
+					"the usage of {} leaves out {}: {}",
+					path.join(" "),
+					spec,
+					page.usage
+				);
+			}
+		}
+	}
+
+	#[test]
+	fn a_page_names_no_option_that_doesnt_exist() {
+		let root = args::command();
+		let commands = commands();
+		for (path, command) in &commands {
+			let text = render(page(&names(path)).unwrap(), command);
+			for (before, option) in options_named(&text) {
+				let others = root.find_subcommand(before).is_some_and(|other| takes(other, option));
+				assert!(
+					takes(command, option) || takes(&root, option) || others,
+					"the page of {} names {}, which isn't an option of it: {}",
+					path.join(" "),
+					option,
+					text
+				);
+			}
+		}
+		let first = overview();
+		for (_, option) in options_named(&first) {
+			assert!(
+				takes(&root, option) || commands.iter().any(|(_, command)| takes(command, option)),
+				"the first page names {}, which isn't an option",
+				option
+			);
+		}
+		assert_eq!(options_named("Put '--' before -x (--wait), log --follow; step-over -trusted Ctrl-C"), [
+			("before", "-x"),
+			("", "--wait"),
+			("log", "--follow")
+		]);
+	}
+
+	#[test]
+	fn a_default_the_help_states_is_the_one_the_code_uses() {
+		let check = |path: &[&str], id: &str, stated: &str| match default_in_code(path, id) {
+			Some(value) => assert!(
+				stated
+					.strip_prefix(value.as_str())
+					.is_some_and(|rest| rest.is_empty() || rest.starts_with([',', ' '])),
+				"{} {} says [default: {}], and the code uses {}",
+				path.join(" "),
+				id,
+				stated,
+				value
+			),
+			None => assert!(
+				!stated.starts_with(|c: char| c.is_ascii_digit()),
+				"{} {} says [default: {}]: name the value the code uses in `default_in_code`",
+				path.join(" "),
+				id,
+				stated
+			)
+		};
+		for (path, command) in commands() {
+			let names = names(&path);
+			let page = page(&names).unwrap();
+			for arg in command.get_arguments() {
+				let id = arg.get_id().as_str();
+				let help = arg.get_help().map(ToString::to_string).unwrap_or_default();
+				let stated = defaults_stated(&help);
+				if arg.get_action().takes_values() && !arg.get_default_values().is_empty() {
+					let given: Vec<_> = arg.get_default_values().iter().map(|value| value.to_string_lossy()).collect();
+					assert_eq!(stated, given, "{} {}", path.join(" "), id);
+				}
+				for stated in stated {
+					if names == ["launch"] && id == "server" {
+						let server: Server = serde_json::from_value(serde_json::json!(stated)).expect("a server by its name");
+						assert_eq!(server, Server::default_for_platform());
+						continue;
+					}
+					check(&names, id, stated);
+				}
+			}
+			for line in page.arguments.lines().chain(page.sections.lines()) {
+				let id = if line.trim_start().starts_with("#N ") { "#N" } else { "" };
+				for stated in defaults_stated(line) {
+					check(&names, id, stated);
+				}
+			}
+		}
+		let first = overview();
+		assert!(
+			first.contains(&format!("\n               {}\n", args::response_timeout_help())),
+			"{}",
+			first
+		);
+		assert_eq!(defaults_stated(&first).len(), 1, "{}", first);
+		assert!(
+			first.contains(&format!("Default: {}, or no limit if unset.", hold::HOLD_MAX_VAR)),
+			"{}",
+			first
+		);
 	}
 
 	#[test]
