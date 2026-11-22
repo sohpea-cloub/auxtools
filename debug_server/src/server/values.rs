@@ -293,6 +293,144 @@ pub(super) fn entry_number(name: &str) -> Option<u32> {
 }
 
 impl Server {
+	pub(super) fn handle_scopes(&mut self, frame_id: u32) {
+		let response = match &self.pause.state {
+			Some(state) => Response::Scopes {
+				arguments: Some(state.get_ref(Variables::Arguments { frame: frame_id })),
+				locals: Some(state.get_ref(Variables::Locals { frame: frame_id })),
+				globals: Some(state.get_ref(Variables::Globals))
+			},
+			None => Response::Scopes {
+				arguments: None,
+				locals: None,
+				globals: None
+			}
+		};
+
+		self.answer(response);
+	}
+
+	pub(super) fn handle_variables(&mut self, vars: VariablesRef, start: Option<u32>, count: Option<u32>) {
+		let listed = match self.pause.state.as_ref().and_then(|state| state.get_variables(vars)) {
+			Some(container) => self.pause.list_variables(container, start, count),
+			None => Ok(vec![])
+		};
+
+		let vars = listed.unwrap_or_else(|e| {
+			self.notify(format!("Couldn't list variables: {}", e.message));
+			vec![]
+		});
+		self.answer(Response::Variables { vars });
+	}
+
+	pub(super) fn complete(&mut self, frame_id: Option<u32>, base: Option<&str>, prefix: &str) -> Vec<Completion> {
+		let mut found: BTreeMap<String, bool> = BTreeMap::new();
+		match base {
+			Some(base) => {
+				let value = self.eval_expr(frame_id, base);
+				if let Some(state) = self.pause.state.as_mut() {
+					state.invalidate_stacks();
+				}
+				let Ok(value) = value else {
+					return vec![];
+				};
+				members_of(&value, &mut found);
+			}
+
+			None => {
+				let mut src = None;
+				if let Some(frame) = frame_id.and_then(|frame_id| self.pause.get_stack_frame(frame_id)) {
+					for name in [".", "src", "usr", "args"] {
+						found.insert(name.to_owned(), false);
+					}
+					found.extend(
+						frame
+							.args
+							.iter()
+							.filter_map(|(name, _)| name.as_ref())
+							.map(|name| (String::from(name), false))
+					);
+					found.extend(visible_locals(&frame).into_iter().flatten().map(|name| (name, false)));
+					src = Some(frame.src.clone()).filter(|src| *src != Value::NULL);
+				}
+				if let Some(src) = &src {
+					members_of(src, &mut found);
+				}
+
+				for name in ["world", "global"] {
+					found.entry(name.to_owned()).or_insert(false);
+				}
+				if let Ok(names) = List::from_value(&unsafe { Value::new(ValueTag::GlobalVars, ValueData { id: 0 }) }) {
+					for i in 1..=names.len() {
+						if let Ok(name) = names.get(i).and_then(|name| name.as_string()) {
+							found.entry(name).or_insert(false);
+						}
+					}
+				}
+				for name in hot_reload::added_globals() {
+					found.entry(name).or_insert(false);
+				}
+				each_proc(|owner, name| {
+					if owner.is_empty() {
+						found.entry(name.to_owned()).or_insert(true);
+					}
+				});
+			}
+		}
+
+		let prefix = prefix.to_lowercase();
+		found
+			.into_iter()
+			.filter(|(name, _)| name.to_lowercase().starts_with(&prefix))
+			.take(MOST_COMPLETIONS)
+			.map(|(name, proc)| Completion { name, proc })
+			.collect()
+	}
+
+	pub(super) fn set_variable(&mut self, vars: VariablesRef, name: &str, value: &str) -> Result<Variable, String> {
+		let container = self
+			.pause
+			.state
+			.as_ref()
+			.and_then(|state| state.get_variables(vars))
+			.ok_or("variable reference expired after execution resumed")?;
+		let frame = match &container {
+			Variables::Arguments { frame } | Variables::Locals { frame } => *frame,
+			_ => 0
+		};
+		let value = self.eval_expr(Some(frame), value);
+		self.pause.state.as_mut().unwrap().invalidate_stacks();
+		let value = value?;
+
+		self.in_eval = true;
+		auxtools::instruction_hook::hear_all();
+		self.eval_error = None;
+		let written = self.pause.write_variable(&container, name, &value);
+		self.in_eval = false;
+		self.refresh_watches();
+		self.pause.state.as_mut().unwrap().invalidate_stacks();
+		if let Some(error) = self.eval_error.take() {
+			return Err(format!("runtime error: {}", error));
+		}
+		written?;
+
+		if let Variables::ListPair { entry, .. } = &container {
+			return Ok(self.pause.value_to_variable(name.to_owned(), &value, entry.clone()));
+		}
+
+		let (start, count) = match &container {
+			Variables::ListContents(..) => (entry_number(name).map(|n| n - 1), Some(1)),
+			_ => (None, None)
+		};
+		let listed = self.pause.list_variables(container, start, count).map_err(|e| e.message)?;
+		listed
+			.into_iter()
+			.find(|variable| variable.name == name)
+			.ok_or_else(|| format!("{} is gone", name))
+	}
+}
+
+impl Pausing {
 	pub(super) fn value_to_variable(&self, name: String, value: &Value, expr: Option<String>) -> Variable {
 		Variable {
 			name,
@@ -460,23 +598,6 @@ impl Server {
 			.collect()
 	}
 
-	pub(super) fn handle_scopes(&mut self, frame_id: u32) {
-		let response = match &self.state {
-			Some(state) => Response::Scopes {
-				arguments: Some(state.get_ref(Variables::Arguments { frame: frame_id })),
-				locals: Some(state.get_ref(Variables::Locals { frame: frame_id })),
-				globals: Some(state.get_ref(Variables::Globals))
-			},
-			None => Response::Scopes {
-				arguments: None,
-				locals: None,
-				globals: None
-			}
-		};
-
-		self.answer(response);
-	}
-
 	pub(super) fn list_variables(&mut self, container: Variables, start: Option<u32>, count: Option<u32>) -> Result<Vec<Variable>, Runtime> {
 		match container {
 			Variables::Arguments { frame } => Ok(self.get_args(frame)),
@@ -494,83 +615,6 @@ impl Server {
 				None => vec![]
 			})
 		}
-	}
-
-	pub(super) fn handle_variables(&mut self, vars: VariablesRef, start: Option<u32>, count: Option<u32>) {
-		let listed = match self.state.as_ref().and_then(|state| state.get_variables(vars)) {
-			Some(container) => self.list_variables(container, start, count),
-			None => Ok(vec![])
-		};
-
-		let vars = listed.unwrap_or_else(|e| {
-			self.notify(format!("Couldn't list variables: {}", e.message));
-			vec![]
-		});
-		self.answer(Response::Variables { vars });
-	}
-
-	pub(super) fn complete(&mut self, frame_id: Option<u32>, base: Option<&str>, prefix: &str) -> Vec<Completion> {
-		let mut found: BTreeMap<String, bool> = BTreeMap::new();
-		match base {
-			Some(base) => {
-				let value = self.eval_expr(frame_id, base);
-				if let Some(state) = self.state.as_mut() {
-					state.invalidate_stacks();
-				}
-				let Ok(value) = value else {
-					return vec![];
-				};
-				members_of(&value, &mut found);
-			}
-
-			None => {
-				let mut src = None;
-				if let Some(frame) = frame_id.and_then(|frame_id| self.get_stack_frame(frame_id)) {
-					for name in [".", "src", "usr", "args"] {
-						found.insert(name.to_owned(), false);
-					}
-					found.extend(
-						frame
-							.args
-							.iter()
-							.filter_map(|(name, _)| name.as_ref())
-							.map(|name| (String::from(name), false))
-					);
-					found.extend(visible_locals(&frame).into_iter().flatten().map(|name| (name, false)));
-					src = Some(frame.src.clone()).filter(|src| *src != Value::NULL);
-				}
-				if let Some(src) = &src {
-					members_of(src, &mut found);
-				}
-
-				for name in ["world", "global"] {
-					found.entry(name.to_owned()).or_insert(false);
-				}
-				if let Ok(names) = List::from_value(&unsafe { Value::new(ValueTag::GlobalVars, ValueData { id: 0 }) }) {
-					for i in 1..=names.len() {
-						if let Ok(name) = names.get(i).and_then(|name| name.as_string()) {
-							found.entry(name).or_insert(false);
-						}
-					}
-				}
-				for name in hot_reload::added_globals() {
-					found.entry(name).or_insert(false);
-				}
-				each_proc(|owner, name| {
-					if owner.is_empty() {
-						found.entry(name.to_owned()).or_insert(true);
-					}
-				});
-			}
-		}
-
-		let prefix = prefix.to_lowercase();
-		found
-			.into_iter()
-			.filter(|(name, _)| name.to_lowercase().starts_with(&prefix))
-			.take(MOST_COMPLETIONS)
-			.map(|(name, proc)| Completion { name, proc })
-			.collect()
 	}
 
 	pub(super) fn write_variable(&mut self, container: &Variables, name: &str, value: &Value) -> Result<(), String> {
@@ -658,46 +702,5 @@ impl Server {
 
 			Variables::Pointee(..) => Err("assign to the target variable to change the pointed-to value".to_owned())
 		}
-	}
-
-	pub(super) fn set_variable(&mut self, vars: VariablesRef, name: &str, value: &str) -> Result<Variable, String> {
-		let container = self
-			.state
-			.as_ref()
-			.and_then(|state| state.get_variables(vars))
-			.ok_or("variable reference expired after execution resumed")?;
-		let frame = match &container {
-			Variables::Arguments { frame } | Variables::Locals { frame } => *frame,
-			_ => 0
-		};
-		let value = self.eval_expr(Some(frame), value);
-		self.state.as_mut().unwrap().invalidate_stacks();
-		let value = value?;
-
-		self.in_eval = true;
-		auxtools::instruction_hook::hear_all();
-		self.eval_error = None;
-		let written = self.write_variable(&container, name, &value);
-		self.in_eval = false;
-		self.refresh_watches();
-		self.state.as_mut().unwrap().invalidate_stacks();
-		if let Some(error) = self.eval_error.take() {
-			return Err(format!("runtime error: {}", error));
-		}
-		written?;
-
-		if let Variables::ListPair { entry, .. } = &container {
-			return Ok(self.value_to_variable(name.to_owned(), &value, entry.clone()));
-		}
-
-		let (start, count) = match &container {
-			Variables::ListContents(..) => (entry_number(name).map(|n| n - 1), Some(1)),
-			_ => (None, None)
-		};
-		let listed = self.list_variables(container, start, count).map_err(|e| e.message)?;
-		listed
-			.into_iter()
-			.find(|variable| variable.name == name)
-			.ok_or_else(|| format!("{} is gone", name))
 	}
 }

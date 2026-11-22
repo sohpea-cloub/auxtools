@@ -1,28 +1,7 @@
 use super::*;
 
-impl Server {
-	pub(super) fn handle_render(&mut self, frame_id: Option<u32>, expression: &str, depth: u32) {
-		let rendered = match expression.strip_prefix('#') {
-			Some(command) => {
-				self.eval_warnings.clear();
-				self.eval_callee_errors.clear();
-				self.eval_callee_more = 0;
-				Ok(Rendered::Text(self.handle_command(frame_id, command)))
-			}
-			None => self.eval_expr(frame_id, expression).map(|value| render(&value, depth))
-		};
-		self.send_callee_errors();
-		self.answer(Response::Render(rendered));
-	}
-
-	pub(super) fn handle_render_variables(&mut self, vars: VariablesRef, depth: u32) {
-		let rendered = self
-			.values_in(vars)
-			.map(|values| values.iter().map(|(name, value)| (name.clone(), render(value, depth))).collect());
-		self.answer(Response::RenderVariables(rendered));
-	}
-
-	fn values_in(&self, vars: VariablesRef) -> Result<Vec<(String, Value)>, String> {
+impl Pausing {
+	pub(super) fn values_in(&self, vars: VariablesRef) -> Result<Vec<(String, Value)>, String> {
 		let container = self
 			.state
 			.as_ref()
@@ -61,6 +40,30 @@ impl Server {
 			Variables::ObjectVars(object, _) => Ok(object_values(&object)),
 			_ => Err("rendering supports frame variables, globals and object variables".to_owned())
 		}
+	}
+}
+
+impl Server {
+	pub(super) fn handle_render(&mut self, frame_id: Option<u32>, expression: &str, depth: u32) {
+		let rendered = match expression.strip_prefix('#') {
+			Some(command) => {
+				self.eval_warnings.clear();
+				self.eval_callee_errors.clear();
+				self.eval_callee_more = 0;
+				Ok(Rendered::Text(self.handle_command(frame_id, command)))
+			}
+			None => self.eval_expr(frame_id, expression).map(|value| render(&value, depth))
+		};
+		self.send_callee_errors();
+		self.answer(Response::Render(rendered));
+	}
+
+	pub(super) fn handle_render_variables(&mut self, vars: VariablesRef, depth: u32) {
+		let rendered = self
+			.pause
+			.values_in(vars)
+			.map(|values| values.iter().map(|(name, value)| (name.clone(), render(value, depth))).collect());
+		self.answer(Response::RenderVariables(rendered));
 	}
 }
 

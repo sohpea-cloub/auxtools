@@ -26,6 +26,7 @@ use crate::{
 };
 
 mod code;
+mod pause;
 mod profile;
 mod render;
 mod sessions;
@@ -33,6 +34,7 @@ mod values;
 mod watches;
 
 use code::Codes;
+use pause::{Pausing, State};
 use sessions::{ClientId, Sessions, Wait};
 use values::Variables;
 
@@ -43,90 +45,6 @@ struct Spawn {
 	bytecode: Vec<u32>,
 	locals: Vec<String>,
 	args: Vec<Value>
-}
-
-struct State {
-	active: OnceCell<Vec<debug::StackFrame>>,
-	suspended: OnceCell<Vec<Vec<debug::StackFrame>>>,
-	sleeping: usize,
-	variables: RefCell<Vec<Variables>>,
-	variables_to_refs: RefCell<HashMap<Variables, VariablesRef>>,
-	sleeping_frames: RefCell<Vec<SleepingFrame>>,
-	sleeping_frame_ids: RefCell<HashMap<SleepingFrame, u32>>
-}
-
-const SLEEPING_FRAMES: u32 = 1 << 30;
-
-const ENDING_LIMIT: Duration = Duration::from_secs(60);
-
-#[derive(Clone, Copy, Hash, PartialEq, Eq)]
-struct SleepingFrame {
-	thread: u32,
-	depth: usize,
-	instance: usize
-}
-
-impl State {
-	fn new() -> Self {
-		Self {
-			active: OnceCell::new(),
-			suspended: OnceCell::new(),
-			sleeping: DEFAULT_SLEEPING_STACKS as usize,
-			variables: RefCell::new(vec![]),
-			variables_to_refs: RefCell::new(HashMap::new()),
-			sleeping_frames: RefCell::new(vec![]),
-			sleeping_frame_ids: RefCell::new(HashMap::new())
-		}
-	}
-
-	fn sleeping_frame_id(&self, frame: SleepingFrame) -> u32 {
-		let mut frames = self.sleeping_frames.borrow_mut();
-		*self.sleeping_frame_ids.borrow_mut().entry(frame).or_insert_with(|| {
-			frames.push(frame);
-			SLEEPING_FRAMES + (frames.len() as u32 - 1)
-		})
-	}
-
-	fn sleeping_frame(&self, id: u32) -> Option<SleepingFrame> {
-		self.sleeping_frames.borrow().get(id.checked_sub(SLEEPING_FRAMES)? as usize).copied()
-	}
-
-	fn invalidate_stacks(&mut self) {
-		self.active = OnceCell::new();
-		self.suspended = OnceCell::new();
-	}
-
-	fn active(&self) -> &Vec<debug::StackFrame> {
-		self.active.get_or_init(debug::CallStacks::active)
-	}
-
-	fn suspended(&self) -> &Vec<Vec<debug::StackFrame>> {
-		self.suspended.get_or_init(|| debug::CallStacks::suspended_first(self.sleeping))
-	}
-
-	fn read_sleeping(&mut self, sleeping: usize) {
-		if sleeping > self.sleeping {
-			self.sleeping = sleeping;
-			self.suspended = OnceCell::new();
-		}
-	}
-
-	fn get_ref(&self, vars: Variables) -> VariablesRef {
-		let mut variables_to_refs = self.variables_to_refs.borrow_mut();
-		let mut variables = self.variables.borrow_mut();
-		(*variables_to_refs.entry(vars.clone()).or_insert_with(|| {
-			let reference = VariablesRef(variables.len() as i32 + 1);
-			variables.push(vars);
-			reference
-		}))
-		.clone()
-	}
-
-	fn get_variables(&self, reference: VariablesRef) -> Option<Variables> {
-		let variables = self.variables.borrow();
-		let index = usize::try_from(reference.0).ok()?.checked_sub(1)?;
-		variables.get(index).cloned()
-	}
 }
 
 const JOURNAL_FRAMES: usize = 64;
@@ -173,7 +91,7 @@ struct EvalCodeKey {
 
 pub struct Server {
 	sessions: Sessions,
-	state: Option<State>,
+	pause: Pausing,
 	in_eval: bool,
 	eval_error: Option<String>,
 	eval_still_running: bool,
@@ -181,7 +99,6 @@ pub struct Server {
 	eval_callee_more: usize,
 	eval_ran: *mut raw_types::procs::ExecutionContext,
 	breakpoints: Breakpoints,
-	paused: Option<Stop>,
 	watches: Vec<watches::Watched>,
 	next_watch: u32,
 	eval_given: Vec<(String, Value)>,
@@ -198,8 +115,6 @@ pub struct Server {
 	spawn_inbox: Option<Value>,
 	spawn_stub_locals: Option<u32>,
 	spawned: HashMap<u64, (String, Option<String>)>,
-	ending: Option<Instant>,
-	stepper: Option<ClientId>,
 	moved_breakpoints: hot_reload::MovedBreakpoints<(ClientId, Placed)>,
 	codes: Codes,
 	waiting_reloads: Vec<HotReloadRequest>
@@ -209,7 +124,7 @@ impl Server {
 	pub fn listen() -> std::io::Result<Server> {
 		Ok(Server {
 			sessions: Sessions::listen()?,
-			state: None,
+			pause: Pausing::new(),
 			in_eval: false,
 			eval_error: None,
 			eval_still_running: false,
@@ -218,7 +133,6 @@ impl Server {
 			eval_ran: std::ptr::null_mut(),
 			breakpoints: HashMap::new(),
 			moved_breakpoints: HashMap::new(),
-			paused: None,
 			watches: vec![],
 			next_watch: 0,
 			eval_given: vec![],
@@ -235,8 +149,6 @@ impl Server {
 			spawn_inbox: None,
 			spawn_stub_locals: None,
 			spawned: HashMap::new(),
-			ending: None,
-			stepper: None,
 			codes: Codes::new(),
 			waiting_reloads: vec![]
 		})
@@ -373,66 +285,6 @@ impl Server {
 		place
 	}
 
-	fn shown(stack: &[debug::StackFrame]) -> &[debug::StackFrame] {
-		match stack.iter().rposition(|frame| !crate::launched::runs_spawns(&frame.proc)) {
-			Some(last) => &stack[..=last],
-			None => stack
-		}
-	}
-
-	fn only_runs_spawns(instance: *mut raw_types::procs::ProcInstance) -> bool {
-		let mut ctx = unsafe { (*instance).context };
-		while !ctx.is_null() {
-			let proc = Proc::from_id(unsafe { (**(*ctx).proc_instance()).proc });
-			if !proc.is_some_and(|proc| crate::launched::runs_spawns(&proc)) {
-				return false;
-			}
-			ctx = unsafe { *(*ctx).parent_context() };
-		}
-		true
-	}
-
-	fn thread_of(&self, stack: &[debug::StackFrame]) -> u32 {
-		Self::shown(stack)
-			.last()
-			.map_or(0, |frame| unsafe { (*frame.instance).argslist_idx.id }.wrapping_add(1))
-	}
-
-	fn stack_position(&self, thread: u32) -> Option<usize> {
-		let state = self.state.as_ref()?;
-		if thread == 0 {
-			return Some(0);
-		}
-		let is = |stack: &[debug::StackFrame]| self.thread_of(stack) == thread;
-		if is(state.active()) {
-			return Some(0);
-		}
-		state.suspended().iter().position(|stack| is(stack)).map(|at| at + 1)
-	}
-
-	fn get_stack(&self, position: usize) -> Option<&Vec<debug::StackFrame>> {
-		let state = self.state.as_ref()?;
-
-		if position == 0 {
-			return Some(state.active());
-		}
-
-		state.suspended().get(position - 1)
-	}
-
-	fn get_stack_frame(&self, frame_index: u32) -> Option<&debug::StackFrame> {
-		let state = self.state.as_ref()?;
-		if frame_index < SLEEPING_FRAMES {
-			return state.active().get(frame_index as usize);
-		}
-
-		let frame = state.sleeping_frame(frame_index)?;
-		let position = self.stack_position(frame.thread).filter(|&position| position != 0)?;
-		self.get_stack(position)?
-			.get(frame.depth)
-			.filter(|found| found.instance as usize == frame.instance)
-	}
-
 	fn breakpoint_offset(proc: &Proc, offset: u32) -> u32 {
 		if offset == 0 {
 			code_index::of(proc).entry_offset()
@@ -536,7 +388,7 @@ impl Server {
 						Ok(value) => message.push_str(&value.as_string().unwrap_or_else(|_| values::stringify(&value))),
 						Err(error) => message.push_str(&format!("{{{}: {}}}", expression, error))
 					}
-					self.state.as_mut().unwrap().invalidate_stacks();
+					self.pause.state.as_mut().unwrap().invalidate_stacks();
 				}
 			}
 		}
@@ -574,103 +426,11 @@ impl Server {
 		self.answer(Response::BreakpointUnset { success, skipped });
 	}
 
-	fn handle_stacks(&mut self, sleeping: Option<u32>) {
-		let sleeping = sleeping.unwrap_or(DEFAULT_SLEEPING_STACKS) as usize;
-		if let Some(state) = &mut self.state {
-			state.read_sleeping(sleeping.saturating_add(1));
-		}
-		let mut asleep = 0;
-		let stacks = match &self.state {
-			Some(state) => {
-				let instances = debug::CallStacks::suspended_instances();
-				asleep = instances.len() - instances.into_iter().filter(|&instance| Self::only_runs_spawns(instance)).count();
-				let suspended = state
-					.suspended()
-					.iter()
-					.filter(|stack| !stack.iter().all(|frame| crate::launched::runs_spawns(&frame.proc)))
-					.take(sleeping);
-				let listed = std::iter::once(state.active()).chain(suspended);
-				listed
-					.enumerate()
-					.filter(|(_, stack)| !stack.is_empty())
-					.map(|(position, stack)| {
-						let (file, line) = self.codes.frame_place(&stack[0], position != 0);
-						Stack {
-							id: self.thread_of(stack),
-							name: unnamed::proc_name(&stack[0].proc),
-							file,
-							line,
-							sleeping: position != 0
-						}
-					})
-					.collect()
-			}
-
-			None => vec![]
-		};
-
-		self.answer(Response::Stacks {
-			stacks,
-			sleeping: asleep as u32
-		});
-	}
-
-	fn handle_stack_frames(&mut self, thread: u32, start_frame: Option<u32>, count: Option<u32>) {
-		let position = self.stack_position(thread);
-		let response = match position.and_then(|position| self.get_stack(position)) {
-			Some(stack) => {
-				let stack_id = position.unwrap_or(0);
-				let thread = self.thread_of(stack);
-				let stack = Self::shown(stack);
-				let start_frame = start_frame.unwrap_or(0);
-				let end_frame = start_frame.saturating_add(count.unwrap_or(stack.len() as u32));
-
-				let start_frame = start_frame as usize;
-				let end_frame = end_frame as usize;
-
-				let mut frames = vec![];
-
-				for i in start_frame..end_frame {
-					if i >= stack.len() {
-						break;
-					}
-
-					let id = match &self.state {
-						Some(state) if stack_id != 0 => state.sleeping_frame_id(SleepingFrame {
-							thread,
-							depth: i,
-							instance: stack[i].instance as usize
-						}),
-						_ => i as u32
-					};
-					frames.push(self.codes.frame_info(&stack[i], id, stack_id != 0 && i == 0));
-				}
-
-				Response::StackFrames {
-					frames,
-					total_count: stack.len() as u32
-				}
-			}
-
-			None => {
-				if self.state.is_none() {
-					self.notify("received StackFrames request when not paused");
-				}
-				Response::StackFrames {
-					frames: vec![],
-					total_count: 0
-				}
-			}
-		};
-
-		self.answer(response);
-	}
-
 	fn handle_command(&mut self, frame_id: Option<u32>, command: &str) -> String {
 		match console::parse(command) {
 			Ok(console::Command::Disassemble { proc: Some(proc), id }) => self.codes.handle_disassemble(proc, id),
 			Ok(console::Command::Disassemble { proc: None, .. }) => match frame_id {
-				Some(frame_id) => match self.get_stack_frame(frame_id) {
+				Some(frame_id) => match self.pause.get_stack_frame(frame_id) {
 					Some(frame) => {
 						let proc = unnamed::proc_ref(&frame.proc);
 						self.codes.handle_disassemble(&proc.path, proc.override_id)
@@ -775,7 +535,7 @@ impl Server {
 			}
 
 			Some(frame_id) => {
-				let Some(frame) = self.get_stack_frame(frame_id) else {
+				let Some(frame) = self.pause.get_stack_frame(frame_id) else {
 					return Err(format!("there's no frame {} (the world isn't paused, or has carried on since)", frame_id));
 				};
 
@@ -1032,11 +792,11 @@ impl Server {
 
 	fn handle_eval_request(&mut self, frame_id: Option<u32>, command: &str, ending: bool) {
 		if ending {
-			self.ending = Some(Instant::now());
+			self.pause.ending = Some(Instant::now());
 		}
 		let still_running = self.handle_eval(frame_id, command);
 		if ending && !still_running {
-			self.ending = None;
+			self.pause.ending = None;
 		}
 	}
 
@@ -1061,7 +821,7 @@ impl Server {
 			.eval_expr(frame_id, command)
 			.map(|result| EvalResponse {
 				value: values::stringify(&result),
-				variables: self.value_to_variables_ref(&result, reached),
+				variables: self.pause.value_to_variables_ref(&result, reached),
 				kind: values::kind(&result),
 				entries: values::entries(&result)
 			})
@@ -1091,7 +851,7 @@ impl Server {
 				value
 					.map(|result| EvalResponse {
 						value: values::stringify(&result),
-						variables: self.value_to_variables_ref(&result, None),
+						variables: self.pause.value_to_variables_ref(&result, None),
 						kind: values::kind(&result),
 						entries: values::entries(&result)
 					})
@@ -1555,7 +1315,7 @@ impl Server {
 			}
 
 			Request::Status => {
-				let paused = self.paused.clone();
+				let paused = self.pause.paused.clone();
 				self.answer(Response::Status { paused });
 			}
 
@@ -1671,8 +1431,8 @@ impl Server {
 		eprintln!("Debug server panicked, dropping the debug clients");
 		self.in_eval = false;
 		self.waiting_to_start = false;
-		self.state = None;
-		self.paused = None;
+		self.pause.state = None;
+		self.pause.paused = None;
 		self.disconnect_all();
 		self.sessions.profiling = None;
 		crate::profiler::discard();
@@ -1699,7 +1459,7 @@ impl Server {
 			if let Some(condition) = condition {
 				let passed = self.eval_expr(Some(0), &condition).map(|result| result.is_truthy());
 
-				self.state.as_mut().unwrap().invalidate_stacks();
+				self.pause.state.as_mut().unwrap().invalidate_stacks();
 				match passed {
 					Ok(true) => {}
 					Ok(false) => continue,
@@ -1724,6 +1484,7 @@ impl Server {
 			};
 			let message = self.log_message(&log);
 			let caller = self
+				.pause
 				.state
 				.as_ref()
 				.and_then(|state| state.active().get(1))
@@ -1770,182 +1531,6 @@ impl Server {
 		self.tell(client.0, Response::ConditionFailed { message });
 	}
 
-	pub fn handle_breakpoint(&mut self, _ctx: *mut raw_types::procs::ExecutionContext, reason: BreakpointReason) -> Option<ContinueKind> {
-		if let BreakpointReason::Runtime { message, caught } = &reason {
-			let stack = self.journal_stack();
-			self.journal(
-				JournalEvent::Runtime {
-					message: message.clone(),
-					caught: *caught,
-					stack
-				},
-				None
-			);
-		}
-
-		let wanted = match &reason {
-			BreakpointReason::Runtime { message, caught } => self.sessions.clients.values().any(|client| {
-				let filter = if *caught { &client.caught } else { &client.uncaught };
-				filter.as_ref().is_some_and(|filter| filter.takes(message))
-			}),
-			_ => self.sessions.has_debuggers() || self.sessions.hold.is_some()
-		};
-		if !wanted || self.ending() {
-			return None;
-		}
-
-		self.state = Some(State::new());
-
-		let proc = unsafe { (*(*(*_ctx).proc_instance())).proc };
-		let offset = unsafe { *(*_ctx).bytecode_offset() };
-		match reason {
-			BreakpointReason::Breakpoint => {
-				if !self.breakpoint_hit((proc, offset)) {
-					self.state = None;
-					return None;
-				}
-			}
-
-			BreakpointReason::Step | BreakpointReason::Pause if crate::instruction_hooking::is_breakpoint(_ctx) => {
-				self.breakpoint_hit((proc, offset));
-			}
-
-			_ => {}
-		}
-
-		let at = unsafe {
-			let proc = Proc::from_id((*(*(*_ctx).proc_instance())).proc);
-			InstructionRef {
-				proc: proc.as_ref().map(unnamed::proc_ref).unwrap_or(ProcRef {
-					path: String::new(),
-					override_id: 0
-				}),
-				offset: u32::from(*(*_ctx).bytecode_offset())
-			}
-		};
-		let stop = Stop {
-			reason,
-			thread: self.thread_of(self.state.as_ref().unwrap().active()),
-			at
-		};
-		self.paused = Some(stop.clone());
-		self.broadcast(Response::BreakpointHit(stop), None);
-
-		let mut unattended: Option<Instant> = None;
-		loop {
-			let mut wait = if self.sessions.hold.is_some() {
-				Wait::Forever
-			} else {
-				Wait::WhileClients
-			};
-			if wait == Wait::WhileClients && !self.sessions.has_debuggers() {
-				break;
-			}
-			if let (Wait::Forever, Some(max)) = (wait, self.sessions.hold_max) {
-				if self.sessions.has_debuggers() {
-					wait = Wait::Until(None);
-				} else {
-					wait = Wait::Until(Some(*unattended.get_or_insert_with(Instant::now) + max));
-				}
-			}
-			let request = match self.recv_request(wait) {
-				Some(request) => request,
-				None => match wait {
-					Wait::Until(Some(until)) if Instant::now() >= until => {
-						self.let_hold_go();
-						return Some(ContinueKind::Continue);
-					}
-					Wait::Until(_) => continue,
-					_ => break
-				}
-			};
-
-			if let Request::Continue { kind } = request {
-				let position = |thread: u32| self.stack_position(thread).unwrap_or(0) as u32;
-				let kind = match kind {
-					ContinueKind::Continue => ContinueKind::Continue,
-					ContinueKind::StepOver { stack_id } => ContinueKind::StepOver {
-						stack_id: position(stack_id)
-					},
-					ContinueKind::StepInto { stack_id } => ContinueKind::StepInto {
-						stack_id: position(stack_id)
-					},
-					ContinueKind::StepOut { stack_id } => ContinueKind::StepOut {
-						stack_id: position(stack_id)
-					},
-					ContinueKind::StepOverInstruction { stack_id } => ContinueKind::StepOverInstruction {
-						stack_id: position(stack_id)
-					},
-					ContinueKind::StepIntoInstruction { stack_id } => ContinueKind::StepIntoInstruction {
-						stack_id: position(stack_id)
-					}
-				};
-				self.answer(Response::Ack);
-				self.broadcast(Response::Resumed, self.sessions.current);
-				self.state = None;
-				self.paused = None;
-				self.sessions.hold = None;
-				self.sessions.hold_max = None;
-				self.stepper = if kind == ContinueKind::Continue { None } else { self.sessions.current };
-				return Some(kind);
-			}
-
-			if let Request::Eval { frame_id, command, ending } = request {
-				self.handle_eval_request(frame_id, &command, ending);
-				if self.ending() {
-					self.broadcast(Response::Resumed, None);
-					self.state = None;
-					self.paused = None;
-					self.sessions.hold = None;
-					self.sessions.hold_max = None;
-					self.stepper = None;
-					return Some(ContinueKind::Continue);
-				}
-				self.state.as_mut().unwrap().invalidate_stacks();
-				continue;
-			}
-			if let Request::Render { frame_id, expression, depth } = request {
-				self.handle_render(frame_id, &expression, depth);
-				self.state.as_mut().unwrap().invalidate_stacks();
-				continue;
-			}
-			if let Request::EvalOn { object, expression, depth } = request {
-				self.handle_eval_on(&object, &expression, depth);
-				self.state.as_mut().unwrap().invalidate_stacks();
-				continue;
-			}
-
-			self.handle_request(request);
-		}
-
-		self.broadcast(Response::Resumed, None);
-		self.state = None;
-		self.paused = None;
-		Some(ContinueKind::Continue)
-	}
-
-	fn let_hold_go(&mut self) {
-		let seconds = self.sessions.hold_max.map_or(0.0, |max| max.as_secs_f64());
-		eprintln!("Debug Server: resumed after {} seconds without a debugger", seconds);
-		self.sessions.hold = None;
-		self.sessions.hold_max = None;
-		self.state = None;
-		self.paused = None;
-		self.journal(JournalEvent::HoldEnded { seconds }, None);
-		self.broadcast(Response::Resumed, None);
-	}
-
-	pub fn step_ended(&mut self) {
-		let Some(id) = self.stepper.take() else {
-			return;
-		};
-		if let Some(client) = self.sessions.clients.get_mut(&id) {
-			if !Sessions::deliver(client, &Response::StepEnded) {
-				self.remove_client(id);
-			}
-		}
-	}
-
 	pub fn process(&mut self) -> bool {
 		let mut should_pause = false;
 
@@ -1976,14 +1561,6 @@ impl Server {
 			self.handle_request(request);
 		}
 		self.waiting_to_start = false;
-	}
-
-	pub fn world_carries_on(&mut self) {
-		self.ending = None;
-	}
-
-	fn ending(&self) -> bool {
-		self.ending.is_some_and(|since| since.elapsed() < ENDING_LIMIT)
 	}
 
 	fn journal(&mut self, event: JournalEvent, from: Option<ClientId>) {

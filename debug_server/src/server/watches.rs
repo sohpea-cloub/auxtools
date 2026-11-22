@@ -127,9 +127,9 @@ impl Server {
 			self.end_watch(id, reason);
 		}
 
-		let paused = self.state.is_some();
+		let paused = self.pause.state.is_some();
 		if !paused {
-			self.state = Some(State::new());
+			self.pause.state = Some(State::new());
 		}
 		let mut wanted = vec![];
 		for (id, before, now) in changes {
@@ -140,7 +140,7 @@ impl Server {
 			if let Some(condition) = condition {
 				self.eval_given = vec![(CONDITION_NEW.to_owned(), now.clone()), (CONDITION_OLD.to_owned(), before.clone())];
 				let passed = self.eval_expr(Some(0), &condition).map(|result| result.is_truthy());
-				if let Some(state) = self.state.as_mut() {
+				if let Some(state) = self.pause.state.as_mut() {
 					state.invalidate_stacks();
 				}
 				match passed {
@@ -177,7 +177,7 @@ impl Server {
 			});
 		}
 		if !paused {
-			self.state = None;
+			self.pause.state = None;
 		}
 		(!wanted.is_empty()).then_some(wanted)
 	}
@@ -186,7 +186,7 @@ impl Server {
 		if self.watches.is_empty() {
 			return;
 		}
-		let frames: Vec<(u32, *mut raw_types::procs::ExecutionContext)> = match &self.state {
+		let frames: Vec<(u32, *mut raw_types::procs::ExecutionContext)> = match &self.pause.state {
 			Some(state) => {
 				let asleep = state.suspended.get().map(|stacks| stacks.iter().flatten());
 				state
@@ -241,7 +241,7 @@ impl Server {
 		}
 		self.eval_given = given;
 		let pointer = self.eval_expr(frame_id, &format!("&({})", expression));
-		if let Some(state) = self.state.as_mut() {
+		if let Some(state) = self.pause.state.as_mut() {
 			state.invalidate_stacks();
 		}
 		let pointer = pointer?;
@@ -295,7 +295,7 @@ impl Server {
 					if expression == "src" || expression == "usr" {
 						return Err(ITS_VARS.to_owned());
 					}
-					let frame = self.get_stack_frame(*frame_id).ok_or("frame no longer exists")?;
+					let frame = self.pause.get_stack_frame(*frame_id).ok_or("frame no longer exists")?;
 					if let Some(slot) = Self::slot_of(frame, expression)? {
 						let (place, now) = Self::slot_place(frame, slot)?;
 						return Ok((place, expression.to_owned(), now));
@@ -307,6 +307,7 @@ impl Server {
 
 			WatchPlace::Variable { vars, name } => {
 				let container = self
+					.pause
 					.state
 					.as_ref()
 					.and_then(|state| state.get_variables(vars.clone()))
@@ -322,7 +323,7 @@ impl Server {
 						if name == "src" || name == "usr" {
 							return Err(ITS_VARS.to_owned());
 						}
-						let frame = self.get_stack_frame(frame).ok_or("frame no longer exists")?;
+						let frame = self.pause.get_stack_frame(frame).ok_or("frame no longer exists")?;
 						let slot = Self::slot_of(frame, name)?.ok_or_else(|| format!("the frame has no var called {}", name))?;
 						let (place, now) = Self::slot_place(frame, slot)?;
 						Ok((place, name.clone(), now))

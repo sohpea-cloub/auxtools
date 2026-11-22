@@ -291,7 +291,7 @@ impl Server {
 			self.sessions.current = None;
 			self.sessions.answering = None;
 		}
-		if self.sessions.hold == Some(id) && self.paused.is_none() {
+		if self.sessions.hold == Some(id) && self.pause.paused.is_none() {
 			self.sessions.hold = None;
 			self.sessions.hold_max = None;
 		}
