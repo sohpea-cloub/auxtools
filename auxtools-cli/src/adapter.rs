@@ -1150,6 +1150,11 @@ impl Adapter {
 
 	fn reload(&mut self, request: aux::HotReloadRequest, summary: &code::Summary, notes: Vec<String>) -> bool {
 		self.reload_started = Some(Instant::now());
+		let unlinked: Vec<(String, String)> = request
+			.removed_procs
+			.iter()
+			.filter_map(|removed| Some((removed.warning()?, removed.proc.path.clone())))
+			.collect();
 		let result = match self.request(&AuxRequest::HotReload(request)) {
 			Ok(AuxResponse::HotReload(result)) => result,
 			Ok(other) => {
@@ -1173,7 +1178,7 @@ impl Adapter {
 		let notes: Vec<String> = notes
 			.into_iter()
 			.filter_map(|note| {
-				let unlinked = note.strip_suffix(code::RETAINED).and_then(|note| note.strip_suffix(": a definition"));
+				let unlinked = unlinked.iter().find(|(warning, _)| *warning == note).map(|(_, path)| path);
 				let Some(path) = unlinked.filter(|_| result.applied) else {
 					return Some(note);
 				};

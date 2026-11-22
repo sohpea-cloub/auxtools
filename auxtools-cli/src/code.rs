@@ -555,12 +555,9 @@ impl Code {
 		}
 		self.out
 			.console("The source has parse errors. Fix them and rebuild before reloading the affected code:");
-		for (_, error) in errors.iter().take(5) {
-			let (file, line, text) = located(error);
-			match file {
-				Some(file) => self.out.console_at(format!("    {}", text), &self.root.join(file), line),
-				None => self.out.console(format!("    {}", text))
-			}
+		for error in errors.iter().take(5) {
+			self.out
+				.console_at(format!("    {}", error.description), &self.root.join(&error.file), Some(error.line));
 		}
 		if errors.len() > 5 {
 			self.out.console(format!("    and {} more", errors.len() - 5));
@@ -678,7 +675,8 @@ impl Code {
 		let files: Vec<String> = resources.iter().map(|r| r.path.clone()).collect();
 		request.resources = resources;
 		request.resource_dirs = self.resource_dirs.borrow().clone();
-		let notes: Vec<String> = changes.warnings.iter().filter(|note| removed_var(note).is_none()).cloned().collect();
+		let removed: Vec<String> = changes.removed_vars.iter().map(|var| var.warning()).collect();
+		let notes: Vec<String> = changes.warnings.iter().filter(|note| !removed.contains(note)).cloned().collect();
 		if request.is_empty() && request.removed_vars.is_empty() {
 			for why in &notes {
 				self.out.console(format!("    note: {}", why));
@@ -970,21 +968,20 @@ fn refuse_hidden(old: &Snapshot, new: &Snapshot, changes: &mut Changes) {
 		return;
 	}
 	let mut fixed = old.parse_errors();
-	for (error, _) in new.parse_errors() {
-		if let Some(at) = fixed.iter().position(|(e, _)| *e == error) {
+	for error in new.parse_errors() {
+		if let Some(at) = fixed.iter().position(|e| e.key() == error.key()) {
 			fixed.remove(at);
 		}
 	}
-	for (_, error) in fixed {
-		let (file, line, text) = located(&error);
+	for error in fixed {
 		changes.refused.push(Refusal {
-			file: file.map(str::to_owned),
-			line,
+			file: Some(error.file),
+			line: Some(error.line),
 			..Refusal::new(
 				"",
 				format!(
 					"fixed parse error may have hidden definitions: {}. Rebuild and reboot before reloading",
-					text
+					error.description
 				)
 			)
 		});
@@ -1010,17 +1007,6 @@ fn refuse_other_maps(built: &Snapshot, new: &Snapshot, changes: &mut Changes) {
 		changes
 			.refused
 			.push(Refusal::new("", format!("compiled maps changed ({})", changed.join("; "))));
-	}
-}
-
-fn located(error: &str) -> (Option<&str>, Option<u32>, &str) {
-	let place = error.split_once(": ").and_then(|(place, text)| {
-		let (file, line) = place.rsplit_once(':')?;
-		Some((file, line.parse::<u32>().ok()?, text))
-	});
-	match place {
-		Some((file, line, text)) => (Some(file), Some(line), text),
-		None => (None, None, error)
 	}
 }
 
@@ -1145,16 +1131,6 @@ impl Summary {
 	}
 }
 
-pub const RETAINED: &str = " was removed from source but retained in the running world";
-
-fn removed_var(note: &str) -> Option<RemovedVar> {
-	let (type_path, var) = note.strip_suffix(RETAINED)?.split_once(": var ")?;
-	type_path.starts_with('/').then(|| RemovedVar {
-		type_path: type_path.to_owned(),
-		var: var.to_owned()
-	})
-}
-
 fn proc_ref(key: &ProcKey) -> ProcRef {
 	ProcRef {
 		path: key.path.clone(),
@@ -1235,7 +1211,14 @@ pub fn reload_request(changes: &Changes) -> HotReloadRequest {
 				lines: m.lines.clone()
 			})
 			.collect(),
-		removed_vars: changes.warnings.iter().filter_map(|note| removed_var(note)).collect(),
+		removed_vars: changes
+			.removed_vars
+			.iter()
+			.map(|removed| RemovedVar {
+				type_path: removed.type_path.clone(),
+				var: removed.var.clone()
+			})
+			.collect(),
 		builtin_inherited: changes.builtin_inherited.clone(),
 		reparented: changes.reparented.clone(),
 		resources: vec![],

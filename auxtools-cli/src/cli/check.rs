@@ -61,7 +61,7 @@ pub fn check(args: &args::Check) -> Result<()> {
 	let mut snapshot = Snapshot::parse(&name, &options).map_err(|e| format!("{}.", e))?;
 	snapshot.set_byond(ByondVersion::new(major, build));
 
-	let unread: Vec<String> = snapshot.parse_errors().into_iter().map(|(_, error)| error).collect();
+	let unread: Vec<String> = snapshot.parse_errors().iter().map(ToString::to_string).collect();
 	let found = snapshot.known_bugs();
 	let procs = snapshot.procs().count() - found.not_checked.len();
 

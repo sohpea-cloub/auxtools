@@ -239,6 +239,35 @@ pub struct RemovedProc {
     pub verb: bool,
 }
 
+impl RemovedProc {
+    pub fn warning(&self) -> Option<String> {
+        self.type_path
+            .is_empty()
+            .then(|| definition_retained(&self.proc.path))
+    }
+}
+
+fn definition_retained(path: &str) -> String {
+    format!("{path}: a definition was removed from source but retained in the running world")
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct RemovedVar {
+    pub type_path: String,
+    pub var: String,
+}
+
+impl RemovedVar {
+    pub fn warning(&self) -> String {
+        var_retained(&self.type_path, &self.var)
+    }
+}
+
+fn var_retained(shown: &str, name: &str) -> String {
+    format!("{shown}: var {name} was removed from source but retained in the running world")
+}
+
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum ConstValue {
@@ -404,6 +433,7 @@ pub struct Changes {
     pub reparented: Vec<Reparented>,
     pub moved_procs: Vec<String>,
     pub line_moves: Vec<LineMove>,
+    pub removed_vars: Vec<RemovedVar>,
     pub warnings: Vec<String>,
     pub refused: Vec<Refusal>,
     pub deferred: Vec<Refusal>,
@@ -456,6 +486,25 @@ impl Changes {
             && self.reparented.is_empty()
             && self.line_moves.is_empty()
             && self.refused.is_empty()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParseError {
+    pub file: String,
+    pub line: u32,
+    pub description: String,
+}
+
+impl ParseError {
+    pub fn key(&self) -> String {
+        format!("{}: {}", self.file, self.description)
+    }
+}
+
+impl std::fmt::Display for ParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}:{}: {}", self.file, self.line, self.description)
     }
 }
 
@@ -1229,15 +1278,13 @@ impl Snapshot {
         found
     }
 
-    pub fn parse_errors(&self) -> Vec<(String, String)> {
+    pub fn parse_errors(&self) -> Vec<ParseError> {
         self.unresolved_errors()
             .into_iter()
-            .map(|(location, description)| {
-                let file = self.file_name(location.file);
-                (
-                    format!("{file}: {description}"),
-                    format!("{file}:{}: {description}", location.line),
-                )
+            .map(|(location, description)| ParseError {
+                file: self.file_name(location.file),
+                line: location.line,
+                description,
             })
             .collect()
     }
@@ -1431,8 +1478,8 @@ pub fn diff(old: &Snapshot, new: &Snapshot, changed_files: Option<&HashSet<PathB
     let mut changes = Changes::default();
 
     let mut old_errors: HashMap<String, usize> = HashMap::new();
-    for (e, _) in old.parse_errors() {
-        *old_errors.entry(e).or_default() += 1;
+    for error in old.parse_errors() {
+        *old_errors.entry(error.key()).or_default() += 1;
     }
     for (e, refusal) in new.parse_refusals() {
         match old_errors.get_mut(&e) {
@@ -2308,9 +2355,7 @@ fn removed(
 ) {
     let path = proc_path(n, name);
     if n.is_root() {
-        changes.warnings.push(format!(
-            "{path}: a definition was removed from source but retained in the running world"
-        ));
+        changes.warnings.push(definition_retained(&path));
     }
     let verb = old
         .find_type(&n.get().path)
@@ -2606,9 +2651,13 @@ fn compare_types(
             if moved::var_moved_up(n, name.as_str(), var, None) {
                 moved::var_moved(old, new, n, name.as_str(), var, None, changes);
             } else if var.declaration.is_some() {
-                changes.warnings.push(format!(
-                    "{shown}: var {name} was removed from source but retained in the running world"
-                ));
+                changes.warnings.push(var_retained(shown, name.as_str()));
+                if !n.is_root() {
+                    changes.removed_vars.push(RemovedVar {
+                        type_path: path.to_owned(),
+                        var: name.to_string(),
+                    });
+                }
             } else if n.get_var_declaration(name.as_str()).is_some() {
                 var_default(old, new, path, name.as_str(), false, changes);
             }
@@ -2628,9 +2677,7 @@ fn compare_types(
                 let map = align(old, new, &old_values, &new_values);
                 for override_id in (0..old_count).filter(|i| !map.contains(&Some(*i))) {
                     if n.is_root() {
-                        changes.warnings.push(format!(
-                            "{path}: a definition was removed from source but retained in the running world"
-                        ));
+                        changes.warnings.push(definition_retained(&path));
                     }
                     changes.removed_procs.push(RemovedProc {
                         proc: ProcKey {

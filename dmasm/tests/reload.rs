@@ -642,6 +642,50 @@ fn removed_procs_and_vars_stay() {
 }
 
 #[test]
+fn what_was_removed_is_listed_with_its_warning() {
+    let before = "var/total = 1\n/datum/thing\n\tvar/a = 1\n\tvar/b = 2\n\
+                  /proc/g()\n\treturn 1\n/proc/h()\n\treturn 2\n";
+    let after = "/datum/thing\n\tvar/b = 2\n/proc/h()\n\treturn 2\n";
+    let changes = changes("removed-listed", before, after);
+    assert!(changes.refused.is_empty(), "{:?}", changes.refused);
+    let vars: Vec<(&str, &str)> = changes
+        .removed_vars
+        .iter()
+        .map(|v| (v.type_path.as_str(), v.var.as_str()))
+        .collect();
+    assert_eq!(vars, [("/datum/thing", "a")]);
+    let procs: Vec<Option<String>> = changes.removed_procs.iter().map(|p| p.warning()).collect();
+    assert_eq!(procs.len(), 1, "{:?}", changes.removed_procs);
+    let mut expected = vec![
+        "(global): var total was removed from source but retained in the running world".to_owned(),
+        changes.removed_vars[0].warning(),
+        procs[0].clone().unwrap(),
+    ];
+    expected.sort();
+    let mut warnings = changes.warnings.clone();
+    warnings.sort();
+    assert_eq!(warnings, expected);
+    assert_eq!(
+        changes.removed_vars[0].warning(),
+        "/datum/thing: var a was removed from source but retained in the running world"
+    );
+    assert_eq!(
+        procs[0].as_deref(),
+        Some("/g: a definition was removed from source but retained in the running world")
+    );
+
+    let before = "/datum/thing/proc/f()\n\treturn 1\n/datum/thing/proc/k()\n\treturn 1\n";
+    let changes = changes_of(
+        "removed-type-proc",
+        before,
+        "/datum/thing/proc/k()\n\treturn 1\n",
+    );
+    assert_eq!(changes.removed_procs.len(), 1);
+    assert_eq!(changes.removed_procs[0].warning(), None);
+    assert!(changes.warnings.is_empty(), "{:?}", changes.warnings);
+}
+
+#[test]
 fn a_removed_var_a_subtype_overrode_stays() {
     let before = "/datum/thing\n\tvar/a = 1\n/datum/thing/sub\n\ta = 2\n";
     let after = "/datum/thing\n/datum/thing/sub\n";
@@ -2106,7 +2150,11 @@ fn an_error_mended_by_reading_its_file_again_is_gone() {
     let mut old = world.parse();
     let errors = old.parse_errors();
     assert_eq!(errors.len(), 1, "{:?}", errors);
-    assert!(errors[0].1.starts_with("code/code.dm:4: "), "{:?}", errors);
+    assert!(
+        errors[0].to_string().starts_with("code/code.dm:4: "),
+        "{:?}",
+        errors
+    );
 
     world.write(&broken.replace("1 +", "1 + 2"));
     let reload = old
