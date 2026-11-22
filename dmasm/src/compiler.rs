@@ -383,7 +383,7 @@ pub fn compile_body_in(
     let tree = builtins_tree();
     let root = tree.root();
     let source = procs::ProcSource {
-        tree: &tree,
+        tree,
         ty: root,
         name: BODY_PROC,
         value: &value,
@@ -534,10 +534,13 @@ fn parse_body(
     Ok(tree)
 }
 
-fn builtins_tree() -> dreammaker::objtree::ObjectTree {
-    let ctx = dreammaker::Context::default();
-    let pp = dreammaker::Preprocessor::from_buffer(&ctx, BODY_FILE.into(), "");
-    dreammaker::Parser::new(&ctx, pp).parse_object_tree()
+fn builtins_tree() -> &'static dreammaker::objtree::ObjectTree {
+    static TREE: std::sync::OnceLock<dreammaker::objtree::ObjectTree> = std::sync::OnceLock::new();
+    TREE.get_or_init(|| {
+        let ctx = dreammaker::Context::default();
+        let pp = dreammaker::Preprocessor::from_buffer(&ctx, BODY_FILE.into(), "");
+        dreammaker::Parser::new(&ctx, pp).parse_object_tree()
+    })
 }
 
 fn body_statements(
