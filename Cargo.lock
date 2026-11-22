@@ -336,11 +336,19 @@ dependencies = [
 name = "dmasm"
 version = "0.1.0"
 dependencies = [
- "bitflags 2.13.2",
+ "dmasm-bytecode",
  "dreammaker",
  "md-5",
  "serde",
  "sha1",
+]
+
+[[package]]
+name = "dmasm-bytecode"
+version = "0.1.0"
+dependencies = [
+ "bitflags 2.13.2",
+ "serde",
 ]
 
 [[package]]

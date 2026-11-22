@@ -8,8 +8,11 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-bitflags = "2"
+dmasm-bytecode = { path = "bytecode" }
 serde = { version = "1", features = ["derive"], optional = true }
 dreammaker = { workspace = true }
 md-5 = "0.10.6"
 sha1 = "0.10.7"
+
+[features]
+serde = ["dep:serde", "dmasm-bytecode/serde"]
