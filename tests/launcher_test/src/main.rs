@@ -19,6 +19,7 @@ use test_support::{
 	cli::{auxtools, launcher_command, listed_world, listed_worlds, ran, Background, Cli},
 	dap::{self, test_args, Launcher},
 	paths::{self, library_path, ByondCommand},
+	process,
 	temp::TempDir
 };
 
@@ -1435,11 +1436,7 @@ impl Drop for Started {
 			}
 		}
 		for pid in &self.pids {
-			let _ = if cfg!(windows) {
-				Command::new("taskkill").args(["/F", "/PID", &pid.to_string()]).output()
-			} else {
-				Command::new("kill").args(["-9", &pid.to_string()]).output()
-			};
+			process::kill(*pid);
 		}
 	}
 }

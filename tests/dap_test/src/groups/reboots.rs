@@ -1,5 +1,5 @@
 use serde_json::json;
-use test_support::{cli, dap};
+use test_support::{cli, process};
 
 use crate::{ok, world::World};
 
@@ -110,7 +110,7 @@ pub fn run() {
 	ok("consecutive reboots");
 
 	b.drop_events("continued");
-	dap::kill_process(pid);
+	process::kill_process(pid);
 	a.event("terminated");
 	a.event("exited");
 	b.event("terminated");

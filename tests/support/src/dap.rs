@@ -2,7 +2,7 @@ use std::{
 	collections::VecDeque,
 	io::{BufRead, BufReader, Read, Write},
 	path::Path,
-	process::{Child, ChildStdin, Command, Stdio},
+	process::{Child, ChildStdin, Stdio},
 	sync::mpsc,
 	time::{Duration, Instant}
 };
@@ -38,16 +38,6 @@ pub fn test_args() -> Option<Vec<String>> {
 	std::env::var("LAUNCHER_TEST_ARGS")
 		.ok()
 		.map(|args| args.split_whitespace().map(str::to_owned).collect())
-}
-
-#[track_caller]
-pub fn kill_process(pid: u64) {
-	let killed = if cfg!(windows) {
-		Command::new("taskkill").args(["/F", "/PID", &pid.to_string()]).output()
-	} else {
-		Command::new("kill").args(["-9", &pid.to_string()]).output()
-	};
-	assert!(killed.is_ok_and(|out| out.status.success()), "couldn't kill process {}", pid);
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
