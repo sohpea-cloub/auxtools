@@ -23,7 +23,7 @@ pub(super) fn emit(
     let logic = super::fold::is_logic(&condition);
     let condition = compiler.emit_expr(condition)?;
     compiler.emit_move_to_stack(condition)?;
-    if compiler.proc.is_some() && !logic {
+    if !logic {
         if let Some(crate::Node::Instruction(Instruction::GetFlag, _)) = compiler.nodes.last() {
             compiler.nodes.pop();
             return emit_branches(compiler, lhs, rhs);

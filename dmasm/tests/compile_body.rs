@@ -687,3 +687,20 @@ fn squares_and_bit_constants_are_the_same_alone_as_in_a_body() {
         same_alone_and_in_a_body(code);
     }
 }
+
+#[test]
+fn a_condition_that_sets_the_test_flag_is_not_tested_again_alone_either() {
+    assert_has(
+        &same_alone_and_in_a_body("by == 1 ? 2 : 3"),
+        &["Teq", "Pop", "Jz L0", "PushInt 2"],
+    );
+    for code in [
+        "by in hp ? 1 : 2",
+        "isnull(by) ? 1 : 2",
+        "(by == 1) ? 2 : 3",
+        "by == 1 && hp ? 2 : 3",
+        "by == 1 ? by == 2 ? 1 : 2 : 3",
+    ] {
+        same_alone_and_in_a_body(code);
+    }
+}
