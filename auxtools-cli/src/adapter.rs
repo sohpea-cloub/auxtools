@@ -2229,7 +2229,7 @@ impl Adapter {
 		let target = |label: &str, kind: &str| serde_json::json!({ "label": label, "type": kind, "start": start, "length": length });
 
 		if place.command {
-			let targets: Vec<Value> = ["dis", "disassemble", "guest_override", "help"]
+			let targets: Vec<Value> = ["dis", "disassemble", "help"]
 				.into_iter()
 				.filter(|command| command.starts_with(prefix))
 				.map(|command| target(command, "keyword"))

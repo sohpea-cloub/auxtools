@@ -305,11 +305,6 @@ impl Server {
 					.about("Show login script string ID, resource IDs and text")
 					.hide(true)
 			)
-			.subcommand(
-				Command::new("guest_override")
-					.about("Override the CKey used by guest connections")
-					.arg(Arg::new("ckey"))
-			)
 	}
 
 	pub fn listen() -> std::io::Result<Server> {
@@ -2012,18 +2007,6 @@ impl Server {
 				},
 
 				Some(("script", _)) => self.evaluating(crate::client_script::state).unwrap_or_else(|e| format!("Failed: {}", e)),
-
-				Some(("guest_override", matches)) => match matches.get_one::<String>("ckey").map(String::as_str) {
-					Some(ckey) => match crate::ckey_override::override_guest_ckey(ckey) {
-						Ok(()) => "Success".to_owned(),
-
-						Err(e) => {
-							format!("Failed: {:?}", e)
-						}
-					},
-
-					None => "no ckey provided".to_owned()
-				},
 
 				_ => "unknown command".to_owned()
 			},

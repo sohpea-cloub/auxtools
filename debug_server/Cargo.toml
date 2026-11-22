@@ -20,10 +20,10 @@ bincode = "1"
 clap = "4"
 dmasm = { workspace = true }
 dreammaker = { workspace = true }
-region = "3"
 interprocess = "=2.4.7"
 
 [target.'cfg(windows)'.dependencies]
+region = "3"
 winapi = { version = "0.3", features = ["libloaderapi", "errhandlingapi", "ioapiset"] }
 
 [lints]
