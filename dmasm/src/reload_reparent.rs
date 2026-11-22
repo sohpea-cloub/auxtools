@@ -272,7 +272,6 @@ pub(super) fn reparented_users(
     let (declared, defaults) = inherited_changes(old, new, &types);
     let named: HashSet<&str> = declared.iter().map(String::as_str).collect();
     let fields: HashSet<&str> = defaults.iter().map(String::as_str).collect();
-    let mut files = HashMap::new();
     let reloaded: HashSet<ProcKey> = changes.reloads.iter().map(|r| r.proc.clone()).collect();
     let mut reloads = vec![];
     for key in new.procs.keys() {
@@ -287,9 +286,6 @@ pub(super) fn reparented_users(
             let Some((_, value)) = new.find(key) else {
                 continue;
             };
-            if named.is_empty() && !new.source_has(value, "::", &mut files) {
-                continue;
-            }
             if !names_any(value, &named, &fields) {
                 continue;
             }

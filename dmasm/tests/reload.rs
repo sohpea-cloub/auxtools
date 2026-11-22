@@ -1548,6 +1548,20 @@ fn a_changed_default_is_found_wherever_a_proc_reads_it_with_scope() {
 }
 
 #[test]
+fn a_changed_default_recompiles_a_proc_that_reads_it_through_a_macro() {
+    let before = "#define DEFAULT_OF(T, V) T::V\n/datum/thing\n\tvar/size = 2\n/datum/thing/big\n/proc/a()\n\treturn DEFAULT_OF(/datum/thing/big, size)\n/proc/b()\n\treturn 2\n";
+    let after = before.replace("/datum/thing/big\n", "/datum/thing/big\n\tsize = 9\n");
+    let changes = changes("type-scope-macro", before, &after);
+    assert_eq!(changes.defaults_changed, ["size"]);
+    assert_eq!(reloaded(&changes), [key("/a", 0)]);
+    let before = "#define DEFAULT_OF(T, V) T::V\n/datum/a\n\tvar/size = 1\n/datum/b\n\tvar/size = 2\n/datum/a/c\n/mob/proc/sized()\n\treturn DEFAULT_OF(/datum/a/c, size)\n";
+    let after = before.replace("/datum/a/c\n", "/datum/a/c\n\tparent_type = /datum/b\n");
+    let changes = changes_of("parent-type-macro", before, &after);
+    assert_eq!(changes.reparented.len(), 1, "{:?}", changes.reparented);
+    assert_eq!(reloaded(&changes), [key("/mob/sized", 0)]);
+}
+
+#[test]
 fn a_new_parent_type_is_a_reparent_and_nothing_else() {
     let before = "/datum/a\n/datum/b\n/datum/a/c\n\tvar/x = 1\n";
     let after = "/datum/a\n/datum/b\n/datum/a/c\n\tparent_type = /datum/b\n\tvar/x = 1\n";
