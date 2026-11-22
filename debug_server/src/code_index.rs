@@ -216,12 +216,6 @@ impl Code {
 		line
 	}
 
-	pub fn after_line(&self, line: u32) -> Option<u32> {
-		let mut steps = self.steps();
-		steps.find(|(_, step)| *step == Step::Line(line))?;
-		steps.next().map(|(offset, _)| offset)
-	}
-
 	pub fn entry_offset(&self) -> u32 {
 		let mut has_line = false;
 		for (offset, step) in self.steps() {
@@ -693,14 +687,6 @@ mod tests {
 				.and_then(|ins| ins.bytecode.get(1).copied())
 		}
 
-		pub fn offset_of_line(bytecode: &[u32], line: u32) -> Option<u32> {
-			let instructions = dmasm::scan(bytecode).ok()?.instructions;
-			let at = instructions
-				.iter()
-				.position(|ins| ins.opcode == dmasm::Opcode::DbgLine && ins.bytecode.get(1) == Some(&line))?;
-			instructions.get(at + 1).map(|ins| ins.offset)
-		}
-
 		pub fn instruction_length(bytecode: &[u32], offset: u32) -> Option<usize> {
 			let (nodes, _error) = disassemble(bytecode, &mut Env);
 			nodes.into_iter().find_map(|node| match node {
@@ -866,15 +852,6 @@ mod tests {
 				for offset in 0..bytecode.len() as u32 + 2 {
 					assert_eq!(code.line_at(offset), by_the_book::line_at(&bytecode, offset), "{} at {}", said, offset);
 				}
-				for line in 1..=5 {
-					assert_eq!(
-						code.after_line(line),
-						by_the_book::offset_of_line(&bytecode, line),
-						"{} line {}",
-						said,
-						line
-					);
-				}
 			}
 			assert_eq!(*code.files, by_the_book::files_of(&bytecode), "{}", said);
 			assert_eq!(code.entry_offset(), by_the_book::entry_offset(&bytecode), "{}", said);
@@ -932,13 +909,12 @@ mod tests {
 		assert_eq!(code.line_at(9), Some(30));
 		assert_eq!(code.line_at(19), Some(1));
 		assert_eq!(code.line_at(40), Some(6));
-		assert_eq!(code.after_line(5), Some(4));
-		assert_eq!(code.after_line(6), Some(16));
+		assert_eq!(code.offset_of(5, None), Some(4));
 		assert_eq!(code.offset_of(6, None), Some(24));
-		assert_eq!(code.after_line(30), Some(10));
-		assert_eq!(code.after_line(7), None);
+		assert_eq!(code.offset_of(30, None), Some(10));
+		assert_eq!(code.offset_of(7, None), None);
 		let (_, code) = read(&[&file(1), &line(10)]);
-		assert_eq!(code.after_line(10), None);
+		assert_eq!(code.offset_of(10, None), None);
 	}
 
 	#[test]

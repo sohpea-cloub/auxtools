@@ -66,3 +66,8 @@ var/list/many_appearances
 		thing.name = "thing [i]"
 		many_appearances += thing
 	return "made"
+
+var/last_calls = 0
+
+/proc/last_in_file()
+	return "last [++last_calls]"

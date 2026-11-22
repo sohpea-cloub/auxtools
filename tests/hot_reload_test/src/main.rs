@@ -689,6 +689,65 @@ fn debugger(built: Built) {
 	reload(&mut watcher, &changes);
 	println!("ok: breakpoint aliases are client-specific");
 
+	let line = source.line_of("resources.dm", "\treturn \"last [");
+	let old_offset = offset_of(&mut client, "/last_in_file", line);
+	let last_in_file = |offset: u32| InstructionRef {
+		proc: ProcRef {
+			path: "/last_in_file".to_owned(),
+			override_id: 0
+		},
+		offset
+	};
+	let set = |client: &mut Client, offset: u32| {
+		let response = client.request(Request::BreakpointSet {
+			instruction: last_in_file(offset),
+			condition: None,
+			hit: None,
+			log: None,
+			exact: false
+		});
+		assert!(
+			matches!(response, Response::BreakpointSet {
+				result: BreakpointSetResult::Success { .. }
+			}),
+			"{:?}",
+			response
+		);
+	};
+	set(&mut client, old_offset);
+	let changes = source.edit(
+		"resources.dm",
+		"/proc/last_in_file()\n",
+		"// two lines that\n// move the proc down\n/proc/last_in_file()\n"
+	);
+	assert!(changes.plan.line_moves.iter().any(|m| m.proc.path == "/last_in_file"));
+	let result = reload(&mut watcher, &changes);
+	assert!(result.warnings.is_empty(), "{:?}", result.warnings);
+	let mut other = world.connect();
+	let new_offset = offset_of(&mut other, "/last_in_file", line + 2);
+	set(&mut other, new_offset);
+	match client.request(Request::Spawn {
+		expression: "last_in_file()".to_owned(),
+		object: None
+	}) {
+		Response::Spawned(Ok(_)) => {}
+		other => panic!("expected last_in_file() to be spawned, got {:?}", other)
+	}
+	assert_eq!(client.expect_pause(), BreakpointReason::Breakpoint);
+	assert_eq!(other.expect_pause(), BreakpointReason::Breakpoint);
+	assert_eq!(paused_line(&mut client), ("/last_in_file".to_owned(), Some(line + 2)));
+	client.resume();
+	wait_for(&mut client, "last_calls", "1");
+	match client.request(Request::BreakpointUnset {
+		instruction: last_in_file(old_offset),
+		exact: false
+	}) {
+		Response::BreakpointUnset { success: true, .. } => {}
+		other => panic!("couldn't take away the moved breakpoint: {:?}", other)
+	}
+	other.leave();
+	println!("ok: a moved breakpoint is where one set anew is, past the .dme's place");
+
 	let changes = source.edit(
 		"reload.dm",
 		"/proc/runtime_target()\n\treturn 1",

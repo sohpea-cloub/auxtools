@@ -2273,7 +2273,10 @@ fn apply_code<K: Ord + std::hash::Hash + Copy, T>(
 		let moved = firsts
 			.filter(|(old_first, _)| line >= *old_first)
 			.map(|(old_first, new_first)| line - old_first + new_first);
-		let Some((line, offset)) = new_code.after_line(moved.unwrap_or(line)).map(|offset| (moved.unwrap_or(line), offset)) else {
+		let Some((line, offset)) = new_code
+			.offset_of(moved.unwrap_or(line), None)
+			.map(|offset| (moved.unwrap_or(line), offset))
+		else {
 			warnings.push(format!(
 				"{}: removed breakpoint on line {}: no executable code after reload",
 				p.name, line
