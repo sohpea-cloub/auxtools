@@ -22,3 +22,20 @@ cargo test -p dmasm --all-features
 ```
 
 The tests need no BYOND installation. dmasm is licensed under GPL-3.0; see [LICENSE](LICENSE).
+
+## Comparing with DreamMaker
+
+`tests/dreammaker/` holds small worlds that dmasm must compile as DreamMaker does: the
+fuzzer's reduced findings, and the snippets the tests compile. The `compare_dreammaker`
+example builds each with a DreamMaker, compiles every proc with dmasm for that build and
+fails on a proc whose code is neither DreamMaker's, nor equivalent to it (a cache load written
+out, a static call made by name, labels placed elsewhere), nor a known difference:
+
+```sh
+cargo run --release -p dmasm --example compare_dreammaker -- BYOND/bin/DreamMaker
+```
+
+It passes on every build from 515.1637 to 516.1689 that CI tests. A case starts with a `// Guards:` line saying what it is for, and runs to the next one.
+`// Builds: A-B` gives the builds whose DreamMaker accepts it, `// Known [A-B]: PATH  WHY` a
+proc that differs by design (or a finding not fixed yet, which says so). Debug line records
+and the global init proc are not compared.
