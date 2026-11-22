@@ -1,0 +1,1053 @@
+=== a: gn33 ga34
+var/gn33 = gn36 + 1
+var/ga34 = gn33
+var/gn36 = -3.25
+/proc/main()
+	return gn33
+=== aa1: x y a
+var/a = list(/client/proc/f)
+var/x = list(1)
+/client/proc/f()
+	return 1
+var/y = list(2)
+=== aa2: a x y
+/client/proc/f()
+	return 1
+var/a = list(/client/proc/f)
+var/x = list(1)
+var/y = list(2)
+=== aa3: a x y
+/client/proc/g()
+	return 1
+var/a = list(/client/proc/f)
+var/x = list(1)
+/client/proc/f()
+	return 1
+var/y = list(2)
+=== aa4: a x
+/obj/o
+var/a = new /obj/o{name = "x"}
+var/x = list(1)
+=== aa5: x y a
+var/a = new /obj/o{name = "x"}
+var/x = list(1)
+/obj/o
+var/y = list(2)
+=== aa6: a b x
+/obj/o
+var/a = new /obj/o
+var/b = list(/obj/o{name = "x"})
+var/x = list(1)
+=== aa7: a x y
+/proc/g()
+	return 1
+var/a = list(/proc/f)
+var/x = list(1)
+/proc/f()
+	return 1
+var/y = list(2)
+=== aa8: a b x
+/datum/d/proc/g()
+	return 1
+/datum/d/proc/f()
+	return 1
+var/a = list(/datum/d/proc/f)
+var/b = list(/datum/d/proc/g)
+var/x = list(1)
+=== b: a c
+var/a = b
+var/c = a
+var/b
+=== bb1: x y a
+/proc/g()
+	return 1
+var/a = list(/verb/v)
+var/x = list(1)
+/verb/v()
+	return 1
+var/y = list(2)
+=== bb2: a x y
+/client/proc/g()
+	return 1
+var/a = list(/client/verb/v)
+var/x = list(1)
+/client/verb/v()
+	return 1
+var/y = list(2)
+=== bb3: a x y
+/client/verb/w()
+	return 1
+var/a = list(/client/proc/g)
+var/x = list(1)
+/client/proc/g()
+	return 1
+var/y = list(2)
+=== c: b a c
+var/a = b + 1
+var/c = a
+var/b = rand()
+=== cc1: a x
+/obj/o
+var/a = new /obj/o{appearance_flags = 1 | 2}
+var/x = list(1)
+=== cc3: a x
+/obj/o
+var/a = new /obj/o{appearance_flags = 3}
+var/x = list(1)
+=== cc4: a x
+/obj/o
+var/a = new /obj/o{alpha = 1 + 2}
+var/x = list(1)
+=== cc5: a x
+/obj/o
+var/global/obj/o/a = new /obj/o{appearance_flags = RESET_COLOR | KEEP_APART}
+var/x = list(1)
+=== cc6: a x
+/obj/o
+	var/v = 1
+var/a = new /obj/o{v = 2}
+var/x = list(1)
+=== d: a c
+var/a = b
+var/c = a
+var/b = 1 + 2
+=== dd1: x0 a x y
+/obj/overlay/simple_light
+	var/v = 1
+var/x0 = list(0)
+var/obj/overlay/simple_light/a = new /obj/overlay/simple_light{v = 2}
+var/x = list(1)
+/obj/overlay/simple_light/disco
+	v = 3
+var/y = list(2)
+=== dd2: x0 a x y
+/obj/overlay/simple_light
+	var/v = 1
+var/x0 = list(0)
+var/obj/overlay/simple_light/a = new /obj/overlay/simple_light{v = 2}
+var/x = list(1)
+/obj/overlay/simple_light/New()
+	..()
+var/y = list(2)
+=== dd3: x0 a x y
+/obj/overlay/simple_light
+	var/v = 1
+var/x0 = list(0)
+var/obj/overlay/simple_light/a = new /obj/overlay/simple_light{v = 2}
+var/x = list(1)
+/obj/overlay/simple_light/proc/f()
+	return 1
+var/y = list(2)
+=== dd4: x0 a x y
+/obj/overlay/simple_light
+	var/v = 1
+var/x0 = list(0)
+var/obj/overlay/simple_light/a = new /obj/overlay/simple_light{v = 2}
+var/x = list(1)
+/obj/overlay/other
+	var/w = 3
+var/y = list(2)
+=== dd5: x0 a b x y
+/obj/overlay/simple_light
+	var/v = 1
+var/x0 = list(0)
+var/obj/overlay/simple_light/a = new
+var/b = new /obj/overlay/simple_light
+var/x = list(1)
+/obj/overlay/simple_light/disco
+	v = 3
+var/y = list(2)
+=== e: b a c
+var/a = b
+var/c = a
+var/b = list(1)
+=== ee1: a x y g
+/datum/t
+	var/v = 5
+var/a = list(/datum/t::v)
+var/x = list(1)
+var/g = f()
+/proc/f()
+	return 1
+var/y = list(2)
+=== ee4: a b x c y g
+/datum/t
+	var/v = 5
+var/a = list(/datum/t::v)
+var/b = a
+var/x = list(1)
+var/g = f()
+var/c = list(/datum/t::v)
+/proc/f()
+	return 1
+var/y = list(2)
+=== f: a c x z
+var/a = b
+var/c = a
+var/b = "text"
+var/x = y
+var/z = x
+var/y = /datum
+=== ff1: letters count z x
+/proc/f()
+	var/static/list/letters = list(1, 2)
+	var/static/count = length(letters)
+	var/static/z = list(3)
+var/x = list(1)
+=== ff2: letters z x count
+/proc/f()
+	var/static/count = length(letters)
+	var/static/list/letters = list(1, 2)
+	var/static/z = list(3)
+var/x = list(1)
+=== g: c a d
+var/a = b + c
+var/d = a
+var/b = 2
+var/c = rand()
+=== gg1: colors z x hair
+/proc/f()
+	var/static/list/colors = list(1)
+	var/static/list/hair = colors.Copy() + list(2)
+	var/static/z = list(3)
+var/x = list(1)
+=== gg2: colors hair z x
+/proc/f()
+	var/static/list/colors = list(1)
+	var/static/list/hair = colors + list(2)
+	var/static/z = list(3)
+var/x = list(1)
+=== gg4: colors x hair
+var/list/colors = list(1)
+var/list/hair = colors.Copy()
+var/x = list(1)
+=== gg5: colors z x hair
+/datum/t
+	var/static/list/colors = list(1)
+	var/static/list/hair = colors.Copy()
+	var/static/z = list(3)
+var/x = list(1)
+=== gg6: colors n z x
+/proc/f()
+	var/static/list/colors = list(1)
+	var/static/n = colors.len
+	var/static/z = list(3)
+var/x = list(1)
+=== gg7: colors z x hair
+/proc/f()
+	var/static/colors = list(1)
+	var/static/list/hair = colors:Copy()
+	var/static/z = list(3)
+var/x = list(1)
+=== h: a d
+var/a = f()
+var/d = a
+/proc/f()
+	return 1
+=== hh1: s2 x s
+/datum/t/proc/p()
+	var/static/s = list(__TYPE__)
+	var/static/s2 = list(1)
+var/x = list(1)
+=== hh4: a x h y g
+/datum/t
+	var/v = 5
+var/g = f()
+var/a = list(/datum/u::v)
+var/x = list(1)
+/proc/f()
+	return 1
+/datum/u
+	var/v = 6
+var/h = f2()
+/proc/f2()
+	return 1
+var/y = list(2)
+=== hh6: x y g b a
+var/g = f()
+var/a = list(/obj/u::v)
+var/b = new /obj/u
+var/x = list(1)
+/proc/f()
+	return 1
+/obj/u
+	var/v = 6
+var/y = list(2)
+=== hh7: s2 x y s
+/proc/p(obj/o/item)
+	var/static/s = list("a" || item.name)
+	var/static/s2 = list(1)
+var/x = list(1)
+/obj/o
+var/y = list(2)
+=== hh8: s s2 x y
+/obj/o
+/proc/p(obj/o/item)
+	var/static/s = list("a" || item.name)
+	var/static/s2 = list(1)
+var/x = list(1)
+var/y = list(2)
+=== hh9: x y g b d a c
+var/g = f()
+var/a = list(/obj/u::v)
+var/b = new /obj/u
+var/c = list(/obj/u::v) + list(/obj/u/w::v)
+var/d = b
+var/x = list(1)
+/proc/f()
+	return 1
+/obj/u
+	var/v = 6
+/obj/u/w
+var/y = list(2)
+=== i: b a d
+var/a = b
+var/d = a
+var/b = c
+var/c = 5
+=== ii1: s2 x y options g
+/mob/proc/p()
+	var/static/list/options = list("a" = icon(/datum/action::icon_file, "x"))
+	var/static/s2 = list(1)
+var/x = list(1)
+var/g = f()
+/datum/action
+	var/icon_file = "a.dmi"
+/proc/f()
+	return 1
+var/y = list(2)
+=== ii2: s2 x y options g
+/mob/proc/p()
+	var/static/list/options = list("a" = /datum/action::icon_file)
+	var/static/s2 = list(1)
+var/x = list(1)
+var/g = f()
+/datum/action
+	var/icon_file = "a.dmi"
+/proc/f()
+	return 1
+var/y = list(2)
+=== ii3: options s2 x y g
+/datum/action
+	var/icon_file = "a.dmi"
+/mob/proc/p()
+	var/static/list/options = list("a" = icon(/datum/action::icon_file, "x"))
+	var/static/s2 = list(1)
+var/x = list(1)
+var/g = f()
+/proc/f()
+	return 1
+var/y = list(2)
+=== j: c b a d e
+var/a = b
+var/d = a
+var/b = c
+var/c = rand()
+var/e = d
+=== jj1: x y g h a
+var/g = f()
+var/a = list(/obj/u::v)
+var/h = f()
+var/x = list(1)
+/proc/f()
+	return 1
+/obj/u
+	var/v = 6
+var/y = list(2)
+=== jj2: x y g a h
+var/g = f()
+var/a = list(/datum/u::v)
+var/h = f()
+var/x = list(1)
+/proc/f()
+	return 1
+/datum/u
+	var/v = 6
+var/y = list(2)
+=== jj3: x y g h a
+var/g = f()
+/mob/proc/p()
+	var/static/a = list(/obj/u::v)
+var/h = f()
+var/x = list(1)
+/proc/f()
+	return 1
+/obj/u
+	var/v = 6
+var/y = list(2)
+=== jj4: x y h a
+var/a = list(/obj/u::v)
+var/h = f()
+var/x = list(1)
+/proc/f()
+	return 1
+/obj/u
+	var/v = 6
+var/y = list(2)
+=== jj5: x y g b h a
+var/g = f()
+var/a = list(/obj/u::v)
+var/b = new /obj/u
+var/h = f()
+var/x = list(1)
+/proc/f()
+	return 1
+/obj/u
+	var/v = 6
+var/y = list(2)
+=== kk1: b x g a h
+var/g = f()
+/datum/t
+	var/static/a = list(/datum/u::v)
+	var/static/b = list(1)
+/datum/u
+	var/v = 6
+var/h = f()
+/proc/f()
+	return 1
+var/x = list(2)
+=== kk2: b x g a h
+var/g = f()
+/datum/t
+	var/v = 5
+/datum/t/proc/p()
+	var/static/a = list(nameof(type::v))
+	var/static/b = list(1)
+var/h = f()
+/proc/f()
+	return 1
+var/x = list(2)
+=== ll2: e x a c b d p q
+/var/list/a = list(/datum/z)
+/var/b = list(/datum/z)
+/var/list/c = list(/datum/z)
+/var/global/list/d = list(/datum/z)
+/var/e = list(1)
+/datum/z
+/particles/var/static/p = list(1)
+/world/proc/w()
+	var/static/q = world.fps
+var/x = list(2)
+=== mm3: s2 x s g t
+/datum/c
+	var/v = 5
+	var/own = /datum/c
+/datum/c/proc/p()
+	var/static/s = list(nameof(type::v))
+	var/static/s2 = list(1)
+var/g = f()
+/turf/proc/p()
+	var/static/t = list(nameof(type::x))
+/proc/f()
+	return 1
+var/x = list(2)
+=== nn1: s2 x s g t
+/datum/c
+	var/v = 5
+/datum/c/proc/p()
+	var/static/s = list(nameof(type::v))
+	var/static/s2 = list(1)
+/datum
+	var/kind = 5
+var/g = f()
+/turf/proc/p()
+	var/static/t = list(nameof(type::x))
+/proc/f()
+	return 1
+var/x = list(2)
+=== nn2: s2 x s g t
+/datum/c
+	var/v = 5
+/datum/c/proc/p()
+	var/static/s = list(nameof(type::v))
+	var/static/s2 = list(1)
+/datum/proc/q()
+	return 1
+var/g = f()
+/turf/proc/p()
+	var/static/t = list(nameof(type::x))
+/proc/f()
+	return 1
+var/x = list(2)
+=== nn3: s2 x s g t
+/datum/c
+	var/v = 5
+/datum/c/proc/p()
+	var/static/s = list(nameof(type::v))
+	var/static/s2 = list(1)
+/datum/c
+	var/w = 5
+var/g = f()
+/turf/proc/p()
+	var/static/t = list(nameof(type::x))
+/proc/f()
+	return 1
+var/x = list(2)
+=== nn4: s2 x s g t
+/datum/c
+	var/v = 5
+/datum/c/proc/p()
+	var/static/s = list(nameof(type::v))
+	var/static/s2 = list(1)
+/datum/d
+	var/w = 5
+var/g = f()
+/turf/proc/p()
+	var/static/t = list(nameof(type::x))
+/proc/f()
+	return 1
+var/x = list(2)
+=== nn5: s2 x s g t
+/datum/c
+	var/v = 5
+/datum/c/proc/p()
+	var/static/s = list(nameof(type::v))
+	var/static/s2 = list(1)
+var/g = f()
+/turf/proc/p()
+	var/static/t = list(nameof(type::x))
+/proc/f()
+	return 1
+var/x = list(2)
+/datum/c
+	var/w = 5
+=== nn6: s2 x y s g t
+/datum/c
+	var/v = 5
+/datum/c/proc/p()
+	var/static/s = list(nameof(type::v))
+	var/static/s2 = list(1)
+var/g = f()
+/turf/proc/p()
+	var/static/t = list(nameof(type::x))
+/proc/f()
+	return 1
+var/x = list(2)
+/datum
+	var/kind = 5
+var/y = list(3)
+=== nn7: s2 x s g t
+/datum
+	var/kind = 5
+/datum/c
+	var/v = 5
+/datum/c/proc/p()
+	var/static/s = list(nameof(type::v))
+	var/static/s2 = list(1)
+var/g = f()
+/turf/proc/p()
+	var/static/t = list(nameof(type::x))
+/proc/f()
+	return 1
+var/x = list(2)
+=== p1: x b a
+var/a = b
+var/x = list(1)
+var/b = list(2)
+=== p2: x b y a d
+var/a = b
+var/d = a
+var/x = list(1)
+var/b = list(2)
+var/y = list(3)
+=== p3: c e a b d
+var/a = f()
+var/b = a
+var/c = list(1)
+/proc/f()
+	return 1
+var/d = b
+var/e = list(2)
+=== p4: x y c z b a
+var/a = b
+var/x = list(1)
+var/b = c
+var/y = list(2)
+var/c = list(3)
+var/z = list(4)
+=== p5: x b y z a
+var/a = b + f()
+var/x = list(1)
+var/b = list(2)
+var/y = list(3)
+/proc/f()
+	return 1
+var/z = list(4)
+=== p6: b c d a
+var/a = d
+var/b = f()
+var/c = f()
+var/d = f()
+/proc/f()
+	return 1
+=== p7: b d a c e g
+var/a = d
+var/b = f()
+var/c = a
+var/d = f()
+var/e = c
+/proc/f()
+	return 1
+var/g = e
+=== p8: b e g d a
+var/a = d + e
+var/b = f()
+var/d = g
+var/e = f()
+var/g = f()
+/proc/f()
+	return 1
+=== q1: c b a d
+/datum/x
+	var/static/a = b
+	var/static/c = list(1)
+	var/static/b = list(2)
+	var/static/d = a
+=== q2: c g h a
+/datum/x
+	var/static/a = g
+	var/static/c = list(1)
+var/g = list(2)
+var/h = list(3)
+=== q3: c b z a d
+/proc/f()
+	var/static/a = b
+	var/static/c = list(1)
+	var/static/b = list(2)
+	var/static/d = a
+var/z = list(9)
+=== q5: x b y a
+var/a = global.b
+var/x = list(1)
+var/b = list(2)
+var/y = list(3)
+=== q6: c h g a
+var/g = f()
+/datum/x
+	var/static/a = g
+	var/static/c = list(1)
+/proc/f()
+	return 1
+var/h = list(3)
+=== q7: a g h
+/datum/x
+	var/static/a = list(1)
+var/g = /datum/x::a
+var/h = list(3)
+=== q8: h a i g
+var/g = /datum/x::a
+var/h = list(3)
+/datum/x
+	var/static/a = list(1)
+var/i = list(4)
+=== q9: y y z a
+/datum/x
+	var/static/a = y
+	var/static/y = list(1)
+var/y = list(2)
+var/z = list(3)
+=== s1: x y a
+var/a = b
+var/x = list(1)
+var/b = 5
+var/y = list(2)
+=== s2: x y a
+var/a = b
+var/x = list(1)
+var/b
+var/y = list(2)
+=== s3: x y gn33 ga34
+var/gn33 = gn36 + 1
+var/ga34 = gn33
+var/x = list(1)
+var/gn36 = -3.25
+var/y = list(2)
+=== s4: c z a
+/datum/x
+	var/static/a = b
+	var/static/c = list(1)
+	var/static/b = 5
+var/z = list(9)
+=== s5: a x
+var/b = 5
+var/a = b
+var/x = list(1)
+=== s6: c x y a
+/proc/f()
+	var/static/a = g
+	var/static/c = list(1)
+var/x = list(1)
+var/g = 5
+var/y = list(2)
+=== t1: x y a
+var/a = list(f(1) = 2)
+var/x = list(1)
+/proc/f(v)
+	return v
+var/y = list(2)
+=== t2: x y a
+var/a = list(f(1))
+var/x = list(1)
+/proc/f(v)
+	return v
+var/y = list(2)
+=== t3: x y a
+var/a = list("k" = f(1))
+var/x = list(1)
+/proc/f(v)
+	return v
+var/y = list(2)
+=== t4: x y a
+var/a = list(f(g(1)) = 2)
+var/x = list(1)
+/proc/f(v)
+	return v
+/proc/g(v)
+	return v
+var/y = list(2)
+=== t5: x y a
+var/a = list(f(1) = h(2))
+var/x = list(1)
+/proc/f(v)
+	return v
+/proc/h(v)
+	return v
+var/y = list(2)
+=== u0: sa sc sb
+/datum/a
+	var/static/sa = list(1)
+/datum/c
+	var/static/sc = list(3)
+/datum/b
+	var/static/sb = list(2)
+=== u1: sa sc sb
+/datum/a
+	var/static/sa = list(1)
+/proc/f()
+	return istype(null, /datum/b)
+/datum/c
+	var/static/sc = list(3)
+/datum/b
+	var/static/sb = list(2)
+=== u2: sa sc sb
+/datum/a
+	var/static/sa = list(1)
+/proc/f()
+	var/datum/b/x
+	return x
+/datum/c
+	var/static/sc = list(3)
+/datum/b
+	var/static/sb = list(2)
+=== u3: sa sc sb
+/datum/a
+	var/static/sa = list(1)
+	var/datum/b/thing
+/datum/c
+	var/static/sc = list(3)
+/datum/b
+	var/static/sb = list(2)
+=== u4: sa sc sb
+/datum/a
+	var/static/sa = list(1)
+/proc/f(datum/b/x)
+	return x
+/datum/c
+	var/static/sc = list(3)
+/datum/b
+	var/static/sb = list(2)
+=== u5: sa sc sb
+/datum/a
+	var/static/sa = list(1)
+var/datum/b/G
+/datum/c
+	var/static/sc = list(3)
+/datum/b
+	var/static/sb = list(2)
+=== u6: sa sc sb
+/datum/a
+	var/static/sa = list(1)
+	var/thing = /datum/b
+/datum/c
+	var/static/sc = list(3)
+/datum/b
+	var/static/sb = list(2)
+=== v1: a x y
+/proc/g()
+	return 1
+var/a = f()
+var/x = list(1)
+/proc/f()
+	return 1
+var/y = list(2)
+=== v3: x y a
+/proc/g()
+	var/static/a = f()
+	var/static/x = list(1)
+	return a
+/proc/f()
+	return 1
+var/y = list(2)
+=== v4: x y a
+/datum/x/proc/g()
+	var/static/a = f()
+	var/static/x = list(1)
+	return a
+/proc/f()
+	return 1
+var/y = list(2)
+=== v5: a x z y
+/proc/h()
+	return 1
+/datum/x/proc/g()
+	var/static/a = f()
+	var/static/x = list(1)
+	return a
+var/z = list(3)
+/proc/f()
+	return 1
+var/y = list(2)
+=== w1: a damage_overlays b z
+/turf
+	var/static/a = list(1)
+/turf/closed/wall
+	var/global/damage_overlays[8]
+	var/static/b = list(3)
+var/z = list(2)
+=== w2: a b c z y q r
+/datum/x
+	var/static/a[3]
+	var/static/b = list(3)
+	var/static/list/c[2]
+var/z[4]
+var/y = list(2)
+/proc/f()
+	var/static/q[5]
+	var/static/r = list(1)
+=== w3: b y a z
+/datum/x
+	var/static/a = new /list(3)
+	var/static/b = list(3)
+var/z = new /list(4)
+var/y = list(2)
+=== x1: a b c d
+/datum/x
+	var/static/list/a = list(1)
+	var/static/b = list(2)
+	var/static/list/c = list(3)
+	var/static/d = list(4)
+=== x2: a c b e
+var/global
+	list/a = list(1)
+	b = list(2)
+	list/c = list(3)
+	datum/d = null
+	e = list(5)
+=== x3: a b c d
+var/list/a = list(1)
+var/b = list(2)
+var/list/c = list(3)
+var/d = list(4)
+=== x4: a d b c
+var
+	list/a = list(1)
+	global
+		list/b = list(2)
+	c = list(3)
+	list/d = list(4)
+=== x5: a c b d
+/datum/x
+	var
+		static/list/a = list(1)
+		static/b = list(2)
+		static/list/c = list(3)
+		static/d = list(4)
+=== x6: a b c e d
+var/global
+	list/a = list(1)
+	b = list(2)
+var/global
+	list/c = list(3)
+	d = list(4)
+	list/e = list(5)
+=== x7: a b d c
+var/global/list
+	a = list(1)
+	list/b = list(2)
+	c = list(3)
+	list/d = list(4)
+=== x8: a b c
+/proc/f()
+	var/static/list/a = list(1)
+	var/static/b = list(2)
+	var/static/list/c = list(3)
+=== y1: g0 c d a am m o t ar i mu g1 y s ic ma e r p z
+var/g0 = list(0)
+/zzz
+	var/static/z = list(1)
+/particles/var/static/p = list(2)
+/client/var/static/c = list(3)
+/datum/var/static/d = list(4)
+/atom/var/static/a = list(5)
+/mob/var/static/m = list(6)
+/obj/var/static/o = list(7)
+/turf/var/static/t = list(8)
+/area/var/static/ar = list(9)
+/image/var/static/i = list(10)
+/sound/var/static/s = list(11)
+/icon/var/static/ic = list(12)
+/matrix/var/static/ma = list(13)
+/regex/var/static/r = list(14)
+/exception/var/static/e = list(15)
+/mutable_appearance/var/static/mu = list(16)
+/atom/movable/var/static/am = list(17)
+var/g1 = list(0)
+/aaa
+	var/static/y = list(1)
+=== y2: g0 g1 g2 g3 z m a
+var/g0 = list(0)
+/zzz/var/static/z = list(1)
+var/g1 = list(0)
+/mmm/var/static/m = list(1)
+var/g2 = list(0)
+/aaa/var/static/a = list(1)
+var/g3 = list(0)
+=== y3: g0 g1 d g2 a g3 z
+var/g0 = list(0)
+/zzz/var/static/z = list(1)
+var/g1 = list(0)
+/datum/var/static/d = list(1)
+var/g2 = list(0)
+/aaa/var/static/a = list(1)
+var/g3 = list(0)
+=== y4: g0 g1 g2 g3 s e r z a
+var/g0 = list(0)
+/zzz/var/static/z = list(1)
+var/g1 = list(0)
+/sound/var/static/s = list(1)
+var/g2 = list(0)
+/regex/var/static/r = list(1)
+/exception/var/static/e = list(1)
+/aaa/var/static/a = list(1)
+var/g3 = list(0)
+=== y5: s ic ma e r p z a b
+/zzz/var/static/z = list(1)
+/sound/var/static/s = list(1)
+/regex/var/static/r = list(1)
+/exception/var/static/e = list(1)
+/aaa/var/static/a = list(1)
+/icon/var/static/ic = list(1)
+/matrix/var/static/ma = list(1)
+/particles/var/static/p = list(1)
+/bbb/var/static/b = list(1)
+=== y7: x s gs z g gz
+var/sound/gs = list(1)
+var/zzz/gz = list(2)
+/zzz/var/static/z = list(3)
+/sound/var/static/s = list(4)
+var/g = f()
+/proc/f()
+	return 1
+var/x = list(5)
+=== y8: i ar t o m am a d c y s ic ma db dq e r df ge p z mu
+/zzz/var/static/z = list(1)
+/database/var/static/db = list(1)
+/database/query/var/static/dq = list(1)
+/generator/var/static/ge = list(1)
+/dm_filter/var/static/df = list(1)
+/particles/var/static/p = list(1)
+/regex/var/static/r = list(1)
+/exception/var/static/e = list(1)
+/matrix/var/static/ma = list(1)
+/icon/var/static/ic = list(1)
+/sound/var/static/s = list(1)
+/mutable_appearance/var/static/mu = list(1)
+/image/var/static/i = list(1)
+/area/var/static/ar = list(1)
+/turf/var/static/t = list(1)
+/obj/var/static/o = list(1)
+/mob/var/static/m = list(1)
+/atom/movable/var/static/am = list(1)
+/atom/var/static/a = list(1)
+/datum/var/static/d = list(1)
+/client/var/static/c = list(1)
+/aaa/var/static/y = list(1)
+=== z1: x y a
+var/a = world.Gen()
+var/x = list(1)
+/world/proc/Gen()
+	return 1
+var/y = list(2)
+=== z10: x y a
+var/a = world.maxx
+var/x = list(1)
+/world/proc/h()
+	return 2
+var/y = list(2)
+=== z12: x y a
+var/a = world.maxx
+var/x = list(1)
+/world
+	fps = 20
+var/y = list(2)
+=== z13: x y a
+var/client/C
+var/a = C.Export("x")
+var/x = list(1)
+/client/proc/h()
+	return 2
+var/y = list(2)
+=== z2: a x y
+/world/proc/Gen()
+	return 1
+var/a = world.Gen()
+var/x = list(1)
+var/y = list(2)
+=== z3: a x y
+/datum/thing
+var/datum/thing/T
+var/a = T.f()
+var/x = list(1)
+/datum/thing/proc/f()
+	return 1
+var/y = list(2)
+=== z4: a x y
+/datum/thing/proc/f()
+	return 1
+var/datum/thing/T
+var/a = T.f()
+var/x = list(1)
+var/y = list(2)
+=== z5: x y _
+/world/proc/_()
+	var/static/_ = world.Gen()
+var/x = list(1)
+/world/proc/Gen()
+	return 1
+var/y = list(2)
+=== z6: x y _
+var/x = list(1)
+/world/proc/h()
+	return 2
+/world/proc/_()
+	var/static/_ = world.Gen()
+/world/proc/Gen()
+	return 1
+var/y = list(2)
+=== z7: x y a
+var/a = world.Export("x")
+var/x = list(1)
+/world/proc/h()
+	return 2
+var/y = list(2)
+=== z8: a x y
+/datum/thing
+var/datum/thing/T
+var/a = T:f()
+var/x = list(1)
+/datum/thing/proc/f()
+	return 1
+var/y = list(2)
+=== z9: x a
+var/a = world.Export("x")
+var/x = list(1)

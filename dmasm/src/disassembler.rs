@@ -1,0 +1,120 @@
+use crate::{Instruction, Label, Node};
+
+pub trait DisassembleEnv {
+    fn get_string_data(&mut self, index: u32) -> Option<Vec<u8>>;
+    fn get_variable_name(&mut self, index: u32) -> Option<Vec<u8>>;
+    fn get_proc_name(&mut self, index: u32) -> Option<String>;
+    fn value_to_string_data(&mut self, tag: u32, data: u32) -> Option<Vec<u8>>;
+}
+
+#[derive(Debug, PartialEq)]
+pub enum DisassembleError {
+    UnexpectedEnd,
+    UnknownOpcode { offset: u32, opcode: u32 },
+    InvalidOffset { offset: u32, dst: u32 },
+    InvalidString { offset: u32, id: u32 },
+    InvalidVariableName { offset: u32, id: u32 },
+    InvalidProc { offset: u32, id: u32 },
+    UnknownAccessModifier { offset: u32, value: u32 },
+    UnknownFieldAccessModifier { offset: u32, value: u32 },
+    UnknownIsInOperand { offset: u32, value: u32 },
+    UnknownValue { offset: u32, tag: u32 },
+    UnknownTypeFilter { offset: u32, value: u32 },
+    Todo,
+}
+
+#[derive(Debug, PartialEq)]
+pub struct DebugData<'a> {
+    pub offset: u32,
+    pub bytecode: &'a [u32],
+}
+
+pub fn disassemble<'a, E: DisassembleEnv>(
+    bytecode: &'a [u32],
+    env: &mut E,
+) -> (Vec<Node<DebugData<'a>>>, Option<DisassembleError>) {
+    let mut state = Disassembler::new(bytecode, env);
+    let mut instructions = Vec::with_capacity(bytecode.len() / 2);
+    let mut err = None;
+
+    // TODO: Move me
+    loop {
+        match Instruction::disassemble(&mut state) {
+            Ok((ins, dbg)) => {
+                instructions.push((ins, dbg));
+            }
+
+            Err(e) => {
+                err = Some(e);
+                break;
+            }
+        }
+
+        if state.finished() {
+            break;
+        }
+    }
+
+    state.indirection_destinations.sort_unstable();
+    state.indirection_destinations.dedup();
+
+    let mut nodes = Vec::with_capacity(instructions.len() + state.indirection_destinations.len());
+
+    for (ins, dbg) in instructions {
+        if state
+            .indirection_destinations
+            .binary_search(&dbg.offset)
+            .is_ok()
+        {
+            nodes.push(Node::Label(Label::Offset(dbg.offset)));
+        }
+
+        nodes.push(Node::Instruction(ins, dbg));
+    }
+
+    (nodes, err)
+}
+
+pub struct Disassembler<'a, 'e, E: DisassembleEnv> {
+    pub bytecode: &'a [u32],
+    pub current_offset: u32,
+    indirection_destinations: Vec<u32>,
+    pub env: &'e mut E,
+}
+
+impl<'a, 'e, E: DisassembleEnv> Disassembler<'a, 'e, E> {
+    fn new(bytecode: &'a [u32], env: &'e mut E) -> Self {
+        Self {
+            bytecode,
+            current_offset: 0,
+            indirection_destinations: Vec::new(),
+            env,
+        }
+    }
+
+    fn finished(&self) -> bool {
+        self.current_offset as usize == self.bytecode.len()
+    }
+
+    pub fn peek_u32(&mut self) -> Option<u32> {
+        self.bytecode.get(self.current_offset as usize).copied()
+    }
+
+    pub fn read_u32(&mut self) -> Result<u32, DisassembleError> {
+        let val = self
+            .bytecode
+            .get(self.current_offset as usize)
+            .copied()
+            .ok_or(DisassembleError::UnexpectedEnd);
+        self.current_offset += 1;
+        val
+    }
+
+    pub fn read_i32(&mut self) -> Result<i32, DisassembleError> {
+        Ok(self.read_u32()? as i32)
+    }
+
+    pub fn reserve_destination(&mut self, offset: u32) {
+        self.indirection_destinations.push(offset);
+    }
+}

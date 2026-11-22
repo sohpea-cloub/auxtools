@@ -1,0 +1,628 @@
+use crate::parser;
+use crate::{
+    assembler::{AssembleEnv, AssembleError, Assembler},
+    disassembler::{DebugData, DisassembleEnv, DisassembleError, Disassembler},
+    list_operands::TypeFilter,
+    operands::{
+        DMString, IsInParams, Label, Operand, OperandDeserialize, PickProbParams, PickSwitchParams,
+        Proc, SwitchParams, SwitchRangeParams, Value, Variable,
+    },
+};
+use std::fmt;
+
+#[allow(unused)]
+macro_rules! instructions {
+    ( $(
+        $opcode:literal = $name:ident
+        $( ( $(
+            $operand_name:ident: $operand_type:tt
+        ),* $(,)? ) )?
+    ),* $(,)? ) => {
+        #[derive(PartialEq, Clone, Debug)]
+        #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+        pub enum Instruction {
+            $(
+                $name$( ( $( $operand_type, )* ) )?,
+            )*
+        }
+
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+        #[repr(u32)]
+        pub enum Opcode {
+            $(
+                $name = $opcode,
+            )*
+        }
+
+        impl Opcode {
+            pub fn from_word(word: u32) -> Option<Self> {
+                match word {
+                    $(
+                        $opcode => Some(Self::$name),
+                    )*
+                    _ => None,
+                }
+            }
+
+            pub const fn word(self) -> u32 {
+                self as u32
+            }
+
+            pub const fn name(self) -> &'static str {
+                match self {
+                    $(
+                        Self::$name => stringify!($name),
+                    )*
+                }
+            }
+
+            pub(crate) fn scan_operands(
+                self,
+                cursor: &mut crate::bytecode::Cursor<'_>,
+                labels: &mut Vec<crate::bytecode::LabelOperand>,
+            ) -> Result<(), crate::bytecode::BytecodeError> {
+                match self {
+                    $(
+                        Self::$name => {
+                            $( $(
+                                crate::bytecode::scan_operand!(cursor, labels, $operand_type);
+                            )* )?
+                        }
+                    )*
+                }
+
+                Ok(())
+            }
+        }
+
+        impl Instruction {
+            pub const fn opcode(&self) -> Opcode {
+                match self {
+                    $(
+                        Self::$name$( ( $( $operand_name, )* ) )? => {
+                            $( $( let _ = $operand_name; )* )?
+                            Opcode::$name
+                        }
+                    )*
+                }
+            }
+
+            pub const fn name(&self) -> &'static str {
+                self.opcode().name()
+            }
+
+            /// The instruction's variable operands.
+            pub fn variables(&self) -> Vec<&Variable> {
+                let mut out = vec![];
+                match self {
+                    $(
+                        Self::$name$( ( $( $operand_name, )* ) )? => {
+                            $( $( $operand_name.variables(&mut out); )* )?
+                        }
+                    )*
+                }
+                out
+            }
+
+            pub fn assemble<'a, E: AssembleEnv>(&'a self, asm: &mut Assembler<'a, E>) -> Result<(), AssembleError> {
+                match self {
+                    $(
+                        Self::$name$( ( $( $operand_name, )* ) )? => {
+                            asm.emit($opcode);
+                            $( $( $operand_name.assemble(asm)?; )* )?
+                        }
+                    )*
+                }
+
+                Ok(())
+            }
+
+            pub fn disassemble<'a, 'e, E: DisassembleEnv>(
+                dism: &mut Disassembler<'a, 'e, E>,
+            ) -> Result<(Self, DebugData<'a>), DisassembleError> {
+                let offset = dism.current_offset;
+
+                let ins = match dism.read_u32()? {
+                    $(
+                        $opcode => {
+                            Self::$name$( ( $( $operand_type::disassemble(dism)?, )* ) )?
+                        }
+                    )*
+
+                    opcode => return Err(DisassembleError::UnknownOpcode { offset, opcode }),
+                };
+
+                let range_start = offset as usize;
+                let range_end = dism.current_offset as usize;
+
+                Ok((
+                    ins,
+                    DebugData {
+                        offset,
+                        bytecode: &dism.bytecode[range_start..range_end],
+                    },
+                ))
+            }
+
+            pub fn serialize(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                match self {
+                    $(
+                        Self::$name$( ( $( $operand_name, )* ) )? => {
+                            write!(f, stringify!($name))?;
+                            $( $(
+                                write!(f, " ")?;
+                                $operand_name.serialize(f)?;
+                            )* )?
+                        }
+                    )*
+                }
+
+                Ok(())
+            }
+
+            pub fn deserialize<'b, E>(i: &'b str) -> nom::IResult<&'b str, Self, E>
+            where
+                E: 'b + nom::error::ParseError<&'b str>
+                    + nom::error::FromExternalError<&'b str, std::num::ParseIntError>,
+            {
+                let (i, name) = parser::whitespace(parser::parse_identifier)(i)?;
+
+                let (i, instruction) = match name {
+                    $(
+                        stringify!($name) => {
+                            $( $(
+                                let (i, $operand_name) = parser::whitespace($operand_type::deserialize)(i)?;
+                            )* )?
+                            (i, Self::$name$( ( $(
+                                $operand_name,
+                             )* ))? )
+                        },
+                    )*
+
+                    // TODO: Real error
+                    other => panic!("unknown instruction {}", other),
+                };
+
+                Ok((i, instruction))
+            }
+        }
+    };
+}
+
+instructions! {
+    0x00 = End,
+    0x01 = New(arg_count: u32),
+    0x02 = Format(pattern: DMString, arg_count: u32),
+    0x03 = Output,
+    0x04 = OutputFormat(pattern: DMString, arg_count: u32),
+    0x05 = Stat,
+    // The slots left commented out below have a handler in BYOND, but no DM statement is known to make dm.exe 516 emit them.
+    // 0x06: old `target << sound(file, repeat)`
+    0x07 = Link,
+    0x08 = OutputFtp,
+    0x09 = OutputRun,
+    0x0A = OutputKey, // target << key(file)
+    0x0B = Missile,
+    0x0C = Del,
+    0x0D = Test,
+    0x0E = Not,
+    0x0F = Jmp(destination: Label),
+    0x10 = Jnz(destination: Label),
+    0x11 = Jz(destination: Label),
+    0x12 = Ret,
+    0x13 = IsLoc,
+    0x14 = IsMob,
+    0x15 = IsObj,
+    0x16 = IsArea,
+    0x17 = IsTurf,
+    0x18 = Alert,
+    0x19 = EmptyList,
+    0x1A = NewList(arg_count: u32),
+    0x1B = View,
+    0x1C = OView,
+    // The Target forms are what the compiler emits when the list is the left side of `<<`,
+    // as in `view() << "hi"`. They push BYOND's shared scratch list with no copy.
+    0x1D = ViewTarget,
+    0x1E = OViewTarget,
+    0x1F = Block,
+    0x20 = BlockTarget,
+    0x21 = Prob,
+    0x22 = Rand,
+    0x23 = RandRange,
+    0x24 = Sleep,
+    0x25 = Spawn(destination: Label),
+    // 0x26: old `spawn` that names a proc instead of having a body; takes arg_count
+    0x27 = BrowseRsc,
+    0x28 = IsIcon,
+    0x29 = Call(proc: Variable, arg_count: u32),
+    0x2A = CallStatement(proc: Variable, arg_count: u32),
+    0x2B = CallPath(arg_count: u32),
+    0x2C = CallParent,
+    0x2D = CallParentArgs(arg_count: u32),
+    0x2E = CallSelf,
+    0x2F = CallSelfArgs(arg_count: u32),
+    0x30 = CallGlob(arg_count: u32, proc: Proc),
+    0x31 = Log10,
+    0x32 = Log,
+    0x33 = GetVar(var: Variable),
+    0x34 = SetVar(var: Variable),
+    0x35 = SetVarExpr(var: Variable),
+    0x36 = GetFlag,
+    0x37 = Teq,
+    0x38 = Tne,
+    0x39 = Tl,
+    0x3A = Tg,
+    0x3B = Tle,
+    0x3C = Tge,
+    0x3D = UnaryNeg,
+    0x3E = Add,
+    0x3F = Sub,
+    0x40 = Mul,
+    0x41 = Div,
+    0x42 = Mod,
+    0x43 = Round,
+    0x44 = RoundN,
+    0x45 = AugAdd(var: Variable),
+    0x46 = AugSub(var: Variable),
+    0x47 = AugMul(var: Variable),
+    0x48 = AugDiv(var: Variable),
+    0x49 = AugMod(var: Variable),
+    0x4A = AugBand(var: Variable),
+    0x4B = AugBor(var: Variable),
+    0x4C = AugXor(var: Variable),
+    0x4D = AugLShift(var: Variable),
+    0x4E = AugRShift(var: Variable),
+    // 0x4F: flips the test flag
+    0x50 = PushInt(value: i32),
+    0x51 = Pop,
+    0x52 = IterLoad(unk0: u32, types: TypeFilter),
+    0x53 = IterNext,
+    0x54 = IterPush,
+    0x55 = IterPop,
+    0x56 = Num2TextSigFigs,
+    0x57 = Roll,
+    0x58 = NewListTarget(arg_count: u32),
+    0x59 = Range, // pushes the shared scratch list; CopyList follows unless it's the left side of `<<`
+    0x5A = LocatePos,
+    0x5B = LocateRef,
+    0x5C = Flick,
+    0x5D = Shutdown,
+    0x5E = Startup(arg_count: u32),
+    0x5F = RollStr,
+    0x60 = PushVal(value: Value),
+    0x61 = NewImage,
+    0x62 = PreInc(var: Variable),
+    0x63 = PostInc(var: Variable),
+    0x64 = PreDec(var: Variable),
+    0x65 = PostDec(var: Variable),
+    0x66 = Inc(var: Variable),
+    0x67 = Dec(var: Variable),
+    0x68 = Abs,
+    0x69 = Sqrt,
+    0x6A = Pow,
+    0x6B = Turn,
+    0x6C = AddText(arg_count: u32),
+    0x6D = Length,
+    0x6E = CopyText,
+    0x6F = FindText,
+    0x70 = FindTextEx,
+    0x71 = CmpText,
+    0x72 = SortText(arg_count: u32),
+    0x73 = SortTextEx(arg_count: u32),
+    0x74 = UpperText,
+    0x75 = LowerText,
+    0x76 = Text2Num,
+    0x77 = Num2Text,
+    0x78 = Switch(params: SwitchParams),
+    0x79 = PickSwitch(params: PickSwitchParams),
+    0x7A = SwitchRange(params: SwitchRangeParams),
+    0x7B = ListGet,
+    0x7C = ListSet,
+    0x7D = IsType,
+    0x7E = Band,
+    0x7F = Bor,
+    0x80 = Bxor,
+    0x81 = Bnot,
+    0x82 = LShift,
+    0x83 = RShift,
+    0x84 = DbgFile(name: DMString),
+    0x85 = DbgLine(line: u32),
+    0x86 = Step,
+    0x87 = StepTo,
+    0x88 = StepAway,
+    0x89 = StepTowards,
+    0x8A = StepRand,
+    0x8B = Walk,
+    0x8C = WalkTo,
+    0x8D = WalkAway,
+    0x8E = WalkTowards,
+    0x8F = WalkRand,
+    0x90 = GetStep,
+    0x91 = GetStepTo,
+    0x92 = GetStepAway,
+    0x93 = GetStepTowards,
+    0x94 = GetStepRand,
+    0x95 = GetDist,
+    0x96 = GetDir,
+    0x97 = LocateType,
+    0x98 = Shell,
+    0x99 = Text2File,
+    0x9A = File2Text,
+    0x9B = FCopy,
+    // 0x9C: does nothing
+    // 0x9D: a third entry into the input() code; same three operand words as Input
+    0x9E = IsNull,
+    0x9F = IsNum,
+    0xA0 = IsText,
+    0xA1 = StatPanel,
+    0xA2 = StatPanelCheck,
+    0xA3 = WaitforBegin, // the old `waitfor` block statement
+    0xA4 = WaitforEnd,
+    0xA5 = Min(arg_count: u32),
+    0xA6 = Max(arg_count: u32),
+    0xA7 = TypesOf(arg_count: u32),
+    0xA8 = CKey,
+    0xA9 = IsIn(params: IsInParams),
+    0xAA = Browse,
+    0xAB = BrowseOpt,
+    0xAC = FList,
+    0xAD = ORange, // same as Range
+    0xAE = CopyList, // replaces the list on top with a private copy
+    0xAF = Read,
+    0xB0 = Index,
+    0xB1 = PickProb(params: PickProbParams),
+    0xB2 = JmpOr(destination: Label),
+    0xB3 = JmpAnd(destination: Label),
+    0xB4 = FDel,
+    0xB5 = CallName(arg_count: u32),
+    0xB6 = ShutdownArgs,
+    0xB7 = List2Params,
+    0xB8 = Params2List,
+    0xB9 = CKeyEx,
+    0xBA = PromptCheck,
+    0xBB = Rgb,
+    0xBC = HasCall,
+    // 0xBD: replaces the value on top with null
+    0xBE = HtmlEncode,
+    0xBF = HtmlDecode,
+    0xC0 = Time2Text,
+    0xC1 = Input(unk0: u32, unk1: u32, unk2: u32),
+    0xC2 = Sin,
+    0xC3 = Cos,
+    0xC4 = ArcSin,
+    0xC5 = ArcCos,
+    0xC6 = InputColor(unk0: u32, unk1: u32, unk2: u32),
+    0xC7 = Crash,
+    0xC8 = NewAssocList(arg_count: u32),
+    0xC9 = CallParentArgList,
+    0xCA = CallSelfArgList,
+    0xCB = CallPathArgList,
+    0xCC = CallNameArgList, // TODO: same as above but without a src?
+    0xCD = CallGlobalArgList(proc: Proc),
+    // 0xCE: 0x26 for arglist()
+    0xCF = NewArgList,
+    0xD0 = MinList,
+    0xD1 = MaxList,
+    0xD2 = Pick,
+    0xD3 = NewImageArgList,
+    0xD4 = NewImageArgs(arg_count: u32),
+    // 0xD5: old `target << sound(...)` with 1 to 5 arguments; takes arg_count
+    // 0xD6: old `target << S` for a /sound datum
+    0xD7 = FCopyRsc,
+
+    // This instruction must have been removed at some point
+    // It's identical to running an invalid opcode
+    // 0xD8 = BadInstruction,
+
+    0xD9 = ShellAllowed,
+    0xDA = RandSeed,
+    0xDB = Text2Ascii,
+    0xDC = Ascii2Text,
+    0xDD = IconStates,
+    0xDE = IconNew(arg_count: u32),
+    0xDF = TurnOrFlipIcon(filter_mode: u32, var: Variable),
+    0xE0 = IconBlendSimple(var: Variable), // _dm_icon_blend(icon, other, function), no x and y
+    0xE1 = IconIntensity(var: Variable),
+    0xE2 = IconSwapColor(var: Variable),
+    0xE3 = ShiftIcon(var: Variable),
+    0xE4 = IsFile,
+    0xE5 = Viewers,
+    0xE6 = OViewers,
+    0xE7 = Hearers,
+    0xE8 = OHearers,
+    0xE9 = DbNewConnection,
+    0xEA = DbNewQuery,
+    0xEB = DbConnect,
+    0xEC = DbExecute,
+    0xED = DbNextRow,
+    0xEE = DbErrorMsg,
+    0xEF = DbClose,
+    0xF0 = DbIsConnected,
+    0xF1 = DbRowsAffected,
+    0xF2 = DbRowCount,
+    0xF3 = DbQuote,
+    0xF4 = DbColumns,
+    0xF5 = IsPath,
+    0xF6 = IsSubPath,
+    0xF7 = FExists,
+
+    // These are the same as Jmp, Jnz, and Jz, except they try to detect infinite loops
+    0xF8 = JmpLoop(destination: Label),
+    0xF9 = JnzLoop(destination: Label),
+    0xFA = JzLoop(destination: Label),
+
+    0xFB = PopN(count: u32),
+    0xFC = Check2Numbers,
+    0xFD = ForRange(exit: Label, var: Variable),
+    0xFE = Check3Numbers,
+    0xFF = ForRangeStep(exit: Label, var: Variable),
+    0x100 = DmsNewKernel,
+    0x101 = DmsParse,
+    0x102 = DmsExportText,
+    0x103 = Eval,
+    0x104 = DmsPrepare,
+    0x105 = IconDrawBox(var: Variable),
+    0x106 = IconInsert(arg_count: u32, var: Variable),
+    0x107 = UrlEncode,
+    0x108 = UrlDecode,
+    0x109 = Md5,
+    0x10A = Text2Path,
+    0x10B = WinOutput,
+    0x10C = WinSet,
+    0x10D = WinGet,
+    0x10E = WinClone,
+    0x10F = WinShow,
+    0x110 = IconMapColors(arg_count: u32, var: Variable),
+    0x111 = IconScale(var: Variable),
+    0x112 = IconCrop(var: Variable),
+    0x113 = Rgba,
+    0x114 = IconStatesMode,
+    0x115 = IconGetPixel(arg_count: u32),
+    0x116 = CallLib(arg_count: u32),
+    0x117 = CallLibArgList,
+    0x118 = WinExists,
+    0x119 = IconBlend(var: Variable),
+    0x11A = IconSize,
+    0x11B = Bounds(arg_count: u32),
+    0x11C = OBounds(arg_count: u32),
+    0x11D = BoundsDist,
+    0x11E = StepSpeed,
+    0x11F = StepToSpeed,
+    0x120 = StepAwaySpeed,
+    0x121 = StepTowardsSpeed,
+    0x122 = StepRandSpeed,
+    0x123 = WalkSpeed,
+    0x124 = WalkToSpeed,
+    0x125 = WalkAwaySpeed,
+    0x126 = WalkTowardsSpeed,
+    0x127 = WalkRandSpeed,
+    0x128 = Animate,
+    0x129 = NullAnimate,
+    0x12A = MatrixNew(arg_count: u32),
+    0x12B = Database(arg_count: u32),
+    0x12C = Try(unk0: Label),
+    0x12D = Throw,
+    0x12E = Catch(unk0: Label),
+
+    // TODO: Why does this exist?
+    0x12F = TryJmp(destination: Label),
+
+    0x130 = ReplaceText,
+    0x131 = ReplaceTextEx,
+    0x132 = FindLastText,
+    0x133 = FindLastTextEx,
+    0x134 = SpanText,
+    0x135 = NonSpanText,
+    0x136 = SplitText,
+    0x137 = JoinText,
+    0x138 = JsonEncode,
+    0x139 = JsonDecode,
+    0x13A = RegexNew(arg_count: u32),
+    0x13B = FilterNewArgList,
+
+    // Pushes the value at the top of the stack (it clones it)
+    0x13C = PushTop,
+
+    // Pops the value _only_ if the jump is not performed
+    0x13D = SetCacheJmpIfNull(destination: Label),
+
+    // Pops the value regardless of if the jump is performed
+    0x13E = SetCachePopJmpIfNull(destination: Label),
+
+    // This one's a bit of a beast. It seems that instructions such as AugAdd cause the offset of their variable operand to be cached
+    // This instruction then uses the operand at that offset to find what the "last" var was and push it.
+    // I haven't confirmed if anything but Aug* instructions set this value yet.
+    0x13F = PushEval,
+
+    0x140 = TestEquiv,
+    0x141 = TestNotEquiv,
+
+    // These instructions interact with a separate stack than the other ones (although both stacks share the same memory allocation.)
+    // They push and pop the contents of the cache register
+    0x142 = PushCache,
+    0x143 = PopCache,
+
+    0x144 = Tan,
+    0x145 = ArcTan,
+    0x146 = ArcTan2,
+    0x147 = IsList,
+    0x148 = Ref,
+    0x149 = IsMovable,
+    0x14A = Clamp,
+    0x14B = Sha1,
+    0x14C = Text2AsciiChar,
+    0x14D = LengthChar,
+    0x14E = CopyTextChar,
+    0x14F = FindTextChar,
+    0x150 = FindTextExChar,
+    0x151 = ReplaceTextChar,
+    0x152 = ReplaceTextExChar,
+    0x153 = FindLastTextChar,
+    0x154 = FindLastTextExChar,
+    0x155 = SpanTextChar,
+    0x156 = NonSpanTextChar,
+    0x157 = SplitTextChar,
+    0x158 = Text2NumRadix,
+    0x159 = Num2TextRadix,
+    0x15A = AssignInto(var: Variable),
+    0x15B = PushCacheKey,
+    0x15C = PopCacheKey,
+    0x15D = Time2TextTZ(arg_count: u32),
+    0x15E = MakeGenerator(unk0: u32),
+    0x15F = SpliceText,
+    0x160 = SpliceTextChar,
+    0x161 = RgbEx, // Used when the color space for rgb() cannot be found to be COLORSPACE_RGB at compile-time
+    0x162 = Rgb2Num, // This is technically a replacement for the original Rgb2Num which is somewhere else
+    0x163 = GradientIndex, // gradient(Gradient, index): the gradient is already one value, the index is pushed separately
+    0x164 = Gradient,
+    0x165 = LoadResource(arg_count: u32),
+    0x166 = IsPointer,
+    0x167 = JsonEncodeFlags(arg_count: u32),
+    0x168 = JsonDecodeFlags(arg_count: u32),
+    0x169 = Ceil,
+    0x16A = Trunc,
+    0x16B = Fract,
+    0x16C = IsNaN,
+    0x16D = IsInf,
+    0x16E = TrimText,
+    0x16F = FTime,
+    0x170 = BlockXYZ,
+    0x171 = BlockXYZTarget,
+    0x172 = NoiseHash(arg_count: u32),
+    0x173 = PowSquare, // Optimization whenever x ** 2 or x ** x is used.
+    0x174 = PowNegativeOne, // Optimization whenever x ** -1 is used.
+    0x175 = GetStepsTo,
+    0x176 = FloatMod,
+    0x177 = AugFloatMod(var: Variable),
+    0x178 = RefCount,
+    0x179 = LoadExt,
+    0x17a = CallExtLoaded(arg_count: u32), // calls a load_ext handle: call_ext(handle)(args...)
+    0x17b = CallExtLoadedArgList, // call_ext(handle)(arglist(L))
+    0x17c = NewAlist(arg_count: u32),
+    0x17d = Spaceship, // <=> (less or greater) comparator. It looks like a spaceship, and thus will be called "Spaceship", because "Tlog" is a dumb instruction name, and we all need some whimsy in our lives.
+    0x17e = KeyValueIter(var: Variable), // for (k,v in list)
+    0x17f = NewPixloc(arg_count: u32),
+    0x180 = NewVector(arg_count: u32),
+    0x181 = BoundPixloc,
+    // yes this is literally just sin/cos/tan 2: electric boogaloo. don't ask me why.
+    0x182 = Sin2,
+    0x183 = Cos2,
+    0x184 = Tan2,
+    0x185 = AsType,
+    0x186 = Sign,
+    0x187 = Lerp,
+    0x188 = ValuesSum,
+    0x189 = ValuesProduct,
+    0x18a = ValuesDot,
+    0x18b = ValuesCutUnder,
+    0x18c = ValuesCutOver,
+
+    0x1337 = AuxtoolsDebugBreak,
+    0x1338 = AuxtoolsDebugBreakNop,
+}
+
+impl std::fmt::Display for Instruction {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.serialize(f)
+    }
+}

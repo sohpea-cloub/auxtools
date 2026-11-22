@@ -1,0 +1,1116 @@
+use crate::{
+    assembler::{AssembleEnv, AssembleError, Assembler},
+    disassembler::{DisassembleEnv, DisassembleError, Disassembler},
+};
+use std::fmt;
+
+pub trait Operand: Sized {
+    fn assemble<'a, E: AssembleEnv>(
+        &'a self,
+        asm: &mut Assembler<'a, E>,
+    ) -> Result<(), AssembleError>;
+    fn disassemble<E: DisassembleEnv>(dism: &mut Disassembler<E>)
+        -> Result<Self, DisassembleError>;
+
+    fn serialize(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result;
+
+    /// Adds this operand to `out` if it's a variable.
+    fn variables<'a>(&'a self, _out: &mut Vec<&'a Variable>) {}
+}
+
+// keeping the nom bullshit separate makes everything else easier to dig thru
+pub trait OperandDeserialize: Sized {
+    fn deserialize<'a, E>(i: &'a str) -> nom::IResult<&'a str, Self, E>
+    where
+        E: nom::error::ParseError<&'a str>
+            + nom::error::FromExternalError<&'a str, std::num::ParseIntError>;
+}
+
+impl Operand for u32 {
+    fn assemble<'a, E: AssembleEnv>(
+        &'a self,
+        asm: &mut Assembler<'a, E>,
+    ) -> Result<(), AssembleError> {
+        asm.emit(*self);
+        Ok(())
+    }
+
+    fn disassemble<E: DisassembleEnv>(
+        dism: &mut Disassembler<E>,
+    ) -> Result<Self, DisassembleError> {
+        dism.read_u32()
+    }
+
+    fn serialize(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", *self)
+    }
+}
+
+impl Operand for i32 {
+    fn assemble<'a, E: AssembleEnv>(
+        &'a self,
+        asm: &mut Assembler<'a, E>,
+    ) -> Result<(), AssembleError> {
+        asm.emit(*self as u32);
+        Ok(())
+    }
+
+    fn disassemble<E: DisassembleEnv>(
+        dism: &mut Disassembler<E>,
+    ) -> Result<Self, DisassembleError> {
+        dism.read_i32()
+    }
+
+    fn serialize(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", *self)
+    }
+}
+
+// f32 only appears inside serialized values, so bytecode assembly is unreachable.
+impl Operand for f32 {
+    fn assemble<'a, E: AssembleEnv>(
+        &'a self,
+        _asm: &mut Assembler<'a, E>,
+    ) -> Result<(), AssembleError> {
+        unreachable!()
+    }
+
+    fn disassemble<E: DisassembleEnv>(
+        _dism: &mut Disassembler<E>,
+    ) -> Result<Self, DisassembleError> {
+        unreachable!()
+    }
+
+    fn serialize(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{:.}", *self)
+    }
+}
+
+#[derive(PartialEq, Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum Label {
+    Named(String),
+    Offset(u32),
+}
+
+impl fmt::Display for Label {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Named(name) => f.write_str(name),
+            Self::Offset(offset) => write!(f, "LAB_{:0>4X}", offset),
+        }
+    }
+}
+
+impl Operand for Label {
+    fn assemble<'a, E: AssembleEnv>(
+        &'a self,
+        asm: &mut Assembler<'a, E>,
+    ) -> Result<(), AssembleError> {
+        match self {
+            Self::Named(name) => asm.emit_label_operand(name),
+            Self::Offset(offset) => asm.emit_offset_label_operand(*offset),
+        }
+        Ok(())
+    }
+
+    fn disassemble<E: DisassembleEnv>(
+        dism: &mut Disassembler<E>,
+    ) -> Result<Self, DisassembleError> {
+        let offset = dism.read_u32()?;
+
+        dism.reserve_destination(offset);
+        Ok(Self::Offset(offset))
+    }
+
+    fn serialize(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self)
+    }
+}
+
+#[derive(PartialEq, Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct Proc(pub String);
+
+impl Operand for Proc {
+    fn assemble<'a, E: AssembleEnv>(
+        &'a self,
+        asm: &mut Assembler<'a, E>,
+    ) -> Result<(), AssembleError> {
+        let idx = asm
+            .env
+            .get_proc_index(&self.0)
+            .ok_or(AssembleError::ProcNotFound(self.0.to_owned()))?;
+        asm.emit(idx);
+        Ok(())
+    }
+
+    fn disassemble<E: DisassembleEnv>(
+        dism: &mut Disassembler<E>,
+    ) -> Result<Self, DisassembleError> {
+        let id = dism.read_u32()?;
+        let string = dism
+            .env
+            .get_proc_name(id)
+            .ok_or(DisassembleError::InvalidProc {
+                offset: dism.current_offset - 1,
+                id,
+            })?;
+
+        Ok(Proc(string))
+    }
+
+    fn serialize(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+//
+// DMString
+//
+#[derive(PartialEq, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct DMString(pub Vec<u8>);
+
+impl fmt::Debug for DMString {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.serialize(f)
+    }
+}
+
+impl DMString {
+    fn get_string_index<E: AssembleEnv>(
+        &self,
+        asm: &mut Assembler<E>,
+    ) -> Result<u32, AssembleError> {
+        asm.env
+            .get_string_index(&self.0)
+            .ok_or_else(|| AssembleError::StringNotFound(self.0.clone()))
+    }
+}
+
+impl Operand for DMString {
+    fn assemble<'a, E: AssembleEnv>(
+        &'a self,
+        asm: &mut Assembler<'a, E>,
+    ) -> Result<(), AssembleError> {
+        let idx = self.get_string_index(asm)?;
+        asm.emit(idx);
+        Ok(())
+    }
+
+    fn disassemble<E: DisassembleEnv>(
+        dism: &mut Disassembler<E>,
+    ) -> Result<Self, DisassembleError> {
+        // A string id landing in the access-modifier range (0xFFCD..=0xFFEF)
+        // arrives with bit 0x1000_0000 set, so a reader deciding "modifier or
+        // string?" can tell. Masking is a no-op otherwise - no string table is
+        // 268M entries deep.
+        let id = dism.read_u32()? & !0x1000_0000;
+        let data = dism
+            .env
+            .get_string_data(id)
+            .ok_or(DisassembleError::InvalidString {
+                offset: dism.current_offset - 1,
+                id,
+            })?;
+
+        Ok(DMString(data))
+    }
+
+    // TODO: Formatting
+    fn serialize(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut format = vec![];
+        let mut iter = self.0.iter();
+
+        while let Some(byte_ref) = iter.next() {
+            let byte = *byte_ref;
+            if byte == 0xFF {
+                // NOTE: Doesn't hold state for formatting, so some strings relying on are a little off
+                format.extend_from_slice(match iter.next() {
+                    None => break,
+                    Some(1) | Some(2) | Some(3) | Some(4) => b"[]",
+                    Some(5) => b"[]\\th",
+                    Some(6) => b"\\a",
+                    Some(7) => b"\\A",
+                    Some(8) => b"\\the",
+                    Some(9) => b"\\The",
+                    Some(10) => b"\\he",
+                    Some(11) => b"\\He",
+                    Some(12) => b"\\his",
+                    Some(13) => b"\\His",
+                    Some(14) => b"\\hers",
+                    Some(15) => b"\\Hers",
+                    Some(16) => b"\\him ",
+                    Some(17) => b"\\himself",
+                    Some(18) => b"\\... ",
+                    Some(19) => b"\\n",
+                    Some(20) => b"\\s ",
+                    Some(21) => b"\\proper ",
+                    Some(22) => b"\\improper ",
+                    Some(23) => b"\\bold ",
+                    Some(24) => b"\\italic ",
+                    Some(25) => b"\\underline ",
+                    Some(26) => b"\\strike ",
+                    Some(27) => b"\\font",
+                    Some(28) => b"\\color",
+                    Some(29) => b"\\font",
+                    Some(30) => b"\\color",
+                    Some(31) => b"\\red ",
+                    Some(32) => b"\\green ",
+                    Some(33) => b"\\blue ",
+                    Some(34) => b"\\black ",
+                    Some(35) => b"\\white ",
+                    Some(36) => b"\\yellow ",
+                    Some(37) => b"\\cyan ",
+                    Some(38) => b"\\magenta ",
+                    Some(39) => b"\\beep ",
+                    Some(40) => b"\\link",
+                    Some(41) => b" \\link",
+                    Some(42) => b"\\ref[]",
+                    Some(43) => b"\\icon[]",
+                    Some(44) => b"\\roman[]",
+                    Some(45) => b"\\Roman[]",
+                    Some(_) => b"[UNKNONWN FORMAT SPECIFIER]",
+                });
+                continue;
+            }
+
+            if byte == b'\n' {
+                format.extend_from_slice(b"\\n");
+                continue;
+            }
+
+            if byte == b'\r' {
+                format.extend_from_slice(b"\\r");
+                continue;
+            }
+
+            // Escape \[]"" chars
+            if byte == b'\\' || byte == b'[' || byte == b']' || byte == b'"' {
+                format.push(b'\\');
+            }
+
+            format.push(byte);
+        }
+
+        write!(f, "\"{}\"", String::from_utf8_lossy(&format))
+    }
+}
+
+// Each form pops a different depth - 3, 2, 3, 7 with the tested value on top -
+// so a consumer that lumps them together gets the stack wrong.
+#[derive(PartialEq, Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum IsInParams {
+    Range,
+    /// `x in a to b step c`. DreamMaker emits this, but DreamDaemon always
+    /// returns false and leaves an extra stack value.
+    RangeStep,
+    Value,
+    /// `x in block(a, b)`.
+    BlockCorners,
+    /// `x in block(...)` by coordinate. Always six of them: DM takes 3 to 6 and
+    /// the compiler pads the rest with `PushVal null`, so there is no argument
+    /// count in the stream.
+    BlockCoords,
+}
+
+impl Operand for IsInParams {
+    fn assemble<'a, E: AssembleEnv>(
+        &'a self,
+        asm: &mut Assembler<'a, E>,
+    ) -> Result<(), AssembleError> {
+        match self {
+            Self::Range => asm.emit(0x0B),
+            Self::RangeStep => asm.emit(0x0C),
+            Self::Value => asm.emit(0x05),
+            Self::BlockCorners => asm.emit(0x06),
+            Self::BlockCoords => asm.emit(0x13),
+        }
+
+        Ok(())
+    }
+
+    fn disassemble<E: DisassembleEnv>(
+        dism: &mut Disassembler<E>,
+    ) -> Result<Self, DisassembleError> {
+        let param = dism.read_u32()?;
+
+        let res = match param {
+            0x0B => Self::Range,
+            0x0C => Self::RangeStep,
+            0x05 => Self::Value,
+            0x06 => Self::BlockCorners,
+            0x13 => Self::BlockCoords,
+            other => {
+                return Err(DisassembleError::UnknownIsInOperand {
+                    offset: dism.current_offset - 1,
+                    value: other,
+                })
+            }
+        };
+
+        Ok(res)
+    }
+
+    fn serialize(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Range => write!(f, "Range"),
+            Self::RangeStep => write!(f, "RangeStep"),
+            Self::Value => write!(f, "Value"),
+            Self::BlockCorners => write!(f, "BlockCorners"),
+            Self::BlockCoords => write!(f, "BlockCoords"),
+        }
+    }
+}
+
+#[derive(PartialEq, Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct SwitchParams {
+    pub default: Label,
+    pub cases: Vec<(Value, Label)>,
+}
+
+impl Operand for SwitchParams {
+    fn assemble<'a, E: AssembleEnv>(
+        &'a self,
+        asm: &mut Assembler<'a, E>,
+    ) -> Result<(), AssembleError> {
+        asm.emit(self.cases.len() as u32);
+
+        for (value, label) in &self.cases {
+            value.assemble(asm)?;
+            label.assemble(asm)?;
+        }
+
+        self.default.assemble(asm)
+    }
+
+    fn disassemble<E: DisassembleEnv>(
+        dism: &mut Disassembler<E>,
+    ) -> Result<Self, DisassembleError> {
+        let mut cases = vec![];
+
+        for _ in 0..dism.read_u32()? {
+            cases.push((Value::disassemble(dism)?, Label::disassemble(dism)?));
+        }
+
+        Ok(Self {
+            default: Label::disassemble(dism)?,
+            cases,
+        })
+    }
+
+    fn serialize(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "default => ")?;
+        self.default.serialize(f)?;
+        write!(f, ", ")?;
+
+        for case in &self.cases {
+            case.0.serialize(f)?;
+            write!(f, " => ")?;
+            case.1.serialize(f)?;
+            write!(f, ", ")?;
+        }
+
+        Ok(())
+    }
+}
+
+#[derive(PartialEq, Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct PickSwitchParams {
+    pub default: Label,
+    pub cases: Vec<(u32, Label)>,
+}
+
+impl Operand for PickSwitchParams {
+    fn assemble<'a, E: AssembleEnv>(
+        &'a self,
+        asm: &mut Assembler<'a, E>,
+    ) -> Result<(), AssembleError> {
+        asm.emit(self.cases.len() as u32);
+
+        for (threshold, label) in &self.cases {
+            asm.emit(*threshold);
+            label.assemble(asm)?;
+        }
+
+        self.default.assemble(asm)
+    }
+
+    fn disassemble<E: DisassembleEnv>(
+        dism: &mut Disassembler<E>,
+    ) -> Result<Self, DisassembleError> {
+        let mut cases = vec![];
+
+        for _ in 0..dism.read_u32()? {
+            cases.push((u32::disassemble(dism)?, Label::disassemble(dism)?));
+        }
+
+        Ok(Self {
+            default: Label::disassemble(dism)?,
+            cases,
+        })
+    }
+
+    fn serialize(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // TODO: Could change our cases to the original DM prob() values
+        write!(f, "default => ")?;
+        self.default.serialize(f)?;
+        write!(f, ", ")?;
+
+        for case in &self.cases {
+            case.0.serialize(f)?;
+            write!(f, " => ")?;
+            case.1.serialize(f)?;
+            write!(f, ", ")?;
+        }
+
+        Ok(())
+    }
+}
+
+#[derive(PartialEq, Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct SwitchRangeParams {
+    pub default: Label,
+    pub cases: Vec<(Value, Label)>,
+    pub range_cases: Vec<(Value, Value, Label)>,
+}
+
+impl Operand for SwitchRangeParams {
+    fn assemble<'a, E: AssembleEnv>(
+        &'a self,
+        asm: &mut Assembler<'a, E>,
+    ) -> Result<(), AssembleError> {
+        asm.emit(self.range_cases.len() as u32);
+
+        for (min, max, label) in &self.range_cases {
+            min.assemble(asm)?;
+            max.assemble(asm)?;
+            label.assemble(asm)?;
+        }
+
+        asm.emit(self.cases.len() as u32);
+
+        for (value, label) in &self.cases {
+            value.assemble(asm)?;
+            label.assemble(asm)?;
+        }
+
+        self.default.assemble(asm)
+    }
+
+    fn disassemble<E: DisassembleEnv>(
+        dism: &mut Disassembler<E>,
+    ) -> Result<Self, DisassembleError> {
+        let mut range_cases = vec![];
+        let mut cases = vec![];
+
+        for _ in 0..dism.read_u32()? {
+            range_cases.push((
+                Value::disassemble(dism)?,
+                Value::disassemble(dism)?,
+                Label::disassemble(dism)?,
+            ));
+        }
+
+        for _ in 0..dism.read_u32()? {
+            cases.push((Value::disassemble(dism)?, Label::disassemble(dism)?));
+        }
+
+        Ok(Self {
+            default: Label::disassemble(dism)?,
+            cases,
+            range_cases,
+        })
+    }
+
+    fn serialize(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "default => ")?;
+        self.default.serialize(f)?;
+        write!(f, ", ")?;
+
+        for case in &self.cases {
+            case.0.serialize(f)?;
+            write!(f, " => ")?;
+            case.1.serialize(f)?;
+            write!(f, ", ")?;
+        }
+
+        for range_case in &self.range_cases {
+            write!(f, "(")?;
+            range_case.0.serialize(f)?;
+            write!(f, " to ")?;
+            range_case.1.serialize(f)?;
+            write!(f, ") => ")?;
+            range_case.2.serialize(f)?;
+            write!(f, ", ")?;
+        }
+
+        Ok(())
+    }
+}
+
+#[derive(PartialEq, Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct PickProbParams {
+    pub cases: Vec<Label>,
+}
+
+impl Operand for PickProbParams {
+    fn assemble<'a, E: AssembleEnv>(
+        &'a self,
+        asm: &mut Assembler<'a, E>,
+    ) -> Result<(), AssembleError> {
+        asm.emit(self.cases.len() as u32);
+
+        for case in &self.cases {
+            case.assemble(asm)?;
+        }
+
+        Ok(())
+    }
+
+    fn disassemble<E: DisassembleEnv>(
+        dism: &mut Disassembler<E>,
+    ) -> Result<Self, DisassembleError> {
+        let mut cases = vec![];
+
+        for _ in 0..dism.read_u32()? {
+            cases.push(Label::disassemble(dism)?);
+        }
+
+        Ok(Self { cases })
+    }
+
+    fn serialize(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for case in &self.cases {
+            case.serialize(f)?;
+            write!(f, ", ")?;
+        }
+
+        Ok(())
+    }
+}
+
+#[derive(PartialEq, Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum Value {
+    Null,
+    Number(f32),
+    DMString(DMString),
+    Path(String),
+    Resource(String),
+    File,
+    Raw {
+        tag: u8,
+        data: u32,
+    },
+    /// Prefab instance with variable overrides. `vars` contains initializer
+    /// code such as `src.a = 1`; assembly orders it by variable-name string ID.
+    Prefab {
+        path: String,
+        vars: Vec<(String, Vec<crate::Node>)>,
+    },
+    /*/
+    DatumPath(DMString),
+    ClientPath,
+    ProcPath(DMString),
+    Resource(DMString),
+    TurfPath(DMString),
+    ObjPath(DMString),
+    File(DMString),
+    MobPath(DMString),
+    ImagePath(DMString),
+    */
+}
+
+impl Operand for Value {
+    fn assemble<'a, E: AssembleEnv>(
+        &'a self,
+        asm: &mut Assembler<'a, E>,
+    ) -> Result<(), AssembleError> {
+        let (tag, data): (u8, u32) = match self {
+            Self::Null => (0x00, 0x00),
+            Self::Raw { tag, data } => (*tag, *data),
+            Self::DMString(value) => (0x06, value.get_string_index(asm)?),
+
+            // Numbers are a special case. They use an extra operand.
+            Self::Number(num) => {
+                let bits = num.to_bits();
+                asm.emit(0x2A);
+                asm.emit((bits >> 16) & 0xFFFF);
+                asm.emit(bits & 0xFFFF);
+                return Ok(());
+            }
+
+            Self::Path(path) => match asm.env.get_type(path) {
+                Some(t) => t,
+                None => return Err(AssembleError::TypeNotFound(path.clone())),
+            },
+
+            Self::Resource(path) => match asm.env.get_resource_index(path) {
+                Some(id) => (0x0C, id),
+                None => return Err(AssembleError::ResourceNotFound(path.clone())),
+            },
+
+            Self::File => (0x27, 0x00),
+
+            Self::Prefab { path, vars } => {
+                let mut parts = vec![];
+                for (name, nodes) in vars {
+                    let id = asm.env.get_string_index(name.as_bytes());
+                    parts.push((id, crate::assembler::assemble(nodes, &mut *asm.env)?));
+                }
+                parts.sort_by_key(|(id, _)| *id);
+                let mut code: Vec<u32> = parts.into_iter().flat_map(|(_, c)| c).collect();
+                code.push(0); // End
+                match asm.env.get_instance(path, &code) {
+                    Some(id) => (0x29, id),
+                    None => return Err(AssembleError::InstanceNotFound(path.clone())),
+                }
+            }
+        };
+
+        // The top 8 bits of data live in tag
+        asm.emit((tag as u32) | ((data & 0xFF0000) >> 8));
+        asm.emit(data & 0xFFFF);
+        Ok(())
+    }
+
+    fn disassemble<E: DisassembleEnv>(
+        dism: &mut Disassembler<E>,
+    ) -> Result<Self, DisassembleError> {
+        let offset = dism.current_offset;
+
+        let tag = dism.read_u32()?;
+        let data = ((tag & 0xFF00) << 8) | dism.read_u32()?;
+        let tag = tag & 0xFF;
+
+        // Number is a special snowflake
+        let value = match tag {
+            0x00 if data == 0 => Self::Null,
+
+            // This one's a bit dodgy. We can't use DMString::disassemble because our bytes are split apart
+            0x06 => Self::DMString(DMString(
+                dism.env
+                    .get_string_data(data)
+                    .ok_or(DisassembleError::InvalidString { offset, id: data })?,
+            )),
+
+            0x2A => {
+                // Numbers store their data portion in the lower 16-bits of two operands
+                let upper_bits = data;
+                let lower_bits = dism.read_u32()?;
+                Self::Number(f32::from_bits((upper_bits << 16) | lower_bits))
+            }
+
+            // Datum typepath: keep the raw tag+data so consumers (e.g. the dmeow
+            // JIT lowering `new /datum/...`) can rebuild the exact type reference.
+            // The Path arm below stringifies via value_to_string_data, which loses
+            // tag+data and also fails for typepaths whose env can't string them.
+            0x20 => Self::Raw {
+                tag: tag as u8,
+                data,
+            },
+
+            0x3B | 0x24 | 0x26 | 0x0A | 0x0B | 0x28 | 0x09 | 0x08 | 0x3F | 0x59 => Self::Path(
+                String::from_utf8(
+                    dism.env
+                        .value_to_string_data(tag, data)
+                        .ok_or(DisassembleError::UnknownValue { offset, tag })?,
+                )
+                .map_err(|_| DisassembleError::UnknownValue { offset, tag })?,
+            ),
+
+            0x0C => Self::Resource(
+                String::from_utf8(
+                    dism.env
+                        .value_to_string_data(tag, data)
+                        .ok_or(DisassembleError::UnknownValue { offset, tag })?,
+                )
+                .map_err(|_| DisassembleError::UnknownValue { offset, tag })?,
+            ),
+
+            0x27 if data == 0 => Self::File,
+
+            0x29 => Self::Raw {
+                tag: tag as u8,
+                data,
+            },
+
+            _ => {
+                return Err(DisassembleError::UnknownValue { offset, tag });
+            }
+        };
+
+        Ok(value)
+    }
+
+    // TODO: Formatting
+    fn serialize(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Null => write!(f, "null"),
+            Value::Number(value) => value.serialize(f),
+            Value::DMString(value) => value.serialize(f),
+            Value::Path(value) => write!(f, "{}", value),
+            Value::Resource(value) => write!(f, "'{}'", value),
+            Value::File => write!(f, "/file"),
+            Value::Raw { tag, data } => write!(f, "ref({:X}{:08X})", tag, data),
+            Value::Prefab { path, vars } => {
+                let names: Vec<&str> = vars.iter().map(|(n, _)| n.as_str()).collect();
+                write!(f, "{}{{{}}}", path, names.join("; "))
+            }
+        }
+    }
+}
+
+/// A global variable operand: the name BYOND records for it, plus the slot it
+/// actually lives in.
+///
+/// The slot is the part that identifies it. A `var/static` declared inside a
+/// proc gets its own slot but keeps only its *local* name, so two statics with
+/// the same name in one proc are two slots sharing one name - anything keying a
+/// global by name alone silently merges them.
+#[derive(PartialEq, Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct GlobalVar {
+    pub name: DMString,
+    /// Index into BYOND's `global_values`, read straight off the bytecode.
+    /// `None` when built from source, where the assembler resolves the name.
+    pub id: Option<u32>,
+    /// Declaration scope for global lookup: `Some("")` for globals, a type path
+    /// for type statics, `proc:PATH` for proc statics, or `None` if unknown.
+    /// Same-named statics can occupy different slots.
+    pub scope: Option<String>,
+}
+
+impl GlobalVar {
+    pub fn named(name: &[u8], scope: Option<String>) -> Self {
+        GlobalVar {
+            name: DMString(name.to_vec()),
+            id: None,
+            scope,
+        }
+    }
+}
+
+#[derive(PartialEq, Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum Variable {
+    Null,
+    World,
+    Usr,
+    Src,
+    Args,
+    Dot,
+    Cache,
+    CacheKey,
+    CacheIndex,
+    Caller,
+    Callee,
+    Arg(u32),
+    Local(u32),
+    Global(GlobalVar),
+    SetCache(Box<Variable>, Box<Variable>),
+    Initial(Box<Variable>),
+    IsSaved(Box<Variable>),
+    Field(DMString),
+    //Initial(Box<Variable>, Vec<DMString>),
+    StaticVerb(Proc),
+    DynamicVerb(DMString),
+    StaticProc(Proc),
+    DynamicProc(DMString),
+    PtrRef(Box<Variable>),
+    PtrDeref(Box<Variable>),
+    //RuntimeProcField(Box<Variable>, Vec<DMString>, DMString),
+}
+
+impl Variable {
+    /// The global vars this reads or writes, including any inside it (the
+    /// base of a cached chain, an `initial()`).
+    pub fn globals(&self) -> Vec<&GlobalVar> {
+        match self {
+            Self::Global(global) => vec![global],
+            Self::SetCache(a, b) => {
+                let mut globals = a.globals();
+                globals.extend(b.globals());
+                globals
+            }
+            Self::Initial(v) | Self::IsSaved(v) | Self::PtrRef(v) | Self::PtrDeref(v) => {
+                v.globals()
+            }
+            _ => vec![],
+        }
+    }
+}
+
+impl Operand for Variable {
+    fn variables<'a>(&'a self, out: &mut Vec<&'a Variable>) {
+        out.push(self);
+    }
+
+    fn assemble<'a, E: AssembleEnv>(
+        &'a self,
+        asm: &mut Assembler<'a, E>,
+    ) -> Result<(), AssembleError> {
+        use crate::access_modifiers;
+
+        // Preserve stored names. The compiler normalizes identifiers;
+        // explicit verb display names retain underscores.
+        fn write_dynamic_name<E: AssembleEnv>(
+            asm: &mut Assembler<E>,
+            name: &DMString,
+        ) -> Result<(), AssembleError> {
+            let id = asm
+                .env
+                .get_string_index(&name.0)
+                .ok_or_else(|| AssembleError::StringNotFound(name.0.clone()))?;
+            asm.emit(id);
+            Ok(())
+        }
+
+        match self {
+            Variable::Null => asm.emit(access_modifiers::Null),
+            Variable::World => asm.emit(access_modifiers::World),
+            Variable::Usr => asm.emit(access_modifiers::Usr),
+            Variable::Src => asm.emit(access_modifiers::Src),
+            Variable::Args => asm.emit(access_modifiers::Args),
+            Variable::Dot => asm.emit(access_modifiers::Dot),
+            Variable::Cache => asm.emit(access_modifiers::Cache),
+            Variable::CacheKey => asm.emit(access_modifiers::CacheKey),
+            Variable::CacheIndex => asm.emit(access_modifiers::CacheIndex),
+            Variable::Caller => asm.emit(access_modifiers::Caller),
+            Variable::Callee => asm.emit(access_modifiers::Callee),
+            Variable::Field(name) => {
+                // The field's string id sits where an access modifier could be,
+                // so one that lands in the modifier range needs bit 0x1000_0000
+                // or BYOND reads it as that modifier. The disassembler strips it.
+                let id = name.get_string_index(asm)?;
+                if access_modifiers::is_access_modifier(id) {
+                    asm.emit(id | 0x1000_0000);
+                } else {
+                    asm.emit(id);
+                }
+            }
+            Variable::Arg(idx) => {
+                asm.emit(access_modifiers::Arg);
+                asm.emit(*idx);
+            }
+            Variable::Local(idx) => {
+                asm.emit(access_modifiers::Local);
+                asm.emit(*idx);
+            }
+            Variable::Global(global) => {
+                asm.emit(access_modifiers::Global);
+                match global.id {
+                    Some(id) => asm.emit(id),
+                    None => {
+                        let id = asm
+                            .env
+                            .get_global_index(&global.name.0, global.scope.as_deref())
+                            .ok_or_else(|| {
+                                AssembleError::VariableNameNotFound(global.name.0.clone())
+                            })?;
+                        asm.emit(id);
+                    }
+                }
+            }
+            Variable::SetCache(lhs, rhs) => {
+                asm.emit(access_modifiers::SetCache);
+                lhs.assemble(asm)?;
+                rhs.assemble(asm)?;
+            }
+            Variable::Initial(rhs) => {
+                asm.emit(access_modifiers::Initial);
+                rhs.assemble(asm)?;
+            }
+            Variable::IsSaved(rhs) => {
+                asm.emit(access_modifiers::IsSaved);
+                rhs.assemble(asm)?;
+            }
+            Variable::DynamicProc(name) => {
+                asm.emit(access_modifiers::DynamicProc);
+                write_dynamic_name(asm, name)?;
+            }
+            Variable::DynamicVerb(name) => {
+                asm.emit(access_modifiers::DynamicVerb);
+                write_dynamic_name(asm, name)?;
+            }
+            Variable::StaticProc(proc) => {
+                asm.emit(access_modifiers::StaticProc);
+                proc.assemble(asm)?;
+            }
+            Variable::StaticVerb(proc) => {
+                asm.emit(access_modifiers::StaticVerb);
+                proc.assemble(asm)?;
+            }
+            Variable::PtrRef(var) => {
+                asm.emit(access_modifiers::PtrRef);
+                var.assemble(asm)?;
+            }
+            Variable::PtrDeref(var) => {
+                asm.emit(access_modifiers::PtrDeref);
+                var.assemble(asm)?;
+            }
+        }
+
+        Ok(())
+    }
+
+    fn disassemble<E: DisassembleEnv>(
+        dism: &mut Disassembler<E>,
+    ) -> Result<Self, DisassembleError> {
+        use crate::access_modifiers;
+
+        fn read_global<E: DisassembleEnv>(
+            dism: &mut Disassembler<E>,
+        ) -> Result<GlobalVar, DisassembleError> {
+            let id = dism.read_u32()?;
+            let string =
+                dism.env
+                    .get_variable_name(id)
+                    .ok_or(DisassembleError::InvalidVariableName {
+                        offset: dism.current_offset - 1,
+                        id,
+                    })?;
+
+            Ok(GlobalVar {
+                name: DMString(string),
+                id: Some(id),
+                scope: None,
+            })
+        }
+
+        // This is either a string-ref or an AccessModifier
+        let param = dism.peek_u32().ok_or(DisassembleError::UnexpectedEnd)?;
+
+        if !access_modifiers::is_access_modifier(param) {
+            return Ok(Variable::Field(DMString::disassemble(dism)?));
+        }
+
+        let var = match dism.read_u32()? {
+            access_modifiers::Null => Variable::Null,
+            access_modifiers::World => Variable::World,
+            access_modifiers::Usr => Variable::Usr,
+            access_modifiers::Src => Variable::Src,
+            access_modifiers::Args => Variable::Args,
+            access_modifiers::Dot => Variable::Dot,
+            access_modifiers::Cache => Variable::Cache,
+            access_modifiers::CacheKey => Variable::CacheKey,
+            access_modifiers::CacheIndex => Variable::CacheIndex,
+            access_modifiers::Caller => Variable::Caller,
+            access_modifiers::Callee => Variable::Callee,
+            access_modifiers::Arg => Variable::Arg(dism.read_u32()?),
+            access_modifiers::Local => Variable::Local(dism.read_u32()?),
+            access_modifiers::Global => Variable::Global(read_global(dism)?),
+            access_modifiers::SetCache => Variable::SetCache(
+                Box::new(Variable::disassemble(dism)?),
+                Box::new(Variable::disassemble(dism)?),
+            ),
+            access_modifiers::Initial => Variable::Initial(Box::new(Variable::disassemble(dism)?)),
+            access_modifiers::IsSaved => Variable::IsSaved(Box::new(Variable::disassemble(dism)?)),
+
+            access_modifiers::DynamicProc => Variable::DynamicProc(DMString::disassemble(dism)?),
+            access_modifiers::DynamicVerb => Variable::DynamicVerb(DMString::disassemble(dism)?),
+            access_modifiers::StaticProc => Variable::StaticProc(Proc::disassemble(dism)?),
+            access_modifiers::StaticVerb => Variable::StaticVerb(Proc::disassemble(dism)?),
+            access_modifiers::PtrRef => Variable::PtrRef(Box::new(Variable::disassemble(dism)?)),
+            access_modifiers::PtrDeref => {
+                Variable::PtrDeref(Box::new(Variable::disassemble(dism)?))
+            }
+
+            other => {
+                return Err(DisassembleError::UnknownAccessModifier {
+                    offset: dism.current_offset - 1,
+                    value: other,
+                })
+            }
+        };
+
+        Ok(var)
+    }
+
+    fn serialize(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Variable::Null => write!(f, "null"),
+            Variable::World => write!(f, "world"),
+            Variable::Usr => write!(f, "usr"),
+            Variable::Src => write!(f, "src"),
+            Variable::Args => write!(f, "args"),
+            Variable::Dot => write!(f, "dot"),
+            Variable::Cache => write!(f, "cache"),
+            Variable::CacheKey => write!(f, "cache_key"),
+            Variable::CacheIndex => write!(f, "cache[cache_key]"),
+            Variable::Caller => write!(f, "caller"),
+            Variable::Callee => write!(f, "callee"),
+            Variable::Arg(x) => {
+                write!(f, "arg(")?;
+                x.serialize(f)?;
+                write!(f, ")")
+            }
+            Variable::Local(x) => {
+                write!(f, "local(")?;
+                x.serialize(f)?;
+                write!(f, ")")
+            }
+            Variable::Global(global) => {
+                write!(f, "global(")?;
+                global.name.serialize(f)?;
+                write!(f, ")")
+            }
+            Variable::Field(name) => {
+                write!(f, "cache[")?;
+                name.serialize(f)?;
+                write!(f, "]")
+            }
+            Variable::SetCache(var, var2) => {
+                write!(f, "cache = ")?;
+                var.serialize(f)?;
+                write!(f, "; ")?;
+                var2.serialize(f)
+            }
+            Variable::Initial(var) => {
+                write!(f, "initial(")?;
+                var.serialize(f)?;
+                write!(f, ")")
+            }
+            Variable::IsSaved(var) => {
+                write!(f, "issaved(")?;
+                var.serialize(f)?;
+                write!(f, ")")
+            }
+            Variable::StaticVerb(proc) => {
+                write!(f, "static_verb(")?;
+                proc.serialize(f)?;
+                write!(f, ")")
+            }
+            Variable::DynamicVerb(proc) => {
+                write!(f, "dynamic_verb(")?;
+                proc.serialize(f)?;
+                write!(f, ")")
+            }
+            Variable::StaticProc(proc) => {
+                write!(f, "static_proc(")?;
+                proc.serialize(f)?;
+                write!(f, ")")
+            }
+            Variable::DynamicProc(proc) => {
+                write!(f, "dynamic_proc(")?;
+                proc.serialize(f)?;
+                write!(f, ")")
+            }
+            Variable::PtrRef(var) => {
+                write!(f, "&")?;
+                var.serialize(f)
+            }
+            Variable::PtrDeref(var) => {
+                write!(f, "*")?;
+                var.serialize(f)
+            }
+        }
+    }
+}

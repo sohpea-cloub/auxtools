@@ -1,0 +1,263 @@
+use dreammaker::ast::{AssignOp, Expression, Follow, ListAccessKind, PropertyAccessKind, Term};
+
+use crate::{
+    compiler::{CompileError, Compiler, EvalKind},
+    operands::{DMString, Value},
+    Instruction,
+};
+
+// (((x))) -> x
+// ((-(x))) -> -(x)
+// (((x).y)) -> (x).y
+// (x = y) -> x = y
+fn unroll(expr: &Expression) -> &Expression {
+    match expr {
+        Expression::Base { term, follow } => {
+            if follow.is_empty() {
+                if let Term::Expr(inner) = &term.elem {
+                    return unroll(inner.as_ref());
+                }
+            }
+
+            expr
+        }
+
+        _ => expr,
+    }
+}
+
+// Only true if any short-circuit behavior would step _over_ the entire expression
+// x.y -> false
+// x[x?.y] -> false
+// x?.y -> true
+// x?.y && z -> false
+// x?.y = z -> true
+fn can_short_circuit(expr: &Expression) -> bool {
+    match expr {
+        Expression::Base { term: _, follow } => {
+            for follow in follow {
+                match follow.elem {
+                    Follow::Index(ListAccessKind::Safe, _) => return true,
+                    Follow::Field(PropertyAccessKind::SafeDot, _) => return true,
+                    Follow::Field(PropertyAccessKind::SafeColon, _) => return true,
+                    Follow::Call(PropertyAccessKind::SafeDot, _, _) => return true,
+                    Follow::Call(PropertyAccessKind::SafeColon, _, _) => return true,
+
+                    _ => {}
+                }
+            }
+
+            false
+        }
+
+        Expression::AssignOp { op: _, lhs, rhs: _ } => can_short_circuit(lhs),
+        Expression::BinaryOp { .. } => false,
+        Expression::TernaryOp { .. } => false,
+    }
+}
+
+fn has_assoc_argument(context: ArgsContext, args: &[Expression]) -> Result<bool, CompileError> {
+    let mut found_associative = false;
+
+    for arg in args {
+        match context {
+            // Proc arguments are only treated as associative if they contain an unwrapped assign operation where the LHS is not a nested expression
+            // (anything else is a key worked out: `f(a + 1 = 2)`)
+            ArgsContext::Proc => {
+                if let Expression::AssignOp {
+                    op: AssignOp::Assign,
+                    lhs,
+                    rhs: _,
+                } = arg
+                {
+                    // `a?.b = x` is an assignment, as an argument like any other
+                    if can_short_circuit(unroll(lhs)) {
+                        continue;
+                    }
+
+                    if !matches!(lhs.as_ref(), Expression::Base { term, .. } if matches!(term.elem, Term::Expr(_)))
+                    {
+                        found_associative = true;
+                    }
+                }
+            }
+
+            // Lists arguments are treated as associative if they contain _any_ assign operation (after unrolling)
+            ArgsContext::List => {
+                if let Expression::AssignOp {
+                    op: AssignOp::Assign,
+                    lhs,
+                    rhs: _,
+                } = unroll(arg)
+                {
+                    // `a?.b = x` is an assignment, as an argument like any other
+                    if can_short_circuit(unroll(lhs)) {
+                        continue;
+                    }
+
+                    // Finding an assign op means these args are associative
+                    found_associative = true;
+                }
+            }
+        }
+    }
+
+    Ok(found_associative)
+}
+
+// TODO: The differences between these are... weird. We should pick a behavior that counts as a sub-set of BYOND and enforce it with errors.
+#[derive(PartialEq, Clone, Copy)]
+pub(super) enum ArgsContext {
+    Proc,
+    List,
+}
+
+pub(super) enum ArgsResult {
+    // Each argument has been pushed on to the stack
+    Normal,
+
+    // Each argument has its key pushed on the stack followed by its value
+    Assoc,
+
+    // Similar to assoc, except the arg list itself has been pushed to the stack
+    ArgList,
+}
+
+pub(super) fn emit(
+    compiler: &mut Compiler,
+    context: ArgsContext,
+    args: Vec<Expression>,
+) -> Result<ArgsResult, CompileError> {
+    if has_assoc_argument(context, &args)? {
+        return do_assoc(compiler, context, args);
+    }
+
+    do_normal(compiler, args)
+}
+
+pub(super) fn emit_single_normal(
+    compiler: &mut Compiler,
+    context: ArgsContext,
+    arg: Expression,
+) -> Result<(), CompileError> {
+    emit_normal(compiler, context, vec![arg])
+}
+
+pub(super) fn emit_normal(
+    compiler: &mut Compiler,
+    context: ArgsContext,
+    args: Vec<Expression>,
+) -> Result<(), CompileError> {
+    let result = emit(compiler, context, args)?;
+
+    match result {
+        ArgsResult::Normal => Ok(()),
+        ArgsResult::Assoc => Err(CompileError::UnexpectedNamedArguments),
+        ArgsResult::ArgList => Err(CompileError::UnexpectedArgList),
+    }
+}
+
+fn do_normal(compiler: &mut Compiler, args: Vec<Expression>) -> Result<ArgsResult, CompileError> {
+    let args_len = args.len();
+
+    for arg in args {
+        compiler.regroup_root = true;
+        let expr = compiler.emit_expr(arg)?;
+
+        // If our param is an arg list and it's the only param, we're an arg list!
+        if let EvalKind::ArgList = expr {
+            if args_len == 1 {
+                return Ok(ArgsResult::ArgList);
+            }
+        }
+
+        compiler.emit_move_to_stack(expr)?;
+    }
+
+    Ok(ArgsResult::Normal)
+}
+
+fn do_assoc(
+    compiler: &mut Compiler,
+    context: ArgsContext,
+    args: Vec<Expression>,
+) -> Result<ArgsResult, CompileError> {
+    // TODO: Lots of cloning in here :(
+    for (idx, arg) in args.into_iter().enumerate() {
+        let idx = idx + 1;
+
+        // Handle `ident = {expr}` case first. The identifier turns into a string literal intead of being evaluated.
+        if let Expression::AssignOp {
+            op: AssignOp::Assign,
+            lhs,
+            rhs,
+        } = &arg
+        {
+            if let Expression::Base { term, follow } = lhs.as_ref() {
+                if follow.is_empty() {
+                    // `null = x` is keyed by "null"
+                    if let Term::Null = &term.elem {
+                        compiler.emit_ins(Instruction::PushVal(Value::DMString(DMString(
+                            b"null".to_vec(),
+                        ))));
+                        compiler.regroup_root = true;
+                        let kind = compiler.emit_expr((**rhs).to_owned())?;
+                        compiler.emit_move_to_stack(kind)?;
+                        continue;
+                    }
+
+                    if let Term::Ident(ident) = &term.elem {
+                        // In a list, a builtin constant key is its value (MALE is "male")
+                        if context == ArgsContext::List
+                            && super::procs::is_builtin_const(compiler, ident.as_str())
+                        {
+                            let value =
+                                super::procs::const_value(compiler, ident.as_str()).unwrap();
+                            compiler.emit_constant(value)?;
+                        } else {
+                            compiler.emit_ins(Instruction::PushVal(Value::DMString(DMString(
+                                ident.as_str().as_bytes().to_vec(),
+                            ))));
+                        }
+
+                        compiler.regroup_root = true;
+                        let kind = compiler.emit_expr((**rhs).to_owned())?;
+                        compiler.emit_move_to_stack(kind)?;
+                        continue;
+                    }
+                }
+            }
+        }
+
+        // Now we unroll. Cases like f((x = y)) will treat the lhs as an expression instead of an identifier
+        let arg = unroll(&arg);
+
+        match arg {
+            // Assoc entry
+            Expression::AssignOp {
+                op: AssignOp::Assign,
+                lhs,
+                rhs,
+            } => {
+                compiler.regroup_root = true;
+                let kind = compiler.emit_expr((**lhs).to_owned())?;
+                compiler.emit_move_to_stack(kind)?;
+
+                compiler.regroup_root = true;
+                let kind = compiler.emit_expr((**rhs).to_owned())?;
+                compiler.emit_move_to_stack(kind)?;
+            }
+
+            // Normal entry
+            other => {
+                compiler.emit_ins(Instruction::PushInt(idx as i32));
+
+                compiler.regroup_root = true;
+                let kind = compiler.emit_expr(other.to_owned())?;
+                compiler.emit_move_to_stack(kind)?;
+            }
+        }
+    }
+
+    Ok(ArgsResult::Assoc)
+}
