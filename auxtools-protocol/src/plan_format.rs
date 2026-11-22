@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 
 use dmasm::{
+	diagnostic::{Diagnostic, Id},
 	reload::{
 		BuiltinInherited, ConstValue, GlobalInit, InList, InitProc, LineMove, NewProc, NewType, NewVar, Param, Plan, ProcKey, ProcReload,
 		ProcSettings, Redeclared, RemovedProc, RemovedVar, Reparented, ReparentedType, SettingsChange, StaticVar, VarDefault
@@ -113,7 +114,7 @@ fn code(path: &str) -> ProcReload {
 				init: Some(Box::new(value("(static)")))
 			},
 		],
-		warnings: vec!["a warning".to_owned()]
+		warnings: vec![Diagnostic::warning(Id::Text, "a warning")]
 	}
 }
 

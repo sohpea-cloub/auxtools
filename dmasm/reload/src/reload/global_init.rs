@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use dreammaker::{FileId, Location};
 
 use super::{const_value, value_location, var_constant, ConstValue, ProcReload, Refusal, Snapshot};
+use crate::diagnostic::{Diagnostic, Id};
 use crate::operands::{DMString, GlobalVar, Label, StaticScope, Variable};
 use crate::{syntax, Instruction, Node};
 
@@ -344,7 +345,7 @@ fn changed(new: &Snapshot, before: &[Initializer<'_>], after: &[Initializer<'_>]
                 StaticScope::Global => "(global)",
                 StaticScope::Type(path) => path,
             };
-            Refusal::new(shown, "changed initializer")
+            Refusal::new(Id::ChangedInitializer, shown, "changed initializer")
                 .named(init.name.clone())
                 .until(super::Until::Reboot)
                 .at(new, init.location)
@@ -1500,7 +1501,11 @@ pub(super) fn compare(old: &Snapshot, new: &Snapshot, changes: &mut super::Chang
     let deferred = changed(new, &before, &after);
     let table_vars = table.len();
     let without = |why: String| {
-        format!("(global init): {why}: reboot will use the build's global and static initializers")
+        Diagnostic::warning(
+            Id::GlobalInitKept,
+            format!("{why}: reboot will use the build's global and static initializers"),
+        )
+        .about("(global init)")
     };
 
     let proc_statics = proc_statics(

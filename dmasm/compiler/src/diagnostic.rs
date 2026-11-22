@@ -1,6 +1,7 @@
 use std::fmt;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Id {
     ParseError,
     StringError,
@@ -55,6 +56,38 @@ pub enum Id {
     ByondFoldedTestFlag,
     ByondZeroWeightPick,
     ByondDefaultDivisionDropped,
+
+    ParentChanged,
+    ReparentedToRoot,
+    MovedVarConflicts,
+    InitializerFailed,
+    ChangedInitializer,
+    NewTypeWithoutParent,
+    UnsupportedBuiltinDefault,
+    BuiltinDefaultNotRestorable,
+    ConstInitializerRequired,
+    ConstValueFailed,
+    ProcDeclarationChanged,
+    DuplicateDefinition,
+    ValueWithoutDeclaration,
+    SettingChanged,
+    FixedParseError,
+    MapsChanged,
+    BuildFlagsChanged,
+
+    RemovedProcRetained,
+    RemovedTypeRetained,
+    RemovedVarRetained,
+    RemovedGlobalRetained,
+    UnreachableGlobalDefinition,
+    NewVarComputedDefault,
+    ComputedDefaultNotApplied,
+    BuiltinDefaultNewInstancesOnly,
+    ConstRefusedByDreamMaker,
+    ConstUsesEditedResource,
+    GlobalInitKept,
+
+    Text,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

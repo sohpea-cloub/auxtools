@@ -9,7 +9,10 @@ use std::{
 
 use auxtools_cli::reload::{self, merge, refuse_hidden, refuse_other_maps};
 use auxtools_protocol::{HotReloadRequest, HotReloadResource, Macro, ReloadedResource, ScriptRequest, SkinRequest};
-use dmasm::reload::{diff, Changes, ParseOptions, Refusal, Snapshot, Until};
+use dmasm::{
+	diagnostic::{Diagnostic, Id},
+	reload::{diff, Changes, ParseOptions, Refusal, Snapshot, Until}
+};
 
 use crate::{adapter::Input, dap::Output, resources::Resources, script::Script, skin::Skin};
 
@@ -47,17 +50,17 @@ pub enum Event {
 	Reload {
 		request: Box<HotReloadRequest>,
 		summary: Summary,
-		notes: Vec<String>,
+		notes: Vec<Diagnostic>,
 		world: u64
 	},
 	NotReloaded {
 		summary: String,
 		errors: Vec<String>,
 		refused: Vec<Refusal>,
-		warnings: Vec<String>
+		warnings: Vec<Diagnostic>
 	},
 	NothingChanged {
-		warnings: Vec<String>
+		warnings: Vec<Diagnostic>
 	},
 	Macros(Vec<Macro>),
 	Skin {
@@ -734,8 +737,12 @@ impl Code {
 		let files: Vec<String> = resources.iter().map(|r| r.path.clone()).collect();
 		request.resources = resources;
 		request.resource_dirs = self.resource_dirs.borrow().clone();
-		let removed: Vec<String> = changes.plan.removed_vars.iter().map(|var| var.warning()).collect();
-		let notes: Vec<String> = changes.warnings.iter().filter(|note| !removed.contains(note)).cloned().collect();
+		let notes: Vec<Diagnostic> = changes
+			.warnings
+			.iter()
+			.filter(|note| note.id != Id::RemovedVarRetained)
+			.cloned()
+			.collect();
 		if request.is_empty() && request.plan.removed_vars.is_empty() {
 			for why in &notes {
 				self.out.console(format!("    note: {}", why));
@@ -840,7 +847,7 @@ impl Code {
 		}
 		(!changed.is_empty()).then(|| Refusal {
 			until: Until::Reboot,
-			..Refusal::new("", format!("build flags changed ({})", changed.join("; ")))
+			..Refusal::new(Id::BuildFlagsChanged, "", format!("build flags changed ({})", changed.join("; ")))
 		})
 	}
 

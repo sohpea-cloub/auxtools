@@ -5,6 +5,7 @@ use dreammaker::constants::Constant;
 use dreammaker::objtree::TypeRef;
 use dreammaker::FileId;
 
+use crate::diagnostic::{Diagnostic, Id};
 use crate::syntax;
 
 use super::{
@@ -143,6 +144,7 @@ impl Snapshot {
                 }),
                 Err(e) => changes.refused.push(
                     Refusal::new(
+                        Id::InitializerFailed,
                         ty.get().path.clone(),
                         format!("initializer compilation failed: {e}"),
                     )
@@ -168,9 +170,13 @@ impl Snapshot {
             return;
         }
         if flags.is_const() {
-            changes.warnings.push(format!(
-                "{shown}: const {var} references the edited resource; compiled uses retain the old file until a rebuild"
-            ));
+            changes.warnings.push(
+                Diagnostic::warning(
+                    Id::ConstUsesEditedResource,
+                    format!("const {var} references the edited resource; compiled uses retain the old file until a rebuild"),
+                )
+                .about(shown),
+            );
             return;
         }
         let Some(Some(value @ ConstValue::Resource(_))) = default_value(ty, var) else {

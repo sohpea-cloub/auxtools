@@ -1,7 +1,10 @@
 use std::path::PathBuf;
 
 use auxtools_protocol::HotReloadRequest;
-use dmasm::reload::{Changes, Plan, Refusal, Snapshot};
+use dmasm::{
+	diagnostic::Id,
+	reload::{Changes, Plan, Refusal, Snapshot}
+};
 
 pub const RESTART: &str = "restart the world to be sure it runs the new code";
 
@@ -163,6 +166,7 @@ pub fn refuse_hidden(old: &Snapshot, new: &Snapshot, changes: &mut Changes) {
 			file: Some(error.file),
 			line: Some(error.line),
 			..Refusal::new(
+				Id::FixedParseError,
 				"",
 				format!(
 					"fixed parse error may have hidden definitions: {}. Rebuild and reboot before reloading",
@@ -189,9 +193,11 @@ pub fn refuse_other_maps(built: &Snapshot, new: &Snapshot, changes: &mut Changes
 		changed.push(format!("removed {}", removed.join(", ")));
 	}
 	if !changed.is_empty() {
-		changes
-			.refused
-			.push(Refusal::new("", format!("compiled maps changed ({})", changed.join("; "))));
+		changes.refused.push(Refusal::new(
+			Id::MapsChanged,
+			"",
+			format!("compiled maps changed ({})", changed.join("; "))
+		));
 	}
 }
 

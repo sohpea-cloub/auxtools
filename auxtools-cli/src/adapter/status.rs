@@ -135,7 +135,12 @@ fn grouped(refused: &[Refusal]) -> Vec<Refusal> {
 	let mut groups: Vec<Refusal> = vec![];
 	for refusal in refused {
 		let same = groups.iter_mut().find(|group| {
-			group.path == refusal.path && group.why == refusal.why && group.until == refusal.until && group.name.is_some() && refusal.name.is_some()
+			group.id == refusal.id
+				&& group.path == refusal.path
+				&& group.why == refusal.why
+				&& group.until == refusal.until
+				&& group.name.is_some()
+				&& refusal.name.is_some()
 		});
 		match (same, &refusal.name) {
 			(Some(group), Some(name)) => {
@@ -153,7 +158,7 @@ fn grouped(refused: &[Refusal]) -> Vec<Refusal> {
 
 #[cfg(test)]
 mod tests {
-	use dmasm::reload::Refusal;
+	use dmasm::{diagnostic::Id, reload::Refusal};
 
 	use super::grouped;
 
@@ -161,12 +166,12 @@ mod tests {
 	fn refusals_of_one_kind_are_one() {
 		let why = "cannot restore this built-in type's original default";
 		let refused = vec![
-			Refusal::new("/area", why).named("layer"),
-			Refusal::new("/area", why).named("luminosity"),
-			Refusal::new("/mob", why).named("layer"),
-			Refusal::new("/area", why).named("icon"),
-			Refusal::new("/area", "another reason").named("icon"),
-			Refusal::new("/proc/f", "doesn't compile: x"),
+			Refusal::new(Id::BuiltinDefaultNotRestorable, "/area", why).named("layer"),
+			Refusal::new(Id::BuiltinDefaultNotRestorable, "/area", why).named("luminosity"),
+			Refusal::new(Id::BuiltinDefaultNotRestorable, "/mob", why).named("layer"),
+			Refusal::new(Id::BuiltinDefaultNotRestorable, "/area", why).named("icon"),
+			Refusal::new(Id::UnsupportedBuiltinDefault, "/area", "another reason").named("icon"),
+			Refusal::new(Id::UndefinedVar, "/proc/f", "doesn't compile: x"),
 		];
 		let shown: Vec<String> = grouped(&refused).iter().map(|r| format!("{:#}", r)).collect();
 		assert_eq!(shown, [

@@ -102,14 +102,25 @@ pub(super) fn reparent(
         .filter(|l| new.source_line(*l).is_some())
         .unwrap_or_else(|| new.type_location(n));
     let Some(parent) = n.parent_type().filter(|p| !p.is_root()) else {
-        changes
-            .refused
-            .push(Refusal::new(path, "cannot change a parent type to the root").at(new, at));
+        changes.refused.push(
+            Refusal::new(
+                Id::ReparentedToRoot,
+                path,
+                "cannot change a parent type to the root",
+            )
+            .at(new, at),
+        );
         return;
     };
     let parent_path = parent.get().path.clone();
-    let refusal =
-        |why: String| Refusal::new(path.clone(), format!("parent type changed: {why}")).at(new, at);
+    let refusal = |why: String| {
+        Refusal::new(
+            Id::ParentChanged,
+            path.clone(),
+            format!("parent type changed: {why}"),
+        )
+        .at(new, at)
+    };
     let new_parent = changes.plan.new_types.iter().any(|t| t.path == parent_path);
     let mut refuse = |why: String| changes.refused.push(refusal(why));
     if builtin_base(n).as_deref() == Some(path.as_str()) {

@@ -22,6 +22,7 @@ use auxtools_protocol::{
 	self as aux, ContinueKind, InstructionRef, ProcRef, Request as AuxRequest, Response as AuxResponse, GLOBAL_INIT, HELPER_FILE
 };
 use dap_types::*;
+use dmasm::diagnostic::{Diagnostic, Id};
 use serde::Deserialize;
 use serde_json::Value;
 
@@ -772,16 +773,16 @@ impl Adapter {
 					let _ = code.send(code::Command::Reloaded(applied));
 				}
 			}
-			code::Event::NotReloaded { refused, warnings, .. } if !refused.is_empty() => self.refused(refused, warnings),
+			code::Event::NotReloaded { refused, warnings, .. } if !refused.is_empty() => self.refused(refused, texts(&warnings)),
 			code::Event::NotReloaded {
 				summary, errors, warnings, ..
 			} => {
 				self.reload_state("failed", Some(summary.clone()));
-				self.journal_reload(false, summary, errors, warnings);
+				self.journal_reload(false, summary, errors, texts(&warnings));
 			}
 			code::Event::NothingChanged { warnings } => {
 				self.reload_state("reloaded", Some("no changes to the running code".to_owned()));
-				self.journal_reload(true, "no runtime changes".to_owned(), vec![], warnings);
+				self.journal_reload(true, "no runtime changes".to_owned(), vec![], texts(&warnings));
 			}
 			code::Event::Macros(macros) => {
 				self.macros = Some(macros);
@@ -822,18 +823,20 @@ impl Adapter {
 		}
 	}
 
-	fn reload(&mut self, request: aux::HotReloadRequest, summary: &code::Summary, notes: Vec<String>) -> bool {
+	fn reload(&mut self, request: aux::HotReloadRequest, summary: &code::Summary, notes: Vec<Diagnostic>) -> bool {
 		self.reload_started = Some(Instant::now());
-		let unlinked: Vec<(String, String)> = request
+		let unlinked: Vec<String> = request
 			.plan
 			.removed_procs
 			.iter()
-			.filter_map(|removed| Some((removed.warning()?, removed.proc.path.clone())))
+			.filter(|removed| removed.type_path.is_empty())
+			.map(|removed| removed.proc.path.clone())
 			.collect();
 		let result = match self.request(&AuxRequest::HotReload(request)) {
 			Ok(AuxResponse::HotReload(result)) => result,
 			Ok(other) => {
 				let why = unexpected(other);
+				let notes = texts(&notes);
 				self.notes(&notes);
 				self.out.console(format!("Hot reload failed: {}", why));
 				self.reload_state("failed", Some(why.clone()));
@@ -841,6 +844,7 @@ impl Adapter {
 				return false;
 			}
 			Err(e) => {
+				let notes = texts(&notes);
 				self.notes(&notes);
 				self.out.console(format!("Hot reload failed: {}", e));
 				self.reload_state("failed", Some(e.clone()));
@@ -853,9 +857,12 @@ impl Adapter {
 		let notes: Vec<String> = notes
 			.into_iter()
 			.filter_map(|note| {
-				let unlinked = unlinked.iter().find(|(warning, _)| *warning == note).map(|(_, path)| path);
+				let unlinked = note
+					.subject
+					.as_ref()
+					.filter(|path| note.id == Id::RemovedProcRetained && unlinked.contains(path));
 				let Some(path) = unlinked.filter(|_| result.applied) else {
-					return Some(note);
+					return Some(note.to_string());
 				};
 				if result.skipped.iter().any(|skipped| skipped == path) {
 					return None;
@@ -2137,6 +2144,10 @@ fn thread_name(stack: &aux::Stack) -> String {
 
 fn unexpected(response: AuxResponse) -> String {
 	Adapter::unexpected(&response)
+}
+
+fn texts(diagnostics: &[Diagnostic]) -> Vec<String> {
+	diagnostics.iter().map(ToString::to_string).collect()
 }
 
 impl Asks for Adapter {

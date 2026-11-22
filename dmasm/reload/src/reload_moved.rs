@@ -68,7 +68,7 @@ pub(super) fn var_moved(
             "moved to {ancestor} as a static or const var; global slot conflicts with {path}'s"
         );
         changes.refused.push(
-            Refusal::new(path, why)
+            Refusal::new(Id::MovedVarConflicts, path, why)
                 .named(name)
                 .at(new, declaration.get().location),
         );

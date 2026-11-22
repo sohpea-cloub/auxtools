@@ -2,6 +2,7 @@ use std::collections::HashSet;
 use std::path::PathBuf;
 
 use dmasm_bytecode::{Instruction, Node};
+use dmasm_compiler::diagnostic::{Diagnostic, Id};
 use dmasm_reload::reload::{
     diff, Changes, ClientScript, ConstValue, InList, NewVar, ParseOptions, ProcKey, ProcSettings,
     Refusal, Snapshot, Until,
@@ -49,6 +50,10 @@ fn changes(name: &str, before: &str, after: &str) -> Changes {
     let new = world.parse();
     let edited: HashSet<PathBuf> = vec![PathBuf::from("code/code.dm")].into_iter().collect();
     diff(&old, &new, Some(&edited))
+}
+
+fn texts(diagnostics: &[Diagnostic]) -> Vec<String> {
+    diagnostics.iter().map(ToString::to_string).collect()
 }
 
 fn key(path: &str, override_id: u32) -> ProcKey {
@@ -698,7 +703,7 @@ fn removed_procs_and_vars_stay() {
     let after = "/datum/thing\n/proc/g()\n\treturn 2\n";
     let changes = changes("removed", before, after);
     assert!(changes.refused.is_empty(), "{:?}", changes.refused);
-    let warnings = changes.warnings.join("\n");
+    let warnings = texts(&changes.warnings).join("\n");
     assert!(warnings.contains("var a was removed"), "{}", warnings);
     assert_eq!(changes.plan.removed_procs.len(), 1);
     assert_eq!(changes.plan.removed_procs[0].proc, key("/datum/thing/f", 0));
@@ -723,20 +728,34 @@ fn what_was_removed_is_listed_with_its_warning() {
         .plan
         .removed_procs
         .iter()
-        .map(|p| p.warning())
+        .map(|p| p.warning().as_ref().map(ToString::to_string))
         .collect();
     assert_eq!(procs.len(), 1, "{:?}", changes.plan.removed_procs);
     let mut expected = vec![
         "(global): var total was removed from source but retained in the running world".to_owned(),
-        changes.plan.removed_vars[0].warning(),
+        changes.plan.removed_vars[0].warning().to_string(),
         procs[0].clone().unwrap(),
     ];
     expected.sort();
-    let mut warnings = changes.warnings.clone();
+    let mut warnings = texts(&changes.warnings);
     warnings.sort();
     assert_eq!(warnings, expected);
+    for (id, subject) in [
+        (Id::RemovedGlobalRetained, "(global)"),
+        (Id::RemovedVarRetained, "/datum/thing"),
+        (Id::RemovedProcRetained, "/g"),
+    ] {
+        assert!(
+            changes
+                .warnings
+                .iter()
+                .any(|w| w.id == id && w.subject.as_deref() == Some(subject)),
+            "{id:?} {subject}: {:?}",
+            changes.warnings
+        );
+    }
     assert_eq!(
-        changes.plan.removed_vars[0].warning(),
+        changes.plan.removed_vars[0].warning().to_string(),
         "/datum/thing: var a was removed from source but retained in the running world"
     );
     assert_eq!(
@@ -762,7 +781,9 @@ fn a_removed_var_a_subtype_overrode_stays() {
     let changes = changes("removed-override", before, after);
     assert!(changes.refused.is_empty(), "{:?}", changes.refused);
     assert!(
-        changes.warnings.join("\n").contains("var a was removed"),
+        texts(&changes.warnings)
+            .join("\n")
+            .contains("var a was removed"),
         "{:?}",
         changes.warnings
     );
@@ -828,8 +849,7 @@ fn removed_overrides_are_unlinked() {
         .map(|r| (r.proc.clone(), r.type_path.as_str()))
         .collect();
     assert_eq!(removed, [(key("/g", 0), "")]);
-    assert!(changes
-        .warnings
+    assert!(texts(&changes.warnings)
         .join("\n")
         .contains("/g: a definition was removed"));
 }
@@ -1169,7 +1189,9 @@ fn another_definition_of_a_global_proc_is_a_proc_of_its_own() {
         .collect();
     assert_eq!(added, [(key("/g", 1), "", false)]);
     assert!(
-        changes.warnings.iter().any(|w| w.contains("unreachable")),
+        texts(&changes.warnings)
+            .iter()
+            .any(|w| w.contains("unreachable")),
         "{:?}",
         changes.warnings
     );
@@ -1299,8 +1321,7 @@ fn defaults_that_arent_constants_change_the_init_procs() {
     );
     assert_eq!(second.plan.var_defaults[0].types, ["/datum/a/c"]);
     assert!(
-        second
-            .warnings
+        texts(&second.warnings)
             .iter()
             .any(|w| w.contains("new var k has a computed default")
                 && w.contains("initial() remain")),
@@ -1971,8 +1992,7 @@ fn a_constant_beyond_32_bits_at_a_bit_operator_is_warned_about() {
     );
     assert_eq!(reloaded(&changes), [key("/f", 0)]);
     assert!(
-        changes
-            .warnings
+        texts(&changes.warnings)
             .iter()
             .any(|w| w.starts_with("/f: line 2: bit operand -10000000000")),
         "{:?}",
@@ -2209,7 +2229,7 @@ fn consts_dreammaker_folds_are_taken_and_those_it_refuses_warned_about() {
         let got = changes("const-refused", before, &after);
         assert!(got.refused.is_empty(), "{value}: {:?}", got.refused);
         assert!(
-            got.warnings
+            texts(&got.warnings)
                 .iter()
                 .any(|w| w.contains("const k: DreamMaker refuses") && w.contains(why)),
             "{value}: {:?}",
@@ -2219,7 +2239,7 @@ fn consts_dreammaker_folds_are_taken_and_those_it_refuses_warned_about() {
     let after = before.replace("/datum/a\n", "/datum/a\n\tvar/const/k = 1 + 2\n");
     let got = changes("const-plain", before, &after);
     assert!(
-        !got.warnings
+        !texts(&got.warnings)
             .iter()
             .any(|w| w.contains("DreamMaker refuses")),
         "{:?}",
@@ -2280,6 +2300,7 @@ fn a_var_declared_twice_on_one_type_is_refused_where_it_is() {
     assert_eq!(
         refused,
         [Refusal {
+            id: Id::DuplicateDefinition,
             path: "/datum/t".to_owned(),
             name: Some("vars".to_owned()),
             why: "duplicate definition (/datum declares it too)".to_owned(),
@@ -2478,7 +2499,9 @@ fn world_and_client_settings_apply_after_a_restart() {
         (Some("code/code.dm"), Some(2))
     );
     assert!(
-        !changes.warnings.iter().any(|w| w.contains("setting")),
+        !texts(&changes.warnings)
+            .iter()
+            .any(|w| w.contains("setting")),
         "{:?}",
         changes.warnings
     );
@@ -2870,7 +2893,7 @@ fn a_resource_is_found_wherever_code_or_a_default_names_it() {
     );
     assert_eq!(users.warnings.len(), 1, "{:?}", users.warnings);
     assert!(
-        users.warnings[0].contains("const ICON"),
+        users.warnings[0].to_string().contains("const ICON"),
         "{:?}",
         users.warnings
     );
@@ -2966,8 +2989,7 @@ fn a_declaration_moved_up_to_a_parent_is_taken() {
         .collect();
     assert_eq!(redeclared, ["/datum/hud/human"]);
     assert!(
-        changes
-            .warnings
+        texts(&changes.warnings)
             .iter()
             .all(|w| !w.contains("removed from source")),
         "{:?}",
@@ -3213,7 +3235,7 @@ fn global_init_left_out_with_a_warning() {
     assert!(changes.refused.is_empty(), "{:?}", changes.refused);
     assert!(changes.global_init.is_none());
     assert!(
-        changes.warnings.iter().any(|w| w
+        texts(&changes.warnings).iter().any(|w| w
             .starts_with("(global init): (global): b: initializer compilation failed")
             && w.ends_with("reboot will use the build's global and static initializers")),
         "{:?}",
