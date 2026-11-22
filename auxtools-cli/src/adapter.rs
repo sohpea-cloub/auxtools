@@ -44,7 +44,6 @@ mod status;
 
 pub use journal::reload_by_another;
 pub use lifecycle::default_args;
-use lifecycle::Prepared;
 
 const RUNTIMES: &str = "runtimes";
 const CAUGHT: &str = "caught";
@@ -261,13 +260,7 @@ pub struct Adapter {
 	answering: bool,
 
 	debugging: bool,
-	pid: Option<u32>,
-	game: Option<Game>,
-	launched: Option<LaunchArguments>,
-	configured_flags: Vec<String>,
 	wanted_defines: Option<Vec<String>>,
-	relaunching: Option<(LaunchArguments, Prepared)>,
-	rebooting: bool,
 	joined: join::Joined,
 	reload_status: status::ReloadStatus,
 
@@ -277,18 +270,11 @@ pub struct Adapter {
 	hot_reload: bool,
 	code_read: bool,
 	watching: bool,
-	configured: bool,
-	said_ready: bool,
 	stddef: Option<Stddef>,
 	macros: Option<Vec<aux::Macro>>,
 
 	debuggee: Option<Debuggee>,
-	generation: u64,
-	ending: bool,
-	unavailable: bool,
-	shutting_down: bool,
-	waiting_for_code: bool,
-	initialized: bool,
+	world: lifecycle::Lifecycle,
 	last_error: Arc<Mutex<LastError>>,
 	reload_started: Option<Instant>,
 
@@ -357,13 +343,7 @@ pub fn serve(out: Output, inputs: mpsc::Sender<Input>, receiver: &mpsc::Receiver
 		leaving,
 		answering: false,
 		debugging: true,
-		pid: None,
-		game: None,
-		launched: None,
-		relaunching: None,
-		configured_flags: vec![],
 		wanted_defines: None,
-		rebooting: false,
 		joined: join::Joined::default(),
 		reload_status: status::ReloadStatus::default(),
 		code_settings: None,
@@ -372,17 +352,10 @@ pub fn serve(out: Output, inputs: mpsc::Sender<Input>, receiver: &mpsc::Receiver
 		hot_reload: false,
 		code_read: false,
 		watching: false,
-		configured: false,
-		said_ready: false,
 		stddef: None,
 		macros: None,
 		debuggee: None,
-		generation: 0,
-		ending: false,
-		unavailable: false,
-		shutting_down: false,
-		waiting_for_code: false,
-		initialized: false,
+		world: lifecycle::Lifecycle::default(),
 		last_error: Arc::new(Mutex::new(LastError::default())),
 		reload_started: None,
 		client: ClientAbilities::default(),
@@ -421,7 +394,7 @@ pub fn serve(out: Output, inputs: mpsc::Sender<Input>, receiver: &mpsc::Receiver
 	if let Some(debuggee) = &mut adapter.debuggee {
 		let _ = debuggee.send(&AuxRequest::Disconnect);
 	}
-	if let Some(game) = adapter.game.take() {
+	if let Some(game) = adapter.world.game.take() {
 		game.kill();
 	}
 	adapter.joined.world_ended();
@@ -464,14 +437,14 @@ impl Adapter {
 			}
 			Input::StdinClosed | Input::Quit => return false,
 			Input::Connected { generation, stream } => {
-				if generation == self.generation && self.debuggee.is_none() {
+				if generation == self.world.generation && self.debuggee.is_none() {
 					self.connected(stream);
 				}
 			}
 			Input::ConnectionClosed { generation, reason } => self.connection_closed(generation, &reason),
 			Input::ShuttingDown { generation } => {
 				if self.debuggee.as_ref().is_some_and(|d| d.generation == generation) {
-					self.shutting_down = true;
+					self.world.shutting_down = true;
 				}
 			}
 			Input::Unavailable { generation, reason } => self.debugger_unavailable(generation, &reason),
@@ -719,7 +692,7 @@ impl Adapter {
 	}
 
 	fn build_flags_changed(&mut self, args: BuildFlagsArguments) -> Handled {
-		let Some(launched) = self.launched.as_mut() else {
+		let Some(launched) = self.world.launched.as_mut() else {
 			return Ok(Value::Null);
 		};
 		launched.build_flags = args.flags;
@@ -742,7 +715,7 @@ impl Adapter {
 		match event {
 			code::Event::Changed => {
 				self.world_as_of = self.reload_seen.take().or_else(|| Some(std::time::SystemTime::now()));
-				if self.code_read && !self.waiting_for_code && self.debuggee.is_some() && self.debugging {
+				if self.code_read && !self.world.waiting_for_code && self.debuggee.is_some() && self.debugging {
 					self.reapply_breakpoints();
 				}
 				self.code_read = true;
@@ -753,14 +726,14 @@ impl Adapter {
 				self.code_read = true;
 				self.code = None;
 				self.say_ready();
-				if self.waiting_for_code {
-					self.waiting_for_code = false;
+				if self.world.waiting_for_code {
+					self.world.waiting_for_code = false;
 					self.ready();
 				}
 			}
 			code::Event::Ready => {
-				if self.waiting_for_code {
-					self.waiting_for_code = false;
+				if self.world.waiting_for_code {
+					self.world.waiting_for_code = false;
 					self.ready();
 				}
 			}
@@ -964,14 +937,14 @@ impl Adapter {
 	}
 
 	fn debuggee(&mut self) -> Result<&mut Debuggee, String> {
-		match self.unavailable {
+		match self.world.unavailable {
 			true => Err(UNAVAILABLE.to_owned()),
 			false => self.debuggee.as_mut().ok_or_else(|| "debug server disconnected".to_owned())
 		}
 	}
 
 	const fn not_connected(&self) -> &'static str {
-		match self.unavailable {
+		match self.world.unavailable {
 			true => UNAVAILABLE,
 			false => "world is not running"
 		}

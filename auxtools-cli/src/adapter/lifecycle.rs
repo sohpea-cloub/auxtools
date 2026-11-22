@@ -55,13 +55,38 @@ impl Prepared {
 	}
 }
 
+#[derive(Default)]
+pub(super) struct Lifecycle {
+	pub(super) pid: Option<u32>,
+	pub(super) game: Option<Game>,
+	pub(super) launched: Option<LaunchArguments>,
+	pub(super) configured_flags: Vec<String>,
+	pub(super) relaunching: Option<(LaunchArguments, Prepared)>,
+	pub(super) generation: u64,
+	pub(super) rebooting: bool,
+	pub(super) shutting_down: bool,
+	pub(super) ending: bool,
+	pub(super) unavailable: bool,
+	pub(super) waiting_for_code: bool,
+	pub(super) startup: Startup
+}
+
+#[derive(Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(super) enum Startup {
+	#[default]
+	Starting,
+	Initialized,
+	Configured,
+	Ready
+}
+
 impl Adapter {
 	pub(super) fn launch(&mut self, args: LaunchArguments) -> Handled {
-		if self.pid.is_some() {
+		if self.world.pid.is_some() {
 			return Err("a world is already running".to_owned());
 		}
 		let prepared = Prepared::of(&args)?;
-		self.configured_flags = args.build_flags.clone();
+		self.world.configured_flags = args.build_flags.clone();
 		self.start(args, prepared)?;
 		Ok(Value::Null)
 	}
@@ -69,7 +94,7 @@ impl Adapter {
 	pub(super) fn start(&mut self, args: LaunchArguments, prepared: Prepared) -> Result<(), String> {
 		self.debugging = !args.no_debug;
 		self.sleeping_threads = args.sleeping_threads.unwrap_or(aux::DEFAULT_SLEEPING_STACKS);
-		let same_code = self.launched.as_ref().is_some_and(|old| {
+		let same_code = self.world.launched.as_ref().is_some_and(|old| {
 			(&old.dme, &old.dmb, &old.defines, &old.build_flags, old.hot_reload, &old.byond_path)
 				== (&args.dme, &args.dmb, &args.defines, &args.build_flags, args.hot_reload, &args.byond_path)
 		});
@@ -119,12 +144,12 @@ impl Adapter {
 				let _ = inputs.send(Input::GameExited(code));
 			}
 		)?;
-		self.pid = Some(game.pid());
-		self.game = Some(game);
-		self.launched = Some(args);
+		self.world.pid = Some(game.pid());
+		self.world.game = Some(game);
+		self.world.launched = Some(args);
 		self.out.event(dap::ProcessEvent {
 			name: prepared.dmb.to_string_lossy().into_owned(),
-			systemProcessId: self.pid.unwrap_or_default(),
+			systemProcessId: self.world.pid.unwrap_or_default(),
 			isLocalProcess: true,
 			startMethod: "launch".to_owned()
 		});
@@ -134,7 +159,7 @@ impl Adapter {
 	}
 
 	pub(super) fn attach(&mut self, args: AttachArguments) -> Handled {
-		if self.pid.is_some() {
+		if self.world.pid.is_some() {
 			return Err("a world is already running".to_owned());
 		}
 		let pid = match &args.process_id {
@@ -161,7 +186,7 @@ impl Adapter {
 			defines: args.defines,
 			hot_reload: args.hot_reload
 		});
-		self.pid = Some(pid);
+		self.world.pid = Some(pid);
 		self.out.console(format!("Attaching to process {}", pid));
 		self.out.event(dap::ProcessEvent {
 			name: format!("process {}", pid),
@@ -174,15 +199,15 @@ impl Adapter {
 	}
 
 	pub(super) fn started(&mut self, stream: Option<Stream>) {
-		if !self.debugging && !self.initialized {
-			self.initialized = true;
+		if !self.debugging && self.world.startup == Startup::Starting {
+			self.world.startup = Startup::Initialized;
 			self.out.event(InitializedEvent);
 		}
 		match stream {
 			Some(stream) => {
-				self.generation += 1;
+				self.world.generation += 1;
 				let _ = self.inputs.send(Input::Connected {
-					generation: self.generation,
+					generation: self.world.generation,
 					stream
 				});
 			}
@@ -191,13 +216,13 @@ impl Adapter {
 	}
 
 	pub(super) fn connect(&mut self) {
-		let Some(pid) = self.pid.filter(|_| !self.unavailable) else {
+		let Some(pid) = self.world.pid.filter(|_| !self.world.unavailable) else {
 			return;
 		};
-		self.generation += 1;
-		let generation = self.generation;
+		self.world.generation += 1;
+		let generation = self.world.generation;
 		let inputs = self.inputs.clone();
-		let launched = self.game.is_some();
+		let launched = self.world.game.is_some();
 		std::thread::Builder::new()
 			.name("connect".to_owned())
 			.spawn(move || match when_listening(pid, None, local::connect) {
@@ -217,7 +242,7 @@ impl Adapter {
 		self.progress_end(RESTARTING);
 		let debuggee = Debuggee::new(
 			stream,
-			self.generation,
+			self.world.generation,
 			self.debugging,
 			self.out.clone(),
 			self.inputs.clone(),
@@ -238,8 +263,8 @@ impl Adapter {
 			Ok(AuxResponse::ByondVersion { version, build }) => (version, build),
 			_ => return
 		};
-		self.shutting_down = false;
-		self.rebooting = false;
+		self.world.shutting_down = false;
+		self.world.rebooting = false;
 		self.send_output();
 		self.give_macros();
 		self.follow_reloads();
@@ -270,20 +295,20 @@ impl Adapter {
 			Some(settings) => self.start_code(settings),
 			None => self.out.console("The world restarted")
 		}
-		self.waiting_for_code = match &self.code {
+		self.world.waiting_for_code = match &self.code {
 			Some(code) => {
-				let world = self.generation;
+				let world = self.world.generation;
 				code.send(code::Command::Connected { byond, world }).is_ok() && self.code_read
 			}
 			None => false
 		};
-		if !self.waiting_for_code {
+		if !self.world.waiting_for_code {
 			self.ready();
 		}
 	}
 
 	pub(super) fn claim_reloads(&mut self) -> bool {
-		let who = match self.game {
+		let who = match self.world.game {
 			Some(_) => format!("the launcher (pid {})", std::process::id()),
 			None => format!("another debugger session (pid {})", std::process::id())
 		};
@@ -310,8 +335,8 @@ impl Adapter {
 	}
 
 	pub(super) fn ready(&mut self) {
-		if !self.initialized {
-			self.initialized = true;
+		if self.world.startup == Startup::Starting {
+			self.world.startup = Startup::Initialized;
 			self.out.event(InitializedEvent);
 			return;
 		}
@@ -333,14 +358,14 @@ impl Adapter {
 		}
 		let _ = self.ack(&AuxRequest::Configured);
 		self.catch_up_on_pause();
-		self.configured = true;
+		self.world.startup = self.world.startup.max(Startup::Configured);
 		self.announce_world();
 		self.say_ready();
 	}
 
 	pub(super) fn say_ready(&mut self) {
-		if !self.said_ready && self.configured && (self.code.is_none() || self.watching) {
-			self.said_ready = true;
+		if self.world.startup == Startup::Configured && (self.code.is_none() || self.watching) {
+			self.world.startup = Startup::Ready;
 			self.out.ready();
 		}
 	}
@@ -360,11 +385,11 @@ impl Adapter {
 		if let Some(mut debuggee) = self.debuggee.take() {
 			debuggee.gone();
 		}
-		self.waiting_for_code = false;
+		self.world.waiting_for_code = false;
 		self.set.lock().unwrap().clear();
 
-		if self.pid.is_some() && !self.ending {
-			if !self.shutting_down && !self.rebooting {
+		if self.world.pid.is_some() && !self.world.ending {
+			if !self.world.shutting_down && !self.world.rebooting {
 				self.out.console(format!("Debug server disconnected ({}); waiting to reconnect", reason));
 				self.progress_start(RESTARTING, "Waiting to reconnect".to_owned());
 			}
@@ -379,24 +404,24 @@ impl Adapter {
 		if let Some(mut debuggee) = self.debuggee.take() {
 			debuggee.gone();
 		}
-		self.unavailable = true;
-		self.waiting_for_code = false;
+		self.world.unavailable = true;
+		self.world.waiting_for_code = false;
 		self.set.lock().unwrap().clear();
 		self.progress_end(STARTING);
 		self.progress_end(RESTARTING);
 		let process = self.world_process().unwrap_or_default();
 		self.out
 			.console(format!("Debugger initialization failed for process {}: {}", process, reason));
-		if self.game.is_none() {
+		if self.world.game.is_none() {
 			self.out.console("The world is running without debugging. Detaching from this session.");
-			self.pid = None;
+			self.world.pid = None;
 			self.out.event(TerminatedEvent::default());
 			return;
 		}
 		self.out
 			.console("The world is running without debugging or hot reload. Stop the session to terminate it.");
-		if !self.initialized {
-			self.initialized = true;
+		if self.world.startup == Startup::Starting {
+			self.world.startup = Startup::Initialized;
 			self.out.event(InitializedEvent);
 		}
 		self.out.unavailable(reason);
@@ -407,28 +432,28 @@ impl Adapter {
 			debuggee.leave();
 		}
 		self.debuggee = None;
-		if terminate == Some(false) && self.game.is_some() {
+		if terminate == Some(false) && self.world.game.is_some() {
 			self.out
 				.console("Stopping the world launched by this session. Attach to an existing world to leave it running on disconnect.");
 		}
-		if terminate.unwrap_or(false) || self.game.is_some() {
+		if terminate.unwrap_or(false) || self.world.game.is_some() {
 			if let Some(process) = self.world_process() {
 				self.out.console(format!("Ending the world (process {})", process));
 				self.kill_world();
 			}
 		}
-		self.pid = None;
-		self.generation += 1;
+		self.world.pid = None;
+		self.world.generation += 1;
 	}
 
 	pub(super) fn world_process(&self) -> Option<u32> {
-		self.game.as_ref().map(Game::pid).or(self.pid)
+		self.world.game.as_ref().map(Game::pid).or(self.world.pid)
 	}
 
 	pub(super) fn kill_world(&mut self) {
-		if let Some(game) = &self.game {
+		if let Some(game) = &self.world.game {
 			game.kill();
-		} else if let Some(pid) = self.pid {
+		} else if let Some(pid) = self.world.pid {
 			local::kill(pid);
 		}
 	}
@@ -437,19 +462,19 @@ impl Adapter {
 		let Some(process) = self.world_process() else {
 			return Ok(Value::Null);
 		};
-		if self.ending {
-			if self.relaunching.take().is_some() {
+		if self.world.ending {
+			if self.world.relaunching.take().is_some() {
 				self.progress_end(RESTARTING);
 				self.out.console("Restart cancelled: the world is stopping");
 			}
 			return Ok(Value::Null);
 		}
-		self.ending = true;
+		self.world.ending = true;
 		let asked = self.debuggee.as_mut().is_some_and(|debuggee| debuggee.end(Ending::Stop).is_ok());
 		if asked {
 			self.out.console("Stopping the world");
 			let inputs = self.inputs.clone();
-			let launched = self.game.is_some();
+			let launched = self.world.game.is_some();
 			std::thread::spawn(move || {
 				let deadline = std::time::Instant::now() + local::test_patience(TERMINATE_GRACE);
 				let mut overdue = false;
@@ -464,7 +489,7 @@ impl Adapter {
 				}
 				let _ = inputs.send(Input::ProcessGone);
 			});
-		} else if self.unavailable {
+		} else if self.world.unavailable {
 			self.out
 				.console(format!("Cannot call world.Del() without the debugger; terminating process {}", process));
 			self.kill_world();
@@ -476,36 +501,36 @@ impl Adapter {
 	}
 
 	pub(super) fn restart(&mut self, args: RestartArguments) -> Handled {
-		if self.ending {
+		if self.world.ending {
 			return Err("the world is already stopping".to_owned());
 		}
-		let Some(launched) = self.launched.clone() else {
+		let Some(launched) = self.world.launched.clone() else {
 			return self.reboot();
 		};
 		let mut wanted = match args.arguments {
 			Some(config) => arguments::<LaunchArguments>(Some(config))?,
 			None => launched.clone()
 		};
-		if wanted.build_flags == self.configured_flags {
+		if wanted.build_flags == self.world.configured_flags {
 			wanted.build_flags = launched.build_flags.clone();
 		} else {
-			self.configured_flags = wanted.build_flags.clone();
+			self.world.configured_flags = wanted.build_flags.clone();
 		}
-		if wanted == launched && self.debuggee.is_some() && !self.unavailable {
+		if wanted == launched && self.debuggee.is_some() && !self.world.unavailable {
 			return self.reboot();
 		}
 		let prepared = Prepared::of(&wanted)?;
-		self.relaunching = Some((wanted, prepared));
+		self.world.relaunching = Some((wanted, prepared));
 		self.progress_start(RESTARTING, "Restarting the world".to_owned());
 		self.terminate()
 	}
 
 	pub(super) fn reboot(&mut self) -> Handled {
-		if self.ending {
+		if self.world.ending {
 			return Err("the world is already stopping".to_owned());
 		}
 		self.debuggee()?.end(Ending::Reboot)?;
-		self.rebooting = true;
+		self.world.rebooting = true;
 		self.out.console("Rebooting the world");
 		self.progress_start(RESTARTING, "Rebooting the world".to_owned());
 		let (inputs, generation) = (self.inputs.clone(), self.debuggee()?.generation);
@@ -517,8 +542,8 @@ impl Adapter {
 	}
 
 	pub(super) fn reboot_overdue(&mut self, generation: u64) {
-		if self.rebooting && self.debuggee.as_ref().is_some_and(|d| d.generation == generation) {
-			self.rebooting = false;
+		if self.world.rebooting && self.debuggee.as_ref().is_some_and(|d| d.generation == generation) {
+			self.world.rebooting = false;
 			self.progress_end(RESTARTING);
 			self.out.console(format!(
 				"The world hasn't rebooted after {} seconds: its world/Reboot() may be waiting, or have declined",
@@ -532,11 +557,11 @@ impl Adapter {
 			debuggee.gone();
 		}
 		self.joined.world_ended();
-		self.pid = None;
-		self.ending = false;
-		self.unavailable = false;
-		self.shutting_down = false;
-		self.waiting_for_code = false;
+		self.world.pid = None;
+		self.world.ending = false;
+		self.world.unavailable = false;
+		self.world.shutting_down = false;
+		self.world.waiting_for_code = false;
 		self.set.lock().unwrap().clear();
 		self.stddef = None;
 		if let Err(e) = self.start(args, prepared) {
@@ -546,8 +571,8 @@ impl Adapter {
 	}
 
 	pub(super) fn game_exited(&mut self, code: Option<i32>) {
-		self.game = None;
-		if let Some((args, prepared)) = self.relaunching.take() {
+		self.world.game = None;
+		if let Some((args, prepared)) = self.world.relaunching.take() {
 			self.relaunched(args, prepared);
 			return;
 		}
@@ -559,7 +584,7 @@ impl Adapter {
 	}
 
 	pub(super) fn terminate_overdue(&mut self, process: u32) {
-		if self.ending && self.world_process() == Some(process) {
+		if self.world.ending && self.world_process() == Some(process) {
 			self.out.console(format!(
 				"Shutdown timed out after {} seconds; terminating process {}",
 				local::test_patience(TERMINATE_GRACE).as_secs(),
@@ -570,14 +595,14 @@ impl Adapter {
 	}
 
 	pub(super) fn process_gone(&mut self) {
-		if self.game.is_none() {
+		if self.world.game.is_none() {
 			self.out.console("The world's process has ended");
 			self.ended(0);
 		}
 	}
 
 	pub(super) fn ended(&mut self, exit_code: i32) {
-		self.pid = None;
+		self.world.pid = None;
 		self.joined.world_ended();
 		if let Some(mut debuggee) = self.debuggee.take() {
 			debuggee.gone();

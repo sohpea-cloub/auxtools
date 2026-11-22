@@ -51,7 +51,8 @@ impl Adapter {
 	}
 
 	fn hosted(&self) -> bool {
-		self.launched
+		self.world
+			.launched
 			.as_ref()
 			.is_some_and(|launched| launched.server == Some(Server::DreamSeeker))
 	}
@@ -79,7 +80,7 @@ impl Adapter {
 		if !args.open || !cfg!(windows) {
 			return Ok(serde_json::json!({ "address": address, "opened": false }));
 		}
-		let byond = self.launched.as_ref().and_then(|launched| launched.byond_path.clone());
+		let byond = self.world.launched.as_ref().and_then(|launched| launched.byond_path.clone());
 		let program = byond::bin_dir(byond.as_deref())?.join(Server::DreamSeeker.program());
 		let client = Command::new(&program)
 			.arg(&address)

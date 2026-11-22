@@ -78,7 +78,7 @@ impl Adapter {
 	}
 
 	pub(super) fn follow_reloads(&mut self) {
-		if self.game.is_some() {
+		if self.world.game.is_some() {
 			return;
 		}
 		let _ = self.request(&AuxRequest::Journal {
