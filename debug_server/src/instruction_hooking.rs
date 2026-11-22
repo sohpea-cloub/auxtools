@@ -25,10 +25,9 @@ struct ProcInstanceRef(u16);
 impl ProcInstanceRef {
 	fn new(ptr: *mut raw_types::procs::ProcInstance) -> Self {
 		unsafe {
-			static mut PTR_REF_ID: u16 = 0x8000;
-			PTR_REF_ID = if PTR_REF_ID == u16::MAX { 0x8001 } else { PTR_REF_ID + 1 };
-			(*ptr).mega_hack = PTR_REF_ID;
-			Self(PTR_REF_ID)
+			STEPPER.last_mark = if STEPPER.last_mark == u16::MAX { 0x8001 } else { STEPPER.last_mark + 1 };
+			(*ptr).mega_hack = STEPPER.last_mark;
+			Self(STEPPER.last_mark)
 		}
 	}
 
@@ -89,12 +88,21 @@ enum DebuggerAction {
 	}
 }
 
-static mut CURRENT_ACTION: DebuggerAction = DebuggerAction::None;
+struct Stepper {
+	action: DebuggerAction,
+	last_frame: *mut raw_types::procs::ExecutionContext,
+	last_opcode: u32,
+	pause_asked: Option<std::time::Instant>,
+	last_mark: u16
+}
 
-static mut LAST_FRAME: *mut raw_types::procs::ExecutionContext = std::ptr::null_mut();
-static mut LAST_OPCODE: u32 = 0;
-
-static mut PAUSE_ASKED: Option<std::time::Instant> = None;
+static mut STEPPER: Stepper = Stepper {
+	action: DebuggerAction::None,
+	last_frame: std::ptr::null_mut(),
+	last_opcode: 0,
+	pause_asked: None,
+	last_mark: 0x8000
+};
 const PAUSE_PATIENCE: std::time::Duration = std::time::Duration::from_secs(1);
 
 static mut DEFERRED_INSTRUCTION_REPLACE: UnsafeCell<Option<(Vec<u32>, *mut u32)>> = UnsafeCell::new(None);
@@ -283,7 +291,7 @@ fn handle_runtime(error: &str) {
 			caught: in_try(ctx)
 		};
 		if let Some(action) = handle_breakpoint(ctx, reason) {
-			CURRENT_ACTION = action;
+			STEPPER.action = action;
 			auxtools::instruction_hook::hear_all();
 		}
 	});
@@ -357,7 +365,7 @@ pub(crate) fn passes(server: &Server, ctx: *mut raw_types::procs::ExecutionConte
 		let opcode = *(*(*ctx).bytecode()).add(*(*ctx).bytecode_offset() as usize);
 		if opcode == OPCODE_DEBUG_BREAK
 			|| opcode == OPCODE_THROW
-			|| !matches!(CURRENT_ACTION, DebuggerAction::None)
+			|| !matches!(STEPPER.action, DebuggerAction::None)
 			|| (*DEFERRED_INSTRUCTION_REPLACE.get()).is_some()
 			|| server.is_in_eval()
 			|| server.has_watches()
@@ -367,8 +375,8 @@ pub(crate) fn passes(server: &Server, ctx: *mut raw_types::procs::ExecutionConte
 			return false;
 		}
 		crate::waker::alive();
-		LAST_FRAME = ctx;
-		LAST_OPCODE = opcode;
+		STEPPER.last_frame = ctx;
+		STEPPER.last_opcode = opcode;
 		true
 	}
 }
@@ -378,7 +386,7 @@ pub(crate) fn rest() {
 		return;
 	}
 	unsafe {
-		LAST_FRAME = std::ptr::null_mut();
+		STEPPER.last_frame = std::ptr::null_mut();
 	}
 	if crate::waker::wants_world() {
 		auxtools::instruction_hook::hear_all();
@@ -403,8 +411,8 @@ impl InstructionHook for Server {
 
 		if !in_eval && server.process() {
 			unsafe {
-				CURRENT_ACTION = DebuggerAction::Pause;
-				PAUSE_ASKED = Some(std::time::Instant::now());
+				STEPPER.action = DebuggerAction::Pause;
+				STEPPER.pause_asked = Some(std::time::Instant::now());
 			}
 		}
 
@@ -418,7 +426,7 @@ impl InstructionHook for Server {
 			if let Some(changes) = server.watched_changes(ctx) {
 				unsafe {
 					if let Some(action) = handle_breakpoint(ctx, BreakpointReason::Data { changes }) {
-						CURRENT_ACTION = action;
+						STEPPER.action = action;
 						did_breakpoint = true;
 					}
 				}
@@ -426,7 +434,7 @@ impl InstructionHook for Server {
 		}
 
 		unsafe {
-			let action = if in_eval { DebuggerAction::None } else { CURRENT_ACTION };
+			let action = if in_eval { DebuggerAction::None } else { STEPPER.action };
 
 			match action {
 				DebuggerAction::StepOver { target: frame, .. }
@@ -434,42 +442,42 @@ impl InstructionHook for Server {
 				| DebuggerAction::StepOut { target: frame }
 				| DebuggerAction::StepOverInstruction { target: frame, .. }
 				| DebuggerAction::StepIntoInstruction { parent: frame, .. } => {
-					if *(*ctx).bytecode_offset() == 0 && !(ctx == LAST_FRAME && crate::profiler::can_jump(LAST_OPCODE)) {
+					if *(*ctx).bytecode_offset() == 0 && !(ctx == STEPPER.last_frame && crate::profiler::can_jump(STEPPER.last_opcode)) {
 						(**(*ctx).proc_instance()).mega_hack = 0;
 					}
 					frame.forget_copy(ctx);
 				}
 				_ => {}
 			}
-			LAST_FRAME = ctx;
-			LAST_OPCODE = opcode;
+			STEPPER.last_frame = ctx;
+			STEPPER.last_opcode = opcode;
 
 			match action {
 				DebuggerAction::None => {}
 
-				DebuggerAction::Pause if PAUSE_ASKED.is_some_and(|asked| asked.elapsed() < PAUSE_PATIENCE) && in_helper(ctx) => {}
+				DebuggerAction::Pause if STEPPER.pause_asked.is_some_and(|asked| asked.elapsed() < PAUSE_PATIENCE) && in_helper(ctx) => {}
 
 				DebuggerAction::Pause => {
-					CURRENT_ACTION = DebuggerAction::None;
-					CURRENT_ACTION = handle_breakpoint(ctx, BreakpointReason::Pause).unwrap_or(DebuggerAction::None);
+					STEPPER.action = DebuggerAction::None;
+					STEPPER.action = handle_breakpoint(ctx, BreakpointReason::Pause).unwrap_or(DebuggerAction::None);
 					did_breakpoint = true;
 				}
 
 				DebuggerAction::BreakOnNext if is_dbgline || opcode == OPCODE_DBGFILE => {}
 
 				DebuggerAction::BreakOnNext => {
-					CURRENT_ACTION = DebuggerAction::None;
-					CURRENT_ACTION = handle_breakpoint(ctx, BreakpointReason::Step).unwrap_or(DebuggerAction::None);
+					STEPPER.action = DebuggerAction::None;
+					STEPPER.action = handle_breakpoint(ctx, BreakpointReason::Step).unwrap_or(DebuggerAction::None);
 					did_breakpoint = true;
 				}
 
 				DebuggerAction::StepOver { target, caller } => {
 					if is_dbgline && target.is_frame(ctx) {
-						CURRENT_ACTION = DebuggerAction::BreakOnNext;
+						STEPPER.action = DebuggerAction::BreakOnNext;
 					} else if !proc_instance_is_in_stack(ctx, target) && !proc_instance_is_suspended(target) {
-						CURRENT_ACTION = DebuggerAction::None;
+						STEPPER.action = DebuggerAction::None;
 						if caller.is_some_and(|caller| caller.is_frame(ctx)) {
-							CURRENT_ACTION = handle_breakpoint(ctx, BreakpointReason::Step).unwrap_or(DebuggerAction::None);
+							STEPPER.action = handle_breakpoint(ctx, BreakpointReason::Step).unwrap_or(DebuggerAction::None);
 							did_breakpoint = true;
 						} else {
 							step_ended();
@@ -482,21 +490,21 @@ impl InstructionHook for Server {
 						let is_in_parent = parent.is_frame(ctx);
 
 						if is_dbgline && is_in_parent {
-							CURRENT_ACTION = DebuggerAction::BreakOnNext;
+							STEPPER.action = DebuggerAction::BreakOnNext;
 						} else if !is_in_parent {
 							let in_stack = proc_instance_is_in_stack(ctx, parent);
 							let is_suspended = proc_instance_is_suspended(parent);
 
 							if !in_stack && !is_suspended {
-								CURRENT_ACTION = DebuggerAction::None;
+								STEPPER.action = DebuggerAction::None;
 								if caller.is_some_and(|caller| caller.is_frame(ctx)) {
-									CURRENT_ACTION = handle_breakpoint(ctx, BreakpointReason::Step).unwrap_or(DebuggerAction::None);
+									STEPPER.action = handle_breakpoint(ctx, BreakpointReason::Step).unwrap_or(DebuggerAction::None);
 									did_breakpoint = true;
 								} else {
 									step_ended();
 								}
 							} else if in_stack && is_dbgline {
-								CURRENT_ACTION = DebuggerAction::BreakOnNext;
+								STEPPER.action = DebuggerAction::BreakOnNext;
 							}
 						}
 					}
@@ -507,9 +515,9 @@ impl InstructionHook for Server {
 					let here = frame.is_frame(ctx) || (into && proc_instance_is_in_stack(ctx, frame));
 					let over = !here && !proc_instance_is_in_stack(ctx, frame) && !proc_instance_is_suspended(frame);
 					if here || over {
-						CURRENT_ACTION = DebuggerAction::None;
+						STEPPER.action = DebuggerAction::None;
 						if here || caller.is_some_and(|caller| caller.is_frame(ctx)) {
-							CURRENT_ACTION = handle_breakpoint(ctx, BreakpointReason::Step).unwrap_or(DebuggerAction::None);
+							STEPPER.action = handle_breakpoint(ctx, BreakpointReason::Step).unwrap_or(DebuggerAction::None);
 							did_breakpoint = true;
 						} else {
 							step_ended();
@@ -520,15 +528,15 @@ impl InstructionHook for Server {
 				DebuggerAction::StepOut { target } => {
 					if !is_generated_proc(ctx) {
 						if target.is_frame(ctx) {
-							CURRENT_ACTION = DebuggerAction::None;
-							CURRENT_ACTION = handle_breakpoint(ctx, BreakpointReason::Step).unwrap_or(DebuggerAction::None);
+							STEPPER.action = DebuggerAction::None;
+							STEPPER.action = handle_breakpoint(ctx, BreakpointReason::Step).unwrap_or(DebuggerAction::None);
 							did_breakpoint = true;
 						} else {
 							let in_stack = proc_instance_is_in_stack(ctx, target);
 							let is_suspended = proc_instance_is_suspended(target);
 
 							if !in_stack && !is_suspended {
-								CURRENT_ACTION = DebuggerAction::None;
+								STEPPER.action = DebuggerAction::None;
 								step_ended();
 							}
 						}
@@ -544,7 +552,7 @@ impl InstructionHook for Server {
 					caught: in_try(ctx)
 				};
 				if let Some(action) = handle_breakpoint(ctx, reason) {
-					CURRENT_ACTION = action;
+					STEPPER.action = action;
 					did_breakpoint = true;
 				}
 			}
@@ -554,9 +562,9 @@ impl InstructionHook for Server {
 		if opcode == OPCODE_DEBUG_BREAK {
 			if !did_breakpoint && !in_eval {
 				unsafe {
-					let stepping = CURRENT_ACTION;
-					CURRENT_ACTION = DebuggerAction::None;
-					CURRENT_ACTION = handle_breakpoint(ctx, BreakpointReason::Breakpoint).unwrap_or(stepping);
+					let stepping = STEPPER.action;
+					STEPPER.action = DebuggerAction::None;
+					STEPPER.action = handle_breakpoint(ctx, BreakpointReason::Breakpoint).unwrap_or(stepping);
 				}
 			}
 
@@ -564,11 +572,11 @@ impl InstructionHook for Server {
 			if let Some(original) = map.get(&PtrKey::new(opcode_ptr)) {
 				unsafe {
 					if original.first() == Some(&OPCODE_DBGLINE) && !in_eval {
-						match CURRENT_ACTION {
+						match STEPPER.action {
 							DebuggerAction::StepOver { target: frame, .. } | DebuggerAction::StepInto { parent: frame, .. }
 								if frame.is_frame(ctx) =>
 							{
-								CURRENT_ACTION = DebuggerAction::BreakOnNext;
+								STEPPER.action = DebuggerAction::BreakOnNext;
 							}
 							_ => {}
 						}
@@ -667,7 +675,7 @@ pub fn unhook_instruction(proc: &Proc, offset: u32) -> Result<(), InstructionUnh
 
 pub fn unhook_all() {
 	unsafe {
-		CURRENT_ACTION = DebuggerAction::None;
+		STEPPER.action = DebuggerAction::None;
 		*DEFERRED_INSTRUCTION_REPLACE.get() = None;
 	}
 
