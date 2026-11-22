@@ -1382,32 +1382,11 @@ pub(super) fn unfolded_has(
     value: &Expression,
     found: impl Fn(&Compiler, usize) -> bool,
 ) -> bool {
-    let start = compiler.nodes.len();
-    let saved = (
-        compiler.label_count,
-        compiler.cache.clone(),
-        compiler.last_line,
-        compiler.label_states.clone(),
-        compiler.global_field,
-        compiler.other_file,
-        compiler.line_pending,
-    );
-    compiler.no_fold = true;
-    compiler.global_field = false;
-    let ok = emit_value(compiler, value).is_ok();
-    compiler.no_fold = false;
-    let saves = ok && found(compiler, start);
-    compiler.nodes.truncate(start);
-    (
-        compiler.label_count,
-        compiler.cache,
-        compiler.last_line,
-        compiler.label_states,
-        compiler.global_field,
-        compiler.other_file,
-        compiler.line_pending,
-    ) = saved;
-    saves
+    compiler.speculate(|compiler, start| {
+        compiler.no_fold = true;
+        compiler.global_field = false;
+        emit_value(compiler, value).is_ok() && found(compiler, start)
+    })
 }
 
 fn unparenthesised(expr: &Expression) -> Expression {
