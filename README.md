@@ -104,7 +104,14 @@ Windows and Linux: 515.1637–515.1647 and 516.1648–516.1689.
 
 Symbol patterns were checked throughout these ranges. Newer builds are attempted but may fail initialization if a pattern no longer matches. Older builds and unsupported major versions are rejected with a version error. If debugger initialization fails, the world keeps running. The launcher, VS Code and CLI report the reason; `auxtools stop` can terminate the world.
 
-The patterns use [byond-scan](https://github.com/Absolucy/byond-scan) and are stored in `auxtools/src/registry/`.
+The patterns use [byond-scan](https://github.com/Absolucy/byond-scan) and are stored in `auxtools/src/registry/`. To check them against a build without running it, give its `libbyond.so` or `byondcore.dll` to the registry's checker, on either platform:
+
+```sh
+cargo run -p auxtools --example check_recipes -- linux 516.1689 byond/bin/libbyond.so
+cargo run -p auxtools --example check_recipes -- windows 516.1689 byond/bin/byondcore.dll
+```
+
+It lists each pattern as found or not and exits with status 1 if the build lacks something auxtools looks up on it. A new BYOND build that passes needs no change to the patterns.
 
 CI tests the library, debugger, hot reload and CLI on 515.1637, 515.1647, 516.1659, 516.1685 and 516.1689. The integration suites cover the library's hooks and values, the debug server, source reloads, launcher lifecycle, CLI output and DAP behavior. Linux tests run on Ubuntu 22.04; Windows tests run in `dd.exe` on Windows Server 2022 and under Wine.
 

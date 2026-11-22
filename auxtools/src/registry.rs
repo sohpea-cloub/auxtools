@@ -6,7 +6,8 @@
 //! range of builds, and a name has one recipe for each range whose code
 //! differs. `registry/linux.rs` and `registry/windows.rs` list them, and both
 //! lists are compiled on either platform. The builds where something changed
-//! are named in `registry/builds.rs`.
+//! are named in `registry/builds.rs`. `examples/check_recipes.rs` checks the
+//! lists against a BYOND binary on disk.
 //!
 //! Every lookup goes through [`resolve`]. A miss is an error that names the
 //! lookup. Nothing here hands back a null pointer, because the C++ shim calls
@@ -53,6 +54,24 @@ pub fn recipe_for(platform: Platform, name: &str, build: u32) -> Option<&'static
 				.max_by_key(|recipe| recipe.versions.max)
 		})
 		.or_else(|| named().next())
+}
+
+pub fn names(platform: Platform) -> Vec<&'static str> {
+	let mut names = Vec::new();
+	for recipe in platform.recipes() {
+		if !names.contains(&recipe.name) {
+			names.push(recipe.name);
+		}
+	}
+	names
+}
+
+/// Whether auxtools looks `name` up on `build`: a recipe of the name has begun
+/// by then and the name's last hasn't ended. The callers ask by the same
+/// boundaries the ranges are made of.
+pub fn needed(platform: Platform, name: &str, build: u32) -> bool {
+	let named = || platform.recipes().iter().filter(move |recipe| recipe.name == name);
+	named().any(|recipe| recipe.versions.min <= build) && named().any(|recipe| build <= recipe.versions.max)
 }
 
 pub fn resolve(module: &Module, platform: Platform, (version, build): (u32, u32), name: &str) -> Result<usize, String> {
@@ -180,6 +199,16 @@ mod tests {
 				);
 			}
 		}
+	}
+
+	#[test]
+	fn a_name_is_needed_from_its_first_build_to_its_last() {
+		let needed = |name, build| needed(Platform::Linux, name, build);
+		assert!(!needed("alist_table_count", builds::FIRST_516 - 1) && needed("alist_table_count", 5000));
+		assert!(needed("misc_intern", 1643) && !needed("misc_intern", 1644));
+		assert!(!needed("register_typepath", 1640) && needed("register_typepath", 1641));
+		assert!(needed("appearance_send", 1645));
+		assert!(!names(Platform::Windows).contains(&"misc_intern") && names(Platform::Linux).contains(&"misc_intern"));
 	}
 
 	#[test]
