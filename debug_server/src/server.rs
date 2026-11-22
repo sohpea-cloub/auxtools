@@ -15,7 +15,6 @@ use auxtools::{
 	raw_types::values::{ValueData, ValueTag},
 	*
 };
-use clap::{Arg, Command};
 use instruction_hooking::disassemble_env;
 
 use super::{
@@ -24,7 +23,7 @@ use super::{
 };
 use crate::{
 	connection::{self, Connection},
-	hot_reload, journal, resource_reload, unnamed, waker
+	console, hot_reload, journal, resource_reload, unnamed, waker
 };
 
 mod profile;
@@ -271,8 +270,7 @@ pub struct Server {
 	procs_by_file: Option<(u32, HashMap<String, Vec<u32>>)>,
 	moved_breakpoints: hot_reload::MovedBreakpoints<(ClientId, Placed)>,
 	old_codes: RefCell<Vec<usize>>,
-	waiting_reloads: Vec<HotReloadRequest>,
-	app: Command
+	waiting_reloads: Vec<HotReloadRequest>
 }
 
 struct ServerThread {
@@ -281,31 +279,6 @@ struct ServerThread {
 
 impl Server {
 	const MOST_COMPLETIONS: usize = 200;
-
-	pub fn setup_app() -> Command {
-		Command::new("Auxtools Debug Server")
-			.version(env!("CARGO_PKG_VERSION"))
-			.subcommand_required(true)
-			.no_binary_name(true)
-			.color(clap::ColorChoice::Never)
-			.disable_version_flag(true)
-			.disable_help_flag(true)
-			.override_usage("#<SUBCOMMAND>")
-			.subcommand(
-				Command::new("disassemble")
-					.alias("dis")
-					.about("Disassembles a proc and displays its bytecode in an assembly-like format")
-					.after_help("If no parameters are provided, the proc executing in the currently debugged stack frame will be disassembled")
-					.arg(Arg::new("proc").help("Path of the proc to disassemble (e.g. /proc/do_stuff)"))
-					.arg(Arg::new("id").help("Id of the proc to disassemble (for when multiple procs are defined with the same path)"))
-			)
-			.subcommand(Command::new("skin").about("Show login skin resource ID and text").hide(true))
-			.subcommand(
-				Command::new("script")
-					.about("Show login script string ID, resource IDs and text")
-					.hide(true)
-			)
-	}
 
 	pub fn listen() -> std::io::Result<Server> {
 		let events = Self::take_events()?;
@@ -346,8 +319,7 @@ impl Server {
 			stepper: None,
 			procs_by_file: None,
 			old_codes: RefCell::new(vec![]),
-			waiting_reloads: vec![],
-			app: Self::setup_app()
+			waiting_reloads: vec![]
 		})
 	}
 
@@ -1977,43 +1949,27 @@ impl Server {
 	}
 
 	fn handle_command(&mut self, frame_id: Option<u32>, command: &str) -> String {
-		let response = match self.app.try_get_matches_from_mut(command.split_ascii_whitespace()) {
-			Ok(matches) => match matches.subcommand() {
-				Some(("disassemble", matches)) => {
-					if let Some(proc) = matches.get_one::<String>("proc").map(String::as_str) {
-						let id = matches
-							.get_one::<String>("id")
-							.map(String::as_str)
-							.and_then(|x| x.parse::<u32>().ok())
-							.unwrap_or(0);
-
-						self.handle_disassemble(proc, id)
-					} else if let Some(frame_id) = frame_id {
-						if let Some(frame) = self.get_stack_frame(frame_id) {
-							let proc = unnamed::proc_ref(&frame.proc);
-							self.handle_disassemble(&proc.path, proc.override_id)
-						} else {
-							"couldn't find stack frame (is execution not paused?)".to_owned()
-						}
-					} else {
-						"no execution frame selected".to_owned()
+		match console::parse(command) {
+			Ok(console::Command::Disassemble { proc: Some(proc), id }) => self.handle_disassemble(proc, id),
+			Ok(console::Command::Disassemble { proc: None, .. }) => match frame_id {
+				Some(frame_id) => match self.get_stack_frame(frame_id) {
+					Some(frame) => {
+						let proc = unnamed::proc_ref(&frame.proc);
+						self.handle_disassemble(&proc.path, proc.override_id)
 					}
-				}
-
-				Some(("skin", _)) => match self.evaluating(crate::skin::state) {
-					Ok(None) => "no skin".to_owned(),
-					Ok(Some((resource, text))) => format!("resource {}\n{}", resource, text),
-					Err(e) => format!("Failed: {}", e)
+					None => "couldn't find stack frame (is execution not paused?)".to_owned()
 				},
-
-				Some(("script", _)) => self.evaluating(crate::client_script::state).unwrap_or_else(|e| format!("Failed: {}", e)),
-
-				_ => "unknown command".to_owned()
+				None => "no execution frame selected".to_owned()
 			},
-			Err(e) => e.to_string()
-		};
-
-		response
+			Ok(console::Command::Skin) => match self.evaluating(crate::skin::state) {
+				Ok(None) => "no skin".to_owned(),
+				Ok(Some((resource, text))) => format!("resource {}\n{}", resource, text),
+				Err(e) => format!("Failed: {}", e)
+			},
+			Ok(console::Command::Script) => self.evaluating(crate::client_script::state).unwrap_or_else(|e| format!("Failed: {}", e)),
+			Ok(console::Command::Help(text)) => text.to_owned(),
+			Err(error) => error
+		}
 	}
 
 	fn eval_expr(&mut self, frame_id: Option<u32>, command: &str) -> Result<Value, String> {

@@ -1,6 +1,7 @@
 mod assemble_env;
 mod client_script;
 mod connection;
+mod console;
 mod dmb_tables;
 mod hot_reload;
 mod instruction_hooking;
