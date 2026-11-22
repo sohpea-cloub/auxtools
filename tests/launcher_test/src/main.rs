@@ -88,7 +88,10 @@ const GROUPS: &[&str] = &[
 	"trace",
 	"journal",
 	"edited",
-	"command_line",
+	"foreground",
+	"detached",
+	"reboots",
+	"stops",
 	"builds"
 ];
 
@@ -145,7 +148,10 @@ fn main() {
 				journal::reboot(world.pid, &world.dir);
 			}
 			("edited", _) => edited_after_build(&server),
-			("command_line", _) => launch_from_the_command_line(&server),
+			("foreground", _) => foreground(&server),
+			("detached", _) => detached(&server),
+			("reboots", _) => reboots(&server),
+			("stops", _) => stops(&server),
 			("builds", _) => {
 				without_debug_info(&server);
 				unread_statics(&server);
@@ -1605,7 +1611,7 @@ fn dmb_elsewhere(server: &str) {
 	println!("ok: a rebuilt .dmb that isn't beside its .dme");
 }
 
-fn launch_from_the_command_line(server: &str) {
+fn foreground(server: &str) {
 	let (dir, dme) = attach_host_copy("launch");
 	let dmb = dme.with_extension("dmb");
 	let code = dir.join("attach_host.dm");
@@ -1683,6 +1689,12 @@ fn launch_from_the_command_line(server: &str) {
 		);
 		println!("ok: interrupt requests graceful shutdown");
 	}
+}
+
+fn detached(server: &str) {
+	let (dir, dme) = attach_host_copy("launch");
+	let dmb = dme.with_extension("dmb");
+	let code = dir.join("attach_host.dm");
 
 	let mut started = Started::default();
 	let args = launch_args(&dmb, server, &["--detach", "--json"]);
@@ -1847,6 +1859,23 @@ fn launch_from_the_command_line(server: &str) {
 		);
 		println!("ok: rebuilt worlds skip reloads already included in the build");
 	}
+	drop(started);
+}
+
+fn reboots(server: &str) {
+	let (dir, dme) = attach_host_copy("launch");
+	let dmb = dme.with_extension("dmb");
+	let mut started = Started::default();
+	let args = launch_args(&dmb, server, &["--detach", "--json"]);
+	let (got, printed) = launcher_command(&args.iter().map(String::as_str).collect::<Vec<_>>());
+	assert_eq!(got, 0, "unexpected launch --detach output: {}", printed);
+	let up: serde_json::Value = serde_json::from_str(&printed).unwrap_or_else(|_| panic!("unexpected launch --detach --json output: {}", printed));
+	let (pid, launcher) = (up["pid"].as_u64().unwrap(), up["launcher"].as_u64().unwrap());
+	started.pids.extend([pid, launcher]);
+	let log = PathBuf::from(up["log"].as_str().unwrap());
+	let read_log = || std::fs::read_to_string(&log).unwrap_or_default();
+	let pid_text = pid.to_string();
+	let cli = Cli::new(&pid_text);
 
 	for moment in 0..8u64 {
 		std::thread::sleep(Duration::from_millis(moment * 13));
@@ -1894,7 +1923,6 @@ fn launch_from_the_command_line(server: &str) {
 	assert_eq!(printed.trim(), format!("pid {}: stopped", pid));
 	assert!(!alive(pid), "world process is still running");
 	assert!(gone_within(launcher, 10), "the background launcher didn't go with the world");
-	std::fs::write(&code, source).unwrap();
 	let said = read_log();
 	assert!(
 		said.contains("attach test: world/Del") && said.contains("The world exited with code 0"),
@@ -1909,6 +1937,12 @@ fn launch_from_the_command_line(server: &str) {
 	let _ = std::fs::remove_file(dir.join("slow_del"));
 	drop(started);
 	println!("ok: paused shutdown with sleeping world/Del");
+}
+
+fn stops(server: &str) {
+	let (dir, dme) = attach_host_copy("launch");
+	let dmb = dme.with_extension("dmb");
+	let log = dir.join("attach_host.auxtools.log");
 
 	let mut started = Started::default();
 	let args = launch_args(&dmb, server, &["--detach", "--no-hot-reload"]);
