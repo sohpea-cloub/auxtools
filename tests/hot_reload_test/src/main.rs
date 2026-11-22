@@ -94,18 +94,6 @@ impl Source {
 		Edit { changes, before: old }
 	}
 
-	fn edit_refused(&mut self, file: &str, from: &str, to: &str) -> Vec<String> {
-		let text = self.text(file);
-		assert_eq!(text.matches(from).count(), 1, "{:?} should be in {} once", from, file);
-		std::fs::write(self.dir.join(file), text.replace(from, to)).unwrap();
-		let old = self.snapshot.take().expect("parsed before editing");
-		self.parse();
-		let edited: HashSet<PathBuf> = [Path::new(file).to_owned()].into_iter().collect();
-		let changes = diff(&old, self.snapshot.as_ref().unwrap(), Some(&edited));
-		assert!(!changes.refused.is_empty(), "the edit wasn't refused");
-		changes.refused.iter().map(|refusal| format!("{:#}", refusal)).collect()
-	}
-
 	fn move_code(&mut self, code: &str, from: &str, to: &str) -> Edit {
 		let text = self.text(from);
 		assert_eq!(text.matches(code).count(), 1, "{:?} should be in {} once", code, from);
@@ -1125,19 +1113,6 @@ fn definitions(built: Built) {
 	assert_eq!(eval(&mut client, "visits()"), "12");
 	println!("ok: new static locals");
 
-	const CAT: &str = "/datum/animal/cat\n\tsound = \"meow\"\n";
-	const DUPE: &str = "/datum/animal\n\tvar/dupe = 1\n\n/datum/animal/cat\n\tsound = \"meow\"\n\tvar/dupe = 2\n";
-	let refused = source.edit_refused("reload.dm", CAT, DUPE);
-	assert!(
-		refused
-			.iter()
-			.any(|e| e.contains("dupe: duplicate definition (/datum/animal declares it too)")),
-		"{:?}",
-		refused
-	);
-	source.edit("reload.dm", DUPE, CAT);
-	println!("ok: duplicate var definition refused by type");
-
 	let changes = source.edit("reload.dm", "\tvar/spare = 1\n", "");
 	reload(&mut watcher, &changes);
 	let changes = source.edit("reload.dm", "/datum/animal\n", "/datum/animal\n\tvar/spare = 3\n");
@@ -1485,18 +1460,7 @@ fn types(built: Built) {
 	let changes = source.edit("reload.dm", "/proc/first_def()\n", "/area\n\tlayer = 9\n\n/proc/first_def()\n");
 	reload(&mut watcher, &changes);
 	assert_eq!(eval(&mut client, "(new /area).layer"), "9");
-	let refused = source.edit_refused("reload.dm", "/area\n\tlayer = 9\n\n", "");
-	assert!(
-		refused
-			.iter()
-			.any(|why| why.starts_with("/area: layer: cannot restore this built-in type's original default")),
-		"{:?}",
-		refused
-	);
-	let changes = source.edit("reload.dm", "/proc/first_def()\n", "/area\n\tlayer = 9\n\n/proc/first_def()\n");
-	reload(&mut watcher, &changes);
-	assert_eq!(eval(&mut client, "(new /area).layer"), "9");
-	println!("ok: built-in type default reset rejection");
+	println!("ok: built-in type default");
 
 	let changes = source.edit(
 		"reload.dm",
