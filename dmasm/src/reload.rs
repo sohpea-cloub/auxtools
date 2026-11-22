@@ -751,7 +751,7 @@ impl Snapshot {
         let mut changes = Changes::default();
         let mut before = HashMap::new();
         for (key, old_value, new_value) in &pairs {
-            if old_value.code == new_value.code && old_value.location != new_value.location {
+            if old_value.code == new_value.code {
                 before.insert(key.clone(), self.compile(key));
             }
         }
@@ -3565,6 +3565,44 @@ mod tests {
             .iter()
             .map(|reload| reload.proc.to_string())
             .collect()
+    }
+
+    #[test]
+    fn lines_that_move_under_a_header_that_stays_are_remapped_as_by_a_full_parse() {
+        let a = "/proc/f()\n\tworld.log << 1\n\treturn 2\n/proc/g()\n\treturn 3\n";
+        let project = Project::new("under", &[("a.dm", a)]);
+        let mut old = project.parse();
+        for (n, edited) in [
+            a.replace("\treturn 2\n", "\t// two\n\treturn 2\n"),
+            a.replace(
+                "\treturn 2\n",
+                "#ifdef ABSENT\n\tworld.log << 0\n#endif\n\treturn 2\n",
+            ),
+        ]
+        .iter()
+        .enumerate()
+        {
+            project.write("a.dm", edited);
+            let (own, full) = project.both(&mut old, "a.dm");
+            assert_eq!(own.unwrap(), full);
+            let reload = old.reload_file(&project.dir, Path::new("a.dm")).unwrap();
+            assert!(reloaded(&reload.changes).is_empty());
+            let moved: Vec<String> = reload
+                .changes
+                .plan
+                .line_moves
+                .iter()
+                .map(|moved| format!("{} {:?}", moved.proc, moved.lines))
+                .collect();
+            let shift = if n == 0 { 1 } else { 3 };
+            assert_eq!(
+                moved,
+                [
+                    format!("/f [(2, 2), (3, {})]", 3 + shift),
+                    format!("/g [(5, {})]", 5 + shift)
+                ]
+            );
+        }
     }
 
     #[test]
