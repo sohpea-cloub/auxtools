@@ -891,6 +891,13 @@ impl Server {
 		Some(literal)
 	}
 
+	fn associated(list: &List, key: &Value) -> Option<Value> {
+		if key.raw.tag == ValueTag::Number {
+			return None;
+		}
+		list.get(key).ok().filter(|value| value.raw.tag != ValueTag::Null)
+	}
+
 	fn entry_expr(list: &str, key: &Value, position: Option<u32>) -> Option<String> {
 		use ValueTag as Tag;
 		if let Some(key) = Self::literal(key) {
@@ -979,13 +986,9 @@ impl Server {
 		for i in first + 1..=last {
 			let key = list.get(i)?;
 
-			if key.raw.tag != raw_types::values::ValueTag::Number {
-				if let Ok(value) = list.get(&key) {
-					if value.raw.tag != raw_types::values::ValueTag::Null {
-						variables.push(pair(i, key, value));
-						continue;
-					}
-				}
+			if let Some(value) = Self::associated(&list, &key) {
+				variables.push(pair(i, key, value));
+				continue;
 			}
 
 			variables.push(self.value_to_variable(format!("[{}]", i), &key, expr.map(|list| format!("{}[{}]", list, i))));
@@ -1135,13 +1138,10 @@ impl Server {
 			.filter(|found| found.instance as usize == frame.instance)
 	}
 
-	fn get_args(&mut self, frame_index: u32) -> Vec<Variable> {
-		let Some(frame) = self.get_stack_frame(frame_index) else {
-			return vec![];
-		};
-		let mut vars = vec![
-			self.value_to_variable("src".to_owned(), &frame.src, Some("src".to_owned())),
-			self.value_to_variable("usr".to_owned(), &frame.usr, Some("usr".to_owned())),
+	fn frame_arguments(frame: &debug::StackFrame) -> Vec<(String, String, &Value)> {
+		let mut values = vec![
+			("src".to_owned(), "src".to_owned(), &frame.src),
+			("usr".to_owned(), "usr".to_owned(), &frame.usr),
 		];
 
 		let mut unnamed_count = 0;
@@ -1153,25 +1153,37 @@ impl Server {
 					(format!("undefined argument #{}", unnamed_count), format!("args[{}]", i + 1))
 				}
 			};
-			vars.push(self.value_to_variable(name, value, Some(expr)));
+			values.push((name, expr, value));
 		}
 
-		vars
+		values
+	}
+
+	fn frame_locals(frame: &debug::StackFrame) -> Vec<(String, &Value)> {
+		let mut values = vec![(".".to_owned(), &frame.dot)];
+		let visible = Self::visible_locals(frame).into_iter().zip(&frame.locals);
+		values.extend(visible.filter_map(|(name, (_, local))| Some((name?, local))));
+		values
+	}
+
+	fn get_args(&mut self, frame_index: u32) -> Vec<Variable> {
+		let Some(frame) = self.get_stack_frame(frame_index) else {
+			return vec![];
+		};
+		Self::frame_arguments(frame)
+			.into_iter()
+			.map(|(name, expr, value)| self.value_to_variable(name, value, Some(expr)))
+			.collect()
 	}
 
 	fn get_locals(&mut self, frame_index: u32) -> Vec<Variable> {
 		let Some(frame) = self.get_stack_frame(frame_index) else {
 			return vec![];
 		};
-		let mut vars = vec![self.value_to_variable(".".to_owned(), &frame.dot, Some(".".to_owned()))];
-
-		for (name, (_, local)) in Self::visible_locals(&frame).into_iter().zip(&frame.locals) {
-			if let Some(name) = name {
-				vars.push(self.value_to_variable(name.clone(), local, Some(name)));
-			}
-		}
-
-		vars
+		Self::frame_locals(frame)
+			.into_iter()
+			.map(|(name, value)| self.value_to_variable(name.clone(), value, Some(name)))
+			.collect()
 	}
 
 	fn breakpoint_offset(proc: &Proc, offset: u32) -> u32 {
@@ -1646,8 +1658,7 @@ impl Server {
 					return list.set(&key, value).map_err(runtime);
 				}
 				let key = list.get(number).map_err(runtime)?;
-				let has_value = key.raw.tag != ValueTag::Number && list.get(&key).is_ok_and(|of_key| of_key.raw.tag != ValueTag::Null);
-				if has_value {
+				if Self::associated(&list, &key).is_some() {
 					list.set(&key, value).map_err(runtime)
 				} else {
 					list.set(number, value).map_err(runtime)

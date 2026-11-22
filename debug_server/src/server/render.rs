@@ -32,30 +32,13 @@ impl Server {
 		match container {
 			Variables::Arguments { frame } => {
 				let frame = self.get_stack_frame(frame).ok_or_else(gone)?;
-				let mut values = vec![("src".to_owned(), frame.src.clone()), ("usr".to_owned(), frame.usr.clone())];
-				let mut unnamed = 0;
-				for (name, value) in &frame.args {
-					let name = match name {
-						Some(name) => String::from(name),
-						None => {
-							unnamed += 1;
-							format!("undefined argument #{}", unnamed)
-						}
-					};
-					values.push((name, value.clone()));
-				}
-				Ok(values)
+				let arguments = Self::frame_arguments(frame).into_iter();
+				Ok(arguments.map(|(name, _, value)| (name, value.clone())).collect())
 			}
 			Variables::Locals { frame } => {
 				let frame = self.get_stack_frame(frame).ok_or_else(gone)?;
-				let mut values = vec![(".".to_owned(), frame.dot.clone())];
-				values.extend(
-					Self::visible_locals(&frame)
-						.into_iter()
-						.zip(&frame.locals)
-						.filter_map(|(name, (_, value))| Some((name?, value.clone())))
-				);
-				Ok(values)
+				let locals = Self::frame_locals(frame).into_iter();
+				Ok(locals.map(|(name, value)| (name, value.clone())).collect())
 			}
 			Variables::Globals | Variables::Builtins => {
 				let builtin = matches!(container, Variables::Builtins);
@@ -159,11 +142,7 @@ impl Server {
 			let Ok(key) = list.get(i) else {
 				continue;
 			};
-			let value = (key.raw.tag != ValueTag::Number)
-				.then(|| list.get(&key).ok())
-				.flatten()
-				.filter(|value| value.raw.tag != ValueTag::Null)
-				.map(|value| Self::render(&value, depth));
+			let value = Self::associated(list, &key).map(|value| Self::render(&value, depth));
 			entries.push((Self::render(&key, depth), value));
 		}
 		entries
