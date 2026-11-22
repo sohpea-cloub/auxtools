@@ -218,7 +218,7 @@ impl World {
 	pub fn started(&mut self, until: Option<Instant>) -> Result<Option<bool>> {
 		let patience = Instant::now() + self.patience;
 		let until = until.map_or(patience, |until| until.min(patience));
-		match self.request_by(Request::Uptime, until)? {
+		match self.request_by(&Request::Uptime, until)? {
 			Some(Response::Uptime { started, .. }) => Ok(Some(started)),
 			Some(other) => Err(unexpected(&other)),
 			None => Ok(None)

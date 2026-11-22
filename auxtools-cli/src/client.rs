@@ -1,3 +1,5 @@
+pub mod ops;
+
 use std::{
 	io,
 	ops::ControlFlow,

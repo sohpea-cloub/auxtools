@@ -8,6 +8,7 @@ use std::{
 
 use auxtools_cli::{
 	byond::{self, Server},
+	client::ops::{Asks, Operations, Placed, Trigger},
 	game::{Game, Launch},
 	local::{self, Stream}
 };
@@ -1651,30 +1652,24 @@ impl Adapter {
 				}
 			};
 
-			let instructions = match self.request(&AuxRequest::Locate {
-				file: self.world_file_name(path),
-				line: line as u32
-			}) {
-				Ok(AuxResponse::Locate { instructions }) if instructions.is_empty() => {
-					breakpoints.push(unverified(if self.world_has_lines() { NO_CODE } else { NO_LINES }));
+			let instructions = match self.locate(&self.world_file_name(path), line as u32) {
+				Ok(instructions) if instructions.is_empty() => {
+					breakpoints.push(unverified(if self.has_lines() { NO_CODE } else { NO_LINES }));
 					continue;
 				}
-				Ok(AuxResponse::Locate { instructions }) => instructions,
-				Ok(other) => {
-					breakpoints.push(unverified(&unexpected(other)));
-					continue;
-				}
+				Ok(instructions) => instructions,
 				Err(e) => {
 					breakpoints.push(unverified(&e));
 					continue;
 				}
 			};
 
+			let trigger = Trigger { condition, hit };
 			let mut result = None;
 			let mut at_start = false;
 			for instruction in instructions {
 				let mut at = None;
-				match self.set_breakpoint(&instruction, condition.clone(), hit, log.clone()) {
+				match self.set_breakpoint(&instruction, &trigger, log.clone(), false) {
 					Ok(Some((set_line, set_at))) => {
 						result.get_or_insert(Ok(set_line));
 						at_start |= set_at.proc.path == GLOBAL_INIT;
@@ -1711,41 +1706,21 @@ impl Adapter {
 	fn set_breakpoint(
 		&mut self,
 		instruction: &InstructionRef,
-		condition: Option<String>,
-		hit: Option<aux::HitCondition>,
-		log: Option<Vec<aux::LogPart>>
+		trigger: &Trigger,
+		log: Option<Vec<aux::LogPart>>,
+		exact: bool
 	) -> Result<Option<(Option<u32>, InstructionRef)>, String> {
-		self.breakpoint_set(&AuxRequest::BreakpointSet {
-			instruction: instruction.clone(),
-			condition,
-			hit,
-			log,
-			exact: false
-		})
-	}
-
-	fn breakpoint_set(&mut self, request: &AuxRequest) -> Result<Option<(Option<u32>, InstructionRef)>, String> {
-		match self.request(request)? {
-			AuxResponse::BreakpointSet {
-				result: aux::BreakpointSetResult::Success { line, at, .. }
-			} => Ok(Some((line, at))),
-			AuxResponse::BreakpointSet {
-				result: aux::BreakpointSetResult::Failed
-			} => Ok(None),
-			AuxResponse::BreakpointSet {
-				result: aux::BreakpointSetResult::Refused { reason }
-			} => Err(reason),
-			other => Err(unexpected(other))
+		match self.place_breakpoint(instruction, trigger, log, exact)? {
+			Placed::Set { at, line, .. } => Ok(Some((line, at))),
+			Placed::Nowhere => Ok(None),
+			Placed::Refused(reason) => Err(reason)
 		}
 	}
 
 	fn unset(&mut self, key: &str) {
 		let set = self.set.lock().unwrap().remove(key).unwrap_or_default();
 		for breakpoint in set {
-			let _ = self.request(&AuxRequest::BreakpointUnset {
-				instruction: breakpoint.asked,
-				exact: key == INSTRUCTION_BREAKPOINTS
-			});
+			let _ = self.remove_breakpoint(&breakpoint.asked, key == INSTRUCTION_BREAKPOINTS);
 		}
 	}
 
@@ -1795,7 +1770,7 @@ impl Adapter {
 			proc: named_proc(name),
 			offset: 0
 		};
-		let set_as_asked = hit_condition(hit).and_then(|hit| self.set_breakpoint(&instruction, condition, hit, None));
+		let set_as_asked = hit_condition(hit).and_then(|hit| self.set_breakpoint(&instruction, &Trigger { condition, hit }, None, false));
 		let mut at = None;
 		let breakpoint = match set_as_asked {
 			Ok(Some((line, set_at))) => {
@@ -1940,23 +1915,19 @@ impl Adapter {
 			};
 
 			let instruction = InstructionRef { proc, offset: offset.into() };
+			let trigger = Trigger {
+				condition: breakpoint.condition.clone(),
+				hit
+			};
 			let mut at = None;
-			breakpoints.push(
-				match self.breakpoint_set(&AuxRequest::BreakpointSet {
-					instruction: instruction.clone(),
-					condition: breakpoint.condition.clone(),
-					hit,
-					log: None,
-					exact: true
-				}) {
-					Ok(Some((line, set_at))) => {
-						at = Some(set_at);
-						serde_json::json!({ "id": id, "verified": true, "line": line, "instructionReference": address_text(address) })
-					}
-					Ok(None) => unverified("could not set breakpoint".to_owned()),
-					Err(e) => unverified(e)
+			breakpoints.push(match self.set_breakpoint(&instruction, &trigger, None, true) {
+				Ok(Some((line, set_at))) => {
+					at = Some(set_at);
+					serde_json::json!({ "id": id, "verified": true, "line": line, "instructionReference": address_text(address) })
 				}
-			);
+				Ok(None) => unverified("could not set breakpoint".to_owned()),
+				Err(e) => unverified(e)
+			});
 			set.push(SetBreakpoint {
 				asked: instruction,
 				at,
@@ -2404,13 +2375,6 @@ impl Adapter {
 		}
 	}
 
-	fn world_has_lines(&mut self) -> bool {
-		match self.request(&AuxRequest::Files) {
-			Ok(AuxResponse::Files { files }) => files.iter().any(|file| file != HELPER_FILE),
-			_ => true
-		}
-	}
-
 	fn loaded_sources(&mut self) -> Handled {
 		if !self.debugging || self.debuggee.is_none() {
 			return Ok(serde_json::json!({ "sources": [] }));
@@ -2653,7 +2617,19 @@ fn thread_name(stack: &aux::Stack) -> String {
 }
 
 fn unexpected(response: AuxResponse) -> String {
-	format!("unexpected debug server response: {:?}", response)
+	Adapter::unexpected(&response)
+}
+
+impl Asks for Adapter {
+	type Error = String;
+
+	fn ask(&mut self, request: &AuxRequest) -> Result<AuxResponse, String> {
+		self.request(request)
+	}
+
+	fn unexpected(response: &AuxResponse) -> String {
+		format!("unexpected debug server response: {:?}", response)
+	}
 }
 
 pub fn default_args(server: Server) -> Vec<String> {

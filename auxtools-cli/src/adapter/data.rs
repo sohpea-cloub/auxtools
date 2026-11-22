@@ -114,14 +114,8 @@ impl Adapter {
 					Err(OVER.to_owned())
 				}
 				Some((place, ..)) => hit_condition(wanted.hit_condition.as_deref()).and_then(|hit| {
-					match self.request(&AuxRequest::WatchSet {
-						place: place.clone(),
-						condition: wanted.condition.clone().filter(|condition| !condition.trim().is_empty()),
-						hit
-					})? {
-						AuxResponse::WatchSet(result) => result,
-						other => Err(unexpected(other))
-					}
+					let condition = wanted.condition.clone().filter(|condition| !condition.trim().is_empty());
+					self.watch(place.clone(), &Trigger { condition, hit })?
 				})
 			};
 			let name = known.map_or_else(|| wanted.data_id.clone(), |(_, name, _)| name);
@@ -216,11 +210,7 @@ impl Adapter {
 				continue;
 			}
 			let condition = breakpoint.condition.clone().filter(|condition| !condition.trim().is_empty());
-			let watched =
-				hit_condition(breakpoint.hit.as_deref()).and_then(|hit| match self.request(&AuxRequest::WatchSet { place, condition, hit })? {
-					AuxResponse::WatchSet(result) => result,
-					other => Err(unexpected(other))
-				});
+			let watched = hit_condition(breakpoint.hit.as_deref()).and_then(|hit| self.watch(place, &Trigger { condition, hit })?);
 			let breakpoint = &mut self.data.set[at];
 			match watched {
 				Ok(watch) => breakpoint.watch = Some(watch.id),

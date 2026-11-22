@@ -27,7 +27,10 @@ use std::{
 };
 
 use auxtools_cli::{
-	client::{Client, Heard, Lost},
+	client::{
+		ops::{Asks, Operations, Placed, Trigger},
+		Client, Heard, Lost
+	},
 	local
 };
 use auxtools_protocol::*;
@@ -507,12 +510,11 @@ impl World {
 	}
 
 	fn request(&mut self, request: Request) -> Result<Response> {
-		let until = Instant::now() + self.patience;
-		self.request_by(request, until)?.ok_or_else(|| self.unresponsive("respond"))
+		self.ask(&request)
 	}
 
-	fn request_by(&mut self, request: Request, until: Instant) -> Result<Option<Response>> {
-		let Some(id) = self.send(&request, Some(until))? else {
+	fn request_by(&mut self, request: &Request, until: Instant) -> Result<Option<Response>> {
+		let Some(id) = self.send(request, Some(until))? else {
 			return Ok(None);
 		};
 		loop {
@@ -1147,7 +1149,7 @@ impl World {
 	}
 
 	fn observe(&mut self, patience: Duration) -> Option<Option<BreakpointReason>> {
-		match self.request_by(Request::Status, Instant::now() + patience) {
+		match self.request_by(&Request::Status, Instant::now() + patience) {
 			Ok(Some(Response::Status { paused })) => Some(paused.map(|stop| stop.reason)),
 			_ => None
 		}
@@ -1183,22 +1185,21 @@ impl World {
 			None => None
 		};
 		for expression in &wait.changes {
-			let watch = Request::WatchSet {
-				place: WatchPlace::Expression {
-					frame_id,
-					expression: expression.clone()
-				},
+			let place = WatchPlace::Expression {
+				frame_id,
+				expression: expression.clone()
+			};
+			let trigger = Trigger {
 				condition: wait.condition.clone(),
 				hit: None
 			};
-			match self.request(watch)? {
-				Response::WatchSet(Ok(watch)) => {
+			match self.watch(place, &trigger)? {
+				Ok(watch) => {
 					ours_watches.push(watch.id);
 					let said = json!([{ "name": watch.name, "value": watch.value }]);
 					self.say_waited("watching", said, Some(&format!("watching {}, now {}", watch.name, short(&watch.value))));
 				}
-				Response::WatchSet(Err(why)) => return Err(format!("cannot watch {}: {}", expression, why).into()),
-				other => return Err(unexpected(&other))
+				Err(why) => return Err(format!("cannot watch {}: {}", expression, why).into())
 			}
 		}
 		if paused.is_some() {
@@ -1248,24 +1249,17 @@ impl World {
 				.rsplit_once(':')
 				.and_then(|(file, line)| Some((file, line.parse::<u32>().ok()?)))
 				.ok_or_else(|| format!("invalid location '{}': expected FILE:LINE or /proc/path[#N].", place))?;
-			match self.request(Request::Locate { file: file.to_owned(), line })? {
-				Response::Locate { instructions } if instructions.is_empty() => return Err(self.nowhere(file, line)?),
-				Response::Locate { instructions } => (instructions, Some(line)),
-				other => return Err(unexpected(&other))
+			let instructions = self.locate(file, line)?;
+			if instructions.is_empty() {
+				return Err(self.nowhere(file, line)?);
 			}
+			(instructions, Some(line))
 		};
+		let trigger = Trigger { condition, hit: None };
 		let mut bound = vec![];
 		for instruction in instructions {
-			match self.request(Request::BreakpointSet {
-				instruction: instruction.clone(),
-				condition: condition.clone(),
-				hit: None,
-				log: log.clone(),
-				exact: false
-			})? {
-				Response::BreakpointSet {
-					result: BreakpointSetResult::Success { line, at, file }
-				} => bound.push(Bound {
+			match self.place_breakpoint(&instruction, &trigger, log.clone(), false)? {
+				Placed::Set { at, file, line } => bound.push(Bound {
 					place: place.to_owned(),
 					asked: instruction,
 					at,
@@ -1273,24 +1267,15 @@ impl World {
 					line,
 					asked_line
 				}),
-				Response::BreakpointSet {
-					result: BreakpointSetResult::Refused { reason }
-				} => return Err(format!("cannot set a breakpoint at {}: {}", place, reason).into()),
-				Response::BreakpointSet { .. } => return Err(format!("cannot set a breakpoint at {}: no such proc.", place).into()),
-				other => return Err(unexpected(&other))
+				Placed::Refused(reason) => return Err(format!("cannot set a breakpoint at {}: {}", place, reason).into()),
+				Placed::Nowhere => return Err(format!("cannot set a breakpoint at {}: no such proc.", place).into())
 			}
 		}
 		Ok(bound)
 	}
 
 	fn unset_breakpoint(&mut self, bound: &Bound) -> Result<u32> {
-		match self.request(Request::BreakpointUnset {
-			instruction: bound.asked.clone(),
-			exact: false
-		})? {
-			Response::BreakpointUnset { skipped, .. } => Ok(skipped),
-			other => Err(unexpected(&other))
-		}
+		self.remove_breakpoint(&bound.asked, false)
 	}
 
 	fn nowhere(&mut self, file: &str, line: u32) -> Result<Failure> {
@@ -1302,12 +1287,8 @@ impl World {
 			Response::LinesWithCode { lines } => lines,
 			other => return Err(unexpected(&other))
 		};
-		let mut lines_known = || match self.request(Request::Files) {
-			Ok(Response::Files { files }) => files.iter().any(|name| name != HELPER_FILE),
-			_ => true
-		};
 		Ok(match lines.last() {
-			None if !lines_known() => format!("cannot set a breakpoint at {}:{}: {}.", file, line, crate::adapter::NO_LINES),
+			None if !self.has_lines() => format!("cannot set a breakpoint at {}:{}: {}.", file, line, crate::adapter::NO_LINES),
 			None => format!(
 				"cannot set a breakpoint at {}:{}: the world has no code from a file named {}.",
 				file, line, file
@@ -1315,6 +1296,19 @@ impl World {
 			Some(last) => format!("cannot set a breakpoint at {}:{}: {} has no code after line {}.", file, line, file, last)
 		}
 		.into())
+	}
+}
+
+impl Asks for World {
+	type Error = Failure;
+
+	fn ask(&mut self, request: &Request) -> Result<Response> {
+		let until = Instant::now() + self.patience;
+		self.request_by(request, until)?.ok_or_else(|| self.unresponsive("respond"))
+	}
+
+	fn unexpected(response: &Response) -> Failure {
+		unexpected(response)
 	}
 }
 
