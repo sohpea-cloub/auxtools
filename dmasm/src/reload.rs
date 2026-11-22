@@ -550,6 +550,7 @@ pub struct Snapshot {
     tree: ObjectTree,
     procs: BTreeMap<ProcKey, (String, String, usize)>,
     defines: Option<DefineHistory>,
+    stopped: bool,
     patched: HashMap<ProcKey, ProcValue>,
     byond: ByondVersion,
     root: Option<PathBuf>,
@@ -596,16 +597,17 @@ impl Snapshot {
         )
         .map_err(|e| e.to_string())?;
 
-        let tree = {
+        let (stopped, tree) = {
             let mut parser = dreammaker::Parser::new(&ctx, &mut pp);
             parser.enable_procs();
-            parser.parse_object_tree()
+            parser.parse_object_tree_2()
         };
         let skin = pp.skins().last().cloned();
         let maps = pp.maps().to_vec();
         let defines = pp.finalize();
         let mut snapshot = Self::from_tree(ctx, tree);
         snapshot.defines = Some(defines);
+        snapshot.stopped = stopped;
         snapshot.root = dme.parent().map(Path::to_owned);
         let root = snapshot.root.clone();
         let relative = |path: PathBuf| match &root {
@@ -883,6 +885,7 @@ impl Snapshot {
             tree,
             procs,
             defines: None,
+            stopped: false,
             patched: HashMap::new(),
             byond: ByondVersion::LATEST,
             root: None,
@@ -969,6 +972,10 @@ impl Snapshot {
 
     pub fn context(&self) -> &Context {
         &self.ctx
+    }
+
+    pub fn macro_history(&self) -> Option<&DefineHistory> {
+        self.defines.as_ref().filter(|_| !self.stopped)
     }
 
     pub fn files(&self) -> Vec<PathBuf> {

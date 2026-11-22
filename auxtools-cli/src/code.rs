@@ -234,7 +234,7 @@ impl Code {
 			},
 			resources
 		};
-		if !self.give_macros() {
+		if !self.give_macros(Some(&watching.built)) {
 			return;
 		}
 		self.out.console("Hot reload active");
@@ -376,9 +376,10 @@ impl Code {
 			Some(true) => {
 				self.watch_named(watching);
 				self.send(Event::Changed);
+				let given = self.give_macros(Some(&new));
 				watching.applied = Some(new);
 				watching.built.clear_patches();
-				self.give_macros()
+				given
 			}
 			Some(false) => true
 		}
@@ -397,7 +398,9 @@ impl Code {
 			}
 			*self.running_defines.borrow_mut() = self.parse_options.borrow().defines.clone();
 			watching.files.changed(&self.root);
-			match self.parse() {
+			let parsed = self.parse();
+			let read = parsed.is_ok();
+			match parsed {
 				Ok(built) => {
 					self.warn_of_errors(&built);
 					let files = files(&built, &self.options.dme);
@@ -424,7 +427,7 @@ impl Code {
 			}
 			watching.applied = None;
 			watching.edited_since_built.clear();
-			return self.send(Event::Changed) && self.give_macros();
+			return self.send(Event::Changed) && self.give_macros(read.then_some(&watching.built));
 		}
 
 		watching.applied = None;
@@ -473,7 +476,7 @@ impl Code {
 		if !self.restore_resources(watching, &resource_files) || !self.ready() {
 			return false;
 		}
-		!applied || self.give_macros()
+		!applied || self.give_macros(watching.applied.as_ref())
 	}
 
 	fn read_resources(&self, sources: &[PathBuf]) -> Resources {
@@ -595,16 +598,21 @@ impl Code {
 		self.reconnected.get() || self.send(Event::Ready)
 	}
 
-	fn give_macros(&self) -> bool {
-		let options = ParseOptions {
-			defines: self.running_defines.borrow().clone(),
-			byond: self.parse_options.borrow().byond
-		};
-		let macros = match macros(&self.options.dme, &options) {
-			Ok(macros) => macros,
-			Err(e) => {
-				self.log(format!("source macros unavailable for evaluation: {}", e));
-				return true;
+	fn give_macros(&self, parsed: Option<&Snapshot>) -> bool {
+		let macros = match parsed.and_then(Snapshot::macro_history) {
+			Some(history) => source_macros(history),
+			None => {
+				let options = ParseOptions {
+					defines: self.running_defines.borrow().clone(),
+					byond: self.parse_options.borrow().byond
+				};
+				match preprocessed_macros(&self.options.dme, &options) {
+					Ok(macros) => macros,
+					Err(e) => {
+						self.log(format!("source macros unavailable for evaluation: {}", e));
+						return true;
+					}
+				}
 			}
 		};
 		if self.macros.borrow().as_ref() == Some(&macros) {
@@ -1081,7 +1089,7 @@ fn listed(name: &OsStr) -> OsString {
 
 const NOT_THE_CODES: [&str; 4] = ["DM_VERSION", "DM_BUILD", "FILE_DIR", "SPACEMAN_DMM"];
 
-pub fn macros(dme: &Path, options: &ParseOptions) -> Result<Vec<Macro>, String> {
+fn preprocessed_macros(dme: &Path, options: &ParseOptions) -> Result<Vec<Macro>, String> {
 	let ctx = dreammaker::Context::default();
 	let mut pp = dreammaker::Preprocessor::new(&ctx, dme.to_owned()).map_err(|e| format!("couldn't read {}: {}", dme.display(), e))?;
 	let mut prelude = String::from("#undef SPACEMAN_DMM\n");
@@ -1097,8 +1105,10 @@ pub fn macros(dme: &Path, options: &ParseOptions) -> Result<Vec<Macro>, String> 
 	pp.push_file(PathBuf::from("<auxtools defines>"), std::io::Cursor::new(prelude.into_bytes()))
 		.map_err(|e| e.to_string())?;
 	pp.by_ref().for_each(drop);
-	let history = pp.finalize();
+	Ok(source_macros(&pp.finalize()))
+}
 
+fn source_macros(history: &dreammaker::preprocessor::DefineHistory) -> Vec<Macro> {
 	let mut defined: HashMap<String, (u16, Macro)> = HashMap::new();
 	for (range, (name, define)) in history.iter() {
 		let at_end = range.end.file == dreammaker::FileId::UNKNOWN && range.end.line == !0;
@@ -1126,7 +1136,7 @@ pub fn macros(dme: &Path, options: &ParseOptions) -> Result<Vec<Macro>, String> 
 	}
 	let mut macros: Vec<Macro> = defined.into_values().map(|(_, define)| define).collect();
 	macros.sort_by(|a, b| a.name.cmp(&b.name));
-	Ok(macros)
+	macros
 }
 
 pub fn parse_define(define: &str) -> (String, Option<String>) {
@@ -1141,6 +1151,95 @@ mod tests {
 	use std::time::{Duration, SystemTime};
 
 	use super::*;
+
+	struct Project {
+		root: PathBuf
+	}
+
+	impl Project {
+		fn new(name: &str, files: &[(&str, &str)]) -> Self {
+			let root = std::env::temp_dir().join(format!("auxtools-code-{}-{}", name, std::process::id()));
+			let _ = std::fs::remove_dir_all(&root);
+			let project = Project { root };
+			for (file, text) in files {
+				project.write(file, text);
+			}
+			project
+		}
+
+		fn write(&self, file: &str, text: &str) {
+			let path = self.root.join(file);
+			std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+			std::fs::write(path, text).unwrap();
+		}
+
+		fn dme(&self) -> PathBuf {
+			self.root.join("world.dme")
+		}
+	}
+
+	impl Drop for Project {
+		fn drop(&mut self) {
+			let _ = std::fs::remove_dir_all(&self.root);
+		}
+	}
+
+	#[test]
+	fn the_parse_gives_the_macros_a_preprocessor_pass_gives() {
+		let project = Project::new("macros", &[
+			(
+				"world.dme",
+				"#define FIRST 1\n#define TWICE(x) ((x) * 2)\n#define GONE 3\n#undef GONE\n#define FIRST 2\n#define MANY(a, rest...) list(a, \
+				 rest)\n#include \"code/code.dm\"\n"
+			),
+			(
+				"code/code.dm",
+				"#ifdef FLAG\n#define FLAGGED FLAG\n#endif\n#ifdef ABSENT\n#define NEVER 1\n#endif\n/proc/f()\n\treturn FIRST\n#define LAST \
+				 \"text\"\n"
+			)
+		]);
+		for byond in [None, Some((516, 1689)), Some((515, 1637))] {
+			let options = ParseOptions {
+				defines: vec![("FLAG".to_owned(), Some("7".to_owned())), ("BARE".to_owned(), None)],
+				byond
+			};
+			let snapshot = Snapshot::parse(&project.dme(), &options).unwrap();
+			let macros = source_macros(snapshot.macro_history().expect("the parse read all the code"));
+			assert_eq!(macros, preprocessed_macros(&project.dme(), &options).unwrap());
+			let texts: Vec<(&str, &str)> = macros.iter().map(|define| (define.name.as_str(), define.text.as_str())).collect();
+			assert_eq!(texts, [
+				("BARE", ""),
+				("FIRST", "2"),
+				("FLAG", "7"),
+				("FLAGGED", "FLAG"),
+				("LAST", "\"text\""),
+				("MANY", "list(a, rest)"),
+				("TWICE", "((x) * 2)")
+			]);
+			assert_eq!(macros[5].params, ["a", "rest..."]);
+		}
+	}
+
+	#[test]
+	fn a_parse_that_stopped_early_leaves_the_macros_to_a_preprocessor_pass() {
+		let project = Project::new("macros-stopped", &[
+			("world.dme", "#define BEFORE 1\n#include \"code/code.dm\"\n"),
+			(
+				"code/code.dm",
+				"/proc/f()\n\treturn BEFORE\n)\n#define AFTER 2\n/proc/g()\n\treturn AFTER\n"
+			)
+		]);
+		let options = ParseOptions::default();
+		let snapshot = Snapshot::parse(&project.dme(), &options).unwrap();
+		assert!(!snapshot.parse_errors().is_empty());
+		assert!(snapshot.macro_history().is_none());
+		let names: Vec<String> = preprocessed_macros(&project.dme(), &options)
+			.unwrap()
+			.into_iter()
+			.map(|define| define.name)
+			.collect();
+		assert_eq!(names, ["AFTER", "BEFORE"]);
+	}
 
 	#[test]
 	fn changed_files_are_found_by_their_directories() {
