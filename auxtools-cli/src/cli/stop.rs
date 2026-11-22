@@ -1,7 +1,7 @@
 use std::time::{Duration, Instant};
 
 use auxtools_cli::local;
-use auxtools_protocol::{Reconnected, Request, Response, ENDING_CONTEXT};
+use auxtools_protocol::{Reconnected, Request, Response};
 use serde_json::json;
 
 use super::{args, seconds_text, Failure, Result, World, HUNG_UP, TIMED_OUT};
@@ -14,7 +14,7 @@ fn ask(world: &mut World, expression: &str, until: Instant) -> Result<bool> {
 	let request = Request::Eval {
 		frame_id: None,
 		command: expression.to_owned(),
-		context: Some(ENDING_CONTEXT.to_owned())
+		ending: true
 	};
 	Ok(world.send(&request, Some(until))?.is_some())
 }

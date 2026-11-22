@@ -9,7 +9,7 @@ use std::{
 
 use auxtools_cli::local::{Shared, Stream};
 use auxtools_protocol::{
-	BreakpointReason, ClientMessage, DataChange, InstructionRef, Pending, Request, RequestId, Response, ServerMessage, Sorted, Stop, ENDING_CONTEXT
+	BreakpointReason, ClientMessage, DataChange, InstructionRef, Pending, Request, RequestId, Response, ServerMessage, Sorted, Stop
 };
 use dap_types::{ContinuedEvent, StoppedEvent as Reasons};
 
@@ -325,7 +325,7 @@ impl Debuggee {
 		self.send(&Request::Eval {
 			frame_id: None,
 			command,
-			context: Some(ENDING_CONTEXT.to_owned())
+			ending: true
 		})
 	}
 

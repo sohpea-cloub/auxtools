@@ -12,7 +12,7 @@ use auxtools_cli::{
 	local::{self, Stream}
 };
 use auxtools_protocol::{
-	self as aux, ContinueKind, InstructionRef, ProcRef, Request as AuxRequest, Response as AuxResponse, ENDING_CONTEXT, GLOBAL_INIT, HELPER_FILE
+	self as aux, ContinueKind, InstructionRef, ProcRef, Request as AuxRequest, Response as AuxResponse, GLOBAL_INIT, HELPER_FILE
 };
 use dap_types::*;
 use serde::Deserialize;
@@ -2195,7 +2195,7 @@ impl Adapter {
 		match self.request(&AuxRequest::Eval {
 			frame_id: args.frameId.map(|id| id as u32),
 			command: args.expression,
-			context: args.context.filter(|context| context != ENDING_CONTEXT)
+			ending: false
 		})? {
 			AuxResponse::Eval(Ok(result)) => json(EvaluateResponse {
 				result: shown(result.value, hex),
@@ -2285,7 +2285,7 @@ impl Adapter {
 		match self.request(&AuxRequest::Eval {
 			frame_id: args.frame_id.map(|id| id as u32),
 			command: format!("{} = ({})", args.expression, args.value),
-			context: None
+			ending: false
 		})? {
 			AuxResponse::Eval(Ok(result)) => Ok(serde_json::json!({
 				"value": shown(result.value, hex),

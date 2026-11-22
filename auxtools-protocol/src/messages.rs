@@ -2,8 +2,6 @@ use serde::{Deserialize, Serialize};
 
 pub const WORLD_SHUTTING_DOWN: &str = "The world is shutting down";
 
-pub const ENDING_CONTEXT: &str = "ending";
-
 pub const GLOBAL_INIT: &str = "(global init)";
 
 pub const HELPER_FILE: &str = "auxtools_launcher.dm";
@@ -16,7 +14,7 @@ pub enum Request {
 	Eval {
 		frame_id: Option<u32>,
 		command: String,
-		context: Option<String>
+		ending: bool
 	},
 	BreakpointSet {
 		instruction: InstructionRef,

@@ -168,14 +168,11 @@ fn on_stop(conn: &mut Connection, options: &Options) -> Option<()> {
 	}
 
 	for watch in &options.watches {
-		let (context, command) = match watch.strip_prefix("repl:") {
-			Some(command) => ("repl", command),
-			None => ("watch", watch.as_str())
-		};
+		let command = watch.strip_prefix("repl:").unwrap_or(watch);
 		let response = conn.request(Request::Eval {
 			frame_id: Some(0),
 			command: command.to_owned(),
-			context: Some(context.to_owned())
+			ending: false
 		})?;
 		if let Response::Eval(Ok(EvalResponse { variables: Some(vars), .. })) = response {
 			conn.request(Request::Variables {

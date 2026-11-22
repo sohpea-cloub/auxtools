@@ -13,7 +13,7 @@ use std::{
 
 use auxtools_protocol::{
 	BreakpointReason, BreakpointSetResult, ContinueKind, InstructionRef, ProcRef, ProfileReply, ProfileRequest, ProfileTotals, ProfiledCode, Request,
-	Response, VariablesRef, ENDING_CONTEXT
+	Response, VariablesRef
 };
 use client::{Client, World};
 use paths::ByondCommand;
@@ -66,7 +66,7 @@ fn eval(client: &mut Client, frame_id: Option<u32>, command: &str) -> String {
 	let response = client.request(Request::Eval {
 		frame_id,
 		command: command.to_owned(),
-		context: None
+		ending: false
 	});
 
 	match response {
@@ -86,7 +86,7 @@ fn eval_fields(client: &mut Client, frame_id: u32, command: &str) -> (String, Ve
 	let response = client.request(Request::Eval {
 		frame_id: Some(frame_id),
 		command: command.to_owned(),
-		context: None
+		ending: false
 	});
 	let Response::Eval(Ok(eval)) = response else {
 		panic!("expected the result of {:?}, got {:?}", command, response);
@@ -119,7 +119,7 @@ fn values_516(client: &mut Client) {
 	let response = client.request(Request::Eval {
 		frame_id: Some(0),
 		command: "alist_sample()".to_owned(),
-		context: None
+		ending: false
 	});
 	let Response::Eval(Ok(alist)) = response else {
 		panic!("expected the result of alist_sample(), got {:?}", response);
@@ -302,7 +302,7 @@ fn protocol(world: &World, mut client: Client) -> Client {
 	let response = client.request(Request::Eval {
 		frame_id: None,
 		command: "1 +".to_owned(),
-		context: None
+		ending: false
 	});
 	assert!(
 		matches!(&response, Response::Eval(Err(why)) if why.starts_with("parser error: ")),
@@ -508,7 +508,7 @@ fn protocol(world: &World, mut client: Client) -> Client {
 	let busy = Request::Eval {
 		frame_id: None,
 		command: BUSY.to_owned(),
-		context: None
+		ending: false
 	};
 	let answer = client.request_within(busy, Duration::from_millis(20));
 	assert!(
@@ -670,7 +670,7 @@ fn waiting_world_ends() {
 	client.send(Request::Eval {
 		frame_id: None,
 		command: "world.Del()".to_owned(),
-		context: Some(ENDING_CONTEXT.to_owned())
+		ending: true
 	});
 	client.wait_closed();
 	let code = world.exit_code();
@@ -684,7 +684,7 @@ fn panics() {
 	let panic = || Request::Eval {
 		frame_id: None,
 		command: "#panic".to_owned(),
-		context: None
+		ending: false
 	};
 	let world = World::start(&host_file("debug_test_host.dmb"), &[]);
 	let mut client = world.connect_silent();

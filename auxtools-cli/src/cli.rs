@@ -861,7 +861,7 @@ impl World {
 		let result = match self.request(Request::Eval {
 			frame_id,
 			command: expression.to_owned(),
-			context: Some("repl".to_owned())
+			ending: false
 		})? {
 			Response::Eval(result) => result,
 			other => return Err(unexpected(&other))

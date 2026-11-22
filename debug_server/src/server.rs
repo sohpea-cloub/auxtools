@@ -2312,8 +2312,7 @@ impl Server {
 				.any(|instance| on(unsafe { (*instance).context }))
 	}
 
-	fn handle_eval_request(&mut self, frame_id: Option<u32>, command: &str, context: Option<&str>) {
-		let ending = context == Some(ENDING_CONTEXT);
+	fn handle_eval_request(&mut self, frame_id: Option<u32>, command: &str, ending: bool) {
 		if ending {
 			self.ending = Some(Instant::now());
 		}
@@ -2801,7 +2800,7 @@ impl Server {
 				self.send_callee_errors();
 				self.answer(Response::SetVariable(result));
 			}
-			Request::Eval { frame_id, command, context } => self.handle_eval_request(frame_id, &command, context.as_deref()),
+			Request::Eval { frame_id, command, ending } => self.handle_eval_request(frame_id, &command, ending),
 
 			Request::StackFrames {
 				stack_id,
@@ -3263,8 +3262,8 @@ impl Server {
 				return Some(kind);
 			}
 
-			if let Request::Eval { frame_id, command, context } = request {
-				self.handle_eval_request(frame_id, &command, context.as_deref());
+			if let Request::Eval { frame_id, command, ending } = request {
+				self.handle_eval_request(frame_id, &command, ending);
 				if self.ending() {
 					self.broadcast(Response::Resumed, None);
 					self.state = None;

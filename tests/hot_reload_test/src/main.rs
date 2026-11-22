@@ -254,7 +254,7 @@ fn eval(client: &mut Client, command: &str) -> String {
 	match client.request(Request::Eval {
 		frame_id: None,
 		command: command.to_owned(),
-		context: None
+		ending: false
 	}) {
 		Response::Eval(Ok(eval)) => eval.value,
 		other => panic!("expected the result of {:?}, got {:?}", command, other)
@@ -265,7 +265,7 @@ fn sleeps(client: &mut Client, command: &str) -> bool {
 	match client.request(Request::Eval {
 		frame_id: None,
 		command: command.to_owned(),
-		context: None
+		ending: false
 	}) {
 		Response::Eval(Ok(_)) => false,
 		Response::Eval(Err(why)) if why.starts_with("evaluation aborted because the code slept") => true,
@@ -676,7 +676,7 @@ fn main() {
 	client.send(Request::Eval {
 		frame_id: None,
 		command: "answer()".to_owned(),
-		context: None
+		ending: false
 	});
 	assert!(expect_reload_result(client.recv()).applied);
 	match client.recv() {
