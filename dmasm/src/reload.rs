@@ -765,30 +765,32 @@ impl Snapshot {
             })
             .collect();
         for (key, old_value, new_value) in &pairs {
-            if old_value.code != new_value.code {
-                let reload = self.compile_code(key).and_then(|mut reload| {
-                    self.compile_in_lists(key, &mut reload, |_, _| false)?;
+            let recompiled = |snapshot: &Snapshot| {
+                snapshot.compile_code(key).and_then(|mut reload| {
+                    snapshot.compile_in_lists(key, &mut reload, |_, _| false)?;
                     Ok(reload)
-                });
-                match reload {
-                    Ok(reload) => changes.plan.reloads.push(reload),
-                    Err(e) => changes.refused.push(self.uncompiled(key, &e)),
+                })
+            };
+            let reload = if old_value.code != new_value.code {
+                recompiled(self)
+            } else if let Some(old_code) = before.remove(key) {
+                match line_change(old_code, self.compile(key), old_value, new_value) {
+                    LineChange::Same => continue,
+                    LineChange::Moved(lines) => {
+                        changes.plan.line_moves.push(LineMove {
+                            proc: key.clone(),
+                            lines,
+                        });
+                        continue;
+                    }
+                    LineChange::Recompile => recompiled(self),
                 }
-            } else if let Some(Ok(old_code)) = before.remove(key) {
-                let lines: BTreeMap<u32, u32> = match self.compile(key) {
-                    Ok(new_code) => dbg_lines(&old_code.nodes)
-                        .into_iter()
-                        .zip(dbg_lines(&new_code.nodes))
-                        .collect(),
-                    Err(_) => BTreeMap::new(),
-                };
-                let lines: Vec<(u32, u32)> = lines.into_iter().collect();
-                if lines.iter().any(|(o, n)| o != n) {
-                    changes.plan.line_moves.push(LineMove {
-                        proc: key.clone(),
-                        lines,
-                    });
-                }
+            } else {
+                continue;
+            };
+            match reload {
+                Ok(reload) => changes.plan.reloads.push(reload),
+                Err(e) => changes.refused.push(self.uncompiled(key, &e)),
             }
         }
         for (key, value) in previous {
@@ -1780,8 +1782,17 @@ fn line_move(
     old_value: &ProcValue,
     new_value: &ProcValue,
 ) -> LineChange {
+    line_change(old.compile(old_key), new.compile(key), old_value, new_value)
+}
+
+fn line_change(
+    old_code: Result<CompiledProc, String>,
+    new_code: Result<CompiledProc, String>,
+    old_value: &ProcValue,
+    new_value: &ProcValue,
+) -> LineChange {
     let mut lines = BTreeMap::new();
-    match (old.compile(old_key), new.compile(key)) {
+    match (old_code, new_code) {
         (Ok(old_code), Ok(new_code)) => match line_map(&old_code.nodes, &new_code.nodes) {
             Some(map) => lines.extend(map),
             None => return LineChange::Recompile,
@@ -3496,6 +3507,84 @@ fn proc_lines(value: &ProcValue) -> std::ops::RangeInclusive<u32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct Project {
+        dir: PathBuf,
+    }
+
+    impl Project {
+        fn new(name: &str, files: &[(&str, &str)]) -> Project {
+            let dir =
+                std::env::temp_dir().join(format!("dmasm-files-{}-{}", name, std::process::id()));
+            let _ = std::fs::remove_dir_all(&dir);
+            std::fs::create_dir_all(&dir).unwrap();
+            let project = Project { dir };
+            let mut dme = String::new();
+            for (file, text) in files {
+                dme += &format!("#include \"{file}\"\n");
+                project.write(file, text);
+            }
+            project.write("world.dme", &dme);
+            project
+        }
+
+        fn write(&self, file: &str, text: &str) {
+            std::fs::write(self.dir.join(file), text).unwrap();
+        }
+
+        fn parse(&self) -> Snapshot {
+            Snapshot::parse(&self.dir.join("world.dme"), &ParseOptions::default()).unwrap()
+        }
+
+        fn both(&self, old: &mut Snapshot, file: &str) -> (Result<String, String>, String) {
+            let shown = |changes: &Changes| {
+                format!(
+                    "{:#?}\n{:#?}\n{:#?}",
+                    changes.plan, changes.refused, changes.warnings
+                )
+            };
+            let own = old
+                .reload_file(&self.dir, Path::new(file))
+                .map(|reload| shown(&reload.changes));
+            let edited = HashSet::from([PathBuf::from(file)]);
+            let full = diff(old, &self.parse(), Some(&edited));
+            (own, shown(&full))
+        }
+    }
+
+    impl Drop for Project {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.dir);
+        }
+    }
+
+    fn reloaded(changes: &Changes) -> Vec<String> {
+        changes
+            .plan
+            .reloads
+            .iter()
+            .map(|reload| reload.proc.to_string())
+            .collect()
+    }
+
+    #[test]
+    fn lines_that_clash_compile_the_proc_again_as_a_full_parse_does() {
+        let (a, b) = (
+            "/proc/g()\n\treturn 1\n/proc/f()\n\treturn /datum/u::x\n",
+            "\n\n/datum/u\n\tvar/x = 3\n",
+        );
+        let project = Project::new("clash", &[("a.dm", a), ("b.dm", b)]);
+        let mut old = project.parse();
+        project.write(
+            "a.dm",
+            &a.replace("\treturn 1\n", "\tworld.log << 0\n\treturn 1\n"),
+        );
+        let (own, full) = project.both(&mut old, "a.dm");
+        assert_eq!(own.unwrap(), full);
+        let reload = old.reload_file(&project.dir, Path::new("a.dm")).unwrap();
+        assert_eq!(reloaded(&reload.changes), ["/f", "/g"]);
+        assert!(reload.changes.plan.line_moves.is_empty());
+    }
 
     #[test]
     fn a_strings_text_is_not_a_use_of_a_name() {
