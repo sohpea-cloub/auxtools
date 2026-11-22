@@ -2511,6 +2511,103 @@ fn a_resource_file_names_the_code_and_defaults_that_use_it() {
 }
 
 #[test]
+fn a_resource_is_found_wherever_code_or_a_default_names_it() {
+    let world = World::new(
+        "resource-places",
+        "/obj/lamp
+/datum/holder
+	var/list/by_name = list(\"lamp\" = 'a.dmi')
+	var/shown = icon('a.dmi')
+	var/lamp = new /obj/lamp{icon = 'a.dmi'}
+	var/other = 'b.dmi'
+/proc/in_default(i = 'a.dmi')
+	return i
+/proc/in_block(x)
+	if(x)
+		for(var/i in 1 to 2)
+			world << 'a.dmi'
+/proc/in_switch(x)
+	switch(x)
+		if(1)
+			return 2
+		else
+			return x ? 'a.dmi' : null
+/proc/in_text()
+	return \"\\icon['a.dmi']\"
+/proc/in_list()
+	return list(\"lamp\" = 'a.dmi')
+/proc/in_new()
+	return new /icon('a.dmi', \"on\")
+/proc/in_call(datum/holder/h)
+	return h.by_name.Find('a.dmi')
+/proc/with_backslash()
+	return 'icons\\\\A.dmi'
+/proc/in_a_string()
+	return \"'a.dmi'\"
+/proc/unrelated()
+	return 'b.dmi'
+",
+    );
+    let snapshot = world.parse();
+    let users = snapshot.resource_users(&["a.dmi".to_owned()]);
+    let mut procs: Vec<String> = reloaded(&users).iter().map(|k| k.to_string()).collect();
+    procs.sort();
+    assert_eq!(
+        procs,
+        [
+            "/in_block",
+            "/in_call",
+            "/in_default",
+            "/in_list",
+            "/in_new",
+            "/in_switch",
+            "/in_text"
+        ]
+    );
+    let inits: Vec<&str> = users
+        .init_procs
+        .iter()
+        .map(|i| i.type_path.as_str())
+        .collect();
+    assert_eq!(inits, ["/datum/holder"]);
+    for var in ["by_name", "shown", "lamp"] {
+        let code = "/obj/lamp\n/datum/holder\n\tvar/VAR = VALUE\n"
+            .replace("VAR", var)
+            .replace(
+                "VALUE",
+                match var {
+                    "by_name" => "list(\"lamp\" = 'a.dmi')",
+                    "shown" => "icon('a.dmi')",
+                    _ => "new /obj/lamp{icon = 'a.dmi'}",
+                },
+            );
+        let world = World::new("resource-default", &code);
+        let users = world.parse().resource_users(&["a.dmi".to_owned()]);
+        assert_eq!(users.init_procs.len(), 1, "{}: {:?}", var, users);
+    }
+    let world = World::new(
+        "resource-evaluated",
+        "/datum/keeper
+	var/const/ICON = 'a.dmi'
+	var/kept = ICON
+	var/list/kept_list = list(ICON, 2)
+",
+    );
+    let users = world.parse().resource_users(&["a.dmi".to_owned()]);
+    assert_eq!(users.var_defaults.len(), 1, "{:?}", users.var_defaults);
+    assert_eq!(users.var_defaults[0].var, "kept");
+    assert_eq!(users.init_procs.len(), 1, "{:?}", users.init_procs);
+    assert_eq!(users.warnings.len(), 1, "{:?}", users.warnings);
+    assert!(
+        users.warnings[0].contains("const ICON"),
+        "{:?}",
+        users.warnings
+    );
+    let users = snapshot.resource_users(&["icons/a.dmi".to_owned()]);
+    assert_eq!(reloaded(&users), [key("/with_backslash", 0)]);
+}
+
+#[test]
 fn the_client_script_is_left_to_the_launcher() {
     for (before, after) in [
         (

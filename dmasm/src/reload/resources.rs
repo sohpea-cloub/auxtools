@@ -1,7 +1,11 @@
 use std::collections::HashMap;
 
+use dreammaker::ast::Term;
+use dreammaker::constants::Constant;
 use dreammaker::objtree::TypeRef;
 use dreammaker::FileId;
+
+use crate::syntax;
 
 use super::{
     default_value, inits, is_builtin, Changes, ConstValue, InitProc, ProcKey, ProcReload, Refusal,
@@ -22,30 +26,17 @@ fn normalized(name: &str) -> String {
     name.replace('\\', "/").to_ascii_lowercase()
 }
 
-fn names_in(text: &str, out: &mut Vec<String>) {
-    let mut rest = text;
-    while let Some(at) = rest.find("Resource(\"") {
-        rest = &rest[at + "Resource(\"".len()..];
-        let mut name = String::new();
-        let mut chars = rest.char_indices();
-        let mut end = rest.len();
-        while let Some((i, c)) = chars.next() {
-            match c {
-                '\\' => {
-                    if let Some((_, escaped)) = chars.next() {
-                        name.push(escaped);
-                    }
-                }
-                '"' => {
-                    end = i + 1;
-                    break;
-                }
-                c => name.push(c),
-            }
+fn as_printed(name: &str) -> String {
+    let text = format!("{:?}", name);
+    let mut read = String::new();
+    let mut chars = text[1..text.len() - 1].chars();
+    while let Some(c) = chars.next() {
+        match c {
+            '\\' => read.extend(chars.next()),
+            c => read.push(c),
         }
-        out.push(normalized(&name));
-        rest = &rest[end..];
     }
+    read
 }
 
 impl Index {
@@ -57,10 +48,11 @@ impl Index {
                 continue;
             };
             names.clear();
-            names_in(
-                &format!("{:?}{:?}", value.code, value.parameters),
-                &mut names,
-            );
+            syntax::walk_proc(value, &mut |node| {
+                if let syntax::Node::Term(Term::Resource(name)) = node {
+                    names.push(normalized(&as_printed(name)));
+                }
+            });
             names.sort();
             names.dedup();
             for name in names.drain(..) {
@@ -72,9 +64,21 @@ impl Index {
                 if value.value.location.file == FileId::BUILTINS {
                     continue;
                 }
-                let text = format!("{:?}{:?}", value.value.expression, value.value.constant);
                 names.clear();
-                names_in(&text, &mut names);
+                if let Some(expression) = &value.value.expression {
+                    syntax::walk_expression(expression, &mut |node| {
+                        if let syntax::Node::Term(Term::Resource(name)) = node {
+                            names.push(normalized(&as_printed(name)));
+                        }
+                    });
+                }
+                if let Some(constant) = &value.value.constant {
+                    syntax::walk_constant(constant, &mut |constant| {
+                        if let Constant::Resource(name) = constant {
+                            names.push(normalized(&as_printed(name)));
+                        }
+                    });
+                }
                 names.sort();
                 names.dedup();
                 for name in names.drain(..) {
@@ -214,20 +218,5 @@ impl Snapshot {
         } else {
             changes.var_defaults.push(default);
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::names_in;
-
-    #[test]
-    fn names_come_out_of_debug_text() {
-        let mut names = vec![];
-        names_in(
-            r#"Call(Resource("icons/A.dmi"), Prefab(x)) Resource("say \"hi\".ogg")"#,
-            &mut names,
-        );
-        assert_eq!(names, vec!["icons/a.dmi", "say \"hi\".ogg"]);
     }
 }
