@@ -247,6 +247,24 @@ fn offset_of(client: &mut Client, proc: &str, line: u32) -> u32 {
 	}
 }
 
+fn procs_on(client: &mut Client, file: &str, line: u32) -> Vec<String> {
+	match client.request(Request::Locate { file: file.to_owned(), line }) {
+		Response::Locate { instructions } => instructions.into_iter().map(|at| at.proc.path).collect(),
+		other => panic!("expected Locate for {}:{}, got {:?}", file, line, other)
+	}
+}
+
+fn lines_with_code(client: &mut Client, file: &str, start: u32, end: u32) -> Vec<u32> {
+	match client.request(Request::LinesWithCode {
+		file: file.to_owned(),
+		start,
+		end
+	}) {
+		Response::LinesWithCode { lines } => lines,
+		other => panic!("expected LinesWithCode for {}, got {:?}", file, other)
+	}
+}
+
 fn main() {
 	let mut source = Source::copy_host();
 
@@ -405,6 +423,7 @@ fn main() {
 	println!("ok: initializer error isolation");
 
 	let line = source.line_of("reload.dm", "\tx += 1");
+	assert_eq!(procs_on(&mut client, "reload.dm", line), ["/breakpoint_target"]);
 	let offset = offset_of(&mut client, "/breakpoint_target", line);
 	let at = InstructionRef {
 		proc: ProcRef {
@@ -437,9 +456,20 @@ fn main() {
 		exact: false
 	});
 	assert!(matches!(response, Response::BreakpointUnset { success: true, .. }), "{:?}", response);
+	println!("ok: breakpoints move with a proc to another file");
+
+	let moved = source.line_of("main.dm", "\tx += 1");
+	assert_eq!(procs_on(&mut client, "main.dm", moved), ["/breakpoint_target"]);
+	assert_eq!(lines_with_code(&mut client, "main.dm", moved, moved), [moved]);
+	let left = procs_on(&mut client, "reload.dm", line);
+	assert!(!left.iter().any(|proc| proc == "/breakpoint_target"), "{:?}", left);
 	let changes = source.move_code(TARGET, "main.dm", "reload.dm");
 	reload(&mut watcher, &changes);
-	println!("ok: breakpoints move with a proc to another file");
+	let back = source.line_of("reload.dm", "\tx += 1");
+	assert_eq!(procs_on(&mut client, "reload.dm", back), ["/breakpoint_target"]);
+	let left = procs_on(&mut client, "main.dm", moved);
+	assert!(!left.iter().any(|proc| proc == "/breakpoint_target"), "{:?}", left);
+	println!("ok: a proc moved to another file is located there");
 
 	let breakpoint = |client: &mut Client, offset: u32, set: bool| {
 		let instruction = InstructionRef {

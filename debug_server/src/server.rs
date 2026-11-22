@@ -257,7 +257,6 @@ pub struct Server {
 	hold: Option<ClientId>,
 	hold_max: Option<Duration>,
 	stepper: Option<ClientId>,
-	procs_by_file: Option<(u32, HashMap<String, Vec<u32>>)>,
 	moved_breakpoints: hot_reload::MovedBreakpoints<(ClientId, Placed)>,
 	old_codes: RefCell<Vec<usize>>,
 	waiting_reloads: Vec<HotReloadRequest>
@@ -309,7 +308,6 @@ impl Server {
 			hold: None,
 			hold_max: None,
 			stepper: None,
-			procs_by_file: None,
 			old_codes: RefCell::new(vec![]),
 			waiting_reloads: vec![]
 		})
@@ -691,57 +689,17 @@ impl Server {
 		}
 	}
 
-	fn file_index(&mut self) -> &HashMap<String, Vec<u32>> {
-		let count = auxtools::runtime_tables::proc_count();
-		if self.procs_by_file.as_ref().is_none_or(|(counted, _)| *counted != count) {
-			let dbg_file = dmasm::Opcode::DbgFile.word();
-			let mut by_file: HashMap<String, Vec<u32>> = HashMap::new();
-			for id in 0..count {
-				let Some(proc) = Proc::from_id(raw_types::procs::ProcId(id)) else {
-					continue;
-				};
-				let Some(file) = code_index::file_of(&proc) else { continue };
-				if unsafe { proc.bytecode() }.iter().skip(2).any(|&word| word == dbg_file) {
-					for other in Self::files_of(&proc) {
-						if other != file {
-							by_file.entry(other).or_default().push(id);
-						}
-					}
-				}
-				by_file.entry(file).or_default().push(id);
-			}
-			self.procs_by_file = Some((count, by_file));
-		}
-		&self.procs_by_file.as_ref().unwrap().1
-	}
-
-	fn files_of(proc: &Proc) -> Vec<String> {
-		let bytecode = crate::instruction_hooking::original_bytecode(proc);
-		let mut env = disassemble_env::DisassembleEnv;
-		let (nodes, _error) = dmasm::disassembler::disassemble(&bytecode, &mut env);
-		let mut files: Vec<String> = vec![];
-		for node in nodes {
-			if let dmasm::Node::Instruction(dmasm::Instruction::DbgFile(name), _) = node {
-				let name = String::from_utf8_lossy(&name.0).into_owned();
-				if !files.contains(&name) {
-					files.push(name);
-				}
-			}
-		}
-		files
-	}
-
 	fn normalized(path: &str) -> String {
 		path.replace('\\', "/").to_ascii_lowercase()
 	}
 
-	fn procs_in(&mut self, file: &str) -> (Vec<String>, Vec<(ProcRef, Vec<u32>)>) {
+	fn procs_in(file: &str) -> (Vec<String>, Vec<(ProcRef, Vec<u32>)>) {
 		let normalize = Self::normalized;
 		let wanted = normalize(file);
 		let same = |file: &str| file == wanted;
 		let alike = |file: &str| file.ends_with(&format!("/{}", wanted)) || wanted.ends_with(&format!("/{}", file));
 
-		let index = self.file_index();
+		let index = code_index::by_file();
 		let matching = |test: &dyn Fn(&str) -> bool| -> (Vec<String>, Vec<u32>) {
 			let files: Vec<(&String, &Vec<u32>)> = index.iter().filter(|(file, _)| test(&normalize(file))).collect();
 			let mut ids: Vec<u32> = files.iter().flat_map(|(_, ids)| ids.iter().copied()).collect();
@@ -765,9 +723,8 @@ impl Server {
 		(files, procs)
 	}
 
-	fn lines_with_code(&mut self, file: &str, start: u32, end: u32) -> Vec<u32> {
-		let mut lines: Vec<u32> = self
-			.procs_in(file)
+	fn lines_with_code(file: &str, start: u32, end: u32) -> Vec<u32> {
+		let mut lines: Vec<u32> = Self::procs_in(file)
 			.1
 			.into_iter()
 			.flat_map(|(_, lines)| lines)
@@ -778,8 +735,8 @@ impl Server {
 		lines
 	}
 
-	fn locate(&mut self, file: &str, line: u32) -> Vec<InstructionRef> {
-		let (files, procs) = self.procs_in(file);
+	fn locate(&self, file: &str, line: u32) -> Vec<InstructionRef> {
+		let (files, procs) = Self::procs_in(file);
 		let Some(line) = procs.iter().flat_map(|(_, lines)| lines.iter().copied()).filter(|&l| l >= line).min() else {
 			return vec![];
 		};
@@ -2694,7 +2651,7 @@ impl Server {
 			}
 
 			Request::LinesWithCode { file, start, end } => {
-				let lines = self.lines_with_code(&file, start, end);
+				let lines = Self::lines_with_code(&file, start, end);
 				self.answer(Response::LinesWithCode { lines });
 			}
 
@@ -2714,7 +2671,7 @@ impl Server {
 			}
 
 			Request::Files => {
-				let mut files: Vec<String> = self.file_index().keys().cloned().collect();
+				let mut files: Vec<String> = code_index::by_file().keys().cloned().collect();
 				files.sort();
 				self.answer(Response::Files { files });
 			}
