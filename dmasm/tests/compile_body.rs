@@ -766,3 +766,42 @@ fn a_logical_assignment_to_a_safe_place_is_a_value_in_a_body_too() {
         );
     }
 }
+
+#[test]
+fn an_assignment_is_the_same_value_alone_as_in_a_body() {
+    assert_has(
+        &same_alone_and_in_a_body("by[1] = 2"),
+        &[
+            "PushInt 2",
+            "PushTop",
+            "GetVar arg(2)",
+            "PushInt 1",
+            "ListSet",
+        ],
+    );
+    assert_has(
+        &same_alone_and_in_a_body("ticks = 3"),
+        &[
+            "PushInt 3",
+            "PushTop",
+            "GetVar arg(3)",
+            "PushVal \"ticks\"",
+            "ListSet",
+        ],
+    );
+    for code in [
+        "*by = 1",
+        "(by).hp = 1",
+        "by.hp ||= 1",
+        "by[\"a\"] ||= 2",
+        "ticks ||= 3",
+        "hp &&= bump()",
+        "by = hp += 1",
+        "by[1] -= 1",
+        "hp <<= 2",
+        "by := 1",
+        "by.hp := 1",
+    ] {
+        same_alone_and_in_a_body(code);
+    }
+}
