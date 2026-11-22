@@ -1459,8 +1459,9 @@ fn types(built: Built) {
 	);
 	reload(&mut watcher, &changes);
 	assert_eq!(eval(&mut client, "(new /obj/crate/big_crate).layer"), "7");
-	let changes = source.edit("reload.dm", "\tpixel_y = 3\n\tlayer = 7\n", "");
+	let changes = source.edit("reload.dm", "\tpixel_y = 3\n\tlayer = 7\n", "\t// pixel_y = 3\n\t// layer = 7\n");
 	assert_eq!(changes.plan.builtin_inherited.len(), 2, "{:?}", changes.plan.builtin_inherited);
+	assert_eq!(changes.plan.len(), 2, "{:?}", changes.plan);
 	reload(&mut watcher, &changes);
 	assert_eq!(eval(&mut client, "(new /obj/crate).layer"), "3");
 	assert_eq!(eval(&mut client, "(new /obj/crate/big_crate).layer"), "3");

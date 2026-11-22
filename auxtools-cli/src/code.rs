@@ -1680,6 +1680,34 @@ mod tests {
 	}
 
 	#[test]
+	fn a_type_edit_with_no_code_to_compile_is_sent() {
+		let worker = Worker::start("types");
+		let types = "/obj/layered\n\tlayer = 7\n/datum/pa\n\tvar/x = 1\n/datum/pb\n\tvar/x = 2\n/datum/pt\n\tparent_type = /datum/pa\n";
+		let a = |types: &str| body("a", "return 1") + types;
+		worker.write("a", &a(types));
+		worker.prepared();
+		worker.applied(false);
+		let edits = [
+			(types.to_owned(), types.replace("\tlayer = 7\n", "\t// layer = 7\n"), "builtin_inherited"),
+			(
+				types.replace("\tlayer = 7\n", "\t// layer = 7\n"),
+				types
+					.replace("\tlayer = 7\n", "\t// layer = 7\n")
+					.replace("= /datum/pa\n", "= /datum/pb\n"),
+				"reparented"
+			)
+		];
+		for (before, after, field) in edits {
+			let before = a(&before);
+			worker.write("a", &a(&after));
+			let reload = worker.prepared();
+			assert_eq!(reload.plan, worker.full_plan(&[("a", &before)], &["a"], false));
+			assert!(reload.plan.contains(&format!("{field}: [\n")), "no {field} in the plan: {}", reload.plan);
+			worker.applied(false);
+		}
+	}
+
+	#[test]
 	fn the_parse_gives_the_macros_a_preprocessor_pass_gives() {
 		let project = Project::new("macros", &[
 			(

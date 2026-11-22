@@ -84,21 +84,6 @@ fn watched_world(name: &str) -> (World, TempDir) {
 	(world, dir)
 }
 
-fn built_in_taken_away() {
-	let (mut world, _dir) = watched_world("built_in_taken_away");
-	edit(
-		&mut world,
-		"main.dm",
-		"/proc/icon_built()\n",
-		"/obj/layered\n\tlayer = 7\n\n/proc/icon_built()\n"
-	);
-	assert_eq!(world.eval_global("(new /obj/layered).layer"), "7");
-	edit(&mut world, "main.dm", "\tlayer = 7\n", "\t// layer = 7\n");
-	assert_eq!(world.eval_global("(new /obj/layered).layer"), "3");
-	ok("built-in-only override removal");
-	world.end();
-}
-
 fn behind_the_clients_back() {
 	let dir = copy_of_the_world("reloading");
 	let mut world = World::launch_in(dir.to_path_buf(), json!({ "hotReload": true }));
@@ -357,22 +342,6 @@ fn starting_at_world_new() {
 		world.output
 	);
 	ok("resource reload after world/New startup");
-	world.end();
-}
-
-fn parent_changed_alone() {
-	let (mut world, _dir) = watched_world("parent_changed_alone");
-	edit(
-		&mut world,
-		"main.dm",
-		"/proc/icon_built()\n",
-		"/datum/pa\n\tvar/x = 1\n\n/datum/pb\n\tvar/x = 2\n\n/datum/pt\n\tparent_type = /datum/pa\n\n/proc/icon_built()\n"
-	);
-	assert_eq!(world.eval_global("(new /datum/pt).x"), "1");
-	edit(&mut world, "main.dm", "\tparent_type = /datum/pa\n", "\tparent_type = /datum/pb\n");
-	assert_eq!(world.eval_global("(new /datum/pt).x"), "2");
-	assert_eq!(world.eval_global("istype(new /datum/pt, /datum/pb)"), "1");
-	ok("parent-only reload");
 	world.end();
 }
 
@@ -794,10 +763,8 @@ fn default_names_a_new_proc() {
 pub fn edits() {
 	default_names_a_new_proc();
 	saved_without_reloading();
-	built_in_taken_away();
 	behind_the_clients_back();
 	starting_at_world_new();
-	parent_changed_alone();
 	types_changed_before_reboot();
 }
 
