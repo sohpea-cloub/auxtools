@@ -715,6 +715,8 @@ fn debugger(built: Built) {
 		);
 	};
 	set(&mut client, old_offset);
+	let dme_lines = lines_with_code(&mut client, "hot_reload_test_host.dme", 1, 10_000);
+	assert!(!dme_lines.is_empty(), "the .dme's place isn't among /last_in_file's lines");
 	let changes = source.edit(
 		"resources.dm",
 		"/proc/last_in_file()\n",
@@ -723,6 +725,11 @@ fn debugger(built: Built) {
 	assert!(changes.plan.line_moves.iter().any(|m| m.proc.path == "/last_in_file"));
 	let result = reload(&mut watcher, &changes);
 	assert!(result.warnings.is_empty(), "{:?}", result.warnings);
+	assert_eq!(
+		lines_with_code(&mut client, "hot_reload_test_host.dme", 1, 10_000),
+		dme_lines,
+		"the .dme's place moved with resources.dm's lines"
+	);
 	let mut other = world.connect();
 	let new_offset = offset_of(&mut other, "/last_in_file", line + 2);
 	set(&mut other, new_offset);
@@ -747,6 +754,45 @@ fn debugger(built: Built) {
 	}
 	other.leave();
 	println!("ok: a moved breakpoint is where one set anew is, past the .dme's place");
+
+	let code = match client.request(Request::ProcInfo { proc: last_in_file(0).proc }) {
+		Response::ProcInfo(Ok(info)) => info.code,
+		other => panic!("expected ProcInfo for /last_in_file, got {:?}", other)
+	};
+	let Response::Disassemble(Ok(disassembly)) = client.request(Request::Disassemble { code }) else {
+		panic!("expected the disassembly of /last_in_file");
+	};
+	let instructions = &disassembly.instructions;
+	let dme_at = instructions
+		.iter()
+		.position(|at| at.text.starts_with("DbgFile") && at.text.contains(".dme"))
+		.unwrap_or_else(|| panic!("/last_in_file has no .dme record: {:?}", instructions));
+	let after_dme_line = instructions[dme_at + 2].offset as u32;
+	match client.request(Request::BreakpointSet {
+		instruction: last_in_file(after_dme_line),
+		condition: None,
+		hit: None,
+		log: None,
+		exact: true
+	}) {
+		Response::BreakpointSet {
+			result: BreakpointSetResult::Success { .. }
+		} => {}
+		other => panic!("couldn't set a breakpoint after the .dme's line: {:?}", other)
+	}
+	let changes = source.edit("resources.dm", "// two lines that\n// move the proc down\n", "");
+	assert!(changes.plan.line_moves.iter().any(|m| m.proc.path == "/last_in_file"));
+	let result = reload(&mut watcher, &changes);
+	assert!(result.warnings.is_empty(), "{:?}", result.warnings);
+	assert_eq!(lines_with_code(&mut client, "hot_reload_test_host.dme", 1, 10_000), dme_lines);
+	match client.request(Request::BreakpointUnset {
+		instruction: last_in_file(after_dme_line),
+		exact: true
+	}) {
+		Response::BreakpointUnset { success: true, .. } => {}
+		other => panic!("the breakpoint after the .dme's line went with the reload: {:?}", other)
+	}
+	println!("ok: a reload moving an included file's lines leaves the .dme's lines");
 
 	let changes = source.edit(
 		"reload.dm",

@@ -2209,13 +2209,17 @@ fn apply_code<K: Ord + std::hash::Hash + Copy, T>(
 
 	let hooked_at = hooked_offsets(&p.proc);
 	let old_code = (!hooked_at.is_empty()).then(|| crate::code_index::of(&p.proc));
-	let hooked: Vec<(u32, u32, Option<BTreeMap<K, T>>)> = hooked_at
+	let hooked: Vec<(u32, u32, Option<String>, Option<BTreeMap<K, T>>)> = hooked_at
 		.into_iter()
 		.filter_map(|offset| {
-			let line = old_code.as_ref()?.line_at(offset)?;
+			let code = old_code.as_ref()?;
+			let line = code.line_at(offset)?;
+			let other_file = (code.place(offset, false).and_then(|(file, _)| file))
+				.filter(|&file| code.file().is_some_and(|own| own != file))
+				.map(str::to_owned);
 			let known = breakpoints.remove(&(p.proc.id, offset as u16));
 			let _ = unhook_instruction(&p.proc, offset);
-			Some((offset, line, known))
+			Some((offset, line, other_file, known))
 		})
 		.collect();
 
@@ -2250,10 +2254,10 @@ fn apply_code<K: Ord + std::hash::Hash + Copy, T>(
 		_ => None
 	};
 
-	for (old_offset, line, known) in hooked {
+	for (old_offset, line, other_file, known) in hooked {
 		let line = match &p.lines {
-			Some(lines) => map_line(line, lines),
-			None => line
+			Some(lines) if other_file.is_none() => map_line(line, lines),
+			_ => line
 		};
 
 		let mut known_as: Vec<(raw_types::procs::ProcId, u32, K)> = moved_breakpoints
@@ -2273,8 +2277,10 @@ fn apply_code<K: Ord + std::hash::Hash + Copy, T>(
 		let moved = firsts
 			.filter(|(old_first, _)| line >= *old_first)
 			.map(|(old_first, new_first)| line - old_first + new_first);
+		let in_other_file = |file: &str| Some(file) == other_file.as_deref();
+		let wanted = other_file.is_some().then_some(&in_other_file as &dyn Fn(&str) -> bool);
 		let Some((line, offset)) = new_code
-			.offset_of(moved.unwrap_or(line), None)
+			.offset_of(moved.unwrap_or(line), wanted)
 			.map(|offset| (moved.unwrap_or(line), offset))
 		else {
 			warnings.push(format!(
@@ -2503,12 +2509,16 @@ fn forget_world() {
 
 fn remap_lines(bytecode: &[u32], lines: &[(u32, u32)]) -> Option<Vec<u32>> {
 	let scanned = dmasm::scan(bytecode).ok()?;
+	let mut file = None;
 	let mut out = bytecode.to_vec();
 	let mut changed = false;
+	let mut inside = true;
 
 	for ins in scanned.instructions {
-		if ins.opcode == Opcode::DbgLine {
-			let at = ins.offset as usize + 1;
+		let at = ins.offset as usize + 1;
+		if ins.opcode == Opcode::DbgFile {
+			inside = *file.get_or_insert(out[at]) == out[at];
+		} else if ins.opcode == Opcode::DbgLine && inside {
 			let line = map_line(out[at], lines);
 			changed |= line != out[at];
 			out[at] = line;
@@ -2881,5 +2891,15 @@ mod tests {
 		let moved = remap_lines(&bytecode, &[(10, 15), (11, 16)]).unwrap();
 		assert_eq!(moved, [dbgline, 15, push_int, 10, dbgline, 16, ret]);
 		assert_eq!(remap_lines(&bytecode, &[(10, 10), (11, 11)]), None);
+	}
+
+	#[test]
+	fn renumbers_the_lines_of_the_first_file_only() {
+		let dbgfile = dmasm::Opcode::DbgFile.word();
+		let dbgline = dmasm::Opcode::DbgLine.word();
+		let ret = dmasm::Opcode::Ret.word();
+		let bytecode = [dbgfile, 1, dbgline, 85, dbgfile, 2, dbgline, 21, dbgfile, 1, dbgline, 85, ret];
+		let moved = remap_lines(&bytecode, &[(84, 86), (85, 87)]).unwrap();
+		assert_eq!(moved, [dbgfile, 1, dbgline, 87, dbgfile, 2, dbgline, 21, dbgfile, 1, dbgline, 87, ret]);
 	}
 }
