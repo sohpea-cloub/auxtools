@@ -2,7 +2,10 @@ use std::{
 	collections::{BTreeMap, HashMap, HashSet},
 	io::BufReader,
 	path::{Path, PathBuf},
-	sync::{mpsc, Arc, Mutex},
+	sync::{
+		atomic::{AtomicBool, Ordering},
+		mpsc, Arc, Mutex
+	},
 	time::{Duration, Instant}
 };
 
@@ -300,6 +303,8 @@ struct CodeSettings {
 pub struct Adapter {
 	out: Arc<Output>,
 	inputs: mpsc::Sender<Input>,
+	leaving: Arc<AtomicBool>,
+	answering: bool,
 
 	debugging: bool,
 	pid: Option<u32>,
@@ -362,25 +367,41 @@ pub struct Adapter {
 
 pub fn run() {
 	let (inputs, receiver) = mpsc::channel();
+	let leaving = Arc::new(AtomicBool::new(false));
 
 	let stdin_inputs = inputs.clone();
+	let stdin_leaving = leaving.clone();
 	std::thread::spawn(move || {
 		let mut stdin = BufReader::new(std::io::stdin());
 		while let Ok(Some(message)) = dap::read_message(&mut stdin) {
+			if asks_to_disconnect(&message) {
+				stdin_leaving.store(true, Ordering::Relaxed);
+			}
 			if stdin_inputs.send(Input::Message(message)).is_err() {
 				return;
 			}
 		}
+		stdin_leaving.store(true, Ordering::Relaxed);
 		let _ = stdin_inputs.send(Input::StdinClosed);
 	});
 
-	serve(Output::new(), inputs, &receiver);
+	serve(Output::new(), inputs, &receiver, leaving);
 }
 
-pub fn serve(out: Output, inputs: mpsc::Sender<Input>, receiver: &mpsc::Receiver<Input>) {
+fn asks_to_disconnect(message: &str) -> bool {
+	#[derive(Deserialize)]
+	struct Asked {
+		command: Option<String>
+	}
+	message.contains("disconnect") && serde_json::from_str::<Asked>(message).is_ok_and(|asked| asked.command.as_deref() == Some("disconnect"))
+}
+
+pub fn serve(out: Output, inputs: mpsc::Sender<Input>, receiver: &mpsc::Receiver<Input>, leaving: Arc<AtomicBool>) {
 	let mut adapter = Adapter {
 		out: Arc::new(out),
 		inputs,
+		leaving,
+		answering: false,
 		debugging: true,
 		pid: None,
 		game: None,
@@ -481,7 +502,12 @@ fn json(value: impl serde::Serialize) -> Handled {
 impl Adapter {
 	fn handle(&mut self, input: Input) -> bool {
 		match input {
-			Input::Message(message) => return self.message(&message),
+			Input::Message(message) => {
+				self.answering = true;
+				let more = self.message(&message);
+				self.answering = false;
+				return more;
+			}
 			Input::StdinClosed | Input::Quit => return false,
 			Input::Connected { generation, stream } => {
 				if generation == self.generation && self.debuggee.is_none() {
@@ -1450,7 +1476,8 @@ impl Adapter {
 	}
 
 	fn request(&mut self, request: &AuxRequest) -> Result<AuxResponse, String> {
-		self.debuggee()?.request(request)
+		let leaving = self.answering.then(|| self.leaving.clone());
+		self.debuggee()?.request(request, leaving.as_deref())
 	}
 
 	fn ack(&mut self, request: &AuxRequest) -> Result<(), String> {
@@ -2652,6 +2679,20 @@ mod tests {
 	use auxtools_protocol::{HitCondition, LogPart, RuntimeFilter};
 
 	use super::{changes_things, completion_place, hover_refuses, instruction_window, named_proc, parse_address, runtime_place, shown};
+
+	#[test]
+	fn a_disconnect_is_known_as_it_is_read() {
+		let asks = super::asks_to_disconnect;
+		assert!(asks(
+			r#"{"seq":9,"type":"request","command":"disconnect","arguments":{"terminateDebuggee":true}}"#
+		));
+		assert!(asks(r#"{"command":"disconnect"}"#));
+		assert!(!asks(
+			r#"{"seq":4,"type":"request","command":"evaluate","arguments":{"expression":""disconnect""}}"#
+		));
+		assert!(!asks(r#"{"seq":5,"type":"request","command":"terminate"}"#));
+		assert!(!asks("disconnect"));
+	}
 
 	#[test]
 	fn missing_arguments_are_empty() {

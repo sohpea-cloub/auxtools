@@ -204,7 +204,7 @@ fn run(options: &Options, detached: bool) -> Result<()> {
 	let _ = inputs.send(request(3, "configurationDone", json!({})));
 
 	interrupts::listen(inputs.clone(), printer.clone());
-	adapter::serve(out, inputs, &receiver);
+	adapter::serve(out, inputs, &receiver, Default::default());
 	interrupts::done();
 
 	let outcome = outcome.lock().unwrap();
