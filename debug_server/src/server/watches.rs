@@ -172,8 +172,8 @@ impl Server {
 			wanted.push(DataChange {
 				id,
 				name,
-				old: Self::stringify(&before),
-				new: Self::stringify(&now)
+				old: values::stringify(&before),
+				new: values::stringify(&now)
 			});
 		}
 		if !paused {
@@ -256,7 +256,7 @@ impl Server {
 		if name == "." {
 			return Ok(Some(Slot::Dot));
 		}
-		let visible = Self::visible_locals(frame);
+		let visible = values::visible_locals(frame);
 		let mut locals = visible.iter().enumerate().filter(|(_, local)| local.as_deref() == Some(name));
 		match (locals.next(), locals.next()) {
 			(Some((index, _)), None) => return Ok(Some(Slot::Local(index))),
@@ -337,7 +337,7 @@ impl Server {
 						pointed(pointer, within(&holder, format!(".{}", name)))
 					}
 					Variables::ListContents(list, holder) => {
-						let number = Self::entry_number(name).ok_or_else(|| format!("the list has no entry {}", name))?;
+						let number = values::entry_number(name).ok_or_else(|| format!("the list has no entry {}", name))?;
 						let runtime = |e: Runtime| format!("runtime error: {}", e.message);
 						let entries = List::from_value(&list).map_err(runtime)?;
 						let key = if entries.is_alist() {
@@ -389,7 +389,7 @@ impl Server {
 		let watch = Watch {
 			id: self.next_watch,
 			name: name.clone(),
-			value: Self::stringify(&now)
+			value: values::stringify(&now)
 		};
 		self.watches.push(Watched {
 			id: watch.id,
