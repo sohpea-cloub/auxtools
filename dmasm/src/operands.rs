@@ -17,13 +17,6 @@ pub trait Operand: Sized {
     fn variables<'a>(&'a self, _out: &mut Vec<&'a Variable>) {}
 }
 
-pub trait OperandDeserialize: Sized {
-    fn deserialize<'a, E>(i: &'a str) -> nom::IResult<&'a str, Self, E>
-    where
-        E: nom::error::ParseError<&'a str>
-            + nom::error::FromExternalError<&'a str, std::num::ParseIntError>;
-}
-
 impl Operand for u32 {
     fn assemble<'a, E: AssembleEnv>(
         &'a self,

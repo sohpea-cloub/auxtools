@@ -62,17 +62,13 @@ Two facts about this state that are easy to get wrong:
 
 ## Text syntax
 
-`dmasm` prints assembly it cannot fully read back. What is real today:
+`dmasm` prints assembly and has no reader for it. The printed form:
 
 - One instruction, label or comment per line.
 - A comment starts with `;`.
 - A label is an identifier followed by `:`. Disassembled labels print as
   `LAB_XXXX`, the target word offset in four uppercase hex digits.
 - An instruction is its name followed by its operands, separated by spaces.
-
-The text parser only reads `u32` (decimal), `i32` and `Label` operands. Every
-other operand type prints but does not parse, and there is no public function
-that parses a whole document.
 
 ## Operands
 

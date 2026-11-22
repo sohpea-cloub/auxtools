@@ -1,11 +1,10 @@
-use crate::parser;
 use crate::{
     assembler::{AssembleEnv, AssembleError, Assembler},
     disassembler::{DebugData, DisassembleEnv, DisassembleError, Disassembler},
     list_operands::TypeFilter,
     operands::{
-        DMString, IsInParams, Label, Operand, OperandDeserialize, PickProbParams, PickSwitchParams,
-        Proc, SwitchParams, SwitchRangeParams, Value, Variable,
+        DMString, IsInParams, Label, Operand, PickProbParams, PickSwitchParams, Proc, SwitchParams,
+        SwitchRangeParams, Value, Variable,
     },
 };
 use std::fmt;
@@ -157,31 +156,6 @@ macro_rules! instructions {
                 }
 
                 Ok(())
-            }
-
-            pub fn deserialize<'b, E>(i: &'b str) -> nom::IResult<&'b str, Self, E>
-            where
-                E: 'b + nom::error::ParseError<&'b str>
-                    + nom::error::FromExternalError<&'b str, std::num::ParseIntError>,
-            {
-                let (i, name) = parser::whitespace(parser::parse_identifier)(i)?;
-
-                let (i, instruction) = match name {
-                    $(
-                        stringify!($name) => {
-                            $( $(
-                                let (i, $operand_name) = parser::whitespace($operand_type::deserialize)(i)?;
-                            )* )?
-                            (i, Self::$name$( ( $(
-                                $operand_name,
-                             )* ))? )
-                        },
-                    )*
-
-                    other => panic!("unknown instruction {}", other),
-                };
-
-                Ok((i, instruction))
             }
         }
     };

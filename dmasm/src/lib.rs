@@ -7,8 +7,6 @@ pub mod disassembler;
 mod instructions;
 mod list_operands;
 mod operands;
-mod operands_deserialize;
-mod parser;
 pub mod reload;
 
 pub use bytecode::{
