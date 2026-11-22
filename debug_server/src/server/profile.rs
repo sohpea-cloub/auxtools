@@ -17,7 +17,7 @@ impl Server {
 					return Err("another profile is running".to_owned());
 				}
 				profiler::start((!only.is_empty()).then_some(only));
-				self.profiling = self.current;
+				self.sessions.profiling = self.sessions.current;
 				Ok(ProfileReply::Started)
 			}
 			ProfileRequest::Stop => {
@@ -47,7 +47,7 @@ impl Server {
 	}
 
 	fn own_profile(&self) -> Result<(), String> {
-		if profiler::exists() && self.profiling != self.current {
+		if profiler::exists() && self.sessions.profiling != self.sessions.current {
 			return Err("the profile belongs to another client".to_owned());
 		}
 		Ok(())

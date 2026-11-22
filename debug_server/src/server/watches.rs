@@ -224,8 +224,8 @@ impl Server {
 			id,
 			reason: reason.to_owned()
 		};
-		if let Some(to) = self.clients.get_mut(&watch.client) {
-			if !Self::deliver(to, &ended) {
+		if let Some(to) = self.sessions.clients.get_mut(&watch.client) {
+			if !Sessions::deliver(to, &ended) {
 				self.remove_client(watch.client);
 			}
 		}
@@ -383,7 +383,7 @@ impl Server {
 	}
 
 	pub(super) fn watch_set(&mut self, place: &WatchPlace, condition: Option<String>, hit: Option<HitCondition>) -> Result<Watch, String> {
-		let client = self.current.ok_or("nobody asked")?;
+		let client = self.sessions.current.ok_or("nobody asked")?;
 		let (place, name, now) = self.watched_place(place)?;
 		self.next_watch += 1;
 		let watch = Watch {
@@ -406,7 +406,7 @@ impl Server {
 	}
 
 	pub(super) fn watch_unset(&mut self, id: u32) {
-		let client = self.current;
+		let client = self.sessions.current;
 		self.watches.retain(|watch| watch.id != id || Some(watch.client) != client);
 	}
 }

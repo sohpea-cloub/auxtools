@@ -27,7 +27,10 @@ use crate::{
 
 mod profile;
 mod render;
+mod sessions;
 mod watches;
+
+use sessions::{ClientId, Sessions, Wait};
 
 static NEXT_SPAWN: AtomicU64 = AtomicU64::new(1);
 
@@ -143,28 +146,6 @@ impl State {
 	}
 }
 
-type ClientId = u32;
-
-enum Event {
-	Connected(ClientId, Connection),
-
-	Request(ClientId, RequestId, Request),
-
-	Disconnected(ClientId)
-}
-
-struct Client {
-	uncaught: Option<RuntimeFilter>,
-	caught: Option<RuntimeFilter>,
-	debugs: bool,
-	follow: Option<Vec<JournalKind>>,
-	outbox: mpsc::SyncSender<Vec<u8>>,
-	writer: Option<thread::JoinHandle<()>>,
-	hold_max: Option<Duration>
-}
-
-const OUTBOX: usize = 1024;
-
 const JOURNAL_FRAMES: usize = 64;
 
 pub struct Claim {
@@ -197,21 +178,6 @@ impl Placed {
 
 const GLOBALS: &str = "global vars";
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Wait {
-	No,
-	WhileClients,
-	Forever,
-	Until(Option<Instant>)
-}
-
-struct Acceptor {
-	events: mpsc::Sender<Event>,
-	waiting: Option<mpsc::Receiver<Event>>
-}
-
-static ACCEPTOR: Mutex<Option<Acceptor>> = Mutex::new(None);
-
 const EVAL_CODE_KEPT: usize = 256;
 
 #[derive(PartialEq, Eq, Hash)]
@@ -223,18 +189,13 @@ struct EvalCodeKey {
 }
 
 pub struct Server {
-	events: mpsc::Receiver<Event>,
-	clients: BTreeMap<ClientId, Client>,
-	current: Option<ClientId>,
-	answering: Option<RequestId>,
+	sessions: Sessions,
 	state: Option<State>,
 	in_eval: bool,
 	eval_error: Option<String>,
 	eval_still_running: bool,
 	eval_callee_errors: Vec<String>,
 	eval_callee_more: usize,
-	reloader: Option<(ClientId, String)>,
-	profiling: Option<ClientId>,
 	eval_ran: *mut raw_types::procs::ExecutionContext,
 	breakpoints: Breakpoints,
 	paused: Option<Stop>,
@@ -255,36 +216,24 @@ pub struct Server {
 	spawn_stub_locals: Option<u32>,
 	spawned: HashMap<u64, (String, Option<String>)>,
 	ending: Option<Instant>,
-	hold: Option<ClientId>,
-	hold_max: Option<Duration>,
 	stepper: Option<ClientId>,
 	moved_breakpoints: hot_reload::MovedBreakpoints<(ClientId, Placed)>,
 	old_codes: RefCell<Vec<usize>>,
 	waiting_reloads: Vec<HotReloadRequest>
 }
 
-struct ServerThread {
-	events: mpsc::Sender<Event>
-}
-
 impl Server {
 	const MOST_COMPLETIONS: usize = 200;
 
 	pub fn listen() -> std::io::Result<Server> {
-		let events = Self::take_events()?;
 		Ok(Server {
-			events,
-			clients: BTreeMap::new(),
-			current: None,
-			answering: None,
+			sessions: Sessions::listen()?,
 			state: None,
 			in_eval: false,
 			eval_error: None,
 			eval_still_running: false,
 			eval_callee_errors: vec![],
 			eval_callee_more: 0,
-			reloader: None,
-			profiling: None,
 			eval_ran: std::ptr::null_mut(),
 			breakpoints: HashMap::new(),
 			moved_breakpoints: HashMap::new(),
@@ -306,90 +255,18 @@ impl Server {
 			spawn_stub_locals: None,
 			spawned: HashMap::new(),
 			ending: None,
-			hold: None,
-			hold_max: None,
 			stepper: None,
 			old_codes: RefCell::new(vec![]),
 			waiting_reloads: vec![]
 		})
 	}
 
-	fn take_events() -> std::io::Result<mpsc::Receiver<Event>> {
-		let mut acceptor = ACCEPTOR.lock().unwrap();
-		if acceptor.is_none() {
-			let listener = connection::listen(&connection::world_name())?;
-			let (events, waiting) = mpsc::channel();
-			*acceptor = Some(Acceptor {
-				events,
-				waiting: Some(waiting)
-			});
-			thread::Builder::new()
-				.name("debug server listener".to_owned())
-				.spawn(move || Self::accept(&listener))?;
-			waker::start()?;
-		}
-		acceptor
-			.as_mut()
-			.and_then(|acceptor| acceptor.waiting.take())
-			.ok_or_else(|| std::io::Error::other("there's a debug server already"))
-	}
-
-	fn accept(listener: &connection::Listener) {
-		let mut next_id = 0;
-		loop {
-			let Ok(connection) = listener.accept() else {
-				continue;
-			};
-			next_id += 1;
-
-			let id = next_id;
-			thread::spawn(move || Self::serve(id, connection));
-		}
-	}
-
-	fn serve(id: ClientId, mut connection: Connection) {
-		if auxtools_protocol::write(&mut connection, &Hello::new(env!("CARGO_PKG_VERSION"))).is_err() {
-			return;
-		}
-
-		let events = {
-			let acceptor = ACCEPTOR.lock().unwrap();
-			let Some(acceptor) = acceptor.as_ref() else {
-				return;
-			};
-			let _ = acceptor.events.send(Event::Connected(id, connection.clone()));
-			waker::event_sent();
-			acceptor.events.clone()
-		};
-		ServerThread { events }.run(id, connection);
-	}
-
 	pub fn refuse(reason: String) {
-		if let Ok(events) = Self::take_events() {
-			Self::refuse_on(events, reason);
-		}
+		Sessions::refuse(reason);
 	}
 
 	pub fn give_up(&mut self, reason: String) {
-		self.clients.clear();
-		self.hold = None;
-		self.hold_max = None;
-		let (_, nothing) = mpsc::channel();
-		Self::refuse_on(std::mem::replace(&mut self.events, nothing), reason);
-	}
-
-	fn refuse_on(events: mpsc::Receiver<Event>, reason: String) {
-		thread::spawn(move || {
-			while let Ok(event) = events.recv() {
-				if let Event::Connected(_, mut connection) = event {
-					for response in [Response::Unavailable { reason: reason.clone() }, Response::Disconnect] {
-						if Self::say(&mut connection, &response).is_err() {
-							break;
-						}
-					}
-				}
-			}
-		});
+		self.sessions.give_up(reason);
 	}
 
 	pub const fn is_in_eval(&self) -> bool {
@@ -440,7 +317,7 @@ impl Server {
 		if more > 0 {
 			notes.push(format!("and {} more runtime errors in called procs", more));
 		}
-		let Some(client) = self.current else {
+		let Some(client) = self.sessions.current else {
 			return;
 		};
 		for message in notes {
@@ -1202,7 +1079,7 @@ impl Server {
 		log: Option<Vec<LogPart>>,
 		exactly: bool
 	) {
-		let (Some(proc), Some(client)) = (unnamed::find(&instruction.proc.path, instruction.proc.override_id), self.current) else {
+		let (Some(proc), Some(client)) = (unnamed::find(&instruction.proc.path, instruction.proc.override_id), self.sessions.current) else {
 			self.answer(Response::BreakpointSet {
 				result: BreakpointSetResult::Failed
 			});
@@ -1297,7 +1174,7 @@ impl Server {
 	}
 
 	fn handle_breakpoint_unset(&mut self, instruction: InstructionRef, exactly: bool) {
-		let (Some(proc), Some(client)) = (unnamed::find(&instruction.proc.path, instruction.proc.override_id), self.current) else {
+		let (Some(proc), Some(client)) = (unnamed::find(&instruction.proc.path, instruction.proc.override_id), self.sessions.current) else {
 			self.answer(Response::BreakpointUnset { success: false, skipped: 0 });
 			return;
 		};
@@ -2262,25 +2139,6 @@ impl Server {
 		Ok(found)
 	}
 
-	fn claim_reloads(&mut self, who: String) -> Result<(), String> {
-		let id = self.current.ok_or("no client")?;
-		match &self.reloader {
-			Some((holder, theirs)) if *holder != id && self.clients.contains_key(holder) => Err(format!(
-				"{} already owns hot reload for this world; two watchers would apply each change twice",
-				theirs
-			)),
-			_ => {
-				self.reloader = Some((id, who));
-				Ok(())
-			}
-		}
-	}
-
-	fn reloads_refused(&self) -> Option<String> {
-		let (holder, who) = self.reloader.as_ref()?;
-		(Some(*holder) != self.current && self.clients.contains_key(holder)).then(|| format!("{} already owns hot reload for this world", who))
-	}
-
 	fn apply_pending_skin(&mut self) {
 		let Some(request) = self.pending_skin.take() else {
 			return;
@@ -2309,7 +2167,7 @@ impl Server {
 	}
 
 	fn handle_hot_reload(&mut self, request: &HotReloadRequest) {
-		if let Some(why) = self.reloads_refused() {
+		if let Some(why) = self.sessions.reloads_refused() {
 			let refused = HotReloadResult {
 				applied: false,
 				errors: vec![why],
@@ -2472,7 +2330,7 @@ impl Server {
 		}
 
 		if result.applied && !request.is_empty() {
-			self.broadcast(Response::CodeChanged, self.current);
+			self.broadcast(Response::CodeChanged, self.sessions.current);
 		}
 
 		result
@@ -2561,7 +2419,7 @@ impl Server {
 		match request {
 			Request::Disconnect => unreachable!(),
 			Request::CatchRuntimes { uncaught, caught } => {
-				if let Some(client) = self.current.and_then(|id| self.clients.get_mut(&id)) {
+				if let Some(client) = self.sessions.current.and_then(|id| self.sessions.clients.get_mut(&id)) {
 					client.uncaught = uncaught;
 					client.caught = caught;
 				}
@@ -2612,11 +2470,11 @@ impl Server {
 
 			Request::HotReload(request) => self.handle_hot_reload(&request),
 			Request::Reloader { who } => {
-				let claimed = self.claim_reloads(who);
+				let claimed = self.sessions.claim_reloads(who);
 				self.answer(Response::Reloader(claimed));
 			}
 			Request::Skin(request) => {
-				let result = match self.reloads_refused() {
+				let result = match self.sessions.reloads_refused() {
 					Some(why) => Err(why),
 					None if !crate::world_resources::is_loaded() => {
 						self.pending_skin = Some(request);
@@ -2627,7 +2485,7 @@ impl Server {
 				self.answer(Response::Skin(result));
 			}
 			Request::Script(request) => {
-				let result = match self.reloads_refused() {
+				let result = match self.sessions.reloads_refused() {
 					Some(why) => Err(why),
 					None if !crate::world_resources::is_loaded() => {
 						self.pending_script = Some(request);
@@ -2652,8 +2510,12 @@ impl Server {
 			}
 
 			Request::HoldPause => {
-				self.hold = self.current;
-				self.hold_max = self.current.and_then(|id| self.clients.get(&id)).and_then(|client| client.hold_max);
+				self.sessions.hold = self.sessions.current;
+				self.sessions.hold_max = self
+					.sessions
+					.current
+					.and_then(|id| self.sessions.clients.get(&id))
+					.and_then(|client| client.hold_max);
 				self.answer(Response::Ack);
 			}
 
@@ -2700,7 +2562,7 @@ impl Server {
 			}
 
 			Request::Watcher => {
-				if let Some(client) = self.current.and_then(|id| self.clients.get_mut(&id)) {
+				if let Some(client) = self.sessions.current.and_then(|id| self.sessions.clients.get_mut(&id)) {
 					client.debugs = false;
 				}
 				self.answer(Response::Ack);
@@ -2712,12 +2574,12 @@ impl Server {
 			}
 
 			Request::Journal { after, kinds, limit, follow } => self.handle_journal(after, kinds, limit, follow),
-			Request::JournalAdd(event) => self.journal(event, self.current),
+			Request::JournalAdd(event) => self.journal(event, self.sessions.current),
 			Request::HoldMax { seconds } => {
 				let hold_max = seconds
 					.filter(|seconds| seconds.is_finite() && *seconds >= 0.0)
 					.map(Duration::from_secs_f64);
-				if let Some(client) = self.current.and_then(|id| self.clients.get_mut(&id)) {
+				if let Some(client) = self.sessions.current.and_then(|id| self.sessions.clients.get_mut(&id)) {
 					client.hold_max = hold_max;
 				}
 				self.answer(Response::Ack);
@@ -2755,64 +2617,6 @@ impl Server {
 		false
 	}
 
-	fn recv_request(&mut self, wait: Wait) -> Option<Request> {
-		loop {
-			let event = match wait {
-				Wait::No => self.events.try_recv().ok()?,
-				Wait::Until(Some(until)) => self.events.recv_timeout(until.saturating_duration_since(Instant::now())).ok()?,
-				_ => self.events.recv().ok()?
-			};
-
-			match event {
-				Event::Connected(id, connection) => {
-					let (outbox, writer) = Self::writer(connection.clone());
-					self.clients.insert(id, Client {
-						uncaught: None,
-						caught: None,
-						debugs: true,
-						follow: None,
-						outbox,
-						writer: Some(writer),
-						hold_max: None
-					});
-					if let Wait::Until(_) = wait {
-						return None;
-					}
-				}
-
-				Event::Disconnected(id) => {
-					self.remove_client(id);
-
-					if (wait == Wait::WhileClients && !self.has_debuggers()) || matches!(wait, Wait::Until(_)) {
-						return None;
-					}
-				}
-
-				Event::Request(id, ..) if !self.clients.contains_key(&id) => waker::request_taken(),
-
-				Event::Request(id, request_id, request) => {
-					waker::request_taken();
-					self.current = Some(id);
-					self.answering = Some(request_id);
-					return Some(request);
-				}
-			}
-		}
-	}
-
-	fn has_debuggers(&self) -> bool {
-		self.clients.values().any(|client| client.debugs)
-	}
-
-	pub fn notify<T: Into<String>>(&mut self, message: T) {
-		let message = message.into();
-		if self.clients.is_empty() {
-			eprintln!("Debug Server: {}", message);
-		}
-
-		self.broadcast(Response::Notification { message }, None);
-	}
-
 	pub fn recover_from_panic(&mut self) {
 		eprintln!("Debug server panicked, dropping the debug clients");
 		self.in_eval = false;
@@ -2820,7 +2624,7 @@ impl Server {
 		self.state = None;
 		self.paused = None;
 		self.disconnect_all();
-		self.profiling = None;
+		self.sessions.profiling = None;
 		crate::profiler::discard();
 	}
 
@@ -2885,8 +2689,8 @@ impl Server {
 					caller
 				}
 			});
-			if let (Some(logged), Some(to)) = (logged, self.clients.get_mut(&client.0)) {
-				if !Self::deliver(to, &logged) {
+			if let (Some(logged), Some(to)) = (logged, self.sessions.clients.get_mut(&client.0)) {
+				if !Sessions::deliver(to, &logged) {
 					self.remove_client(client.0);
 				}
 			}
@@ -2916,14 +2720,6 @@ impl Server {
 		self.tell(client.0, Response::ConditionFailed { message });
 	}
 
-	fn tell(&mut self, client: ClientId, response: Response) {
-		if let Some(to) = self.clients.get_mut(&client) {
-			if !Self::deliver(to, &response) {
-				self.remove_client(client);
-			}
-		}
-	}
-
 	pub fn handle_breakpoint(&mut self, _ctx: *mut raw_types::procs::ExecutionContext, reason: BreakpointReason) -> Option<ContinueKind> {
 		if let BreakpointReason::Runtime { message, caught } = &reason {
 			let stack = self.journal_stack();
@@ -2938,11 +2734,11 @@ impl Server {
 		}
 
 		let wanted = match &reason {
-			BreakpointReason::Runtime { message, caught } => self.clients.values().any(|client| {
+			BreakpointReason::Runtime { message, caught } => self.sessions.clients.values().any(|client| {
 				let filter = if *caught { &client.caught } else { &client.uncaught };
 				filter.as_ref().is_some_and(|filter| filter.takes(message))
 			}),
-			_ => self.has_debuggers() || self.hold.is_some()
+			_ => self.sessions.has_debuggers() || self.sessions.hold.is_some()
 		};
 		if !wanted || self.ending() {
 			return None;
@@ -2987,12 +2783,16 @@ impl Server {
 
 		let mut unattended: Option<Instant> = None;
 		loop {
-			let mut wait = if self.hold.is_some() { Wait::Forever } else { Wait::WhileClients };
-			if wait == Wait::WhileClients && !self.has_debuggers() {
+			let mut wait = if self.sessions.hold.is_some() {
+				Wait::Forever
+			} else {
+				Wait::WhileClients
+			};
+			if wait == Wait::WhileClients && !self.sessions.has_debuggers() {
 				break;
 			}
-			if let (Wait::Forever, Some(max)) = (wait, self.hold_max) {
-				if self.has_debuggers() {
+			if let (Wait::Forever, Some(max)) = (wait, self.sessions.hold_max) {
+				if self.sessions.has_debuggers() {
 					wait = Wait::Until(None);
 				} else {
 					wait = Wait::Until(Some(*unattended.get_or_insert_with(Instant::now) + max));
@@ -3031,12 +2831,12 @@ impl Server {
 					}
 				};
 				self.answer(Response::Ack);
-				self.broadcast(Response::Resumed, self.current);
+				self.broadcast(Response::Resumed, self.sessions.current);
 				self.state = None;
 				self.paused = None;
-				self.hold = None;
-				self.hold_max = None;
-				self.stepper = if kind == ContinueKind::Continue { None } else { self.current };
+				self.sessions.hold = None;
+				self.sessions.hold_max = None;
+				self.stepper = if kind == ContinueKind::Continue { None } else { self.sessions.current };
 				return Some(kind);
 			}
 
@@ -3046,8 +2846,8 @@ impl Server {
 					self.broadcast(Response::Resumed, None);
 					self.state = None;
 					self.paused = None;
-					self.hold = None;
-					self.hold_max = None;
+					self.sessions.hold = None;
+					self.sessions.hold_max = None;
 					self.stepper = None;
 					return Some(ContinueKind::Continue);
 				}
@@ -3075,10 +2875,10 @@ impl Server {
 	}
 
 	fn let_hold_go(&mut self) {
-		let seconds = self.hold_max.map_or(0.0, |max| max.as_secs_f64());
+		let seconds = self.sessions.hold_max.map_or(0.0, |max| max.as_secs_f64());
 		eprintln!("Debug Server: resumed after {} seconds without a debugger", seconds);
-		self.hold = None;
-		self.hold_max = None;
+		self.sessions.hold = None;
+		self.sessions.hold_max = None;
 		self.state = None;
 		self.paused = None;
 		self.journal(JournalEvent::HoldEnded { seconds }, None);
@@ -3089,8 +2889,8 @@ impl Server {
 		let Some(id) = self.stepper.take() else {
 			return;
 		};
-		if let Some(client) = self.clients.get_mut(&id) {
-			if !Self::deliver(client, &Response::StepEnded) {
+		if let Some(client) = self.sessions.clients.get_mut(&id) {
+			if !Sessions::deliver(client, &Response::StepEnded) {
 				self.remove_client(id);
 			}
 		}
@@ -3128,109 +2928,6 @@ impl Server {
 		self.waiting_to_start = false;
 	}
 
-	fn answer(&mut self, response: Response) {
-		let Some(request) = self.answering.take() else {
-			return;
-		};
-		let Some(id) = self.current else {
-			return;
-		};
-		let Some(client) = self.clients.get_mut(&id) else {
-			return;
-		};
-
-		if !Self::post(client, Some(request), &response) {
-			eprintln!("Debug server failed to send a message to a client");
-			self.remove_client(id);
-		}
-	}
-
-	fn broadcast(&mut self, response: Response, except: Option<ClientId>) {
-		let mut gone = vec![];
-		for (&id, client) in &mut self.clients {
-			if Some(id) != except && !Self::deliver(client, &response) {
-				gone.push(id);
-			}
-		}
-		for id in gone {
-			self.remove_client(id);
-		}
-	}
-
-	fn remove_client(&mut self, id: ClientId) {
-		let Some(client) = self.clients.remove(&id) else {
-			return;
-		};
-		drop(client);
-		if self.current == Some(id) {
-			self.current = None;
-			self.answering = None;
-		}
-		if self.hold == Some(id) && self.paused.is_none() {
-			self.hold = None;
-			self.hold_max = None;
-		}
-
-		self.forget_watches_of(id);
-		if self.profiling == Some(id) {
-			self.profiling = None;
-			crate::profiler::discard();
-		}
-
-		let mut unclaimed = vec![];
-		for (key, claims) in &mut self.breakpoints {
-			claims.retain(|(client, _), _| *client != id);
-			if claims.is_empty() {
-				unclaimed.push(*key);
-			}
-		}
-		self.moved_breakpoints.retain(|(.., (client, _)), _| *client != id);
-		for (proc, offset) in unclaimed {
-			self.breakpoints.remove(&(proc, offset));
-			if let Some(proc) = Proc::from_id(proc) {
-				let _ = unhook_instruction(&proc, offset as u32);
-			}
-		}
-
-		if self.clients.is_empty() {
-			self.breakpoints.clear();
-			self.moved_breakpoints.clear();
-			unhook_all();
-		}
-	}
-
-	fn disconnect_all(&mut self) {
-		let ids: Vec<ClientId> = self.clients.keys().copied().collect();
-		for id in ids {
-			self.remove_client(id);
-		}
-	}
-
-	fn deliver(client: &mut Client, response: &Response) -> bool {
-		Self::post(client, None, response)
-	}
-
-	fn post(client: &mut Client, reply_to: Option<RequestId>, response: &Response) -> bool {
-		auxtools_protocol::frame(&ServerMessage { reply_to, response }).is_ok_and(|bytes| client.outbox.try_send(bytes).is_ok())
-	}
-
-	fn say(connection: &mut Connection, response: &Response) -> std::io::Result<()> {
-		auxtools_protocol::write(connection, &ServerMessage::event(response))
-	}
-
-	fn writer(mut connection: Connection) -> (mpsc::SyncSender<Vec<u8>>, thread::JoinHandle<()>) {
-		let (outbox, sent) = mpsc::sync_channel::<Vec<u8>>(OUTBOX);
-		let writer = thread::spawn(move || {
-			while let Ok(bytes) = sent.recv() {
-				if connection.write_all(&bytes).and_then(|()| connection.flush()).is_err() {
-					return;
-				}
-			}
-			let _ = Self::say(&mut connection, &Response::Disconnect);
-		});
-		(outbox, writer)
-	}
-
 	pub fn world_carries_on(&mut self) {
 		self.ending = None;
 	}
@@ -3239,22 +2936,12 @@ impl Server {
 		self.ending.is_some_and(|since| since.elapsed() < ENDING_LIMIT)
 	}
 
-	pub fn world_shutting_down(&mut self) {
-		self.broadcast(Response::ShuttingDown, None);
-		let writers: Vec<_> = self.clients.values_mut().filter_map(|client| client.writer.take()).collect();
-		self.disconnect_all();
-		let deadline = Instant::now() + Duration::from_secs(1);
-		while writers.iter().any(|writer| !writer.is_finished()) && Instant::now() < deadline {
-			thread::sleep(Duration::from_millis(5));
-		}
-	}
-
 	fn journal(&mut self, event: JournalEvent, from: Option<ClientId>) {
 		let entry = journal::add(event);
 		let mut gone = vec![];
-		for (&id, client) in &mut self.clients {
+		for (&id, client) in &mut self.sessions.clients {
 			let follows = client.follow.as_ref().is_some_and(|kinds| journal::wanted(&entry, kinds));
-			if follows && Some(id) != from && !Self::deliver(client, &Response::Journaled(entry.clone())) {
+			if follows && Some(id) != from && !Sessions::deliver(client, &Response::Journaled(entry.clone())) {
 				gone.push(id);
 			}
 		}
@@ -3327,7 +3014,7 @@ impl Server {
 
 	fn handle_journal(&mut self, after: u64, kinds: Vec<JournalKind>, limit: Option<u32>, follow: bool) {
 		let (entries, first, last) = journal::read(after, &kinds, limit);
-		if let Some(client) = self.current.and_then(|id| self.clients.get_mut(&id)) {
+		if let Some(client) = self.sessions.current.and_then(|id| self.sessions.clients.get_mut(&id)) {
 			client.follow = follow.then_some(kinds);
 		}
 		self.answer(Response::Journal { entries, first, last });
@@ -3338,24 +3025,6 @@ fn background_known() -> bool {
 	auxtools::version::get().0 >= 516
 }
 
-impl Drop for Server {
-	fn drop(&mut self) {
-		self.disconnect_all();
-
-		if let Some(acceptor) = ACCEPTOR.lock().unwrap().as_mut() {
-			let (events, waiting) = mpsc::channel();
-			acceptor.events = events;
-			acceptor.waiting = Some(waiting);
-		}
-
-		while let Ok(event) = self.events.try_recv() {
-			if let Event::Connected(_, mut connection) = event {
-				thread::spawn(move || Self::say(&mut connection, &Response::Disconnect).is_ok());
-			}
-		}
-	}
-}
-
 const MAX_CALLEE_ERRORS: usize = 5;
 
 pub(crate) fn is_expression_frame(ctx: *mut raw_types::procs::ExecutionContext) -> bool {
@@ -3363,29 +3032,6 @@ pub(crate) fn is_expression_frame(ctx: *mut raw_types::procs::ExecutionContext) 
 	["/proc/auxtools_expr_stub", "/proc/auxtools_spawn_stub"]
 		.into_iter()
 		.any(|path| Proc::find(path).is_some_and(|stub| stub.id == id))
-}
-
-impl ServerThread {
-	fn run(&self, id: ClientId, mut stream: Connection) {
-		waker::client_connected();
-
-		while let Ok(ClientMessage { id: request_id, request }) = auxtools_protocol::read(&mut stream) {
-			if let Request::Disconnect = request {
-				break;
-			}
-
-			waker::request_waiting();
-			if let Err(e) = self.events.send(Event::Request(id, request_id, request)) {
-				eprintln!("Debug server thread failed to handle request: {}", e);
-				break;
-			}
-			waker::event_sent();
-		}
-
-		waker::client_left();
-		let _ = self.events.send(Event::Disconnected(id));
-		waker::event_sent();
-	}
 }
 
 #[cfg(test)]
@@ -3407,7 +3053,7 @@ mod tests {
 			let second = Connection::connect(&connection::world_name()).unwrap();
 			thread::sleep(Duration::from_millis(200));
 			assert!(server.recv_request(super::Wait::No).is_none());
-			assert_eq!(server.clients.len(), 2);
+			assert_eq!(server.sessions.clients.len(), 2);
 
 			drop(server);
 			let _ = done.send((first, second));
@@ -3434,7 +3080,7 @@ mod tests {
 		thread::sleep(Duration::from_millis(200));
 		let mut server = Server::listen().expect("the next server couldn't listen");
 		assert!(server.recv_request(super::Wait::No).is_none());
-		assert_eq!(server.clients.len(), 1);
+		assert_eq!(server.sessions.clients.len(), 1);
 		assert!(Server::listen().is_err(), "multiple active servers accepted");
 	}
 }
