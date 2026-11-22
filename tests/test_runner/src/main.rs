@@ -1,17 +1,42 @@
-mod paths;
+use std::{path::PathBuf, process::Command};
 
-use std::process::Command;
+use test_support::paths::{self, ByondCommand};
 
-use paths::ByondCommand;
+fn find_dll() -> PathBuf {
+	let mut path = std::env::current_exe().unwrap();
+	path.pop();
+
+	#[cfg(unix)]
+	path.push("libauxtest.so");
+
+	#[cfg(windows)]
+	path.push("auxtest.dll");
+
+	assert!(path.is_file(), "couldn't find auxtest");
+	path
+}
+
+fn find_dme() -> PathBuf {
+	let mut path = std::env::current_dir().unwrap();
+	path.push("tests/auxtest_host/auxtest_host.dme");
+	assert!(path.is_file(), "couldn't find auxtest_host.dme");
+	path
+}
+
+fn find_dmb() -> PathBuf {
+	let mut path = std::env::current_dir().unwrap();
+	path.push("tests/auxtest_host/auxtest_host.dmb");
+	assert!(path.is_file(), "couldn't find auxtest_host.dmb");
+	path
+}
 
 fn main() {
-	let res = Command::new(paths::find_dm()).with_byond_paths().arg(paths::find_dme()).status().unwrap();
-	assert!(res.success(), "dreamdaemon build failed");
+	paths::compile(&find_dme());
 
 	let output = Command::new(paths::find_dreamdaemon())
 		.with_byond_paths()
-		.env("AUXTEST_DLL", paths::find_dll())
-		.arg(paths::find_dmb())
+		.env("AUXTEST_DLL", find_dll())
+		.arg(find_dmb())
 		.arg("-trusted")
 		.arg("-close")
 		.output()

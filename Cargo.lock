@@ -275,6 +275,7 @@ version = "0.1.0"
 dependencies = [
  "debug_server",
  "serde_json",
+ "test_support",
 ]
 
 [[package]]
@@ -308,6 +309,7 @@ dependencies = [
  "auxtools-cli",
  "auxtools-protocol",
  "debug_server",
+ "test_support",
 ]
 
 [[package]]
@@ -472,6 +474,7 @@ dependencies = [
  "auxtools-protocol",
  "debug_server",
  "dmasm",
+ "test_support",
 ]
 
 [[package]]
@@ -549,6 +552,7 @@ dependencies = [
  "debug_server",
  "interprocess",
  "serde_json",
+ "test_support",
 ]
 
 [[package]]
@@ -920,7 +924,12 @@ name = "test_runner"
 version = "0.1.0"
 dependencies = [
  "auxtest",
+ "test_support",
 ]
+
+[[package]]
+name = "test_support"
+version = "0.1.0"
 
 [[package]]
 name = "thiserror"

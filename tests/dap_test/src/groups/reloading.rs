@@ -1,11 +1,10 @@
-use std::{path::PathBuf, process::Command, time::Duration};
+use std::{path::PathBuf, time::Duration};
 
 use serde_json::{json, Value};
 
 use crate::{
 	client::{launch_arguments, value_of},
-	ok,
-	paths::{self, ByondCommand},
+	ok, paths,
 	world::{host_file, World}
 };
 
@@ -367,12 +366,7 @@ fn starting_at_world_new() {
 	)
 	.unwrap();
 	std::fs::copy(host_file("reload_new.dmi"), dir.join("reload_new.dmi")).unwrap();
-	let built = Command::new(crate::paths::find_dm())
-		.with_byond_paths()
-		.arg(dir.join("dap_test_host.dme"))
-		.status()
-		.unwrap();
-	assert!(built.success(), "dreammaker build of {} failed", dir.display());
+	paths::compile(&dir.join("dap_test_host.dme"));
 
 	let mut world = World::launch_in(dir.clone(), json!({ "hotReload": true }));
 	world.configure();
@@ -459,8 +453,7 @@ fn override_restored_before_map() {
 	let dme = dir.join("dap_test_host.dme");
 	let text = std::fs::read_to_string(&dme).unwrap() + "#include \"placed.dm\"\n#include \"placed.dmm\"\n";
 	std::fs::write(&dme, text).unwrap();
-	let built = Command::new(crate::paths::find_dm()).with_byond_paths().arg(&dme).status().unwrap();
-	assert!(built.success(), "dreammaker build of {} failed", dir.display());
+	paths::compile(&dme);
 
 	let mut world = World::launch_in(dir.clone(), json!({ "hotReload": true }));
 	world.catch_runtimes(false);
@@ -552,8 +545,7 @@ fn held_until_reboot() {
 	let dme = dir.join("dap_test_host.dme");
 	let text = std::fs::read_to_string(&dme).unwrap() + "#include \"held_b.dm\"\n#include \"held.dm\"\n";
 	std::fs::write(&dme, text).unwrap();
-	let built = Command::new(crate::paths::find_dm()).with_byond_paths().arg(&dme).status().unwrap();
-	assert!(built.success(), "dreammaker build of {} failed", dir.display());
+	paths::compile(&dme);
 	let mut world = World::launch_in(dir.clone(), json!({ "hotReload": true }));
 	world.catch_runtimes(false);
 	world.configure();
@@ -627,8 +619,7 @@ fn initializers_after_reboot() {
 	let dme = dir.join("dap_test_host.dme");
 	let text = std::fs::read_to_string(&dme).unwrap() + "#include \"inits.dm\"\n#include \"inits.dmm\"\n";
 	std::fs::write(&dme, text).unwrap();
-	let built = Command::new(crate::paths::find_dm()).with_byond_paths().arg(&dme).status().unwrap();
-	assert!(built.success(), "dreammaker build of {} failed", dir.display());
+	paths::compile(&dme);
 
 	let mut world = World::launch_in(dir.clone(), json!({ "hotReload": true }));
 	world.catch_runtimes(false);
@@ -698,12 +689,7 @@ fn initializer_added_to_a_world_without() {
 		"var/bare_n = 1\n\n/world/New()\n\tworld.log << \"dap: world/New\"\n\n/proc/bare_reboot()\n\tspawn(1)\n\t\tworld.Reboot()\n"
 	)
 	.unwrap();
-	let built = Command::new(crate::paths::find_dm())
-		.with_byond_paths()
-		.arg(dir.join("dap_test_host.dme"))
-		.status()
-		.unwrap();
-	assert!(built.success(), "dreammaker build of {} failed", dir.display());
+	paths::compile(&dir.join("dap_test_host.dme"));
 
 	let mut world = World::launch_in(dir.clone(), json!({ "hotReload": true }));
 	world.catch_runtimes(false);
@@ -913,10 +899,7 @@ fn held_for_build_flags() {
 	let dme = dir.join("dap_test_host.dme");
 	let text = std::fs::read_to_string(&dme).unwrap() + "#include \"flags.dm\"\n";
 	std::fs::write(&dme, text).unwrap();
-	let build = |flags: &[&str]| {
-		let built = Command::new(paths::find_dm()).with_byond_paths().args(flags).arg(&dme).status().unwrap();
-		assert!(built.success(), "dreammaker build of {} failed", dir.display());
-	};
+	let build = |flags: &[&str]| paths::compile_with(&dme, flags);
 	build(&[]);
 	let more = json!({ "hotReload": true, "buildFlags": [] });
 	let mut world = World::launch_in(dir.clone(), more.clone());
@@ -999,8 +982,7 @@ fn default_names_a_new_proc() {
 	let dme = dir.join("dap_test_host.dme");
 	let text = std::fs::read_to_string(&dme).unwrap() + "#include \"named.dm\"\n";
 	std::fs::write(&dme, text).unwrap();
-	let built = Command::new(paths::find_dm()).with_byond_paths().arg(&dme).status().unwrap();
-	assert!(built.success(), "dreammaker build of {} failed", dir.display());
+	paths::compile(&dme);
 
 	let mut world = World::launch_in(dir.clone(), json!({ "hotReload": true }));
 	world.catch_runtimes(false);
@@ -1066,8 +1048,7 @@ fn initializers_after_reboot_at_an_area() {
 	let dme = dir.join("dap_test_host.dme");
 	let text = std::fs::read_to_string(&dme).unwrap() + "#include \"area_inits.dm\"\n#include \"area_inits.dmm\"\n";
 	std::fs::write(&dme, text).unwrap();
-	let built = Command::new(crate::paths::find_dm()).with_byond_paths().arg(&dme).status().unwrap();
-	assert!(built.success(), "dreammaker build of {} failed", dir.display());
+	paths::compile(&dme);
 
 	let mut world = World::launch_in(dir.clone(), json!({ "hotReload": true }));
 	world.catch_runtimes(false);

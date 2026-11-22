@@ -1,13 +1,8 @@
 #[allow(dead_code)]
 mod client;
 
-#[allow(dead_code)]
-#[path = "../../test_runner/src/paths.rs"]
-mod paths;
-
 use std::{
 	path::PathBuf,
-	process::Command,
 	time::{Duration, Instant}
 };
 
@@ -16,7 +11,7 @@ use auxtools_protocol::{
 	Response, VariablesRef
 };
 use client::{Client, World};
-use paths::ByondCommand;
+use test_support::paths;
 
 const BUSY: &str = "var/start = world.timeofday
 var/turns = 0
@@ -723,12 +718,7 @@ fn panics() {
 }
 
 fn main() {
-	let res = Command::new(paths::find_dm())
-		.with_byond_paths()
-		.arg(host_file("debug_test_host.dme"))
-		.status()
-		.unwrap();
-	assert!(res.success(), "dreammaker build failed");
+	paths::compile(&host_file("debug_test_host.dme"));
 
 	let world = World::start(&host_file("debug_test_host.dmb"), &[]);
 

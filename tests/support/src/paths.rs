@@ -1,4 +1,7 @@
-use std::{path::PathBuf, process::Command};
+use std::{
+	path::{Path, PathBuf},
+	process::Command
+};
 
 pub trait ByondCommand {
 	fn with_byond_paths(&mut self) -> &mut Self;
@@ -41,7 +44,6 @@ pub fn find_byond() -> PathBuf {
 	path
 }
 
-#[allow(dead_code)]
 pub fn find_byond_bin() -> PathBuf {
 	let mut path = find_byond();
 	path.push("bin");
@@ -75,30 +77,19 @@ pub fn find_dreamdaemon() -> PathBuf {
 	path
 }
 
-pub fn find_dll() -> PathBuf {
-	let mut path = std::env::current_exe().unwrap();
-	path.pop();
-
-	#[cfg(unix)]
-	path.push("libauxtest.so");
-
-	#[cfg(windows)]
-	path.push("auxtest.dll");
-
-	assert!(path.is_file(), "couldn't find auxtest");
-	path
+pub fn dreammaker() -> Command {
+	let mut dm = Command::new(find_dm());
+	dm.with_byond_paths();
+	dm
 }
 
-pub fn find_dme() -> PathBuf {
-	let mut path = std::env::current_dir().unwrap();
-	path.push("tests/auxtest_host/auxtest_host.dme");
-	assert!(path.is_file(), "couldn't find auxtest_host.dme");
-	path
+#[track_caller]
+pub fn compile(dme: &Path) {
+	compile_with(dme, &[]);
 }
 
-pub fn find_dmb() -> PathBuf {
-	let mut path = std::env::current_dir().unwrap();
-	path.push("tests/auxtest_host/auxtest_host.dmb");
-	assert!(path.is_file(), "couldn't find auxtest_host.dmb");
-	path
+#[track_caller]
+pub fn compile_with(dme: &Path, flags: &[&str]) {
+	let built = dreammaker().args(flags).arg(dme).status().unwrap();
+	assert!(built.success(), "dreammaker build of {} failed", dme.display());
 }

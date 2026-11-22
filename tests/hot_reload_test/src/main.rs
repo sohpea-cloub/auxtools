@@ -1,21 +1,17 @@
 #[allow(dead_code)]
 #[path = "../../debug_test/src/client.rs"]
 mod client;
-#[allow(dead_code)]
-#[path = "../../test_runner/src/paths.rs"]
-mod paths;
 
 use std::{
 	collections::HashSet,
 	path::{Path, PathBuf},
-	process::Command,
 	time::{Duration, Instant}
 };
 
 use auxtools_protocol::*;
 use client::{Client, World};
 use dmasm::reload::{diff, Changes, ParseOptions, Snapshot};
-use paths::ByondCommand;
+use test_support::paths;
 
 struct Source {
 	dir: PathBuf,
@@ -265,8 +261,7 @@ fn offset_of(client: &mut Client, proc: &str, line: u32) -> u32 {
 fn main() {
 	let mut source = Source::copy_host();
 
-	let res = Command::new(paths::find_dm()).with_byond_paths().arg(source.dme()).status().unwrap();
-	assert!(res.success(), "dreammaker build failed");
+	paths::compile(&source.dme());
 
 	let world = World::start(&source.dir.join("hot_reload_test_host.dmb"), &[]);
 

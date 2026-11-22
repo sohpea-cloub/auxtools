@@ -1,8 +1,6 @@
-use std::process::Command;
-
 use serde_json::json;
 
-use crate::{ok, paths, paths::ByondCommand, world::World};
+use crate::{ok, paths, world::World};
 
 fn script(world: &mut World) -> (String, Vec<String>, String) {
 	let shown = world.eval_global("#script");
@@ -36,8 +34,7 @@ pub fn run() {
 	let dme = dir.join("dap_test_host.dme");
 	let source = std::fs::read_to_string(&dme).unwrap();
 	std::fs::write(&dme, source + "#include \"x.dms\"\n#include \"script.dm\"\n").unwrap();
-	let built = Command::new(paths::find_dm()).with_byond_paths().arg(&dme).status().unwrap();
-	assert!(built.success(), "dreammaker build failed");
+	paths::compile(&dme);
 
 	let mut world = World::launch_in(dir.clone(), json!({ "hotReload": true }));
 	world.catch_runtimes(false);

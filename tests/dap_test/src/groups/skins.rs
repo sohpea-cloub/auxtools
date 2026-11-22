@@ -1,8 +1,8 @@
-use std::{path::Path, process::Command};
+use std::path::Path;
 
 use serde_json::json;
 
-use crate::{ok, paths, paths::ByondCommand, world::World};
+use crate::{ok, paths, world::World};
 
 const SKIN: &str = "macro \"default\"\n\telem \"k_f\"\n\t\tname = \"F\"\n\t\tcommand = \"say \\\"f\\\"\"\n\nwindow \"mainwindow\"\n\telem \
                     \"mainwindow\"\n\t\ttype = MAIN\n\t\tsize = 640x480\n\t\tis-default = true\n\t\ttitle = \"first\"\n\telem \"label\"\n\t\ttype = \
@@ -26,8 +26,7 @@ pub fn run() {
 	let dme = dir.join("dap_test_host.dme");
 	let source = std::fs::read_to_string(&dme).unwrap();
 	std::fs::write(&dme, source + "#include \"skin.dmf\"\n").unwrap();
-	let built = Command::new(paths::find_dm()).with_byond_paths().arg(&dme).status().unwrap();
-	assert!(built.success(), "dreammaker build failed");
+	paths::compile(&dme);
 
 	let mut world = World::launch_in(dir.clone(), json!({ "hotReload": true }));
 	world.catch_runtimes(false);

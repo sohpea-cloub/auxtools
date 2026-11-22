@@ -7,6 +7,7 @@ edition.workspace = true
 
 [dependencies]
 debug_server = { path = "../../debug_server" }
+test_support = { path = "../support" }
 auxtools-cli = { path = "../../auxtools-cli" }
 auxtools-protocol = { path = "../../auxtools-protocol" }
 

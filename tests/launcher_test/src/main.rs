@@ -4,9 +4,6 @@ mod check;
 mod client;
 mod inspect;
 mod journal;
-#[allow(dead_code)]
-#[path = "../../test_runner/src/paths.rs"]
-mod paths;
 mod profile;
 
 use std::{
@@ -21,8 +18,8 @@ use std::{
 };
 
 use client::{launcher_command, launcher_path, library_path, test_args, Launcher};
-use paths::ByondCommand;
 use serde_json::json;
+use test_support::paths::{self, ByondCommand};
 
 const TARGET_LINE: u64 = 28;
 
@@ -107,12 +104,7 @@ fn main() {
 		assert!(GROUPS.contains(&name.as_str()), "unknown group {}; available groups: {:?}", name, GROUPS);
 	}
 	std::env::set_var("AUXTOOLS_WATCH_INTERVAL", "50");
-	let res = Command::new(paths::find_dm())
-		.with_byond_paths()
-		.arg(host_file("launcher_test_host.dme"))
-		.status()
-		.unwrap();
-	assert!(res.success(), "dreammaker build failed");
+	paths::compile(&host_file("launcher_test_host.dme"));
 	let _ = std::fs::remove_file(host_file("rebooted"));
 
 	let server = client::server();
@@ -1253,8 +1245,7 @@ fn edited_after_build(server: &str) {
 	let said = "Hot reload: files newer than the .dmb may have unapplied changes: attach_host.dm";
 	assert!(read_log().contains(said), "launch said:\n{}", read_log());
 
-	let res = Command::new(paths::find_dm()).with_byond_paths().arg(&dme).status().unwrap();
-	assert!(res.success(), "dreammaker build failed");
+	paths::compile(&dme);
 	edit(format!("{}\n/proc/edited()\n\treturn 1\n\n/proc/edited_again()\n\treturn 2\n", source));
 	wait_for_text("the launcher's log", "Hot reload: added /edited_again", read_log);
 	let pid = pid.to_string();
@@ -1434,8 +1425,7 @@ fn attach_host_copy(name: &str) -> (PathBuf, PathBuf) {
 		std::fs::copy(host_file(file), dir.join(file)).unwrap();
 	}
 	let dme = dir.join("attach_host.dme");
-	let res = Command::new(paths::find_dm()).with_byond_paths().arg(&dme).status().unwrap();
-	assert!(res.success(), "dreammaker build failed");
+	paths::compile(&dme);
 	(dir, dme)
 }
 
@@ -1629,8 +1619,7 @@ fn dmb_elsewhere(server: &str) {
 	let source = std::fs::read_to_string(&code).unwrap();
 	std::fs::write(&code, format!("{}\n/proc/added_here()\n\treturn 99\n", source)).unwrap();
 	wait_for_text("the world", "99", || run(&["eval", "added_here()"]));
-	let res = Command::new(paths::find_dm()).with_byond_paths().arg(&dme).status().unwrap();
-	assert!(res.success(), "dreammaker build failed");
+	paths::compile(&dme);
 	std::fs::rename(&built, &dmb).unwrap();
 	assert_eq!(run(&["reboot", "--timeout", "15"]).trim(), format!("pid {}: rebooted", pid));
 	let printed = run(&["proc", "/added_here"]);
@@ -1859,7 +1848,7 @@ fn launch_from_the_command_line(server: &str) {
 		assert!(Command::new("kill").args(["-STOP", &launcher_text]).status().unwrap().success());
 		let edited = std::fs::read_to_string(&code).unwrap();
 		std::fs::write(&code, format!("{}\n/proc/zz_agent_probe()\n\treturn 7\n", edited)).unwrap();
-		let built = Command::new(paths::find_dm()).with_byond_paths().arg(&dme).output().unwrap();
+		let built = paths::dreammaker().arg(&dme).output().unwrap();
 		std::fs::write(dir.join("reboot"), "yes").unwrap();
 		let until = Instant::now() + Duration::from_secs(20);
 		while loads() == loaded && Instant::now() < until {
@@ -2038,8 +2027,7 @@ fn without_debug_info(server: &str) {
 	let (dir, dme) = attach_host_copy("nolines");
 	let text = std::fs::read_to_string(&dme).unwrap().replace("#define DEBUG\n", "");
 	std::fs::write(&dme, text).unwrap();
-	let res = Command::new(paths::find_dm()).with_byond_paths().arg(&dme).status().unwrap();
-	assert!(res.success(), "dreammaker build failed");
+	paths::compile(&dme);
 	let dmb = dme.with_extension("dmb");
 
 	let mut started = Started::default();
@@ -2077,8 +2065,7 @@ fn unread_statics(server: &str) {
 		 2\n#endif\n\n/proc/unread_static_proc()\n\tvar/static/named = count_init(STATIC_NAME)\n\treturn 1\n"
 	);
 	std::fs::write(&code, &source).unwrap();
-	let res = Command::new(paths::find_dm()).with_byond_paths().arg(&dme).status().unwrap();
-	assert!(res.success(), "dreammaker build failed");
+	paths::compile(&dme);
 	let dmb = dme.with_extension("dmb");
 
 	let mut started = Started::default();

@@ -1,17 +1,11 @@
 #[allow(dead_code)]
 mod client;
 mod groups;
-#[allow(dead_code)]
-#[path = "../../test_runner/src/paths.rs"]
-mod paths;
 mod world;
 
-use std::{
-	process::Command,
-	sync::atomic::{AtomicUsize, Ordering}
-};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
-use paths::ByondCommand;
+use test_support::paths;
 
 static CHECKS: AtomicUsize = AtomicUsize::new(0);
 
@@ -64,12 +58,7 @@ fn main() {
 	std::env::set_var("AUXTOOLS_WATCH_INTERVAL", "50");
 
 	let _ = std::fs::remove_file(world::host_file("fail_early"));
-	let res = Command::new(paths::find_dm())
-		.with_byond_paths()
-		.arg(world::host_file("dap_test_host.dme"))
-		.status()
-		.unwrap();
-	assert!(res.success(), "dreammaker build failed");
+	paths::compile(&world::host_file("dap_test_host.dme"));
 
 	for (name, run) in GROUPS {
 		if wanted.is_empty() || wanted.iter().any(|w| w == name) {
