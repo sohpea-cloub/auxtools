@@ -338,8 +338,7 @@ version = "0.1.0"
 dependencies = [
  "dmasm-bytecode",
  "dmasm-compiler",
- "dreammaker",
- "serde",
+ "dmasm-reload",
 ]
 
 [[package]]
@@ -359,6 +358,16 @@ dependencies = [
  "md-5",
  "serde",
  "sha1",
+]
+
+[[package]]
+name = "dmasm-reload"
+version = "0.1.0"
+dependencies = [
+ "dmasm-bytecode",
+ "dmasm-compiler",
+ "dreammaker",
+ "serde",
 ]
 
 [[package]]

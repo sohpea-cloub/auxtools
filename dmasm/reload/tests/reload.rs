@@ -1,11 +1,11 @@
 use std::collections::HashSet;
 use std::path::PathBuf;
 
-use dmasm::reload::{
+use dmasm_bytecode::{Instruction, Node};
+use dmasm_reload::reload::{
     diff, Changes, ClientScript, ConstValue, InList, NewVar, ParseOptions, ProcKey, ProcSettings,
     Refusal, Snapshot, Until,
 };
-use dmasm::{Instruction, Node};
 
 struct World {
     dir: PathBuf,
@@ -88,7 +88,7 @@ fn a_changed_body_is_compiled() {
     assert_eq!(
         reload.nodes.first(),
         Some(&Node::Instruction(
-            Instruction::DbgFile(dmasm::DMString(b"code/code.dm".to_vec())),
+            Instruction::DbgFile(dmasm_bytecode::DMString(b"code/code.dm".to_vec())),
             ()
         ))
     );
@@ -126,8 +126,8 @@ fn a_reloaded_assignment_operator_returns_src_by_default() {
             .collect()
     };
     let dot_src = [
-        Instruction::GetVar(dmasm::Variable::Src),
-        Instruction::SetVar(dmasm::Variable::Dot),
+        Instruction::GetVar(dmasm_bytecode::Variable::Src),
+        Instruction::SetVar(dmasm_bytecode::Variable::Dot),
     ];
     assert_eq!(prologue("/datum/d/operator+="), dot_src);
     assert_ne!(prologue("/datum/d/operator+"), dot_src);
@@ -174,7 +174,7 @@ fn files_of_an_included_environment_are_named_as_it_names_them() {
     assert_eq!(
         changes.plan.reloads[0].nodes.first(),
         Some(&Node::Instruction(
-            Instruction::DbgFile(dmasm::DMString(b"std.dm".to_vec())),
+            Instruction::DbgFile(dmasm_bytecode::DMString(b"std.dm".to_vec())),
             ()
         ))
     );
@@ -515,7 +515,7 @@ fn spaceman_dmm_is_not_defined() {
     };
     let changes = changes("spaceman", &code(1), &code(2));
     assert_eq!(reloaded(&changes), [key("/a", 0)]);
-    let code = dmasm::format(&changes.plan.reloads[0].nodes);
+    let code = dmasm_bytecode::format(&changes.plan.reloads[0].nodes);
     assert!(code.contains("PushInt 2"), "{}", code);
 }
 
@@ -1110,15 +1110,16 @@ fn static_locals_come_with_their_initial_values() {
     let before = "/datum/a/proc/f()\n\treturn 1\n";
     let after = "/datum/a/proc/f()\n\tvar/static/n = 3\n\tvar/static/list/l = list()\n\tif (n)\n\t\tvar/static/n = \"x\"\n\t\treturn n\n\treturn l\n";
     let changes = changes("statics", before, after);
-    let in_f = |nth| dmasm::StaticScope::Proc {
+    let in_f = |nth| dmasm_bytecode::StaticScope::Proc {
         path: "/datum/a/proc/f".to_owned(),
         nth,
     };
-    let statics: Vec<(String, dmasm::StaticScope, Option<ConstValue>)> = changes.plan.reloads[0]
-        .statics
-        .iter()
-        .map(|s| (s.name.clone(), s.scope.clone(), s.value.clone()))
-        .collect();
+    let statics: Vec<(String, dmasm_bytecode::StaticScope, Option<ConstValue>)> =
+        changes.plan.reloads[0]
+            .statics
+            .iter()
+            .map(|s| (s.name.clone(), s.scope.clone(), s.value.clone()))
+            .collect();
     assert_eq!(
         statics,
         [
@@ -1235,19 +1236,19 @@ fn in_list_expressions_are_kept_or_compiled() {
         panic!("{:?}", changes.plan.reloads[0].params[0].in_list);
     };
     assert!(
-        dmasm::format(&code.nodes).contains("cache = src; cache[\"loc\"]"),
+        dmasm_bytecode::format(&code.nodes).contains("cache = src; cache[\"loc\"]"),
         "{}",
-        dmasm::format(&code.nodes)
+        dmasm_bytecode::format(&code.nodes)
     );
     let InList::New(code) = &changes.plan.new_procs[0].code.params[0].in_list else {
         panic!("{:?}", changes.plan.new_procs[0].code.params[0].in_list);
     };
     assert!(
-        dmasm::format(&code.nodes).contains("NewList 2"),
+        dmasm_bytecode::format(&code.nodes).contains("NewList 2"),
         "{}",
-        dmasm::format(&code.nodes)
+        dmasm_bytecode::format(&code.nodes)
     );
-    let text = dmasm::format(&code.nodes);
+    let text = dmasm_bytecode::format(&code.nodes);
     assert!(
         text.starts_with("DbgFile") && text.contains("DbgLine 3"),
         "{}",
@@ -2002,7 +2003,9 @@ fn a_static_local_s_initializer_names_its_own_proc() {
         .nodes
         .iter()
         .filter_map(|n| match n {
-            Node::Instruction(Instruction::PushVal(dmasm::Value::Path(p)), _) => Some(p.clone()),
+            Node::Instruction(Instruction::PushVal(dmasm_bytecode::Value::Path(p)), _) => {
+                Some(p.clone())
+            }
             _ => None,
         })
         .collect();
@@ -3030,12 +3033,12 @@ fn a_moved_up_proc_that_names_itself_is_compiled_again() {
     );
 }
 
-fn scope(var: &dmasm::GlobalVar) -> String {
+fn scope(var: &dmasm_bytecode::GlobalVar) -> String {
     match &var.scope {
         None => "?".to_owned(),
-        Some(dmasm::StaticScope::Global) => String::new(),
-        Some(dmasm::StaticScope::Type(path)) => path.clone(),
-        Some(dmasm::StaticScope::Proc { path, nth }) => format!("{path}#{nth}"),
+        Some(dmasm_bytecode::StaticScope::Global) => String::new(),
+        Some(dmasm_bytecode::StaticScope::Type(path)) => path.clone(),
+        Some(dmasm_bytecode::StaticScope::Proc { path, nth }) => format!("{path}#{nth}"),
     }
 }
 
@@ -3046,7 +3049,7 @@ fn global_init_sets(changes: &Changes) -> Vec<String> {
     for node in &init.code.nodes {
         match node {
             Node::Instruction(Instruction::DbgLine(at), ()) => line = *at,
-            Node::Instruction(Instruction::SetVar(dmasm::Variable::Global(var)), ()) => {
+            Node::Instruction(Instruction::SetVar(dmasm_bytecode::Variable::Global(var)), ()) => {
                 sets.push(format!(
                     "{}:{} @{line}",
                     scope(var),
@@ -3108,9 +3111,13 @@ fn global_init_reads_a_procs_earlier_statics() {
         .nodes
         .iter()
         .filter_map(|node| match node {
-            Node::Instruction(Instruction::GetVar(dmasm::Variable::Global(var)), ()) => Some(
-                format!("{}:{}", scope(var), String::from_utf8_lossy(&var.name.0)),
-            ),
+            Node::Instruction(Instruction::GetVar(dmasm_bytecode::Variable::Global(var)), ()) => {
+                Some(format!(
+                    "{}:{}",
+                    scope(var),
+                    String::from_utf8_lossy(&var.name.0)
+                ))
+            }
             _ => None,
         })
         .collect();
@@ -3185,7 +3192,7 @@ fn changed_initializers_give_a_rebuilds_global_init_proc() {
     );
     assert!(matches!(
         changes.global_init.as_ref().unwrap().code.nodes[2],
-        Node::Instruction(Instruction::GetVar(dmasm::Variable::Null), ())
+        Node::Instruction(Instruction::GetVar(dmasm_bytecode::Variable::Null), ())
     ));
 
     let changes = changes_of(
@@ -3317,9 +3324,10 @@ var/datum/h3 = list(3)
         let set: Vec<String> = nodes
             .iter()
             .filter_map(|node| match node {
-                Node::Instruction(Instruction::SetVar(dmasm::Variable::Global(var)), ()) => {
-                    Some(String::from_utf8_lossy(&var.name.0).into_owned())
-                }
+                Node::Instruction(
+                    Instruction::SetVar(dmasm_bytecode::Variable::Global(var)),
+                    (),
+                ) => Some(String::from_utf8_lossy(&var.name.0).into_owned()),
                 _ => None,
             })
             .collect();
@@ -3353,9 +3361,10 @@ fn global_init_orders_dreammaker_gave() {
         let set: Vec<String> = nodes
             .iter()
             .filter_map(|node| match node {
-                Node::Instruction(Instruction::SetVar(dmasm::Variable::Global(var)), ()) => {
-                    Some(String::from_utf8_lossy(&var.name.0).into_owned())
-                }
+                Node::Instruction(
+                    Instruction::SetVar(dmasm_bytecode::Variable::Global(var)),
+                    (),
+                ) => Some(String::from_utf8_lossy(&var.name.0).into_owned()),
                 _ => None,
             })
             .collect();
@@ -3409,9 +3418,10 @@ fn global_init_after_a_reload_is_in_dmasms_order() {
             .nodes
             .iter()
             .filter_map(|node| match node {
-                Node::Instruction(Instruction::SetVar(dmasm::Variable::Global(var)), ()) => {
-                    Some(String::from_utf8_lossy(&var.name.0).into_owned())
-                }
+                Node::Instruction(
+                    Instruction::SetVar(dmasm_bytecode::Variable::Global(var)),
+                    (),
+                ) => Some(String::from_utf8_lossy(&var.name.0).into_owned()),
                 _ => None,
             })
             .collect()

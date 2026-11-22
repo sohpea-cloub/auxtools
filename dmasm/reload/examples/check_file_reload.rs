@@ -4,12 +4,12 @@ fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let dme = PathBuf::from(&args[0]);
     let root = dme.parent().unwrap().to_owned();
-    let options = dmasm::reload::ParseOptions {
+    let options = dmasm_reload::reload::ParseOptions {
         defines: vec![],
         byond: Some((516, 1688)),
     };
     let t = Instant::now();
-    let mut snapshot = dmasm::reload::Snapshot::parse(&dme, &options).unwrap();
+    let mut snapshot = dmasm_reload::reload::Snapshot::parse(&dme, &options).unwrap();
     println!("full parse: {:?}", t.elapsed());
     for file in &args[1..] {
         let path = root.join(file);
@@ -32,9 +32,9 @@ fn main() {
         let quick = snapshot.reload_file(&root, std::path::Path::new(file));
         let quick_time = t.elapsed();
         let t = Instant::now();
-        let new = dmasm::reload::Snapshot::parse(&dme, &options).unwrap();
+        let new = dmasm_reload::reload::Snapshot::parse(&dme, &options).unwrap();
         let changed: HashSet<PathBuf> = [PathBuf::from(file)].into();
-        let full = dmasm::reload::diff(&snapshot, &new, Some(&changed));
+        let full = dmasm_reload::reload::diff(&snapshot, &new, Some(&changed));
         let full_time = t.elapsed();
         std::fs::write(&path, &original).unwrap();
         match quick {

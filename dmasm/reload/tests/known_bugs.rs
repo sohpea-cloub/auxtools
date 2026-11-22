@@ -1,4 +1,5 @@
-use dmasm::{reload::Snapshot, ByondVersion};
+use dmasm_compiler::ByondVersion;
+use dmasm_reload::reload::Snapshot;
 
 const CODE: &str = "\
 /datum/num/proc/operator<<=(b)
