@@ -285,7 +285,15 @@ pub(super) fn emit(
                     }
                     Some(n) if op == BinaryOp::Mul && i == 0 => compiler.emit_number(n),
                     _ => {
-                        compiler.mul_lhs = op == BinaryOp::Mul && i == 0;
+                        compiler.mul_lhs = op == BinaryOp::Mul
+                            && i == 0
+                            && (matches!(
+                                operand,
+                                Expression::BinaryOp {
+                                    op: BinaryOp::Mul,
+                                    ..
+                                }
+                            ) || paren_op(BinaryOp::Mul, &operand).is_some());
                         let kind = compiler.emit_expr(operand)?;
                         compiler.mul_lhs = false;
                         compiler.emit_move_to_stack(kind)?;

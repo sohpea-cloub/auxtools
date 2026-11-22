@@ -520,6 +520,36 @@ fn a_variable_times_itself_is_squared() {
 }
 
 #[test]
+fn a_square_left_of_a_product() {
+    let code = |expr: &str| {
+        compile(
+            &format!("/proc/g(x)\n/proc/f(a, b, list/L)\n\tvar/v = {expr}\n\treturn v\n"),
+            "",
+            "f",
+        )
+    };
+    for expr in ["a * a * b", "(a * a) * b", "((a * a)) * b"] {
+        let code = code(expr);
+        assert!(!code.contains("PowSquare"), "{}:\n{}", expr, code);
+    }
+    for expr in [
+        "g(a * a) * b",
+        "L[a * a] * b",
+        "list(a * a)[1] * b",
+        "(b ? a * a : 1) * b",
+        "-(a * a) * b",
+    ] {
+        let code = code(expr);
+        assert!(
+            code.contains("GetVar arg(0)\nPowSquare"),
+            "{}: expected a square of a in\n{}",
+            expr,
+            code
+        );
+    }
+}
+
+#[test]
 fn a_pick_of_weight_0_and_a_case_of_minus_0() {
     let v = |build| dmasm_compiler::ByondVersion::new(516, build);
     let middle = "/proc/f(a, b)\n\treturn pick(1; a, 0; b, 2; \"c\")\n";
