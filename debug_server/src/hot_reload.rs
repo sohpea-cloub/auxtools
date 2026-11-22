@@ -2202,10 +2202,12 @@ fn apply_code<K: Ord + std::hash::Hash + Copy, T>(
 		auxtools::debug::set_local_names(old_ptr, names);
 	}
 
-	let hooked: Vec<(u32, u32, Option<BTreeMap<K, T>>)> = hooked_offsets(&p.proc)
+	let hooked_at = hooked_offsets(&p.proc);
+	let old_code = (!hooked_at.is_empty()).then(|| crate::code_index::of(&p.proc));
+	let hooked: Vec<(u32, u32, Option<BTreeMap<K, T>>)> = hooked_at
 		.into_iter()
 		.filter_map(|offset| {
-			let line = line_at(&old_bytecode, offset)?;
+			let line = old_code.as_ref()?.line_at(offset)?;
 			let known = breakpoints.remove(&(p.proc.id, offset as u16));
 			let _ = unhook_instruction(&p.proc, offset);
 			Some((offset, line, known))
@@ -2230,6 +2232,15 @@ fn apply_code<K: Ord + std::hash::Hash + Copy, T>(
 	auxtools::debug::set_local_names(new_ptr, local_names);
 	crate::code_index::proc_changed(p.proc.id);
 
+	let Some(old_code) = old_code.filter(|_| !hooked.is_empty()) else {
+		return;
+	};
+	let new_code = crate::code_index::of(&p.proc);
+	let firsts = match (old_code.lines().next(), new_code.lines().next()) {
+		(Some(old_first), Some(new_first)) if debug_file(&old_bytecode) != debug_file(&p.bytecode) => Some((old_first, new_first)),
+		_ => None
+	};
+
 	for (old_offset, line, known) in hooked {
 		let line = match &p.lines {
 			Some(lines) => map_line(line, lines),
@@ -2250,16 +2261,10 @@ fn apply_code<K: Ord + std::hash::Hash + Copy, T>(
 			}
 		}
 
-		let moved = match (first_line(&old_bytecode), first_line(&p.bytecode)) {
-			(Some(old_first), Some(new_first)) if debug_file(&old_bytecode) != debug_file(&p.bytecode) && line >= old_first => {
-				Some(line - old_first + new_first)
-			}
-			_ => None
-		};
-		let Some((line, offset)) = (match moved {
-			Some(moved) => offset_of_line(&p.bytecode, moved).map(|offset| (moved, offset)),
-			None => offset_of_line(&p.bytecode, line).map(|offset| (line, offset))
-		}) else {
+		let moved = firsts
+			.filter(|(old_first, _)| line >= *old_first)
+			.map(|(old_first, new_first)| line - old_first + new_first);
+		let Some((line, offset)) = new_code.after_line(moved.unwrap_or(line)).map(|offset| (moved.unwrap_or(line), offset)) else {
 			warnings.push(format!(
 				"{}: removed breakpoint on line {}: no executable code after reload",
 				p.name, line
@@ -2517,40 +2522,10 @@ fn map_line(line: u32, lines: &[(u32, u32)]) -> u32 {
 	}
 }
 
-fn line_at(bytecode: &[u32], offset: u32) -> Option<u32> {
-	let mut line = None;
-	for ins in dmasm::scan(bytecode).ok()?.instructions {
-		if ins.offset > offset {
-			break;
-		}
-		if ins.opcode == Opcode::DbgLine {
-			line = ins.bytecode.get(1).copied();
-		}
-	}
-	line
-}
-
 fn debug_file(bytecode: &[u32]) -> Option<u32> {
 	(bytecode.first() == Some(&Opcode::DbgFile.word()))
 		.then(|| bytecode.get(1).copied())
 		.flatten()
-}
-
-fn first_line(bytecode: &[u32]) -> Option<u32> {
-	dmasm::scan(bytecode)
-		.ok()?
-		.instructions
-		.iter()
-		.find(|ins| ins.opcode == Opcode::DbgLine)
-		.and_then(|ins| ins.bytecode.get(1).copied())
-}
-
-fn offset_of_line(bytecode: &[u32], line: u32) -> Option<u32> {
-	let instructions = dmasm::scan(bytecode).ok()?.instructions;
-	let at = instructions
-		.iter()
-		.position(|ins| ins.opcode == Opcode::DbgLine && ins.bytecode.get(1) == Some(&line))?;
-	instructions.get(at + 1).map(|ins| ins.offset)
 }
 
 fn describe_assemble_error(e: &dmasm::assembler::AssembleError) -> String {
