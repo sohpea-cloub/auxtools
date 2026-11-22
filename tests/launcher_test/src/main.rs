@@ -1754,7 +1754,15 @@ fn launch_from_the_command_line(server: &str) {
 		.map(|args| {
 			std::thread::spawn({
 				let args: Vec<String> = args.iter().map(|arg| (*arg).to_owned()).collect();
-				move || launcher_command(&args.iter().map(String::as_str).collect::<Vec<_>>())
+				move || {
+					let out = Command::new(launcher_path())
+						.args(&args)
+						.env("AUXTOOLS_TEST_PATIENCE", "1000")
+						.output()
+						.unwrap();
+					let printed = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+					(out.status.code().unwrap_or(-1), printed)
+				}
 			})
 		})
 		.collect();

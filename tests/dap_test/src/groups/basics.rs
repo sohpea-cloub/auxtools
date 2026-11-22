@@ -68,19 +68,20 @@ fn asked_to_end() {
 	ok("shutdown while paused");
 	world.end();
 
-	let mut world = World::start();
+	let short = std::time::Duration::from_secs(2);
+	let mut world = World::start_with(&[("AUXTOOLS_TEST_PATIENCE", "2000")]);
 	assert_eq!(world.eval_global("on_shutdown = \"refuse\""), "\"refuse\"");
 	let asked = std::time::Instant::now();
 	world.request("terminate", json!({}));
 	world.wait_output("dap: world/Del\n");
 	let took = over(&mut world, asked);
-	assert!(took >= grace && took < grace * 2, "the world was ended after {:?}", took);
+	assert!(took >= short && took < short + grace, "the world was ended after {:?}", took);
 	assert!(
 		!world.output.contains("waiting to reconnect"),
 		"the launcher waited for the debugger of a world it was ending"
 	);
 	assert!(
-		world.output.contains("Shutdown timed out after 5 seconds; terminating process"),
+		world.output.contains("Shutdown timed out after 2 seconds; terminating process"),
 		"the launcher didn't say why:\n{}",
 		world.output
 	);

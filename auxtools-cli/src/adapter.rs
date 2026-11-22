@@ -544,7 +544,7 @@ impl Adapter {
 				if self.ending && self.world_process() == Some(process) {
 					self.out.console(format!(
 						"Shutdown timed out after {} seconds; terminating process {}",
-						TERMINATE_GRACE.as_secs(),
+						local::test_patience(TERMINATE_GRACE).as_secs(),
 						process
 					));
 					self.kill_world();
@@ -1408,7 +1408,7 @@ impl Adapter {
 			let inputs = self.inputs.clone();
 			let launched = self.game.is_some();
 			std::thread::spawn(move || {
-				let deadline = std::time::Instant::now() + TERMINATE_GRACE;
+				let deadline = std::time::Instant::now() + local::test_patience(TERMINATE_GRACE);
 				let mut overdue = false;
 				while launched || local::alive(process) {
 					if !overdue && std::time::Instant::now() >= deadline {

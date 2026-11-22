@@ -102,7 +102,10 @@ impl World {
 	}
 
 	pub fn launch_as(abilities: Value, dir: PathBuf, more: Value) -> Self {
-		let mut launcher = Launcher::start();
+		Self::launch_from(Launcher::start(), abilities, dir, more)
+	}
+
+	fn launch_from(mut launcher: Launcher, abilities: Value, dir: PathBuf, more: Value) -> Self {
 		launcher.initialize_as(abilities);
 		launcher.launch(&paths::find_byond(), &dir.join("dap_test_host.dme"), more);
 		Self {
@@ -139,7 +142,11 @@ impl World {
 	}
 
 	pub fn start() -> Self {
-		let mut world = Self::launch(json!({}));
+		Self::start_with(&[])
+	}
+
+	pub fn start_with(env: &[(&str, &str)]) -> Self {
+		let mut world = Self::launch_from(Launcher::start_with(env), json!({}), host_file(""), json!({}));
 		world.catch_runtimes(false);
 		world.configure();
 		world

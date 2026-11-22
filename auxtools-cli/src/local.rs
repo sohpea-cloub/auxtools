@@ -1,7 +1,7 @@
 use std::{
 	io::{self, Read, Write},
 	path::{Path, PathBuf},
-	sync::Arc,
+	sync::{Arc, OnceLock},
 	time::{Duration, Instant}
 };
 
@@ -122,6 +122,14 @@ enum Probed {
 
 pub const PROBE_PATIENCE: Duration = Duration::from_secs(5);
 
+const TEST_PATIENCE_VAR: &str = "AUXTOOLS_TEST_PATIENCE";
+
+pub fn test_patience(usual: Duration) -> Duration {
+	static GIVEN: OnceLock<Option<Duration>> = OnceLock::new();
+	let given = GIVEN.get_or_init(|| std::env::var(TEST_PATIENCE_VAR).ok()?.parse().ok().map(Duration::from_millis));
+	given.map_or(usual, |given| given.min(usual))
+}
+
 pub fn worlds() -> Vec<World> {
 	let probes: Vec<_> = server_processes()
 		.into_iter()
@@ -130,7 +138,7 @@ pub fn worlds() -> Vec<World> {
 			(pid, program, answer)
 		})
 		.collect();
-	let until = Instant::now() + PROBE_PATIENCE;
+	let until = Instant::now() + test_patience(PROBE_PATIENCE);
 	probes
 		.into_iter()
 		.filter_map(|(pid, program, answer)| {

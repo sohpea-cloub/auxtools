@@ -118,8 +118,13 @@ pub struct Launcher {
 
 impl Launcher {
 	pub fn start() -> Self {
+		Self::start_with(&[])
+	}
+
+	pub fn start_with(env: &[(&str, &str)]) -> Self {
 		let mut child = Command::new(launcher_path())
 			.arg("dap")
+			.envs(env.iter().copied())
 			.stdin(Stdio::piped())
 			.stdout(Stdio::piped())
 			.spawn()
