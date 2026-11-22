@@ -412,8 +412,17 @@ impl Server {
 				continue;
 			}
 
+			let runs_dm = matches!(
+				request,
+				Request::HotReload(_) | Request::Skin(_) | Request::Script(_) | Request::Reconnect | Request::Spawn { .. }
+			);
 			self.handle_request(request);
 			self.sessions.request_over();
+			if runs_dm {
+				if let Some(state) = self.pause.state.as_mut() {
+					state.invalidate_stacks();
+				}
+			}
 		}
 
 		self.broadcast(Response::Resumed, None);

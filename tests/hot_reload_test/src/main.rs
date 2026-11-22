@@ -373,6 +373,27 @@ fn main() {
 	let result = reload(&mut watcher, &changes);
 	assert!(result.warnings.is_empty(), "{:?}", result.warnings);
 	assert_eq!(paused_line(&mut client), ("/breakpoint_target".to_owned(), Some(line + 2)));
+	fn sleeping_stacks(client: &mut Client) -> (usize, u32) {
+		match client.request(Request::Stacks { sleeping: Some(1000) }) {
+			Response::Stacks { stacks, sleeping } => (stacks.iter().filter(|stack| stack.sleeping).count(), sleeping),
+			other => panic!("expected Stacks, got {:?}", other)
+		}
+	}
+	let (listed, asleep) = sleeping_stacks(&mut client);
+	assert_eq!(listed, asleep as usize);
+	let changes = source.edit(
+		"reload.dm",
+		"/proc/first_def()\n\treturn \"first\"",
+		"/proc/first_def()\n\treturn \"first\"\n\nvar/global/spawned_by_reload = \
+		 sleep_from_reload()\n\n/proc/sleep_from_reload()\n\tspawn(0)\n\t\tsleep(6000)\n\treturn 1"
+	);
+	reload(&mut watcher, &changes);
+	assert_eq!(
+		sleeping_stacks(&mut client),
+		(listed + 1, asleep + 1),
+		"the stacks shown after a reload while paused aren't the world's"
+	);
+	println!("ok: stacks after a paused reload");
 	client.resume();
 
 	eval(&mut client, "arm_breakpoint()");
