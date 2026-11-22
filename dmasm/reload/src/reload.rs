@@ -7,6 +7,7 @@ use dreammaker::preprocessor::DefineHistory;
 use dreammaker::{Context, FileId, Severity};
 
 use crate::compiler::{compile_proc, CompiledProc, ProcSource};
+use crate::diagnostic::{Diagnostic, Id};
 use crate::syntax;
 
 #[path = "reload_moved.rs"]
@@ -1095,16 +1096,19 @@ impl Snapshot {
         Some(self.file_name(value.location.file))
     }
 
-    pub fn compile_reload(&self, key: &ProcKey) -> Result<ProcReload, String> {
+    pub fn compile_reload(&self, key: &ProcKey) -> Result<ProcReload, Diagnostic> {
         let mut reload = self.compile_code(key)?;
-        reload.settings = Some(self.settings(key)?);
+        reload.settings = Some(
+            self.settings(key)
+                .map_err(|e| Diagnostic::error(Id::UnsupportedSetting, e))?,
+        );
         Ok(reload)
     }
 
-    fn compile_code(&self, key: &ProcKey) -> Result<ProcReload, String> {
-        let (_, value) = self.find(key).ok_or_else(|| format!("no proc {key}"))?;
+    fn compile_code(&self, key: &ProcKey) -> Result<ProcReload, Diagnostic> {
+        let (_, value) = self.find(key).ok_or_else(|| no_proc(key))?;
         let compiled = self.compile(key)?;
-        let (ty, _) = self.find(key).ok_or_else(|| format!("no proc {key}"))?;
+        let (ty, _) = self.find(key).ok_or_else(|| no_proc(key))?;
         let mut statics = vec![];
         let mut earlier = vec![];
         for s in compiled.statics {
@@ -1144,8 +1148,8 @@ impl Snapshot {
         key: &ProcKey,
         reload: &mut ProcReload,
         new: impl Fn(&str, &dreammaker::ast::Expression) -> bool,
-    ) -> Result<(), String> {
-        let (ty, value) = self.find(key).ok_or_else(|| format!("no proc {key}"))?;
+    ) -> Result<(), Diagnostic> {
+        let (ty, value) = self.find(key).ok_or_else(|| no_proc(key))?;
         for param in reload.params.iter_mut() {
             if param.in_list != InList::Kept {
                 continue;
@@ -1162,7 +1166,12 @@ impl Snapshot {
                 let location = value_location(expression, value.location);
                 let code = self
                     .compile_in_list(ty, expression, location)
-                    .map_err(|e| format!("parameter {}'s `in` list: {e}", param.name))?;
+                    .map_err(|e| {
+                        Diagnostic::error(
+                            e.id,
+                            format!("parameter {}'s `in` list: {e}", param.name),
+                        )
+                    })?;
                 param.in_list = InList::New(Box::new(code));
             }
         }
@@ -1174,7 +1183,7 @@ impl Snapshot {
         ty: TypeRef,
         expression: &dreammaker::ast::Expression,
         location: dreammaker::Location,
-    ) -> Result<ProcReload, String> {
+    ) -> Result<ProcReload, Diagnostic> {
         use dreammaker::ast::{Spanned, Statement};
         let block: Block = Box::new([Spanned::new(
             location,
@@ -1191,7 +1200,7 @@ impl Snapshot {
         location: dreammaker::Location,
         proc_path: Option<&str>,
         statics: &[(String, u32)],
-    ) -> Result<ProcReload, String> {
+    ) -> Result<ProcReload, Diagnostic> {
         use dreammaker::ast::{Expression, Ident, PathOp, Prefab, RelativePath, Spanned, Term};
         let mut expression = expression.clone();
         if let Expression::Base { term, .. } = &mut expression {
@@ -1203,7 +1212,10 @@ impl Snapshot {
                 };
                 let mut parts = declared.split('/').filter(|part| !part.is_empty());
                 let Some(first) = parts.next() else {
-                    return Err("implicit new requires a declared variable type".to_owned());
+                    return Err(Diagnostic::error(
+                        Id::ImplicitNewUntyped,
+                        "implicit new requires a declared variable type",
+                    ));
                 };
                 let mut path = RelativePath::single(PathOp::Slash, Ident::from_nonstatic(first));
                 for part in parts {
@@ -1227,7 +1239,7 @@ impl Snapshot {
         )
     }
 
-    fn compile_init(&self, ty: TypeRef, inits: &[Init]) -> Result<ProcReload, String> {
+    fn compile_init(&self, ty: TypeRef, inits: &[Init]) -> Result<ProcReload, Diagnostic> {
         use dreammaker::ast::{
             AssignOp, Expression, Follow, Ident, PropertyAccessKind, Spanned, Term,
         };
@@ -1267,7 +1279,7 @@ impl Snapshot {
         debug_info: bool,
         proc_path: Option<&str>,
         statics: &[(String, u32)],
-    ) -> Result<ProcReload, String> {
+    ) -> Result<ProcReload, Diagnostic> {
         let value = ProcValue {
             location,
             parameters: Box::new([]),
@@ -1296,8 +1308,8 @@ impl Snapshot {
             crate::compiler::compile_proc_as(&source, proc_path, statics)
         })) {
             Ok(Ok(compiled)) => compiled,
-            Ok(Err(e)) => return Err(e.to_string()),
-            Err(_) => return Err("the compiler panicked".to_owned()),
+            Ok(Err(e)) => return Err(e.diagnostic()),
+            Err(_) => return Err(panicked()),
         };
         Ok(ProcReload {
             proc: ProcKey {
@@ -1330,8 +1342,8 @@ impl Snapshot {
         settings_of(ty, name, *index, declared)
     }
 
-    pub fn compile(&self, key: &ProcKey) -> Result<CompiledProc, String> {
-        let (ty, value) = self.find(key).ok_or_else(|| format!("no proc {key}"))?;
+    pub fn compile(&self, key: &ProcKey) -> Result<CompiledProc, Diagnostic> {
+        let (ty, value) = self.find(key).ok_or_else(|| no_proc(key))?;
         let (_, name, index) = &self.procs[key];
         let file = self.debug_file_name(value.location.file);
         let source = ProcSource {
@@ -1347,8 +1359,8 @@ impl Snapshot {
         };
         match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| compile_proc(&source))) {
             Ok(Ok(compiled)) => Ok(compiled),
-            Ok(Err(e)) => Err(e.to_string()),
-            Err(_) => Err("the compiler panicked".to_owned()),
+            Ok(Err(e)) => Err(e.diagnostic()),
+            Err(_) => Err(panicked()),
         }
     }
 
@@ -1365,7 +1377,9 @@ impl Snapshot {
                         proc: key.clone(),
                         text: bug.text,
                     })),
-                Err(error) => found.not_checked.push((key.clone(), file, error)),
+                Err(error) => found
+                    .not_checked
+                    .push((key.clone(), file, error.to_string())),
             }
         }
         found
@@ -1459,16 +1473,12 @@ impl Snapshot {
         }
     }
 
-    fn uncompiled(&self, key: &ProcKey, e: &str) -> Refusal {
-        let line = e
-            .strip_prefix("line ")
-            .and_then(|rest| rest.split_once(": "))
-            .and_then(|(line, what)| Some((line.parse::<u32>().ok()?, what)));
+    fn uncompiled(&self, key: &ProcKey, e: &Diagnostic) -> Refusal {
         let refusal = self.proc_refusal(key, format!("doesn't compile: {e}"));
-        match line {
-            Some((line, what)) if refusal.file.is_some() => Refusal {
-                why: format!("doesn't compile: {what}"),
-                line: Some(line),
+        match (&e.span, &e.subject) {
+            (Some(span), None) if span.file.is_none() && refusal.file.is_some() => Refusal {
+                why: format!("doesn't compile: {}", e.message),
+                line: Some(span.line),
                 ..refusal
             },
             _ => refusal,
@@ -1897,8 +1907,8 @@ fn line_move(
 }
 
 fn line_change(
-    old_code: Result<CompiledProc, String>,
-    new_code: Result<CompiledProc, String>,
+    old_code: Result<CompiledProc, Diagnostic>,
+    new_code: Result<CompiledProc, Diagnostic>,
     old_value: &ProcValue,
     new_value: &ProcValue,
 ) -> LineChange {
@@ -2081,6 +2091,14 @@ fn macros_in(
 }
 
 type DeclaredSettings = HashMap<(usize, String), Result<ProcSettings, String>>;
+
+fn no_proc(key: &ProcKey) -> Diagnostic {
+    Diagnostic::error(Id::NoSuchProc, format!("no proc {key}"))
+}
+
+fn panicked() -> Diagnostic {
+    Diagnostic::error(Id::CompilerPanicked, "the compiler panicked")
+}
 
 fn settings_of(
     ty: TypeRef,

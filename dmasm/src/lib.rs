@@ -4,5 +4,5 @@ pub use dmasm_bytecode::{
     Node, Opcode, PickProbParams, PickSwitchParams, Proc, ScannedBytecode, StaticScope,
     SwitchParams, SwitchRangeParams, TypeFilter, Value, Variable,
 };
-pub use dmasm_compiler::{compiler, ByondVersion};
+pub use dmasm_compiler::{compiler, diagnostic, ByondVersion};
 pub use dmasm_reload::{debug_files, reload};

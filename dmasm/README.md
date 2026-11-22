@@ -18,7 +18,9 @@ It has three parts, each a crate of its own:
   reboot or a rebuild. It uses the compiler.
 
 The `dmasm` crate re-exports the three at the paths they had as one crate: the bytecode's
-types, `assembler` and `disassembler` at its root, and the `compiler` and `reload` modules.
+types, `assembler` and `disassembler` at its root, and the `compiler` and `reload` modules,
+with `diagnostic`. What dmasm reports (compile errors, warnings, a reload's refusals and
+notes) has an id from `diagnostic::Id` to decide by; its text is for people, and can change.
 Each crate's `serde` feature derives serde's traits for its types; `dmasm`'s turns on all
 three.
 

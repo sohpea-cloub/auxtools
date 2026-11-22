@@ -3,6 +3,7 @@ use std::fmt;
 use dreammaker::ast::Follow;
 use dreammaker::{ast::Expression, Severity};
 
+use crate::diagnostic::{Diagnostic, Id, Span};
 use crate::operands::{self, DMString, GlobalVar, Label, StaticScope, Variable};
 use crate::syntax;
 use crate::Instruction;
@@ -90,6 +91,56 @@ pub enum CompileError {
     IncorrectArgCount(String),
     MissingArgument { proc: String, index: u32 },
     TooManyArguments { proc: String, expected: u32 },
+}
+
+impl CompileError {
+    pub fn id(&self) -> Id {
+        match self {
+            CompileError::ParseError(_) => Id::ParseError,
+            CompileError::StringError(_) => Id::StringError,
+            CompileError::ExpectedLValue => Id::ExpectedLValue,
+            CompileError::ExpectedFieldReference => Id::ExpectedFieldReference,
+            CompileError::ExpectedEnd => Id::ExpectedEnd,
+            CompileError::UnexpectedRange => Id::UnexpectedRange,
+            CompileError::UnexpectedGlobal => Id::UnexpectedGlobal,
+            CompileError::UnexpectedArgList => Id::UnexpectedArgList,
+            CompileError::UnexpectedProbability => Id::UnexpectedProbability,
+            CompileError::UnexpectedNamedArguments => Id::UnexpectedNamedArguments,
+            CompileError::UnsupportedPrefabWithVars => Id::UnsupportedPrefabWithVars,
+            CompileError::UnsupportedBuiltin { .. } => Id::UnsupportedBuiltin,
+            CompileError::UnsupportedImplicitNew => Id::UnsupportedImplicitNew,
+            CompileError::UnsupportedRelativeCall => Id::UnsupportedRelativeCall,
+            CompileError::UnsupportedImplicitLocate => Id::UnsupportedImplicitLocate,
+            CompileError::UnsupportedStringInterpolation => Id::UnsupportedStringInterpolation,
+            CompileError::UnsupportedInput => Id::UnsupportedInput,
+            CompileError::UnsupportedCompilerMacro { .. } => Id::UnsupportedCompilerMacro,
+            CompileError::UnsupportedStatement(_) => Id::UnsupportedStatement,
+            CompileError::UndefinedVar(_) => Id::UndefinedVar,
+            CompileError::AtLine(_, e) => e.id(),
+            CompileError::AmbiguousListConstructor => Id::AmbiguousListConstructor,
+            CompileError::NotInByond { .. } => Id::NotInByond,
+            CompileError::InvalidLocateArgs => Id::InvalidLocateArgs,
+            CompileError::BadProcReference(_) => Id::BadProcReference,
+            CompileError::IncorrectArgCount(_) => Id::IncorrectArgCount,
+            CompileError::MissingArgument { .. } => Id::MissingArgument,
+            CompileError::TooManyArguments { .. } => Id::TooManyArguments,
+        }
+    }
+
+    pub fn diagnostic(&self) -> Diagnostic {
+        match self {
+            CompileError::AtLine(line, e) => {
+                Diagnostic::error(e.id(), e.to_string()).at(Some(Span::line(*line)))
+            }
+            e => Diagnostic::error(e.id(), e.to_string()),
+        }
+    }
+}
+
+impl From<CompileError> for Diagnostic {
+    fn from(err: CompileError) -> Self {
+        err.diagnostic()
+    }
 }
 
 impl From<strings::StringError> for CompileError {
