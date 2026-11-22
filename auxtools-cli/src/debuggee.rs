@@ -10,7 +10,7 @@ use std::{
 };
 
 use auxtools_cli::{
-	client::{Client, Heard, Listener, Lost},
+	client::{ops::Ending, Client, Heard, Listener, Lost},
 	local::{self, Stream}
 };
 use auxtools_protocol::{BreakpointReason, DataChange, InstructionRef, Request, Response, Stop};
@@ -309,12 +309,8 @@ impl Debuggee {
 		self.client.tell(request, None).map(|_| ()).map_err(lost)
 	}
 
-	pub fn eval_unanswered(&mut self, command: String) -> Result<(), String> {
-		self.send(&Request::Eval {
-			frame_id: None,
-			command,
-			ending: true
-		})
+	pub fn end(&mut self, ending: Ending) -> Result<(), String> {
+		self.send(&ending.request())
 	}
 
 	pub fn request(&mut self, request: &Request) -> Result<Response, String> {
@@ -349,7 +345,7 @@ impl Debuggee {
 mod tests {
 	use std::sync::{mpsc, Arc};
 
-	use auxtools_cli::local::Stream;
+	use auxtools_cli::{client::ops::Ending, local::Stream};
 	use auxtools_protocol::{ClientMessage, EvalError, Request, Response, ServerMessage};
 	use interprocess::local_socket::{prelude::*, GenericNamespaced, ListenerOptions};
 
@@ -376,7 +372,7 @@ mod tests {
 
 		let (inputs, _heard) = mpsc::channel();
 		let mut debuggee = Debuggee::new(client, 1, true, Arc::new(Output::new()), inputs, Default::default(), Default::default()).unwrap();
-		debuggee.eval_unanswered("world.Del()".to_owned()).unwrap();
+		debuggee.end(Ending::Stop).unwrap();
 		let answering = std::thread::spawn(move || {
 			let eval = read_request(&mut world);
 			assert!(matches!(eval.request, Request::Eval { .. }));

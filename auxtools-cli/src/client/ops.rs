@@ -24,6 +24,29 @@ pub enum Placed {
 	Refused(String)
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Ending {
+	Stop,
+	Reboot
+}
+
+impl Ending {
+	pub const fn call(self) -> &'static str {
+		match self {
+			Self::Stop => "world.Del()",
+			Self::Reboot => "world.Reboot()"
+		}
+	}
+
+	pub fn request(self) -> Request {
+		Request::Eval {
+			frame_id: None,
+			command: self.call().to_owned(),
+			ending: true
+		}
+	}
+}
+
 pub trait Operations: Asks {
 	fn locate(&mut self, file: &str, line: u32) -> Result<Vec<InstructionRef>, Self::Error> {
 		match self.ask(&Request::Locate { file: file.to_owned(), line })? {
@@ -93,7 +116,7 @@ impl<T: Asks + ?Sized> Operations for T {}
 mod tests {
 	use auxtools_protocol::{BreakpointSetResult, HitCondition, InstructionRef, ProcRef, Request, Response, HELPER_FILE};
 
-	use super::{Asks, Operations, Placed, Trigger};
+	use super::{Asks, Ending, Operations, Placed, Trigger};
 
 	struct Scripted {
 		answers: Vec<Response>,
@@ -198,5 +221,15 @@ mod tests {
 		assert!(!world.has_lines());
 		assert!(world.has_lines());
 		assert!(world.has_lines());
+	}
+
+	#[test]
+	fn ending_a_world_is_its_own_call() {
+		for (ending, call) in [(Ending::Stop, "world.Del()"), (Ending::Reboot, "world.Reboot()")] {
+			assert!(matches!(
+				ending.request(),
+				Request::Eval { frame_id: None, command, ending: true } if command == call
+			));
+		}
 	}
 }

@@ -1,6 +1,6 @@
 use std::time::{Duration, Instant};
 
-use auxtools_cli::local;
+use auxtools_cli::{client::ops::Ending, local};
 use auxtools_protocol::{Reconnected, Request, Response};
 use serde_json::json;
 
@@ -10,13 +10,8 @@ const INTERVAL: Duration = Duration::from_millis(50);
 
 const RUNTIME_ERROR: &str = "runtime error: ";
 
-fn ask(world: &mut World, expression: &str, until: Instant) -> Result<bool> {
-	let request = Request::Eval {
-		frame_id: None,
-		command: expression.to_owned(),
-		ending: true
-	};
-	Ok(world.send(&request, Some(until))?.is_some())
+fn ask(world: &mut World, ending: Ending, until: Instant) -> Result<bool> {
+	Ok(world.send(&ending.request(), Some(until))?.is_some())
 }
 
 fn gone_by(pid: u32, until: Instant) -> bool {
@@ -70,7 +65,7 @@ pub fn stop(world: &mut World, args: &args::Stop) -> Result<()> {
 	let kill_timeout = args.kill_timeout.unwrap_or(args::DEFAULT_KILL_TIMEOUT);
 	let pid = world.pid;
 	let until = Instant::now() + timeout;
-	match ask(world, "world.Del()", until) {
+	match ask(world, Ending::Stop, until) {
 		Ok(_) => {}
 		Err(Failure(HUNG_UP, _)) if !local::alive(pid) => {}
 		Err(Failure(HUNG_UP, _)) => {
@@ -164,7 +159,7 @@ pub fn reboot(world: &mut World, args: &args::Reboot) -> Result<()> {
 	let timeout = args.timeout.unwrap_or(args::DEFAULT_REBOOT_TIMEOUT);
 	let pid = world.pid;
 	let until = Instant::now() + timeout;
-	ask(world, "world.Reboot()", until)?;
+	ask(world, Ending::Reboot, until)?;
 
 	loop {
 		match world.next(Some(until)) {

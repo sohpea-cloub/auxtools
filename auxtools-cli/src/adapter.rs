@@ -8,7 +8,7 @@ use std::{
 
 use auxtools_cli::{
 	byond::{self, Server},
-	client::ops::{Asks, Operations, Placed, Trigger},
+	client::ops::{Asks, Ending, Operations, Placed, Trigger},
 	game::{Game, Launch},
 	local::{self, Stream}
 };
@@ -1406,10 +1406,7 @@ impl Adapter {
 			return Ok(Value::Null);
 		}
 		self.ending = true;
-		let asked = self
-			.debuggee
-			.as_mut()
-			.is_some_and(|debuggee| debuggee.eval_unanswered("world.Del()".to_owned()).is_ok());
+		let asked = self.debuggee.as_mut().is_some_and(|debuggee| debuggee.end(Ending::Stop).is_ok());
 		if asked {
 			self.out.console("Stopping the world");
 			let inputs = self.inputs.clone();

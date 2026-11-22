@@ -37,7 +37,7 @@ impl Adapter {
 		if self.ending {
 			return Err("the world is already stopping".to_owned());
 		}
-		self.debuggee()?.eval_unanswered("world.Reboot()".to_owned())?;
+		self.debuggee()?.end(Ending::Reboot)?;
 		self.rebooting = true;
 		self.out.console("Rebooting the world");
 		self.progress_start(RESTARTING, "Rebooting the world".to_owned());
