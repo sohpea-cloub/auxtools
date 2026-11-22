@@ -733,6 +733,30 @@ fn initializer_added_to_a_world_without() {
 	let _ = std::fs::remove_dir_all(&dir);
 }
 
+#[track_caller]
+fn finished_with(world: &mut World, what: &str) {
+	let deadline = std::time::Instant::now() + crate::client::TIMEOUT;
+	loop {
+		world.has_event("progressEnd");
+		let reloaded = |e: &Value| {
+			e["event"] == "auxtoolsReload"
+				&& e["body"]["state"] == "reloaded"
+				&& e["body"]["summary"].as_str().is_some_and(|said| said.contains(what))
+		};
+		let ended = |e: &Value| e["event"] == "progressEnd" && e["body"]["progressId"] == "reloading";
+		if world.events.iter().skip_while(|e| !reloaded(e)).any(ended) {
+			return;
+		}
+		assert!(
+			std::time::Instant::now() < deadline,
+			"the launcher didn't finish with the reload of {}: {:?}",
+			what,
+			world.events
+		);
+		std::thread::sleep(std::time::Duration::from_millis(10));
+	}
+}
+
 fn file_named_by_a_reload() {
 	let dir = copy_of_the_world("file_named_by_a_reload");
 	std::fs::create_dir_all(dir.join("fzdir")).unwrap();
@@ -740,7 +764,7 @@ fn file_named_by_a_reload() {
 	let dme = dir.join("dap_test_host.dme");
 	let text = "#define FILE_DIR fzdir\n".to_owned() + &std::fs::read_to_string(&dme).unwrap();
 	std::fs::write(&dme, text).unwrap();
-	let mut world = World::launch_in(dir.clone(), json!({ "hotReload": true }));
+	let mut world = World::launch_as(json!({ "supportsProgressReporting": true }), dir.clone(), json!({ "hotReload": true }));
 	world.catch_runtimes(false);
 	world.configure();
 	world.wait_output("Hot reload active");
@@ -753,6 +777,7 @@ fn file_named_by_a_reload() {
 	let shown = |world: &mut World| world.eval_global("\"[icon_named()] [jointext(icon_states(icon_named()), \",\")]\"");
 	assert_eq!(shown(&mut world), "\"fzdir/named.dmi new1\"");
 	ok("new resource lookup through FILE_DIR");
+	finished_with(&mut world, "/icon_named");
 
 	let before = world.count("Hot reload: reloaded fzdir/named.dmi");
 	std::fs::copy(host_file("lamp_edited.dmi"), dir.join("fzdir/named.dmi")).unwrap();
