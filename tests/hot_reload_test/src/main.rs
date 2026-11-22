@@ -248,8 +248,12 @@ fn offset_of(client: &mut Client, proc: &str, line: u32) -> u32 {
 }
 
 fn procs_on(client: &mut Client, file: &str, line: u32) -> Vec<String> {
+	located(client, file, line).into_iter().map(|at| at.proc.path).collect()
+}
+
+fn located(client: &mut Client, file: &str, line: u32) -> Vec<InstructionRef> {
 	match client.request(Request::Locate { file: file.to_owned(), line }) {
-		Response::Locate { instructions } => instructions.into_iter().map(|at| at.proc.path).collect(),
+		Response::Locate { instructions } => instructions,
 		other => panic!("expected Locate for {}:{}, got {:?}", file, line, other)
 	}
 }
@@ -286,6 +290,14 @@ fn main() {
 	println!("ok: BYOND {}.{}", version, build);
 	source.options.byond = Some((version, build));
 	source.parse();
+
+	let built_lines = [
+		lines_with_code(&mut client, "reload.dm", 1, 10_000),
+		lines_with_code(&mut client, "main.dm", 1, 10_000)
+	];
+	let built_line = source.line_of("reload.dm", "\tx += 1");
+	let built_place = located(&mut client, "reload.dm", built_line);
+	assert_eq!(built_place.len(), 1, "{:?}", built_place);
 
 	assert_eq!(eval(&mut client, "answer()"), "1");
 	let changes = source.edit("reload.dm", "/proc/answer()\n\treturn 1", "/proc/answer()\n\treturn 2");
@@ -470,6 +482,72 @@ fn main() {
 	let left = procs_on(&mut client, "main.dm", moved);
 	assert!(!left.iter().any(|proc| proc == "/breakpoint_target"), "{:?}", left);
 	println!("ok: a proc moved to another file is located there");
+
+	let stops_on = |client: &mut Client, at: &InstructionRef, line: u32| {
+		let response = client.request(Request::BreakpointSet {
+			instruction: at.clone(),
+			condition: None,
+			hit: None,
+			log: None,
+			exact: false
+		});
+		assert!(matches!(response, Response::BreakpointSet { .. }), "{:?}", response);
+		eval(client, "arm_breakpoint()");
+		assert_eq!(client.expect_pause(), BreakpointReason::Breakpoint);
+		assert_eq!(paused_line(client), ("/breakpoint_target".to_owned(), Some(line)));
+		client.resume();
+		let response = client.request(Request::BreakpointUnset {
+			instruction: at.clone(),
+			exact: false
+		});
+		assert!(matches!(response, Response::BreakpointUnset { success: true, .. }), "{:?}", response);
+	};
+	let line = source.line_of("reload.dm", "\tx += 1");
+	assert_eq!(lines_with_code(&mut client, "reload.dm", line - 1, line + 3), [line - 1, line, line + 1]);
+	let before = located(&mut client, "reload.dm", line);
+	assert_eq!(before.len(), 1, "{:?}", before);
+	stops_on(&mut client, &before[0], line);
+	let changes = source.edit("reload.dm", "\tvar/x = 1\n\tx += 1", "\tvar/x = 1\n\tx *= 3\n\tx += 1");
+	reload(&mut watcher, &changes);
+	assert_eq!(lines_with_code(&mut client, "reload.dm", line - 1, line + 3), [
+		line - 1,
+		line,
+		line + 1,
+		line + 2
+	]);
+	assert_eq!(located(&mut client, "reload.dm", line), before);
+	let after = located(&mut client, "reload.dm", line + 1);
+	assert_eq!(after.len(), 1, "{:?}", after);
+	assert_eq!(after[0].proc, before[0].proc);
+	assert!(after[0].offset > before[0].offset, "{:?} isn't after {:?}", after, before);
+	stops_on(&mut client, &after[0], line + 1);
+	println!("ok: lines are located in a proc's new code");
+
+	let changes = source.edit(
+		"reload.dm",
+		"/proc/breakpoint_target()\n",
+		"// two lines that\n// move the proc down\n/proc/breakpoint_target()\n"
+	);
+	reload(&mut watcher, &changes);
+	assert_eq!(lines_with_code(&mut client, "reload.dm", line - 1, line + 5), [
+		line + 1,
+		line + 2,
+		line + 3,
+		line + 4
+	]);
+	assert_eq!(located(&mut client, "reload.dm", line + 3), after);
+	stops_on(&mut client, &after[0], line + 3);
+	let changes = source.edit_many("reload.dm", &[
+		(
+			"// two lines that\n// move the proc down\n/proc/breakpoint_target()\n",
+			"/proc/breakpoint_target()\n"
+		),
+		("\tvar/x = 1\n\tx *= 3\n\tx += 1", "\tvar/x = 1\n\tx += 1")
+	]);
+	reload(&mut watcher, &changes);
+	assert_eq!(located(&mut client, "reload.dm", line), before);
+	assert_eq!(lines_with_code(&mut client, "reload.dm", line - 1, line + 5), [line - 1, line, line + 1]);
+	println!("ok: lines are located where a reload moved them");
 
 	let breakpoint = |client: &mut Client, offset: u32, set: bool| {
 		let instruction = InstructionRef {
@@ -1565,6 +1643,7 @@ fn main() {
 	assert_eq!(eval(&mut client, "states_of(placed_lamp.icon)"), "\"on,off,new\"");
 	println!("ok: resource reload with restored built content");
 
+	assert_ne!(lines_with_code(&mut client, "reload.dm", 1, 10_000), built_lines[0]);
 	eval(&mut client, "request_reboot()");
 	client.wait_closed();
 	let mut client = world.connect();
@@ -1573,6 +1652,9 @@ fn main() {
 	assert_eq!(eval(&mut client, "few_locals()"), "1");
 	assert_eq!(eval(&mut client, "counter()"), "1");
 	assert_eq!(eval(&mut client, "old_dog.legs"), "4");
+	assert_eq!(lines_with_code(&mut client, "reload.dm", 1, 10_000), built_lines[0]);
+	assert_eq!(lines_with_code(&mut client, "main.dm", 1, 10_000), built_lines[1]);
+	assert_eq!(located(&mut client, "reload.dm", built_line), built_place);
 	println!("ok: reboot after reload");
 
 	assert_eq!(eval(&mut client, "make_lamps()"), "\"made\"");
