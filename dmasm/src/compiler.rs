@@ -4,6 +4,7 @@ use dreammaker::ast::Follow;
 use dreammaker::{ast::Expression, Severity};
 
 use crate::operands::{self, DMString, GlobalVar, Label, Variable};
+use crate::syntax;
 use crate::Instruction;
 use crate::{ByondVersion, Node};
 
@@ -947,7 +948,7 @@ impl<'a> Compiler<'a> {
             if folded.as_ref().is_some_and(|c| *c != fold::Constant::New)
                 && self.debug_info
                 && !self.other_file
-                && format!("{expr:?}").contains("StaticField")
+                && syntax::has_static_field(&expr)
                 && self.names_other_file(&expr)
             {
                 self.other_file = true;
@@ -970,7 +971,7 @@ impl<'a> Compiler<'a> {
                 };
                 if self.debug_info
                     && !self.other_file
-                    && format!("{cond:?}").contains("StaticField")
+                    && syntax::has_static_field(&cond)
                     && self.names_other_file(&cond)
                 {
                     if let Some(line) = self.last_line {
