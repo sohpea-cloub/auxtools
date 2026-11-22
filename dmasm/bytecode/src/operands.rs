@@ -189,7 +189,7 @@ impl Operand for DMString {
     fn disassemble<E: DisassembleEnv>(
         dism: &mut Disassembler<E>,
     ) -> Result<Self, DisassembleError> {
-        let id = dism.read_u32()? & !0x1000_0000;
+        let id = dism.read_u32()? & !crate::access_modifiers::STRING_NOT_MODIFIER_BIT;
         let data = dism
             .env
             .get_string_data(id)
@@ -624,7 +624,7 @@ impl Operand for Value {
                 }
                 parts.sort_by_key(|(id, _)| *id);
                 let mut code: Vec<u32> = parts.into_iter().flat_map(|(_, c)| c).collect();
-                code.push(0);
+                code.push(crate::Opcode::End.word());
                 match asm.env.get_instance(path, &code) {
                     Some(id) => (0x29, id),
                     None => return Err(AssembleError::InstanceNotFound(path.clone())),
@@ -840,7 +840,7 @@ impl Operand for Variable {
             Variable::Field(name) => {
                 let id = name.get_string_index(asm)?;
                 if access_modifiers::is_access_modifier(id) {
-                    asm.emit(id | 0x1000_0000);
+                    asm.emit(id | access_modifiers::STRING_NOT_MODIFIER_BIT);
                 } else {
                     asm.emit(id);
                 }

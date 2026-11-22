@@ -31,11 +31,12 @@ access_modifiers! {
     Initial = 0xFFE7,
     IsSaved = 0xFFE8,
     PtrRef = 0xFFEF,
-
     Caller = 0xFFF0,
     Callee = 0xFFF1,
 }
 
+pub(crate) const STRING_NOT_MODIFIER_BIT: u32 = 0x1000_0000;
+
 pub fn is_access_modifier(value: u32) -> bool {
-    (0xFFCD..=0xFFF1).contains(&value)
+    (Usr..=Callee).contains(&value)
 }

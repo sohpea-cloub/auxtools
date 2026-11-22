@@ -375,7 +375,6 @@ instructions! {
     0xD3 = NewImageArgList,
     0xD4 = NewImageArgs(arg_count: u32),
     0xD7 = FCopyRsc,
-
     0xD9 = ShellAllowed,
     0xDA = RandSeed,
     0xDB = Text2Ascii,
@@ -464,7 +463,6 @@ instructions! {
     0x12C = Try(unk0: Label),
     0x12D = Throw,
     0x12E = Catch(unk0: Label),
-
     0x12F = TryJmp(destination: Label),
 
     0x130 = ReplaceText,
@@ -479,15 +477,10 @@ instructions! {
     0x139 = JsonDecode,
     0x13A = RegexNew(arg_count: u32),
     0x13B = FilterNewArgList,
-
     0x13C = PushTop,
-
     0x13D = SetCacheJmpIfNull(destination: Label),
-
     0x13E = SetCachePopJmpIfNull(destination: Label),
-
     0x13F = PushEval,
-
     0x140 = TestEquiv,
     0x141 = TestNotEquiv,
 
