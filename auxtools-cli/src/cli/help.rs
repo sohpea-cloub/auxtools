@@ -611,7 +611,8 @@ Usage:
 			text += &format!("  {:width$}  {}\n", name, brief);
 		}
 	}
-	text += "
+	text += &format!(
+		"
 World selection:
   --pid PID    Select a world process. Required when selection is ambiguous.
                Without --pid, select the only compatible world.
@@ -619,7 +620,7 @@ World selection:
 
 Responses:
   --response-timeout SECONDS
-               Set the wait for each response from the world. [default: 30]
+               {response_timeout}
                Exit with code 2 if the world does not respond in time.
                Event waits are separate: use --timeout or --for where
                available. log --follow has no event deadline.
@@ -647,7 +648,9 @@ Exit codes:
   5  check: known BYOND bugs found
 
 Commands that follow lifecycle events can reconnect across reboots.
-";
+",
+		response_timeout = super::args::response_timeout_help()
+	);
 	text
 }
 
@@ -695,7 +698,7 @@ fn option_rows(command: &clap::Command, path: &[&str]) -> Vec<(String, String)> 
 		rows.push(("--pid PID".to_owned(), "Select the world process.".to_owned()));
 	}
 	if selects_world && path.first() != Some(&"stop") {
-		rows.push(("--response-timeout SECONDS".to_owned(), super::args::RESPONSE_TIMEOUT.to_owned()));
+		rows.push(("--response-timeout SECONDS".to_owned(), super::args::response_timeout_help()));
 	}
 	if common_json {
 		rows.push(("--json".to_owned(), COMMON_JSON.to_owned()));

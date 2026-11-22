@@ -68,8 +68,8 @@ fn done(as_json: bool, document: serde_json::Value, line: String) {
 }
 
 pub fn stop(world: &mut World, args: &args::Stop) -> Result<()> {
-	let timeout = args.timeout.unwrap_or(Duration::from_secs(10));
-	let kill_timeout = args.kill_timeout.unwrap_or(Duration::from_secs(5));
+	let timeout = args.timeout.unwrap_or(args::DEFAULT_STOP_TIMEOUT);
+	let kill_timeout = args.kill_timeout.unwrap_or(args::DEFAULT_KILL_TIMEOUT);
 	let pid = world.pid;
 	if ask(world, "world.Del()").is_err() && local::alive(pid) {
 		return Err(format!("cannot send the shutdown request: the connection to the world with pid {} ended.", pid).into());
@@ -157,7 +157,7 @@ pub fn reconnect(world: &mut World, args: &args::Reconnect) -> Result<()> {
 }
 
 pub fn reboot(world: &mut World, args: &args::Reboot) -> Result<()> {
-	let timeout = args.timeout.unwrap_or(Duration::from_secs(60));
+	let timeout = args.timeout.unwrap_or(args::DEFAULT_REBOOT_TIMEOUT);
 	let pid = world.pid;
 	let until = Instant::now() + timeout;
 	ask(world, "world.Reboot()")?;

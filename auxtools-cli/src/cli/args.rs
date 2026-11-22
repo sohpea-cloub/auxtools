@@ -2,22 +2,42 @@ use std::{path::PathBuf, time::Duration};
 
 use clap::{Args, CommandFactory, FromArgMatches, Parser, Subcommand};
 
-use super::help;
+use super::{help, hold, json, launch};
 
 const JSON: &str = "Emit one JSON value on stdout.";
-const HOLD_MAX: &str =
-	"Automatically resume a retained pause after this many\nseconds with no debugger connected.\n[default: AUXTOOLS_HOLD_MAX, or unlimited if unset]";
-
-pub const RESPONSE_TIMEOUT: &str = "Set the wait for each response from the world. [default: 30]";
+const HOLD_MAX: &str = "Automatically resume a retained pause after this many\nseconds with no debugger connected.";
 
 pub const DEFAULT_RESPONSE_TIMEOUT: Duration = Duration::from_secs(30);
+pub const DEFAULT_STOP_TIMEOUT: Duration = Duration::from_secs(10);
+pub const DEFAULT_KILL_TIMEOUT: Duration = Duration::from_secs(5);
+pub const DEFAULT_REBOOT_TIMEOUT: Duration = Duration::from_secs(60);
+pub const DEFAULT_TOP: u64 = 40;
+
+fn default_seconds(default: Duration) -> String {
+	format!("[default: {}]", default.as_secs_f64())
+}
+
+pub fn response_timeout_help() -> String {
+	format!(
+		"Set the wait for each response from the world. {}",
+		default_seconds(DEFAULT_RESPONSE_TIMEOUT)
+	)
+}
+
+fn hold_max_help(help: &str) -> String {
+	format!("{}\n[default: {}, or unlimited if unset]", help, hold::HOLD_MAX_VAR)
+}
+
+fn depth_help() -> String {
+	format!("Set JSON value expansion depth. Requires --json. [default: {}]", json::DEFAULT_DEPTH)
+}
 
 #[derive(Parser)]
 #[command(name = "auxtools", disable_help_subcommand = true, disable_version_flag = true)]
 pub struct Cli {
 	#[arg(long, global = true, value_name = "PID", value_parser = pid, help = "Select the world process.")]
 	pub pid: Option<u32>,
-	#[arg(long, global = true, value_name = "SECONDS", value_parser = seconds, help = RESPONSE_TIMEOUT)]
+	#[arg(long, global = true, value_name = "SECONDS", value_parser = seconds, help = response_timeout_help())]
 	pub response_timeout: Option<Duration>,
 	#[arg(long, short = 'V', hide = true)]
 	pub version: bool,
@@ -106,7 +126,7 @@ pub struct Launch {
 	#[arg(
 		long,
 		value_name = "FILE",
-		help = "Write launcher output to FILE.\nWith --detach, default: NAME.auxtools.log beside NAME.dmb."
+		help = format!("Write launcher output to FILE.\nWith --detach, default: NAME.{} beside NAME.dmb.", launch::LOG_EXTENSION)
 	)]
 	pub log: Option<PathBuf>,
 	#[arg(
@@ -158,7 +178,12 @@ pub struct Status {
 
 #[derive(Args)]
 pub struct Stop {
-	#[arg(long, value_name = "SECONDS", value_parser = seconds, help = "Set the graceful shutdown deadline. [default: 10]")]
+	#[arg(
+		long,
+		value_name = "SECONDS",
+		value_parser = seconds,
+		help = format!("Set the graceful shutdown deadline. {}", default_seconds(DEFAULT_STOP_TIMEOUT))
+	)]
 	pub timeout: Option<Duration>,
 	#[arg(long, help = "Terminate the process if graceful shutdown times out.")]
 	pub kill: bool,
@@ -166,7 +191,7 @@ pub struct Stop {
 		long,
 		value_name = "SECONDS",
 		value_parser = seconds,
-		help = "Set the wait after forced termination. [default: 5]\nRequires --kill."
+		help = format!("Set the wait after forced termination. {}\nRequires --kill.", default_seconds(DEFAULT_KILL_TIMEOUT))
 	)]
 	pub kill_timeout: Option<Duration>,
 	#[arg(long, help = JSON)]
@@ -175,7 +200,12 @@ pub struct Stop {
 
 #[derive(Args)]
 pub struct Reboot {
-	#[arg(long, value_name = "SECONDS", value_parser = seconds, help = "Set the reboot deadline. [default: 60]")]
+	#[arg(
+		long,
+		value_name = "SECONDS",
+		value_parser = seconds,
+		help = format!("Set the reboot deadline. {}", default_seconds(DEFAULT_REBOOT_TIMEOUT))
+	)]
 	pub timeout: Option<Duration>,
 	#[arg(long, help = JSON)]
 	pub json: bool
@@ -187,7 +217,7 @@ pub struct Reconnect {
 		long,
 		value_name = "SECONDS",
 		value_parser = seconds,
-		help = "Set the reboot deadline for DreamSeeker-hosted worlds. [default: 60]"
+		help = format!("Set the reboot deadline for DreamSeeker-hosted worlds. {}", default_seconds(DEFAULT_REBOOT_TIMEOUT))
 	)]
 	pub timeout: Option<Duration>,
 	#[arg(long, help = JSON)]
@@ -237,7 +267,7 @@ pub struct Vars {
 	pub frame: Option<u32>,
 	#[arg(long, help = "Include global variables.")]
 	pub globals: bool,
-	#[arg(long, value_name = "N", value_parser = whole::<u32>, help = "Set JSON value expansion depth. Requires --json. [default: 2]")]
+	#[arg(long, value_name = "N", value_parser = whole::<u32>, help = depth_help())]
 	pub depth: Option<u32>,
 	#[arg(long, help = JSON)]
 	pub json: bool
@@ -271,7 +301,7 @@ pub struct Eval {
 		help = "Set the --wait deadline. Requires --wait. [default: unlimited]"
 	)]
 	pub timeout: Option<Duration>,
-	#[arg(long, value_name = "N", value_parser = whole::<u32>, help = "Set JSON value expansion depth. Requires --json. [default: 2]")]
+	#[arg(long, value_name = "N", value_parser = whole::<u32>, help = depth_help())]
 	pub depth: Option<u32>,
 	#[arg(long, help = JSON)]
 	pub json: bool
@@ -295,7 +325,7 @@ pub struct Disassemble {
 
 #[derive(Args)]
 pub struct Pause {
-	#[arg(long, value_name = "SECONDS", value_parser = seconds, help = HOLD_MAX)]
+	#[arg(long, value_name = "SECONDS", value_parser = seconds, help = hold_max_help(HOLD_MAX))]
 	pub hold_max: Option<Duration>,
 	#[arg(long, help = JSON)]
 	pub json: bool
@@ -316,7 +346,7 @@ pub struct StepOver {
 	pub instruction: bool,
 	#[arg(long, value_name = "SECONDS", value_parser = seconds, help = "Set the step deadline. [default: unlimited]")]
 	pub timeout: Option<Duration>,
-	#[arg(long, value_name = "SECONDS", value_parser = seconds, help = HOLD_MAX)]
+	#[arg(long, value_name = "SECONDS", value_parser = seconds, help = hold_max_help(HOLD_MAX))]
 	pub hold_max: Option<Duration>,
 	#[arg(long, help = JSON)]
 	pub json: bool
@@ -331,7 +361,7 @@ pub struct StepIn {
 	pub instruction: bool,
 	#[arg(long, value_name = "SECONDS", value_parser = seconds, help = "Set the step deadline. [default: unlimited]")]
 	pub timeout: Option<Duration>,
-	#[arg(long, value_name = "SECONDS", value_parser = seconds, help = HOLD_MAX)]
+	#[arg(long, value_name = "SECONDS", value_parser = seconds, help = hold_max_help(HOLD_MAX))]
 	pub hold_max: Option<Duration>,
 	#[arg(long, help = JSON)]
 	pub json: bool
@@ -341,7 +371,7 @@ pub struct StepIn {
 pub struct StepOut {
 	#[arg(long, value_name = "SECONDS", value_parser = seconds, help = "Set the step deadline. [default: unlimited]")]
 	pub timeout: Option<Duration>,
-	#[arg(long, value_name = "SECONDS", value_parser = seconds, help = HOLD_MAX)]
+	#[arg(long, value_name = "SECONDS", value_parser = seconds, help = hold_max_help(HOLD_MAX))]
 	pub hold_max: Option<Duration>,
 	#[arg(long, help = JSON)]
 	pub json: bool
@@ -403,7 +433,7 @@ pub struct WaitPause {
 		long,
 		value_name = "SECONDS",
 		value_parser = seconds,
-		help = "Limit the retained pause when no debugger is connected.\n[default: AUXTOOLS_HOLD_MAX, or unlimited if unset]"
+		help = hold_max_help("Limit the retained pause when no debugger is connected.")
 	)]
 	pub hold_max: Option<Duration>,
 	#[arg(long, help = "Emit one JSON object with pause details.")]
@@ -472,9 +502,9 @@ pub struct Profile {
 		long,
 		value_name = "N",
 		value_parser = positive,
-		default_value = "40",
+		default_value_t = DEFAULT_TOP,
 		hide_default_value = true,
-		help = "List the N slowest procs and lines. [default: 40]"
+		help = format!("List the N slowest procs and lines. [default: {}]", DEFAULT_TOP)
 	)]
 	pub top: u64,
 	#[arg(long, value_name = "FILE", help = "Write an HTML report to FILE.")]
@@ -607,7 +637,7 @@ pub fn rules(command: &Command) -> Result<(), String> {
 mod tests {
 	use std::time::Duration;
 
-	use super::{parse, rules, Cli, Command, Unparsed, WaitFor};
+	use super::{parse, rules, Cli, Command, Unparsed, WaitFor, DEFAULT_TOP};
 
 	fn args(args: &[&str]) -> Vec<String> {
 		args.iter().map(|arg| (*arg).to_owned()).collect()
@@ -752,7 +782,7 @@ mod tests {
 			_ => panic!("not profile")
 		};
 		let all = profile(&["profile"]);
-		assert!(all.procs.is_empty() && all.duration.is_none() && all.top == 40 && all.html.is_none() && !all.json);
+		assert!(all.procs.is_empty() && all.duration.is_none() && all.top == DEFAULT_TOP && all.html.is_none() && !all.json);
 		let some = profile(&[
 			"profile",
 			"/mob/proc/life",

@@ -224,8 +224,10 @@ fn say_to_starter(line: &str) {
 	let _ = stdout.flush();
 }
 
+pub const LOG_EXTENSION: &str = "auxtools.log";
+
 fn default_log(dmb: &Path) -> PathBuf {
-	dmb.with_extension("auxtools.log")
+	dmb.with_extension(LOG_EXTENSION)
 }
 
 fn detach(options: &Options, as_json: bool) -> Result<()> {
