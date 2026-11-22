@@ -115,6 +115,7 @@ receiver for `a.b.x`. dmasm matches these reuse and invalidation rules.
 | `isnan()` or `isinf()` of a value not constant, in 516.1670 | Leaves out reading the test's flag; the server crashes | Reads the flag |
 | Out-of-range constants in `&`, `\|`, `^`, `<<`, `>>` | Inconsistent, build-dependent 24-bit conversion | Uses the low 24 bits of the nearest 32-bit integer |
 | `pick()` ending in a zero-weight entry, before 516.1689 | Jumps outside the proc if no earlier entry is selected | Selects the last entry whose weight is not a constant zero |
+| `continue LABEL` to a labelled block holding a `do` ... `while`, inside a counted `for` loop | Pops the `for` loop's range (`PopN`) before jumping; the server crashes | Leaves the range on the stack |
 
 Hexadecimal literals longer than eight digits and octal literals exceeding i32
 are rejected. DreamMaker's conversion is unusual (`0x100000000` becomes `2**60`)
