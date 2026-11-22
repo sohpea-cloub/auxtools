@@ -1208,35 +1208,24 @@ impl<'a> Compiler<'a> {
         }
     }
 
-    fn names_other_file(&mut self, expr: &Expression) -> bool {
+    fn speculate<T>(&mut self, look: impl FnOnce(&mut Self, usize) -> T) -> T {
+        let nodes = std::mem::take(&mut self.nodes);
+        let saved = self.clone();
+        self.nodes = nodes;
         let start = self.nodes.len();
-        let saved = (
-            self.label_count,
-            self.cache.clone(),
-            self.last_line,
-            self.label_states.clone(),
-            self.global_field,
-            self.line_pending,
-            self.short_circuit_labels.len(),
-        );
-        self.no_fold = true;
-        self.live_only = true;
-        let ok = self.emit_expr(expr.clone()).is_ok();
-        self.no_fold = false;
-        self.live_only = false;
-        let found = ok && self.other_file;
-        self.nodes.truncate(start);
-        self.short_circuit_labels.truncate(saved.6);
-        (
-            self.label_count,
-            self.cache,
-            self.last_line,
-            self.label_states,
-            self.global_field,
-            self.line_pending,
-        ) = (saved.0, saved.1, saved.2, saved.3, saved.4, saved.5);
-        self.other_file = false;
+        let found = look(self, start);
+        let mut nodes = std::mem::replace(self, saved).nodes;
+        nodes.truncate(start);
+        self.nodes = nodes;
         found
+    }
+
+    fn names_other_file(&mut self, expr: &Expression) -> bool {
+        self.speculate(|c, _| {
+            c.no_fold = true;
+            c.live_only = true;
+            c.emit_expr(expr.clone()).is_ok() && c.other_file
+        })
     }
 
     fn emit_found_proc(&mut self, found: FoundProc) {
