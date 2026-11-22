@@ -1075,37 +1075,6 @@ pub fn run() {
 	world.drop_events("breakpoint");
 	ok("rejected reload preserves code and breakpoints");
 
-	let before = world.count("Hot reload requires a rebuild");
-	world.drop_events("auxtoolsReload");
-	world
-		.marks
-		.edit("stepping.dm", "/mob/player\n", "/mob/refused\n\tckey = \"someone\"\n\n/mob/player\n");
-	world.wait_count("Hot reload requires a rebuild", before + 1);
-	let refused = last_reload_state(&mut world);
-	assert_eq!(refused["state"], "refused", "{}", refused);
-	edit_held(&mut world, "errors.dm", "return fail_null() + 1", "return fail_null() + 2");
-	let still = last_reload_state(&mut world);
-	assert_eq!(
-		(&still["state"], &still["problems"]),
-		(&refused["state"], &refused["problems"]),
-		"{}",
-		still
-	);
-	let reloaded = reloads(&world.output);
-	world.marks.edit("stepping.dm", "/mob/refused\n\tckey = \"someone\"\n\n", "");
-	world.wait_until("the held reload", |output| reloads(output) > reloaded);
-	let last = world
-		.output
-		.lines()
-		.rfind(|line| line.starts_with("Hot reload: ") && line.ends_with(" ms"))
-		.unwrap()
-		.to_owned();
-	assert!(last.contains("/fail_deep"), "the fix's reload: {}", last);
-	let fixed = last_reload_state(&mut world);
-	assert_eq!(fixed["problems"], json!([]), "{}", fixed);
-	edit(&mut world, "errors.dm", "return fail_null() + 2", "return fail_null() + 1");
-	ok("refusal holds edits in other files");
-
 	world.break_on(&["leaf_2"]);
 	world.run("reboot");
 	world.wait_count("dap: world/New", 2);

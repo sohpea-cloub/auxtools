@@ -91,6 +91,33 @@ fn held_until_reboot() {
 		&dir,
 		"held.dm",
 		"var/held_n = 3\n",
+		"var/held_n = 3\n/mob/refused\n\tckey = \"someone\"\n"
+	);
+	let refused = held(&mut launcher);
+	assert!(
+		refused.len() == 1 && refused[0].0.contains("/mob/refused: ckey") && refused[0].1 == "rebuild",
+		"{:?}",
+		refused
+	);
+	edit_held(&mut launcher, &dir, "held_b.dm", "\treturn 6\n", "\treturn 7\n");
+	assert_eq!(held(&mut launcher), refused);
+	assert!(world.next_within(super::SHORTLY, is_reload).is_none(), "a held edit was sent");
+	edit(&dir, "held.dm", "/mob/refused\n\tckey = \"someone\"\n", "");
+	let reload = reloaded(&mut world);
+	assert_eq!(
+		procs(&reload).iter().map(|(proc, _)| proc.as_str()).collect::<Vec<_>>(),
+		["/held_b"],
+		"{:?}",
+		reload
+	);
+	assert!(procs(&reload)[0].1.contains("PushInt(7)"), "{:?}", procs(&reload));
+	assert_eq!(held(&mut launcher), []);
+
+	edit_held(
+		&mut launcher,
+		&dir,
+		"held.dm",
+		"var/held_n = 3\n",
 		"var/held_n = 3\n\n/world\n\tfps = 25\n"
 	);
 	assert_eq!(held(&mut launcher), held_one("/world: fps: changed setting", "rebuild"));
