@@ -149,10 +149,20 @@ jobs:
           cd "target/$TARGET/release"
           "$GITHUB_WORKSPACE/ci/split-debug.sh" auxtools libdebug_server.so
           "$GITHUB_WORKSPACE/ci/check-linux.sh" auxtools libdebug_server.so
+          if grep -q 'asked for with #panic' libdebug_server.so; then echo "the debug library has the tests' console commands"; exit 1; fi
           strip --strip-debug libauxtest.so test_runner debug_test hot_reload_test launcher_test dap_test examples/check_recipes
           tar -czf "$RUNNER_TEMP/auxtools-linux.tar.gz" auxtools libdebug_server.so
           tar -czf "$RUNNER_TEMP/auxtools-linux-symbols.tar.gz" auxtools.debug libdebug_server.so.debug
-          tar -cf "$RUNNER_TEMP/bundle-linux.tar" auxtools libdebug_server.so libauxtest.so test_runner debug_test hot_reload_test launcher_test dap_test -C examples check_recipes
+          mkdir released
+          cp libdebug_server.so released/
+
+      - name: Build the debug library the tests use
+        run: |
+          cargo build --release --locked --target "$TARGET" --workspace --features debug_server/test-commands
+          cd "target/$TARGET/release"
+          strip --strip-debug libdebug_server.so
+          grep -q 'asked for with #panic' libdebug_server.so
+          tar -cf "$RUNNER_TEMP/bundle-linux.tar" auxtools libdebug_server.so released/libdebug_server.so libauxtest.so test_runner debug_test hot_reload_test launcher_test dap_test -C examples check_recipes
 
       - name: Upload the launcher and the debug library
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -252,9 +262,19 @@ jobs:
         run: |
           cd "target/$TARGET/release"
           "$GITHUB_WORKSPACE/ci/check-windows.sh" auxtools.exe debug_server.dll
+          if grep -q 'asked for with #panic' debug_server.dll; then echo "the debug library has the tests' console commands"; exit 1; fi
           python3 -m zipfile -c "$RUNNER_TEMP/auxtools-windows.zip" auxtools.exe debug_server.dll
           python3 -m zipfile -c "$RUNNER_TEMP/auxtools-windows-symbols.zip" auxtools.pdb debug_server.pdb
-          tar -cf "$RUNNER_TEMP/bundle-windows.tar" auxtools.exe debug_server.dll auxtest.dll test_runner.exe debug_test.exe hot_reload_test.exe launcher_test.exe dap_test.exe unit -C examples check_recipes.exe
+          mkdir released
+          cp debug_server.dll released/
+
+      - name: Build the debug library the tests use
+        run: |
+          . ci/msvc/env.sh
+          cargo build --release --locked --target "$TARGET" --workspace --features debug_server/test-commands
+          cd "target/$TARGET/release"
+          grep -q 'asked for with #panic' debug_server.dll
+          tar -cf "$RUNNER_TEMP/bundle-windows.tar" auxtools.exe debug_server.dll released/debug_server.dll auxtest.dll test_runner.exe debug_test.exe hot_reload_test.exe launcher_test.exe dap_test.exe unit -C examples check_recipes.exe
 
       - name: Upload the launcher and the debug library
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -447,8 +467,11 @@ jobs:
       - name: Pack
         run: |
           mkdir -p target/i686-unknown-linux-gnu/release target/i686-pc-windows-msvc/release
-          tar -xf bundle/bundle-linux.tar -C target/i686-unknown-linux-gnu/release auxtools libdebug_server.so
-          tar -xf bundle/bundle-windows.tar -C target/i686-pc-windows-msvc/release auxtools.exe debug_server.dll
+          tar -xf bundle/bundle-linux.tar -C target/i686-unknown-linux-gnu/release --strip-components=1 released/libdebug_server.so
+          tar -xf bundle/bundle-linux.tar -C target/i686-unknown-linux-gnu/release auxtools
+          tar -xf bundle/bundle-windows.tar -C target/i686-pc-windows-msvc/release --strip-components=1 released/debug_server.dll
+          tar -xf bundle/bundle-windows.tar -C target/i686-pc-windows-msvc/release auxtools.exe
+          if grep -q 'asked for with #panic' target/i686-unknown-linux-gnu/release/libdebug_server.so target/i686-pc-windows-msvc/release/debug_server.dll; then echo "a debug library has the tests' console commands"; exit 1; fi
           python3 editors/vscode/package.py | tee packed.txt
           grep -q "(2 platforms)" packed.txt
 

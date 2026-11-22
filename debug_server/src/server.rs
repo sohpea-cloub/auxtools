@@ -1967,11 +1967,13 @@ impl Server {
 				},
 				None => "no execution frame selected".to_owned()
 			},
+			#[cfg(feature = "test-commands")]
 			Ok(console::Command::Skin) => match self.evaluating(crate::skin::state) {
 				Ok(None) => "no skin".to_owned(),
 				Ok(Some((resource, text))) => format!("resource {}\n{}", resource, text),
 				Err(e) => format!("Failed: {}", e)
 			},
+			#[cfg(feature = "test-commands")]
 			Ok(console::Command::Script) => self.evaluating(crate::client_script::state).unwrap_or_else(|e| format!("Failed: {}", e)),
 			Ok(console::Command::Help(text)) => text.to_owned(),
 			Err(error) => error
@@ -2327,7 +2329,7 @@ impl Server {
 	}
 
 	fn handle_eval(&mut self, frame_id: Option<u32>, command: &str) -> bool {
-		#[cfg(debug_assertions)]
+		#[cfg(feature = "test-commands")]
 		if command == "#panic" {
 			panic!("asked for with #panic");
 		}

@@ -29,6 +29,7 @@ fn place() -> Result<&'static Place, String> {
 		.map_err(|e| format!("cannot locate the client script: {}", e))
 }
 
+#[cfg_attr(not(feature = "test-commands"), allow(dead_code))]
 struct Fields {
 	text: *mut u32,
 	list: *const *const u32,
@@ -55,6 +56,7 @@ fn fields() -> Result<Fields, String> {
 }
 
 impl Fields {
+	#[cfg(feature = "test-commands")]
 	fn files(&self) -> Vec<u32> {
 		unsafe {
 			let count = *self.count as usize;
@@ -66,6 +68,7 @@ impl Fields {
 		}
 	}
 
+	#[cfg(feature = "test-commands")]
 	fn text(&self) -> Option<u32> {
 		let id = unsafe { *self.text };
 		(id != NO_TEXT).then_some(id)
@@ -118,6 +121,7 @@ fn write_text(fields: &Fields, text: Option<Value>) {
 	}
 }
 
+#[cfg(feature = "test-commands")]
 fn full(fields: &Fields) -> Result<String, String> {
 	let mut script = String::new();
 	for id in fields.files() {
@@ -148,6 +152,7 @@ pub fn set(request: &ScriptRequest) -> Result<ScriptReloaded, String> {
 	})
 }
 
+#[cfg(feature = "test-commands")]
 pub fn state() -> Result<String, String> {
 	let fields = fields()?;
 	let text = fields.text().map_or("none".to_owned(), |id| id.to_string());

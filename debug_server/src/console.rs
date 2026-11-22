@@ -1,7 +1,12 @@
 #[derive(Debug, PartialEq, Eq)]
 pub enum Command<'a> {
-	Disassemble { proc: Option<&'a str>, id: u32 },
+	Disassemble {
+		proc: Option<&'a str>,
+		id: u32
+	},
+	#[cfg(feature = "test-commands")]
 	Skin,
+	#[cfg(feature = "test-commands")]
 	Script,
 	Help(&'static str)
 }
@@ -28,12 +33,14 @@ Arguments:
 If no parameters are provided, the proc executing in the currently debugged stack frame will be disassembled
 ";
 
+#[cfg(feature = "test-commands")]
 const SKIN_HELP: &str = "\
 Show login skin resource ID and text
 
 Usage: skin
 ";
 
+#[cfg(feature = "test-commands")]
 const SCRIPT_HELP: &str = "\
 Show login script string ID, resource IDs and text
 
@@ -74,14 +81,18 @@ pub fn parse(command: &str) -> Result<Command<'_>, String> {
 				id: args.get(1).and_then(|id| id.parse().ok()).unwrap_or(0)
 			})
 		}
+		#[cfg(feature = "test-commands")]
 		"skin" => at_most(&args, 0, "skin").map(|()| Command::Skin),
+		#[cfg(feature = "test-commands")]
 		"script" => at_most(&args, 0, "script").map(|()| Command::Script),
 		"help" => {
 			at_most(&args, 1, "help [COMMAND]")?;
 			match args.first().copied() {
 				None => Ok(Command::Help(HELP)),
 				Some("disassemble" | "dis") => Ok(Command::Help(DISASSEMBLE_HELP)),
+				#[cfg(feature = "test-commands")]
 				Some("skin") => Ok(Command::Help(SKIN_HELP)),
+				#[cfg(feature = "test-commands")]
 				Some("script") => Ok(Command::Help(SCRIPT_HELP)),
 				Some("help") => Ok(Command::Help(HELP_HELP)),
 				Some(other) => Err(unknown(other))
@@ -119,8 +130,10 @@ mod tests {
 				id: 0
 			})
 		);
-		assert_eq!(parse("skin"), Ok(Command::Skin));
-		assert_eq!(parse("script"), Ok(Command::Script));
+		#[cfg(feature = "test-commands")]
+		assert_eq!((parse("skin"), parse("script")), (Ok(Command::Skin), Ok(Command::Script)));
+		#[cfg(not(feature = "test-commands"))]
+		assert!(parse("skin").is_err() && parse("script").is_err() && parse("help skin").is_err());
 	}
 
 	#[test]
@@ -146,6 +159,11 @@ mod tests {
 			parse("dis a 1 c").unwrap_err(),
 			"error: unexpected argument 'c' found\n\nUsage: disassemble [proc] [id]\n"
 		);
+		assert_eq!(
+			parse("help x y").unwrap_err(),
+			"error: unexpected argument 'y' found\n\nUsage: help [COMMAND]\n"
+		);
+		#[cfg(feature = "test-commands")]
 		assert_eq!(parse("skin x").unwrap_err(), "error: unexpected argument 'x' found\n\nUsage: skin\n");
 	}
 }

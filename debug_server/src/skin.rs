@@ -1,12 +1,12 @@
 use std::sync::OnceLock;
 
-use auxtools::{
-	raw_types::values::{ValueData, ValueTag},
-	registry, Proc, Value
-};
+#[cfg(feature = "test-commands")]
+use auxtools::raw_types::values::ValueData;
+use auxtools::{raw_types::values::ValueTag, registry, Proc, Value};
 
 use auxtools_protocol::{Reconnected, SkinReloaded, SkinRequest};
 
+#[cfg(feature = "test-commands")]
 const NO_SKIN: u32 = 0xFFFF;
 
 struct Place {
@@ -85,6 +85,7 @@ pub(crate) fn clients() -> Result<u32, String> {
 	count.as_number().map(|n| n as u32).map_err(|e| e.message)
 }
 
+#[cfg(feature = "test-commands")]
 pub fn state() -> Result<Option<(u32, String)>, String> {
 	let id = unsafe { *field()? };
 	if id == NO_SKIN {

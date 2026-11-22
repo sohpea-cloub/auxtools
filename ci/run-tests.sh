@@ -3,7 +3,9 @@
 #
 #     ci/run-tests.sh PROGRAMS BYOND [TEST...]
 #
-# PROGRAMS contains test binaries, launcher and debug library. BYOND is
+# PROGRAMS contains test binaries, launcher and debug library; the debug
+# library has to be one built with `--features debug_server/test-commands`,
+# for the console commands the suites inspect a world with. BYOND is
 # the installation directory containing bin/. Run from the repository root.
 #
 # Set WINE=wine to run Windows binaries on Linux.

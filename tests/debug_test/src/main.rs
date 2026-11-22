@@ -692,7 +692,6 @@ fn waiting_world_ends() {
 	println!("ok: an evaluation ends a world that waits for its debugger");
 }
 
-#[cfg(debug_assertions)]
 fn panics() {
 	let panic = || Request::Eval {
 		frame_id: None,
@@ -824,7 +823,6 @@ fn main() {
 	drop(world);
 
 	waiting_world_ends();
-	#[cfg(debug_assertions)]
 	panics();
 
 	println!("Debug server tests succeeded");

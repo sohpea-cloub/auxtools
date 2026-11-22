@@ -24,5 +24,8 @@ interprocess = "=2.4.7"
 region = "3"
 winapi = { version = "0.3", features = ["libloaderapi", "errhandlingapi"] }
 
+[features]
+test-commands = []
+
 [lints]
 workspace = true

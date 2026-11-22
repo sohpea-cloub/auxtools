@@ -206,7 +206,7 @@ Linux binaries target glibc 2.35 and later. Windows binaries target Windows 10 a
 
 CI uses pinned Rust and action versions. `rust-toolchain.toml` selects the same Rust version and both targets for local builds. Format code with `cargo +nightly-2026-10-24 fmt --all`; the rustfmt configuration requires nightly options.
 
-BYOND test archives come from the [BYOND build mirror](https://byond-builds.dm-lang.org), verified against `ci/byond.sha256`. To run the integration suites locally, use `ci/run-tests.sh PROGRAMS BYOND`.
+BYOND test archives come from the [BYOND build mirror](https://byond-builds.dm-lang.org), verified against `ci/byond.sha256`. To run the integration suites locally, build with `--features debug_server/test-commands` (the console commands the suites inspect a world with, which a release leaves out) and use `ci/run-tests.sh PROGRAMS BYOND`.
 
 | Artifact | Contents |
 | --- | --- |
