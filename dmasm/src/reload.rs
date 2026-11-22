@@ -1885,7 +1885,8 @@ struct FileContents<'a> {
         ),
     >,
     var_lines: BTreeMap<(String, String), u32>,
-    declarations: BTreeMap<(String, String), String>,
+    declarations:
+        BTreeMap<(String, String), (dreammaker::ast::ProcDeclKind, dreammaker::ast::ProcFlags)>,
     procs: BTreeMap<(String, String), Vec<(Option<ProcKey>, &'a ProcValue)>>,
 }
 
@@ -1914,10 +1915,8 @@ impl<'a> FileContents<'a> {
                 .as_ref()
                 .filter(|d| d.location.file == file)
             {
-                self.declarations.insert(
-                    (path.clone(), name.to_string()),
-                    format!("{:?} {:?}", d.kind, d.flags),
-                );
+                self.declarations
+                    .insert((path.clone(), name.to_string()), (d.kind, d.flags));
             }
             let values: Vec<(Option<ProcKey>, &ProcValue)> = proc
                 .value

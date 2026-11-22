@@ -234,18 +234,13 @@ fn inherited_changes(
             }
         }
         for name in names {
-            let declaration = |t: TypeRef| {
-                t.get_var_declaration(name).map(|d| {
-                    let var_type = &d.get().var_type;
-                    (format!("{var_type:?}"), var_type.flags.is_const())
-                })
-            };
+            let before = o.get_var_declaration(name).map(|d| &d.get().var_type);
+            let after = n.get_var_declaration(name).map(|d| &d.get().var_type);
             let value = |t: TypeRef| {
                 t.get_value(name)
                     .map(|v| format!("{:?}{:?}", v.constant, v.expression))
             };
-            let (before, after) = (declaration(o), declaration(n));
-            let is_const = after.as_ref().is_some_and(|(_, is_const)| *is_const);
+            let is_const = after.is_some_and(|var_type| var_type.flags.is_const());
             if before != after {
                 declared.insert(name.to_owned());
             } else if value(o) != value(n) {

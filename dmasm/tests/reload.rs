@@ -1476,6 +1476,16 @@ fn one_file_parsed_again_on_its_own() {
             format!("{}/datum/a/f()\n\treturn 5\n", again),
             "added",
         ),
+        (
+            "verb",
+            again.replace("/datum/a/proc/g()", "/datum/a/verb/g()"),
+            "declarations",
+        ),
+        (
+            "final",
+            again.replace("/datum/a/proc/g()", "/datum/a/proc/final/g()"),
+            "declarations",
+        ),
         ("type", format!("{}/datum/b\n", again), "new type"),
         ("parameters", again.replace("g()", "g(z)"), "parameters"),
         (
@@ -1609,6 +1619,18 @@ fn what_a_new_parent_changes_is_found_wherever_a_proc_names_it() {
             "/mob/through_its_type"
         ]
     );
+}
+
+#[test]
+fn a_new_parent_with_the_same_default_written_elsewhere_names_its_file() {
+    let changes = types_changes(
+        "parent-type-same-default",
+        "/datum/a\n\tvar/x = 5\n/proc/f()\n\treturn /datum/a/c::x\n/proc/g()\n\treturn 5\n",
+        "/datum/b\n\tvar/x = 5\n/datum/a/c\n",
+        "/datum/b\n\tvar/x = 5\n/datum/a/c\n\tparent_type = /datum/b\n",
+    );
+    assert_eq!(changes.reparented.len(), 1, "{:?}", changes.reparented);
+    assert_eq!(reloaded(&changes), [key("/f", 0)]);
 }
 
 #[test]
