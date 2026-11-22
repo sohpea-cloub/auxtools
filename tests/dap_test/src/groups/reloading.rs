@@ -1,9 +1,9 @@
 use std::{path::PathBuf, time::Duration};
 
 use serde_json::{json, Value};
+use test_support::dap::{launch_arguments, value_of};
 
 use crate::{
-	client::{launch_arguments, value_of},
 	ok, paths,
 	world::{host_file, World}
 };
@@ -721,7 +721,7 @@ fn initializer_added_to_a_world_without() {
 
 #[track_caller]
 fn finished_with(world: &mut World, what: &str) {
-	let deadline = std::time::Instant::now() + crate::client::TIMEOUT;
+	let deadline = std::time::Instant::now() + test_support::dap::TIMEOUT;
 	loop {
 		world.has_event("progressEnd");
 		let reloaded = |e: &Value| {

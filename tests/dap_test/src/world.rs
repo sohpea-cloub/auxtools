@@ -5,8 +5,9 @@ use std::{
 };
 
 use serde_json::{json, Value};
+use test_support::dap::Launcher;
 
-use crate::{client::Launcher, paths};
+use crate::paths;
 
 pub fn host_file(name: &str) -> PathBuf {
 	std::env::current_dir().unwrap().join("tests/dap_test_host").join(name)
@@ -269,7 +270,7 @@ impl World {
 		self.run(scenario);
 		let finished = self.finished[scenario];
 		let over = format!("dap: finished {}\n", scenario);
-		let deadline = std::time::Instant::now() + crate::client::TIMEOUT;
+		let deadline = std::time::Instant::now() + test_support::dap::TIMEOUT;
 		let mut seen = vec![];
 		loop {
 			if self.launcher.event_within("stopped", std::time::Duration::from_millis(20)).is_some() {

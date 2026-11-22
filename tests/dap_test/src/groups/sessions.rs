@@ -1,5 +1,4 @@
 use serde_json::json;
-
 use test_support::cli;
 
 use crate::{ok, world::World};

@@ -163,7 +163,7 @@ pub fn reloads(pid: u64, code: &Path) {
 		error.trim()
 	);
 
-	let mut attached = crate::client::Launcher::start();
+	let mut attached = test_support::dap::Launcher::start();
 	attached.initialize();
 	attached.request("attach", serde_json::json!({ "processId": pid, "hotReload": false }));
 	attached.event("initialized");

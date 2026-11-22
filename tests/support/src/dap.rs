@@ -8,7 +8,8 @@ use std::{
 };
 
 use serde_json::{json, Value};
-use test_support::{cli, paths::library_path};
+
+use crate::{cli, paths::library_path};
 
 pub const TIMEOUT: Duration = Duration::from_secs(15);
 

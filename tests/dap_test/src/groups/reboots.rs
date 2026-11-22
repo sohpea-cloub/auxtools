@@ -1,8 +1,7 @@
 use serde_json::json;
+use test_support::{cli, dap};
 
-use test_support::cli;
-
-use crate::{client, ok, world::World};
+use crate::{ok, world::World};
 
 fn rebooted(world: &mut World, worlds: usize) {
 	world.wait_count("dap: world/New", worlds);
@@ -112,7 +111,7 @@ pub fn run() {
 	ok("consecutive reboots");
 
 	b.drop_events("continued");
-	client::kill_process(pid);
+	dap::kill_process(pid);
 	a.event("terminated");
 	a.event("exited");
 	b.event("terminated");

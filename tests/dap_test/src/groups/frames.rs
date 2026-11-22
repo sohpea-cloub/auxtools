@@ -1,6 +1,7 @@
 use std::path::Path;
 
 use serde_json::{json, Value};
+use test_support::dap::{named, value_of};
 
 use crate::{ok, world::World};
 
@@ -61,10 +62,10 @@ pub fn run() {
 
 	let caller = frames[1]["id"].clone();
 	let locals = world.scope(&caller, "Locals");
-	let locals = crate::client::named(&world.variables(&locals));
-	assert_eq!(crate::client::value_of(&locals, "r"), "null");
+	let locals = named(&world.variables(&locals));
+	assert_eq!(value_of(&locals, "r"), "null");
 	let arguments = world.scope(&caller, "Arguments");
-	assert_eq!(crate::client::value_of(&crate::client::named(&world.variables(&arguments)), "a"), "3");
+	assert_eq!(value_of(&named(&world.variables(&arguments)), "a"), "3");
 	ok("caller variables");
 
 	let stale_frame = frames[0]["id"].clone();
@@ -90,10 +91,7 @@ pub fn run() {
 	assert_eq!(names, ["/recurse", "/recurse", "/sc_deep", "/main_loop"]);
 	let deepest = page["stackFrames"][1]["id"].clone();
 	let arguments = world.scope(&deepest, "Arguments");
-	assert_eq!(
-		crate::client::value_of(&crate::client::named(&world.variables(&arguments)), "depth"),
-		"120"
-	);
+	assert_eq!(value_of(&named(&world.variables(&arguments)), "depth"), "120");
 	world.resume_through("deep");
 	ok("deep stack pagination");
 
@@ -114,7 +112,7 @@ pub fn run() {
 	for (frame, mine) in &dozing {
 		assert_eq!(&world.evaluate_in(frame, "mine", "watch")["result"], mine.as_str());
 		let locals = world.scope(frame, "Locals");
-		assert_eq!(crate::client::value_of(&crate::client::named(&world.variables(&locals)), "mine"), mine);
+		assert_eq!(value_of(&named(&world.variables(&locals)), "mine"), mine);
 	}
 	world.resume_through("dozers");
 	ok("stable sleeping frame IDs after evaluation");

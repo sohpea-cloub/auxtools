@@ -1,6 +1,6 @@
 use serde_json::{json, Value};
 
-use crate::{client::named, ok, world::World};
+use crate::{ok, world::World};
 
 fn info(world: &mut World, container: Option<&Value>, name: &str) -> Value {
 	let frame = world.frame_id();
@@ -33,7 +33,7 @@ fn stops(world: &mut World, scenario: &str) -> Vec<(String, String, String, Vec<
 	let over = format!("dap: finished {}\n", scenario);
 	let finished = world.count(&over);
 	world.resume();
-	let deadline = std::time::Instant::now() + crate::client::TIMEOUT;
+	let deadline = std::time::Instant::now() + test_support::dap::TIMEOUT;
 	loop {
 		if let Some(event) = world.launcher.event_within("stopped", std::time::Duration::from_millis(20)) {
 			let frame = world.top_frame();

@@ -1,8 +1,7 @@
 use serde_json::{json, Value};
+use test_support::{cli, dap};
 
-use test_support::cli;
-
-use crate::{client, ok, paths, world::World};
+use crate::{ok, paths, world::World};
 
 fn free_port() -> u16 {
 	std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port()
@@ -70,7 +69,7 @@ pub fn run() {
 	breaks_at_leaf(&mut world);
 	ok("explicit reboot request");
 
-	let changed = client::launch_arguments(
+	let changed = dap::launch_arguments(
 		&paths::find_byond(),
 		&world.marks.file("dap_test_host.dme"),
 		json!({ "port": port, "env": { "AUXTOOLS_RESTART_TEST": "1" } })
@@ -87,7 +86,7 @@ pub fn run() {
 	world.break_on(&[]);
 
 	assert_eq!(world.eval_global("on_shutdown = \"refuse\""), "\"refuse\"");
-	let changed_again = client::launch_arguments(
+	let changed_again = dap::launch_arguments(
 		&paths::find_byond(),
 		&world.marks.file("dap_test_host.dme"),
 		json!({ "port": port, "env": { "AUXTOOLS_RESTART_TEST": "2" } })

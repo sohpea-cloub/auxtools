@@ -1,4 +1,5 @@
 use serde_json::{json, Value};
+use test_support::dap::{named, value_of};
 
 use crate::{ok, world::World};
 
@@ -355,8 +356,8 @@ pub fn run() {
 	for context in ["repl", "watch", "hover"] {
 		let watched = world.evaluate_in(&frame, "src", context);
 		assert_eq!(watched["result"], "S");
-		let inside = crate::client::named(&world.variables(&watched["variablesReference"].clone()));
-		assert_eq!(crate::client::value_of(&inside, "n"), "1", "{}", context);
+		let inside = named(&world.variables(&watched["variablesReference"].clone()));
+		assert_eq!(value_of(&inside, "n"), "1", "{}", context);
 		let watched = world.evaluate_in(&frame, "local_list", context);
 		assert_eq!(world.variables(&watched["variablesReference"].clone()).len(), 3);
 		let watched = world.evaluate_in(&frame, "by", context);

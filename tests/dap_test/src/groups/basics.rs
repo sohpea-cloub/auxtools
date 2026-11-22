@@ -4,11 +4,12 @@ use std::{
 };
 
 use serde_json::{json, Value};
-
-use test_support::cli;
+use test_support::{
+	cli,
+	dap::{self, Launcher}
+};
 
 use crate::{
-	client::{self, Launcher},
 	ok, paths,
 	world::{host_file, World}
 };
@@ -362,7 +363,7 @@ fn files_another_environment_names(world: &mut World) {
 }
 
 fn evaluate_when_connected(launcher: &mut Launcher, expression: &str) -> String {
-	let deadline = Instant::now() + client::TIMEOUT;
+	let deadline = Instant::now() + dap::TIMEOUT;
 	loop {
 		let response = launcher.try_request("evaluate", json!({ "expression": expression, "context": "repl" }));
 		if response["success"] == true {

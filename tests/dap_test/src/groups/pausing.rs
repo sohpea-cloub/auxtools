@@ -1,8 +1,9 @@
 use std::time::Duration;
 
 use serde_json::json;
+use test_support::dap::{named, value_of};
 
-use crate::{client::named, ok, world::World};
+use crate::{ok, world::World};
 
 fn threads_in<'a>(threads: &'a [(u64, String)], proc: &str) -> Vec<&'a (u64, String)> {
 	let with_place = format!("{}  ", proc);
@@ -122,9 +123,9 @@ pub fn run() {
 
 	let frame = frames[0]["id"].clone();
 	let locals = world.scope(&frame, "Locals");
-	assert_eq!(crate::client::value_of(&named(&world.variables(&locals)), "napped"), "10");
+	assert_eq!(value_of(&named(&world.variables(&locals)), "napped"), "10");
 	let arguments = world.scope(&frame, "Arguments");
-	assert_eq!(crate::client::value_of(&named(&world.variables(&arguments)), "ticks"), "10");
+	assert_eq!(value_of(&named(&world.variables(&arguments)), "ticks"), "10");
 	ok("sleeping frame variables");
 
 	assert_eq!(world.evaluate_in(&frame, "napped + ticks", "watch")["result"], "20");

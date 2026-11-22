@@ -121,7 +121,7 @@ fn stops_of(world: &mut World) -> Vec<String> {
 
 fn resume_collecting(world: &mut World, scenario: &str, finished: usize) -> Vec<String> {
 	let over = format!("dap: finished {}\n", scenario);
-	let deadline = std::time::Instant::now() + crate::client::TIMEOUT;
+	let deadline = std::time::Instant::now() + test_support::dap::TIMEOUT;
 	let mut seen = vec![];
 	world.resume();
 	loop {

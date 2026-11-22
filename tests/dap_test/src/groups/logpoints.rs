@@ -19,7 +19,7 @@ fn logged_so_far(world: &World, from: usize) -> Vec<String> {
 }
 
 fn logged(world: &mut World, from: usize, count: usize) -> Vec<String> {
-	let deadline = std::time::Instant::now() + crate::client::TIMEOUT;
+	let deadline = std::time::Instant::now() + test_support::dap::TIMEOUT;
 	while logged_so_far(world, from).len() < count {
 		assert!(std::time::Instant::now() < deadline, "only {:?} was logged", logged_so_far(world, from));
 		world.has_event("output");

@@ -1,10 +1,7 @@
 use serde_json::{json, Value};
+use test_support::dap::{named, value_of};
 
-use crate::{
-	client::{named, value_of},
-	ok,
-	world::World
-};
+use crate::{ok, world::World};
 
 fn kinds_and_expressions(world: &mut World, locals: &[Value], version: u64) {
 	let of = |name: &str| locals.iter().find(|v| v["name"] == name).unwrap().clone();

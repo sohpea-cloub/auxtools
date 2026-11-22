@@ -1,7 +1,4 @@
 mod check;
-#[allow(dead_code)]
-#[path = "../../dap_test/src/client.rs"]
-mod client;
 mod inspect;
 mod journal;
 mod profile;
@@ -17,10 +14,10 @@ use std::{
 	time::{Duration, Instant}
 };
 
-use client::{test_args, Launcher};
 use serde_json::json;
 use test_support::{
 	cli::{auxtools, launcher_command, listed_world, listed_worlds, ran, Background, Cli},
+	dap::{self, test_args, Launcher},
 	paths::{self, library_path, ByondCommand}
 };
 
@@ -110,7 +107,7 @@ fn main() {
 	paths::compile(&host_file("launcher_test_host.dme"));
 	let _ = std::fs::remove_file(host_file("rebooted"));
 
-	let server = client::server();
+	let server = dap::server();
 	let library = library_path();
 	let mut attached: Option<Attached> = None;
 	for group in GROUPS {
