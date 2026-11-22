@@ -18,7 +18,39 @@ pub(crate) struct Evaluation {
 	pub(super) eval_callee_errors: Vec<String>,
 	pub(super) eval_callee_more: usize,
 	pub(super) eval_ran: *mut raw_types::procs::ExecutionContext,
-	pub(super) eval_code: HashMap<EvalCodeKey, Result<(Vec<u32>, Vec<String>, Vec<String>), String>>
+	pub(super) eval_code: HashMap<EvalCodeKey, Result<(Vec<u32>, Vec<String>, Vec<String>), CodeError>>
+}
+
+#[derive(Clone)]
+pub(super) struct CodeError {
+	text: String,
+	unknown: Option<String>
+}
+
+impl CodeError {
+	fn compiled(error: dmasm::compiler::CompileError) -> Self {
+		use dmasm::compiler::CompileError;
+		let unknown = match &error {
+			CompileError::UndefinedVar(name) => Some(name.clone()),
+			_ => None
+		};
+		CodeError {
+			text: error.to_string(),
+			unknown
+		}
+	}
+
+	fn assembled(error: dmasm::assembler::AssembleError) -> Self {
+		use dmasm::assembler::AssembleError;
+		let unknown = match &error {
+			AssembleError::ProcNotFound(path) => Some(path.rsplit('/').next().unwrap_or(path).to_owned()),
+			_ => None
+		};
+		CodeError {
+			text: Evaluation::assemble_error(error),
+			unknown
+		}
+	}
 }
 
 pub(super) struct EvalRequest<'a> {
@@ -49,7 +81,8 @@ impl<'a> EvalRequest<'a> {
 pub(super) struct EvalOutcome {
 	pub(super) value: Result<Value, String>,
 	pub(super) still_running: bool,
-	pub(super) notes: EvalNotes
+	pub(super) notes: EvalNotes,
+	pub(super) unknown: Option<String>
 }
 
 impl EvalOutcome {
@@ -57,7 +90,8 @@ impl EvalOutcome {
 		Self {
 			value: Err(message),
 			still_running: false,
-			notes: EvalNotes::default()
+			notes: EvalNotes::default(),
+			unknown: None
 		}
 	}
 }
@@ -152,12 +186,7 @@ impl Evaluation {
 		}
 	}
 
-	pub(super) fn unknown_name(error: String) -> String {
-		let name = match (error.strip_prefix("undefined var: "), error.strip_prefix("proc not found: ")) {
-			(Some(name), _) => name,
-			(_, Some(path)) => path.rsplit('/').next().unwrap_or(path),
-			_ => return error
-		};
+	pub(super) fn unknown_name(error: String, name: &str) -> String {
 		let capitals = name.chars().any(|c| c.is_ascii_uppercase()) && !name.chars().any(|c| c.is_ascii_lowercase());
 		if !capitals || crate::macros::given() {
 			return error;
@@ -185,19 +214,25 @@ impl Evaluation {
 		command: &str,
 		arg_names: &[&str],
 		scope: &dmasm::compiler::ExprScope
-	) -> Result<(Vec<dmasm::Node>, Vec<String>, Vec<String>), String> {
+	) -> Result<(Vec<dmasm::Node>, Vec<String>, Vec<String>), CodeError> {
 		let byond = crate::world_byond();
 		if dmasm::compiler::is_body(command) {
-			let body = dmasm::compiler::compile_body_in(command, arg_names, Some(scope), byond).map_err(|e| e.to_string())?;
+			let body = dmasm::compiler::compile_body_in(command, arg_names, Some(scope), byond).map_err(CodeError::compiled)?;
 			return Ok((body.nodes, body.locals, texts(&body.warnings)));
 		}
 		match dmasm::compiler::compile_expr_warned(command, arg_names, Some(scope), byond) {
 			Ok((expr, warnings)) => Ok((expr, vec![], texts(&warnings))),
 			Err(_) if command.trim().contains(['\n', ';']) => {
 				let error = dmasm::compiler::compile_body_in(command, arg_names, Some(scope), byond).err();
-				Err(error.map_or_else(|| "invalid expression or proc body".to_owned(), |e| e.to_string()))
+				Err(error.map_or_else(
+					|| CodeError {
+						text: "invalid expression or proc body".to_owned(),
+						unknown: None
+					},
+					CodeError::compiled
+				))
 			}
-			Err(e) => Err(e.to_string())
+			Err(e) => Err(CodeError::compiled(e))
 		}
 	}
 
@@ -318,7 +353,9 @@ impl Server {
 
 	pub(super) fn eval_expr(&mut self, request: EvalRequest) -> EvalOutcome {
 		let mut outcome = self.eval_expr_plain(request);
-		outcome.value = outcome.value.map_err(Evaluation::unknown_name);
+		if let Some(name) = outcome.unknown.take() {
+			outcome.value = outcome.value.map_err(|error| Evaluation::unknown_name(error, &name));
+		}
 		outcome
 	}
 
@@ -332,7 +369,8 @@ impl Server {
 		let mut outcome = EvalOutcome {
 			value: Ok(Value::NULL),
 			still_running: false,
-			notes: EvalNotes::default()
+			notes: EvalNotes::default(),
+			unknown: None
 		};
 
 		let result = self.compile_and_run_expr(request, &mut outcome);
@@ -346,7 +384,10 @@ impl Server {
 		outcome.notes.callee_more = callee_more;
 
 		outcome.value = match self.eval.eval_error.take() {
-			Some(error) => Err(format!("runtime error: {}", error)),
+			Some(error) => {
+				outcome.unknown = None;
+				Err(format!("runtime error: {}", error))
+			}
 			None => result
 		};
 		outcome
@@ -453,7 +494,7 @@ impl Server {
 			Some(compiled) => compiled.clone(),
 			None => {
 				let compiled = Evaluation::compile_eval(command, &arg_names, &scope).and_then(|(code, locals, warnings)| {
-					let assembly = dmasm::assembler::assemble(&code, &mut crate::assemble_env::AssembleEnv).map_err(Evaluation::assemble_error)?;
+					let assembly = dmasm::assembler::assemble(&code, &mut crate::assemble_env::AssembleEnv).map_err(CodeError::assembled)?;
 					Ok((assembly, locals, warnings))
 				});
 				if self.eval.eval_code.len() >= EVAL_CODE_KEPT {
@@ -463,7 +504,10 @@ impl Server {
 				compiled
 			}
 		};
-		let (assembly, locals, warnings) = compiled?;
+		let (assembly, locals, warnings) = compiled.map_err(|error| {
+			outcome.unknown = error.unknown;
+			error.text
+		})?;
 		outcome.notes.warnings = warnings;
 		if let EvalMode::Queue(number) = mode {
 			self.spawns.queued.push_back(Spawn {
@@ -589,7 +633,9 @@ impl Server {
 		}
 
 		let reached = (!dmasm::compiler::is_body(command)).then(|| format!("({})", command));
-		let EvalOutcome { value, still_running, notes } = self.eval_expr(EvalRequest::new(frame_id, command));
+		let EvalOutcome {
+			value, still_running, notes, ..
+		} = self.eval_expr(EvalRequest::new(frame_id, command));
 		let response = value
 			.map(|result| EvalResponse {
 				value: values::stringify(&result),
@@ -605,7 +651,9 @@ impl Server {
 	}
 
 	pub(super) fn handle_eval_on(&mut self, object: &str, expression: &str, depth: Option<u32>) {
-		let EvalOutcome { value, still_running, notes } = match self.object_of(object) {
+		let EvalOutcome {
+			value, still_running, notes, ..
+		} = match self.object_of(object) {
 			Ok(object) => self.eval_expr(EvalRequest {
 				src: Some(object),
 				..EvalRequest::new(None, expression)
