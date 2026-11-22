@@ -718,10 +718,6 @@ pub fn original_code(proc: &Proc) -> Cow<'_, [u32]> {
 	code
 }
 
-pub fn original_bytecode(proc: &Proc) -> Vec<u32> {
-	original_code(proc).into_owned()
-}
-
 pub fn hooked_at(proc: &Proc, offset: usize) -> bool {
 	let code = unsafe { proc.bytecode() };
 	let Some(&word) = code.get(offset) else {

@@ -20,7 +20,7 @@ use dmasm::{
 
 use crate::{
 	assemble_env::AssembleEnv,
-	instruction_hooking::{hook_instruction, hooked_offsets, original_bytecode, original_code, unhook_instruction}
+	instruction_hooking::{hook_instruction, hooked_offsets, original_code, unhook_instruction}
 };
 
 #[path = "reload_inherit.rs"]
@@ -2194,7 +2194,6 @@ fn apply_code<K: Ord + std::hash::Hash + Copy, T>(
 	warnings: &mut Vec<String>
 ) {
 	let (old_ptr, _) = unsafe { p.proc.bytecode_mut_ptr() };
-	let old_bytecode = original_bytecode(&p.proc);
 	mark_reloaded(p.proc.id.0, if p.lines.is_some() { Reloaded::Lines } else { Reloaded::Code });
 
 	if !auxtools::debug::has_local_names(old_ptr) {
@@ -2215,7 +2214,11 @@ fn apply_code<K: Ord + std::hash::Hash + Copy, T>(
 		.collect();
 
 	let local_names = p.local_names.unwrap_or_else(|| auxtools::debug::local_names_for(&p.proc, old_ptr));
-	auxtools::remember_bytecode(old_ptr, &old_bytecode);
+	let old_file = {
+		let old = original_code(&p.proc);
+		auxtools::remember_bytecode(old_ptr, &old);
+		debug_file(&old)
+	};
 
 	runtime_tables::set_proc_entry_word(p.proc.id, ProcEntryWords::BYTECODE, p.bytecode_id);
 	if let Some(locals) = p.locals_id {
@@ -2237,7 +2240,7 @@ fn apply_code<K: Ord + std::hash::Hash + Copy, T>(
 	};
 	let new_code = crate::code_index::of(&p.proc);
 	let firsts = match (old_code.lines().next(), new_code.lines().next()) {
-		(Some(old_first), Some(new_first)) if debug_file(&old_bytecode) != debug_file(&p.bytecode) => Some((old_first, new_first)),
+		(Some(old_first), Some(new_first)) if old_file != debug_file(&p.bytecode) => Some((old_first, new_first)),
 		_ => None
 	};
 
