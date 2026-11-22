@@ -8,7 +8,7 @@ use std::{
 
 use crate::client::{launcher_command, launcher_path};
 
-const TIMEOUT: Duration = Duration::from_secs(60);
+const TIMEOUT: Duration = Duration::from_secs(20);
 
 #[track_caller]
 pub fn run(pid: u64, args: &[&str], code: i32) -> String {
@@ -133,7 +133,7 @@ impl Background {
 
 #[track_caller]
 pub fn wait_at(pid: u64, place: &str) -> Background {
-	let mut waiting = Background::start(pid, &["wait", "pause", "--break", place, "--timeout", "60"]);
+	let mut waiting = Background::start(pid, &["wait", "pause", "--break", place, "--timeout", "15"]);
 	waiting.error_with("breakpoint set at ");
 	waiting
 }
@@ -233,7 +233,7 @@ pub fn reloads(pid: u64, code: &Path) {
 	let looped = "\tfor (var/a in list(1)) { try { for (var/b in list(2)) { a += b } } catch (var/e) { a = e } }\n\treturn 3\n";
 	assert!(source.contains("\treturn 2\n\n"), "unexpected value() source after test setup");
 	std::fs::write(code, source.replace("\treturn 2\n\n", looped)).unwrap();
-	let printed = run(pid, &["wait", "reload", "--since", &since, "--timeout", "60"], 0);
+	let printed = run(pid, &["wait", "reload", "--since", &since, "--timeout", "15"], 0);
 	assert!(
 		printed.starts_with('#') && printed.contains(" hot reload applied: reloaded /value"),
 		"unexpected wait reload output: {}",
@@ -248,7 +248,7 @@ pub fn reloads(pid: u64, code: &Path) {
 
 	let since = newest(pid).to_string();
 	std::fs::write(code, source.replace("\treturn 2\n", "\treturn nothing_called_this\n")).unwrap();
-	let printed = run(pid, &["wait", "reload", "--since", &since, "--timeout", "60", "--json"], 1);
+	let printed = run(pid, &["wait", "reload", "--since", &since, "--timeout", "15", "--json"], 1);
 	let entry: serde_json::Value = serde_json::from_str(printed.lines().next().unwrap()).unwrap();
 	assert_eq!((&entry["kind"], &entry["applied"]), (&"reload".into(), &false.into()), "{}", printed);
 	let errors = entry["errors"].to_string();
@@ -266,7 +266,7 @@ pub fn reloads(pid: u64, code: &Path) {
 
 	let since = newest(pid).to_string();
 	std::fs::write(code, source.replace("\treturn 2\n", "\treturn ]\n")).unwrap();
-	let printed = run(pid, &["wait", "reload", "--since", &since, "--timeout", "60"], 1);
+	let printed = run(pid, &["wait", "reload", "--since", &since, "--timeout", "15"], 1);
 	let error = printed
 		.lines()
 		.find(|line| line.starts_with("  error: "))
@@ -291,7 +291,7 @@ pub fn reloads(pid: u64, code: &Path) {
 	attached.request("configurationDone", serde_json::json!({}));
 
 	let since = newest(pid).to_string();
-	let waiting = Background::start(pid, &["wait", "reload", "--since", &since, "--timeout", "60"]);
+	let waiting = Background::start(pid, &["wait", "reload", "--since", &since, "--timeout", "15"]);
 	std::fs::write(code, &source).unwrap();
 	let (exit, printed) = waiting.finish();
 	assert!(
@@ -349,20 +349,20 @@ pub fn reloads(pid: u64, code: &Path) {
 	let waiting = wait_at(pid, &place);
 	let since = newest(pid).to_string();
 	std::fs::write(code, source.replace("/proc/two_loops()\n", "/proc/two_loops()\n\tvar/moved = 1\n")).unwrap();
-	run(pid, &["wait", "reload", "--since", &since, "--timeout", "60"], 0);
+	run(pid, &["wait", "reload", "--since", &since, "--timeout", "15"], 0);
 	run(pid, &["eval", "--spawn", "two_loops()"], 0);
 	let (exit, printed) = waiting.finish();
 	assert_eq!(exit, 0, "wait pause after a reload gave: {}", printed);
 	run(pid, &["continue"], 0);
 	let since = newest(pid).to_string();
 	std::fs::write(code, &source).unwrap();
-	run(pid, &["wait", "reload", "--since", &since, "--timeout", "60"], 0);
+	run(pid, &["wait", "reload", "--since", &since, "--timeout", "15"], 0);
 	println!("ok: wait pause keeps its breakpoint through a reload");
 }
 
 pub fn reboot(pid: u64, dir: &Path) {
 	let before = newest(pid);
-	let waiting = Background::start(pid, &["wait", "reboot", "--since", &before.to_string(), "--timeout", "60"]);
+	let waiting = Background::start(pid, &["wait", "reboot", "--since", &before.to_string(), "--timeout", "15"]);
 	std::fs::write(dir.join("reboot"), "yes").unwrap();
 	let (exit, printed) = waiting.finish();
 	assert!(
@@ -403,14 +403,14 @@ pub fn reboot(pid: u64, dir: &Path) {
 		"log --world said {}",
 		printed
 	);
-	let printed = run(pid, &["wait", "reload", "--since", &number.to_string(), "--timeout", "60"], 0);
+	let printed = run(pid, &["wait", "reload", "--since", &number.to_string(), "--timeout", "15"], 0);
 	assert!(printed.contains("hot reload applied: "), "unexpected wait reload output: {}", printed);
 	println!("ok: journal continuity across reboot");
 }
 
 #[track_caller]
 pub fn wait_for_reboot(pid: u64) -> Background {
-	let waiting = Background::start(pid, &["wait", "reboot", "--timeout", "60"]);
+	let waiting = Background::start(pid, &["wait", "reboot", "--timeout", "15"]);
 	std::thread::sleep(Duration::from_secs(1));
 	waiting
 }

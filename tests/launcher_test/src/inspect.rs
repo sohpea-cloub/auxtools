@@ -220,7 +220,7 @@ fn from_files(pid: &str, dir: &Path) {
 	let ran = run(pid, &["trace", "/proc/value", "--log", &format!("@{}", message), "--count", "1"], 0);
 	assert!(ran.out.contains("value() said \"2\"\n"), "unexpected trace --log output: {}", ran.out);
 	let watched = file("watched.txt", "rounds");
-	let ran = run(pid, &["wait", "pause", "--change", &format!("@{}", watched), "--timeout", "60"], 0);
+	let ran = run(pid, &["wait", "pause", "--change", &format!("@{}", watched), "--timeout", "15"], 0);
 	assert!(
 		ran.out.starts_with("watching rounds, now "),
 		"unexpected wait --change output: {}",
@@ -328,7 +328,7 @@ fn where_breakpoints_bound(pid: &str, code: &Path) {
 	let declared = line_of(code, "/proc/value()");
 	let ran = run(
 		pid,
-		&["wait", "pause", "--break", &format!("attach_host.dm:{}", declared), "--timeout", "60"],
+		&["wait", "pause", "--break", &format!("attach_host.dm:{}", declared), "--timeout", "15"],
 		0
 	);
 	assert!(
@@ -568,7 +568,7 @@ fn as_json(pid: &str, dir: &Path) {
 	);
 	println!("ok: recursive JSON rendering");
 
-	let mut waiting = Background::start(number, &["wait", "pause", "--json", "--break", "/proc/fail_in", "--timeout", "60"]);
+	let mut waiting = Background::start(number, &["wait", "pause", "--json", "--break", "/proc/fail_in", "--timeout", "15"]);
 	waiting.error_with("breakpoint set at ");
 	std::fs::write(dir.join("call"), "yes").unwrap();
 	let (code, out, err) = waiting.finish_apart();
@@ -916,13 +916,13 @@ fn spawned(pid: &str, code: &Path) {
 fn steps_that_end_elsewhere(pid: &str, dir: &Path) {
 	let number: u64 = pid.parse().unwrap();
 	paused_in_call(pid, dir, "/proc/fail_in");
-	let out = run(pid, &["step-out", "--timeout", "30"], 0).out;
+	let out = run(pid, &["step-out", "--timeout", "15"], 0).out;
 	assert!(
 		out.starts_with(&format!("pid {}: paused after a step\n#0 /run_until_stopped  ", pid)),
 		"step-out said {}",
 		out
 	);
-	let ran = run(pid, &["step-over", "--timeout", "30", "--json"], 0);
+	let ran = run(pid, &["step-over", "--timeout", "15", "--json"], 0);
 	let state: Value = serde_json::from_str(&ran.out).unwrap_or_else(|e| panic!("step-over --json printed {}: {}", ran.out, e));
 	assert!(
 		state["pid"] == number && state["paused"] == false && state["reason"].is_null() && state["stack"] == json!([]),
@@ -934,9 +934,9 @@ fn steps_that_end_elsewhere(pid: &str, dir: &Path) {
 	println!("ok: step exhaustion succeeds with world running");
 
 	paused_in_call(pid, dir, "/proc/fail_deeper");
-	let ran = run(pid, &["step-over", "--timeout", "30"], 0);
+	let ran = run(pid, &["step-over", "--timeout", "15"], 0);
 	assert!(ran.err.is_empty(), "step-over said {}", ran.err);
-	let ran = run(pid, &["step-over", "--timeout", "30"], 0);
+	let ran = run(pid, &["step-over", "--timeout", "15"], 0);
 	assert!(
 		ran.out.starts_with(&format!("pid {}: paused after a step\n#0 /fail_in  ", pid)),
 		"step-over said {}",
@@ -949,7 +949,7 @@ fn steps_that_end_elsewhere(pid: &str, dir: &Path) {
 	paused_at(number, "/proc/slow_double", || {
 		run(pid, &["eval", "--spawn", "slow_double(6, 40)"], 0);
 	});
-	let on_sleep = run(pid, &["step-over", "--timeout", "30", "--json"], 0).out;
+	let on_sleep = run(pid, &["step-over", "--timeout", "15", "--json"], 0).out;
 	assert!(
 		on_sleep.contains("\"reason\":\"step\"") && on_sleep.contains("\"proc\":\"/slow_double\""),
 		"step-over said {}",
@@ -972,7 +972,7 @@ fn steps_that_end_elsewhere(pid: &str, dir: &Path) {
 	paused_at(number, "/proc/slow_double", || {
 		run(pid, &["eval", "--spawn", "slow_double(7, 20)"], 0);
 	});
-	run(pid, &["step-over", "--timeout", "30"], 0);
+	run(pid, &["step-over", "--timeout", "15"], 0);
 	let ran = run(pid, &["step-over", "--timeout", "0.5"], 2);
 	assert_eq!(ran.out, format!("pid {}: running\n", pid));
 	assert!(

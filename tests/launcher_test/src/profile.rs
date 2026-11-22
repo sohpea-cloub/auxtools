@@ -139,7 +139,7 @@ pub fn profile(pid: u64, dir: &Path, code: &Path) {
 		assert_eq!(run(pid, args, 1), said, "{:?}", args);
 	}
 	running.stop();
-	let deadline = Instant::now() + Duration::from_secs(30);
+	let deadline = Instant::now() + Duration::from_secs(20);
 	loop {
 		let pid = pid.to_string();
 		let (code, printed) = crate::client::launcher_command(&["--pid", &pid, "profile", "--for", "1"]);

@@ -14,7 +14,9 @@ use auxtools_protocol::{
 	BreakpointReason, ClientMessage, ContinueKind, Pending, Request, RequestId, Response, ServerMessage, Sorted, WORLD_SHUTTING_DOWN
 };
 
-const TIMEOUT: Duration = Duration::from_secs(30);
+const TIMEOUT: Duration = Duration::from_secs(15);
+
+const START_TIMEOUT: Duration = Duration::from_secs(30);
 
 pub struct World {
 	game: Game,
@@ -74,7 +76,7 @@ impl World {
 	pub fn connect_silent(&self) -> Client {
 		let start = Instant::now();
 		loop {
-			assert!(start.elapsed() < TIMEOUT, "timed out connecting to debug server");
+			assert!(start.elapsed() < START_TIMEOUT, "timed out connecting to debug server");
 			if let Ok(stream) = local::connect(self.game.pid()) {
 				let stream = Shared::new(stream);
 				return Client::new(Box::new(stream.clone()), Box::new(stream), false);
@@ -87,7 +89,7 @@ impl World {
 	fn connect_as(&self, watcher: bool) -> Client {
 		let start = Instant::now();
 		loop {
-			assert!(start.elapsed() < TIMEOUT, "timed out connecting to debug server");
+			assert!(start.elapsed() < START_TIMEOUT, "timed out connecting to debug server");
 			let Ok(stream) = local::connect(self.game.pid()) else {
 				std::thread::sleep(Duration::from_millis(100));
 				continue;

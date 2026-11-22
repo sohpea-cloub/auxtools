@@ -187,7 +187,7 @@ fn launch(server: &str, library: &Path) {
 		})
 	);
 
-	launcher.event("initialized");
+	launcher.started();
 	println!("ok: debug library initialization");
 	let set = launcher.request(
 		"setBreakpoints",
@@ -245,7 +245,7 @@ fn command_line(pid: u64, code: &Path) {
 	assert_eq!(printed.trim(), "error: timed out after 1 second waiting for the world to pause.");
 
 	let line = line_of(code, "\treturn 2").to_string();
-	let printed = cli.run(&["wait", "pause", "--break", &format!("attach_host.dm:{}", line), "--timeout", "60"], 0);
+	let printed = cli.run(&["wait", "pause", "--break", &format!("attach_host.dm:{}", line), "--timeout", "15"], 0);
 	assert!(
 		printed.starts_with(&format!("pid {}: paused at a breakpoint\n#0 /value  attach_host.dm:", pid)) && printed.contains("#1 /run_until_stopped"),
 		"unexpected wait output: {}",
@@ -268,7 +268,7 @@ fn command_line(pid: u64, code: &Path) {
 
 	let declared = line_of(code, "/proc/value()");
 	let printed = cli.run(
-		&["wait", "pause", "--break", &format!("attach_host.dm:{}", declared), "--timeout", "60"],
+		&["wait", "pause", "--break", &format!("attach_host.dm:{}", declared), "--timeout", "15"],
 		0
 	);
 	assert!(
@@ -822,13 +822,13 @@ fn command_line_more(pid: u64, dir: &Path) {
 	let pid = pid.to_string();
 	let cli = Cli(pid.clone());
 
-	let printed = cli.run(&["wait", "pause", "--break", "/proc/value", "--timeout", "60"], 0);
+	let printed = cli.run(&["wait", "pause", "--break", "/proc/value", "--timeout", "15"], 0);
 	assert!(
 		printed.starts_with(&format!("pid {}: paused at a breakpoint\n#0 /value", pid)),
 		"unexpected wait output: {}",
 		printed
 	);
-	let printed = cli.run(&["step-out", "--timeout", "30"], 0);
+	let printed = cli.run(&["step-out", "--timeout", "15"], 0);
 	assert!(
 		printed.starts_with(&format!("pid {}: paused after a step\n#0 /run_until_stopped", pid)),
 		"step-out said {}",
@@ -901,7 +901,7 @@ fn command_line_more(pid: u64, dir: &Path) {
 	cli.run(&["continue"], 0);
 
 	std::fs::write(dir.join("fail"), "yes").unwrap();
-	let printed = cli.run(&["wait", "pause", "--runtimes", "--timeout", "60"], 0);
+	let printed = cli.run(&["wait", "pause", "--runtimes", "--timeout", "15"], 0);
 	assert!(
 		printed.starts_with(&format!("pid {}: paused on a runtime error: cannot read from list\n#0 /fail", pid)),
 		"wait --runtimes said {}",
@@ -914,7 +914,7 @@ fn command_line_more(pid: u64, dir: &Path) {
 	let printed = cli.run(&["wait", "pause", "--runtime-filter", "!cannot read", "--timeout", "1.5"], 2);
 	assert!(printed.contains("timed out"), "wait --runtime-filter said {}", printed);
 	std::fs::write(dir.join("fail"), "yes").unwrap();
-	let printed = cli.run(&["wait", "pause", "--runtime-filter", "bounds, FROM LIST", "--timeout", "60"], 0);
+	let printed = cli.run(&["wait", "pause", "--runtime-filter", "bounds, FROM LIST", "--timeout", "15"], 0);
 	assert!(
 		printed.starts_with(&format!("pid {}: paused on a runtime error: cannot read from list", pid)),
 		"wait --runtime-filter said {}",
@@ -933,7 +933,7 @@ fn command_line_more(pid: u64, dir: &Path) {
 	println!("ok: log runtime filter");
 
 	let waiting = journal::wait_at(pid.parse().unwrap(), "/proc/fail");
-	let printed = cli.run(&["wait", "pause", "--break", "/proc/tick", "--timeout", "60"], 0);
+	let printed = cli.run(&["wait", "pause", "--break", "/proc/tick", "--timeout", "15"], 0);
 	assert!(printed.contains("#0 /tick"), "the other wait said {}", printed);
 	cli.run(&["continue"], 0);
 	std::fs::write(dir.join("fail"), "yes").unwrap();
@@ -947,7 +947,7 @@ fn command_line_more(pid: u64, dir: &Path) {
 	cli.run(&["continue"], 0);
 	println!("ok: CLI wait passes over another client's pause");
 
-	let printed = cli.run(&["wait", "pause", "--break", "/proc/value", "--no-hold", "--timeout", "60"], 0);
+	let printed = cli.run(&["wait", "pause", "--break", "/proc/value", "--no-hold", "--timeout", "15"], 0);
 	assert!(
 		printed.starts_with(&format!("pid {}: paused at a breakpoint\n#0 /value", pid)),
 		"wait --no-hold said {}",
@@ -971,7 +971,7 @@ fn command_line_more(pid: u64, dir: &Path) {
 	);
 	println!("ok: wait condition error reported once");
 
-	let printed = cli.run(&["wait", "pause", "--change", "rounds", "--timeout", "60"], 0);
+	let printed = cli.run(&["wait", "pause", "--change", "rounds", "--timeout", "15"], 0);
 	assert!(
 		printed.starts_with("watching rounds, now ")
 			&& printed.contains(&format!("\npid {}: paused after a change: rounds changed from ", pid))
@@ -979,7 +979,7 @@ fn command_line_more(pid: u64, dir: &Path) {
 		"unexpected wait --change output: {}",
 		printed
 	);
-	let printed = cli.run(&["wait", "pause", "--change", "said", "--if", "value > old", "--timeout", "60"], 0);
+	let printed = cli.run(&["wait", "pause", "--change", "said", "--if", "value > old", "--timeout", "15"], 0);
 	assert!(
 		printed.starts_with("watching said, now ")
 			&& printed.contains(&format!("\npid {}: paused after a change: said changed from ", pid))
@@ -1258,9 +1258,9 @@ fn edited_after_build(server: &str) {
 	edit(format!("{}\n/proc/edited()\n\treturn 1\n\n/proc/edited_again()\n\treturn 2\n", source));
 	wait_for_text("the launcher's log", "Hot reload: added /edited_again", read_log);
 	let pid = pid.to_string();
-	let (got, printed) = launcher_command(&["--pid", &pid, "reboot", "--timeout", "60"]);
+	let (got, printed) = launcher_command(&["--pid", &pid, "reboot", "--timeout", "15"]);
 	assert_eq!(got, 0, "reboot said {}", printed);
-	let until = Instant::now() + Duration::from_secs(60);
+	let until = Instant::now() + Duration::from_secs(20);
 	while read_log().matches(said).count() < 2 {
 		assert!(Instant::now() < until, "the launcher said:\n{}", read_log());
 		std::thread::sleep(Duration::from_millis(100));
@@ -1314,7 +1314,7 @@ fn attach_and_reload(server: &str, library: &Path) -> Attached {
 			"args": test_args()
 		})
 	);
-	runner.event("initialized");
+	runner.started();
 	runner.request("configurationDone", json!({}));
 	runner.wait_output("attach test: 1");
 	runner.wait_output("Hot reload active");
@@ -1556,7 +1556,7 @@ fn launch_here(dmb: &Path, server: &str, started: &mut Started) -> Arc<Mutex<Str
 #[track_caller]
 fn launcher_exit(started: &mut Started, output: &Mutex<String>) -> i32 {
 	let child = started.child.as_mut().unwrap();
-	let until = Instant::now() + Duration::from_secs(30);
+	let until = Instant::now() + Duration::from_secs(20);
 	loop {
 		if let Some(status) = child.try_wait().unwrap() {
 			return status.code().unwrap_or(-1);
@@ -1632,7 +1632,7 @@ fn dmb_elsewhere(server: &str) {
 	let res = Command::new(paths::find_dm()).with_byond_paths().arg(&dme).status().unwrap();
 	assert!(res.success(), "dreammaker build failed");
 	std::fs::rename(&built, &dmb).unwrap();
-	assert_eq!(run(&["reboot", "--timeout", "60"]).trim(), format!("pid {}: rebooted", pid));
+	assert_eq!(run(&["reboot", "--timeout", "15"]).trim(), format!("pid {}: rebooted", pid));
 	let printed = run(&["proc", "/added_here"]);
 	assert!(printed.contains("definitions: 1\n"), "proc said {}", printed);
 	assert_eq!(run(&["stop"]).trim(), format!("pid {}: stopped", pid));
@@ -1823,7 +1823,7 @@ fn launch_from_the_command_line(server: &str) {
 		cli.run(&["status"], 0).lines().next().unwrap_or_default(),
 		format!("pid {}: running", pid)
 	);
-	let again: serde_json::Value = serde_json::from_str(&cli.run(&["reboot", "--json", "--timeout", "60"], 0)).unwrap();
+	let again: serde_json::Value = serde_json::from_str(&cli.run(&["reboot", "--json", "--timeout", "15"], 0)).unwrap();
 	assert_eq!(again, json!({ "pid": pid, "rebooted": true }));
 	wait_for_text("the background launcher's log", "The world restarted", read_log);
 	println!("ok: reboot waits for reconnection");
@@ -1831,7 +1831,7 @@ fn launch_from_the_command_line(server: &str) {
 	let source = std::fs::read_to_string(&code).unwrap();
 	std::fs::write(&code, format!("{}\n/proc/added_by_reload()\n\treturn 99\n", source)).unwrap();
 	wait_for_text("the background launcher's log", "Hot reload: added /added_by_reload", read_log);
-	cli.run(&["reboot", "--timeout", "60"], 0);
+	cli.run(&["reboot", "--timeout", "15"], 0);
 	assert_eq!(cli.run(&["eval", "added_by_reload()"], 0).trim(), "99");
 	let loaded: serde_json::Value = serde_json::from_str(&cli.run(&["log", "--world", "--last", "1", "--json"], 0)).unwrap();
 	let status: serde_json::Value = serde_json::from_str(&cli.run(&["status", "--json"], 0)).unwrap();
@@ -1861,7 +1861,7 @@ fn launch_from_the_command_line(server: &str) {
 		std::fs::write(&code, format!("{}\n/proc/zz_agent_probe()\n\treturn 7\n", edited)).unwrap();
 		let built = Command::new(paths::find_dm()).with_byond_paths().arg(&dme).output().unwrap();
 		std::fs::write(dir.join("reboot"), "yes").unwrap();
-		let until = Instant::now() + Duration::from_secs(60);
+		let until = Instant::now() + Duration::from_secs(20);
 		while loads() == loaded && Instant::now() < until {
 			std::thread::sleep(Duration::from_millis(100));
 		}
@@ -1872,7 +1872,7 @@ fn launch_from_the_command_line(server: &str) {
 		let started = Instant::now();
 		while rebaselined() == before {
 			assert!(
-				started.elapsed() < Duration::from_secs(60),
+				started.elapsed() < Duration::from_secs(20),
 				"the launcher did not adopt the rebuilt .dmb:\n{}",
 				read_log()
 			);
@@ -1891,7 +1891,7 @@ fn launch_from_the_command_line(server: &str) {
 
 	for moment in 0..8u64 {
 		std::thread::sleep(Duration::from_millis(moment * 13));
-		cli.run(&["reboot", "--timeout", "60"], 0);
+		cli.run(&["reboot", "--timeout", "15"], 0);
 	}
 	assert_eq!(
 		cli.run(&["status"], 0).lines().next().unwrap_or_default(),
@@ -1907,10 +1907,10 @@ fn launch_from_the_command_line(server: &str) {
 	println!("ok: reboot throughout world execution");
 
 	std::fs::write(dir.join("slow_reboot"), "yes").unwrap();
-	cli.run(&["wait", "pause", "--break", "/proc/value", "--timeout", "60"], 0);
-	cli.run(&["reboot", "--timeout", "60"], 0);
+	cli.run(&["wait", "pause", "--break", "/proc/value", "--timeout", "15"], 0);
+	cli.run(&["reboot", "--timeout", "15"], 0);
 	std::fs::remove_file(dir.join("slow_reboot")).unwrap();
-	cli.run(&["wait", "pause", "--break", "/proc/value", "--timeout", "60"], 0);
+	cli.run(&["wait", "pause", "--break", "/proc/value", "--timeout", "15"], 0);
 	println!("ok: paused reboot with sleeping world/Reboot");
 
 	for (files, command, over) in [
@@ -2105,7 +2105,7 @@ fn unread_statics(server: &str) {
 		);
 		let since = journal::newest(pid).to_string();
 		std::fs::write(&code, &source).unwrap();
-		let printed = cli.run(&["wait", "reload", "--since", &since, "--timeout", "60"], 0);
+		let printed = cli.run(&["wait", "reload", "--since", &since, "--timeout", "15"], 0);
 		assert!(printed.contains("hot reload applied"), "the reload said {}", printed);
 		assert_eq!(cli.run(&["eval", "inits"], 0).trim(), "2", "an initializer ran again");
 	}
@@ -2114,7 +2114,7 @@ fn unread_statics(server: &str) {
 	source = source.replace("count_init(1)\n\treturn 3\n", "count_init(1)\n\treturn kept + 10\n");
 	let since = journal::newest(pid).to_string();
 	std::fs::write(&code, &source).unwrap();
-	let printed = cli.run(&["wait", "reload", "--since", &since, "--timeout", "60"], 0);
+	let printed = cli.run(&["wait", "reload", "--since", &since, "--timeout", "15"], 0);
 	assert!(printed.contains("hot reload applied"), "the reload said {}", printed);
 	assert_eq!(cli.run(&["eval", "unread_static()"], 0).trim(), "11");
 	assert_eq!(cli.run(&["eval", "inits"], 0).trim(), "2", "an initializer ran again");

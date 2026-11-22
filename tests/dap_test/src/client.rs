@@ -9,7 +9,9 @@ use std::{
 
 use serde_json::{json, Value};
 
-pub const TIMEOUT: Duration = Duration::from_secs(90);
+pub const TIMEOUT: Duration = Duration::from_secs(15);
+
+pub const START_TIMEOUT: Duration = Duration::from_secs(90);
 
 #[track_caller]
 pub fn next_to_us(name: &str) -> PathBuf {
@@ -464,9 +466,16 @@ impl Launcher {
 	}
 
 	#[track_caller]
+	pub fn started(&mut self) {
+		if self.event_within("initialized", START_TIMEOUT).is_none() {
+			panic!("the world didn't start: no initialized event; output:\n{}", self.output);
+		}
+	}
+
+	#[track_caller]
 	pub fn launch(&mut self, byond: &Path, dme: &Path, more: Value) {
 		self.request("launch", launch_arguments(byond, dme, more));
-		self.event("initialized");
+		self.started();
 	}
 
 	#[track_caller]
