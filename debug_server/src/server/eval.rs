@@ -306,6 +306,11 @@ impl Server {
 			},
 			#[cfg(feature = "test-commands")]
 			Ok(console::Command::Script) => self.evaluating(crate::client_script::state).unwrap_or_else(|e| format!("Failed: {}", e)),
+			#[cfg(feature = "test-commands")]
+			Ok(console::Command::FailReload(at)) => {
+				hot_reload::fail_next(at);
+				format!("the next reload fails at {:?}", at)
+			}
 			Ok(console::Command::Help(text)) => text.to_owned(),
 			Err(error) => error
 		}

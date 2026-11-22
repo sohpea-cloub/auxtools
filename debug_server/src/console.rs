@@ -8,6 +8,8 @@ pub enum Command<'a> {
 	Skin,
 	#[cfg(feature = "test-commands")]
 	Script,
+	#[cfg(feature = "test-commands")]
+	FailReload(crate::hot_reload::FailAt),
 	Help(&'static str)
 }
 
@@ -47,6 +49,9 @@ Show login script string ID, resource IDs and text
 Usage: script
 ";
 
+#[cfg(feature = "test-commands")]
+const FAIL_RELOAD_USAGE: &str = "fail-reload <append>";
+
 const HELP_HELP: &str = "\
 Print this message or the help of the given subcommand(s)
 
@@ -85,6 +90,14 @@ pub fn parse(command: &str) -> Result<Command<'_>, String> {
 		"skin" => at_most(&args, 0, "skin").map(|()| Command::Skin),
 		#[cfg(feature = "test-commands")]
 		"script" => at_most(&args, 0, "script").map(|()| Command::Script),
+		#[cfg(feature = "test-commands")]
+		"fail-reload" => {
+			at_most(&args, 1, FAIL_RELOAD_USAGE)?;
+			match args.first().copied() {
+				Some("append") => Ok(Command::FailReload(crate::hot_reload::FailAt::Append)),
+				_ => Err(format!("error: a step to fail is required: append\n\nUsage: {}\n", FAIL_RELOAD_USAGE))
+			}
+		}
 		"help" => {
 			at_most(&args, 1, "help [COMMAND]")?;
 			match args.first().copied() {
@@ -132,8 +145,10 @@ mod tests {
 		);
 		#[cfg(feature = "test-commands")]
 		assert_eq!((parse("skin"), parse("script")), (Ok(Command::Skin), Ok(Command::Script)));
+		#[cfg(feature = "test-commands")]
+		assert_eq!(parse("fail-reload append"), Ok(Command::FailReload(crate::hot_reload::FailAt::Append)));
 		#[cfg(not(feature = "test-commands"))]
-		assert!(parse("skin").is_err() && parse("script").is_err() && parse("help skin").is_err());
+		assert!(parse("skin").is_err() && parse("script").is_err() && parse("help skin").is_err() && parse("fail-reload append").is_err());
 	}
 
 	#[test]
@@ -142,7 +157,7 @@ mod tests {
 			panic!("help said {:?}", parse("help"));
 		};
 		assert!(help.contains("disassemble") && help.contains("help"), "{}", help);
-		assert!(!help.contains("skin") && !help.contains("script"), "{}", help);
+		assert!(!help.contains("skin") && !help.contains("script") && !help.contains("fail"), "{}", help);
 		assert_eq!(parse("help dis"), parse("help disassemble"));
 		assert!(matches!(parse("help dis"), Ok(Command::Help(text)) if text.contains("[proc]")));
 	}
@@ -165,5 +180,10 @@ mod tests {
 		);
 		#[cfg(feature = "test-commands")]
 		assert_eq!(parse("skin x").unwrap_err(), "error: unexpected argument 'x' found\n\nUsage: skin\n");
+		#[cfg(feature = "test-commands")]
+		assert_eq!(
+			parse("fail-reload").unwrap_err(),
+			"error: a step to fail is required: append\n\nUsage: fail-reload <append>\n"
+		);
 	}
 }

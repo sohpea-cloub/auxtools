@@ -200,20 +200,10 @@ impl Server {
 
 		let mut warnings = id_warnings;
 		let mut skipped = vec![];
-		let prepared = hot_reload::add_types(&request.plan.new_types).and_then(|added| {
-			hot_reload::prepare(request, &mut warnings, &mut skipped)
-				.and_then(|prepared| Ok((prepared, resource_reload::prepare(&request.resources)?)))
-				.map_err(|mut errors| {
-					if added > 0 {
-						errors.push(format!("{} new types remain allocated but unused", added));
-					}
-					errors
-				})
-		});
-		let prepared = prepared.and_then(|(prepared, resources)| Ok((prepared, resource_reload::apply(&resources).map_err(|e| vec![e])?)));
+		let prepared = Self::prepare_hot_reload(request, &mut warnings, &mut skipped);
 		let result = match prepared {
-			Ok((prepared, applied)) => {
-				hot_reload::apply(prepared, &mut self.breakpoints.claims, &mut self.breakpoints.moved, &mut warnings);
+			Ok((appended, applied)) => {
+				hot_reload::apply(appended, &mut self.breakpoints.claims, &mut self.breakpoints.moved, &mut warnings);
 				warnings.extend(applied.warnings);
 				if let Err(e) = resource_reload::resend(&applied.appearances) {
 					warnings.push(format!("resource reload: could not send updated appearances to clients: {}", e));
@@ -248,6 +238,27 @@ impl Server {
 		}
 
 		result
+	}
+
+	fn prepare_hot_reload(
+		request: &HotReloadRequest,
+		warnings: &mut Vec<String>,
+		skipped: &mut Vec<String>
+	) -> Result<(hot_reload::Appended, resource_reload::Applied), Vec<String>> {
+		let added = hot_reload::add_types(&request.plan.new_types)?;
+		let unused_types = |mut errors: Vec<String>| {
+			if added > 0 {
+				errors.push(format!("{} new types remain allocated but unused", added));
+			}
+			errors
+		};
+		let prepared = hot_reload::prepare(request, warnings, skipped).map_err(unused_types)?;
+		let resources = resource_reload::prepare(&request.resources).map_err(unused_types)?;
+		let appended = hot_reload::append(prepared).map_err(unused_types)?;
+		match resource_reload::apply(&resources) {
+			Ok(applied) => Ok((appended, applied)),
+			Err(e) => Err(unused_types(std::iter::once(e).chain(appended.unused()).collect()))
+		}
 	}
 
 	pub fn world_data_loaded(&mut self) {

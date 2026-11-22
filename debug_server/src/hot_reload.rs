@@ -1961,44 +1961,152 @@ fn prepare_var_default(default: &VarDefault, pending: &Pending, type_vars: &mut 
 	Ok(())
 }
 
+pub struct Appended {
+	prepared: Prepared,
+	procs_before: u32,
+	init_procs: Vec<u32>,
+	added: Added
+}
+
+#[derive(Default)]
+struct Added {
+	vars: usize,
+	procs: usize,
+	prefabs: usize,
+	in_lists: usize
+}
+
+impl Added {
+	fn unused(&self) -> Option<String> {
+		let counted = |n: usize, one: &str, many: &str| (n > 0).then(|| format!("{} {}", n, if n == 1 { one } else { many }));
+		let parts: Vec<String> = [
+			counted(self.vars, "var", "vars"),
+			counted(self.procs, "proc", "procs"),
+			counted(self.prefabs, "prefab", "prefabs"),
+			counted(self.in_lists, "`in` list", "`in` lists")
+		]
+		.into_iter()
+		.flatten()
+		.collect();
+		(!parts.is_empty()).then(|| format!("new entries remain allocated but unused: {}", parts.join(", ")))
+	}
+}
+
+impl Appended {
+	pub fn unused(&self) -> Option<String> {
+		self.added.unused()
+	}
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(not(feature = "test-commands"), allow(dead_code))]
+pub enum FailAt {
+	Append
+}
+
+#[cfg(feature = "test-commands")]
+static FAIL_NEXT: Mutex<Option<FailAt>> = Mutex::new(None);
+
+#[cfg(feature = "test-commands")]
+pub fn fail_next(at: FailAt) {
+	*FAIL_NEXT.lock().unwrap() = Some(at);
+}
+
+fn failing(at: FailAt) -> Result<(), String> {
+	#[cfg(feature = "test-commands")]
+	if FAIL_NEXT.lock().unwrap().take_if(|next| *next == at).is_some() {
+		return Err("asked for with #fail-reload".to_owned());
+	}
+	let _ = at;
+	Ok(())
+}
+
+pub fn append(prepared: Prepared) -> Result<Appended, Vec<String>> {
+	let mut added = Added::default();
+	let procs_before = runtime_tables::proc_count();
+	let appended = append_entries(&prepared, &mut added);
+	added.procs = (runtime_tables::proc_count() - procs_before) as usize;
+	match appended {
+		Ok(init_procs) => Ok(Appended {
+			prepared,
+			procs_before,
+			init_procs,
+			added
+		}),
+		Err(e) => Err(std::iter::once(e).chain(added.unused()).collect())
+	}
+}
+
+fn append_entries(prepared: &Prepared, added: &mut Added) -> Result<Vec<u32>, String> {
+	for new in &prepared.new_vars {
+		let id = runtime_tables::add_variable(new.name, new.value.0 as u8, new.value.1).map_err(|e| format!("couldn't add a var: {}", e))?;
+		added.vars += 1;
+		if id != new.id {
+			return Err(format!("new variable ID mismatch: got {}, expected {}", id, new.id));
+		}
+	}
+	for new in &prepared.new_procs {
+		let id = failing(FailAt::Append)
+			.and_then(|()| runtime_tables::append_proc(&new.entry))
+			.map_err(|e| format!("couldn't add a proc: {}", e))?;
+		if id.0 != new.id {
+			return Err(format!("new proc ID mismatch: got {}, expected {}", id.0, new.id));
+		}
+	}
+	for (expected, instance, entry) in &prepared.instances {
+		let id = runtime_tables::add_proc(entry)
+			.and_then(|init| runtime_tables::add_instance(runtime_tables::Instance { init: init.0, ..*instance }))
+			.map_err(|e| format!("couldn't add a prefab: {}", e))?;
+		added.prefabs += 1;
+		if id != *expected {
+			return Err(format!("prefab ID mismatch: got {}, expected {}", id, expected));
+		}
+	}
+	for (expected, entry) in &prepared.in_lists {
+		let index = runtime_tables::add_proc(entry)
+			.and_then(runtime_tables::add_in_list)
+			.map_err(|e| format!("couldn't add an `in` list: {}", e))?;
+		added.in_lists += 1;
+		if index != *expected {
+			return Err(format!("input list index mismatch: got {}, expected {}", index, expected));
+		}
+	}
+	let mut init_procs = vec![];
+	for init in &prepared.init_procs {
+		init_procs.push(match &init.proc {
+			None => NONE,
+			Some((entry, _)) => {
+				runtime_tables::add_proc(entry)
+					.map_err(|e| format!("couldn't add an init proc: {}", e))?
+					.0
+			}
+		});
+	}
+	if !prepared.new_globals.is_empty() {
+		let pairs: Vec<(u32, u32)> = prepared.new_globals.iter().map(|&(_, id, flags)| (id, flags)).collect();
+		runtime_tables::add_global_vars(&pairs).map_err(|e| format!("the new global vars are missing from global.vars: {}", e))?;
+	}
+	Ok(init_procs)
+}
+
 pub fn apply<K: Ord + std::hash::Hash + Copy, T>(
-	mut prepared: Prepared,
+	appended: Appended,
 	breakpoints: &mut HashMap<(raw_types::procs::ProcId, u16), BTreeMap<K, T>>,
 	moved_breakpoints: &mut MovedBreakpoints<K>,
 	warnings: &mut Vec<String>
 ) {
+	let Appended {
+		mut prepared,
+		procs_before,
+		init_procs,
+		added: _
+	} = appended;
 	code_changed();
 	reparent::apply_tree(&mut prepared.reparent);
-	let mut got = HashMap::new();
-	for new in &prepared.new_vars {
-		let id = match runtime_tables::add_variable(new.name, new.value.0 as u8, new.value.1) {
-			Ok(id) => {
-				if id != new.id {
-					warnings.push(format!("new variable ID mismatch: got {}, expected {}", id, new.id));
-				}
-				Some(id)
-			}
-			Err(e) => {
-				warnings.push(format!("couldn't add a var: {}", e));
-				None
-			}
-		};
-		got.insert(new.id, id);
-	}
-	let globals: Vec<(String, u32, u32)> = prepared
-		.new_globals
-		.iter()
-		.filter_map(|(name, id, flags)| Some((name.clone(), got.get(id).copied().unwrap_or(Some(*id))?, *flags)))
-		.collect();
-	if !globals.is_empty() {
-		let pairs: Vec<(u32, u32)> = globals.iter().map(|&(_, id, flags)| (id, flags)).collect();
-		if let Err(e) = runtime_tables::add_global_vars(&pairs) {
-			warnings.push(format!("the new global vars are missing from global.vars: {}", e));
-		}
-	}
-	ADDED_GLOBALS.lock().unwrap().extend(globals.into_iter().map(|(name, id, _)| (name, id)));
-
-	let procs_before = runtime_tables::proc_count();
+	ADDED_GLOBALS
+		.lock()
+		.unwrap()
+		.extend(prepared.new_globals.iter().map(|(name, id, _)| (name.clone(), *id)));
 
 	for removal in &prepared.removed_procs {
 		if let Some(edit) = &removal.on_world {
@@ -2026,16 +2134,6 @@ pub fn apply<K: Ord + std::hash::Hash + Copy, T>(
 		}
 		for &proc in &removal.relinked {
 			runtime_tables::set_proc_entry_word(raw_types::procs::ProcId(proc), ProcEntryWords::NEXT_OVERRIDE, removal.next);
-		}
-	}
-
-	for new in &prepared.new_procs {
-		match runtime_tables::append_proc(&new.entry) {
-			Ok(id) if id.0 != new.id => {
-				warnings.push(format!("new proc ID mismatch: got {}, expected {}", id.0, new.id));
-			}
-			Ok(_) => {}
-			Err(e) => warnings.push(format!("couldn't add a proc: {}", e))
 		}
 	}
 
@@ -2081,40 +2179,13 @@ pub fn apply<K: Ord + std::hash::Hash + Copy, T>(
 			auxtools::debug::set_local_names(ptr, new.local_names.clone());
 		}
 	}
-	for (expected, instance, entry) in &prepared.instances {
-		let added =
-			runtime_tables::add_proc(entry).and_then(|init| runtime_tables::add_instance(runtime_tables::Instance { init: init.0, ..*instance }));
-		match added {
-			Ok(id) if id != *expected => warnings.push(format!("prefab ID mismatch: got {}, expected {}", id, expected)),
-			Ok(_) => {}
-			Err(e) => warnings.push(format!("couldn't add a prefab: {}", e))
-		}
-	}
-	for (expected, entry) in &prepared.in_lists {
-		match runtime_tables::add_proc(entry).and_then(runtime_tables::add_in_list) {
-			Ok(index) if index != *expected => warnings.push(format!("input list index mismatch: got {}, expected {}", index, expected)),
-			Ok(_) => {}
-			Err(e) => warnings.push(format!("couldn't add an `in` list: {}", e))
-		}
-	}
-	for init in &prepared.init_procs {
-		let id = match &init.proc {
-			None => NONE,
-			Some((entry, local_names)) => {
-				let id = match runtime_tables::add_proc(entry) {
-					Ok(id) => id,
-					Err(e) => {
-						warnings.push(format!("couldn't add an init proc: {}", e));
-						continue;
-					}
-				};
-				if let Some(proc) = Proc::from_id(id) {
-					let (ptr, _) = unsafe { proc.bytecode_mut_ptr() };
-					auxtools::debug::set_local_names(ptr, local_names.clone());
-				}
-				id.0
+	for (init, id) in prepared.init_procs.iter().zip(init_procs) {
+		if let Some((_, local_names)) = &init.proc {
+			if let Some(proc) = Proc::from_id(raw_types::procs::ProcId(id)) {
+				let (ptr, _) = unsafe { proc.bytecode_mut_ptr() };
+				auxtools::debug::set_local_names(ptr, local_names.clone());
 			}
-		};
+		}
 		let _ = runtime_tables::set_type_field(init.type_id, type_fields::INIT_PROC, id);
 	}
 

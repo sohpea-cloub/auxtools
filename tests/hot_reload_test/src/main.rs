@@ -963,6 +963,31 @@ fn debugger(built: Built) {
 		"/datum/declared/never_built: not found in the running world; skipping removal"
 	]);
 	println!("ok: removals the world never had");
+
+	assert_eq!(eval(&mut client, "#fail-reload append"), "the next reload fails at Append");
+	let changes = source.edit(
+		"reload.dm",
+		"\treturn 5",
+		"\treturn unadded()\n\nvar/unadded_var = 6\n\n/proc/unadded()\n\treturn unadded_var"
+	);
+	assert_eq!(
+		(changes.plan.new_vars.len(), changes.plan.new_procs.len(), changes.plan.reloads.len()),
+		(1, 1, 1),
+		"{:?}",
+		changes.plan
+	);
+	let result = expect_reload_result(client.request(reload_request(&changes)));
+	assert!(!result.applied, "a reload whose proc wasn't added was applied: {:?}", result);
+	assert_eq!(result.errors, [
+		"couldn't add a proc: asked for with #fail-reload",
+		"new entries remain allocated but unused: 1 var"
+	]);
+	assert_eq!(eval(&mut client, "answer()"), "4");
+	assert_eq!(eval(&mut client, "(\"unadded_var\" in global.vars)"), "0");
+	reload(&mut client, &changes);
+	assert_eq!(eval(&mut client, "answer()"), "6");
+	assert_eq!(eval(&mut client, "global.vars[\"unadded_var\"]"), "6");
+	println!("ok: a reload stops before changing anything when an addition fails");
 }
 
 fn definitions(built: Built) {

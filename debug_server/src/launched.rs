@@ -190,8 +190,10 @@ fn add_helper_procs() -> Result<(), String> {
 	}
 
 	let mut warnings = vec![];
-	let prepared = hot_reload::prepare(&request, &mut warnings, &mut vec![]).map_err(|errors| errors.join("; "))?;
-	hot_reload::apply(prepared, &mut HashMap::<_, BTreeMap<(), ()>>::new(), &mut HashMap::new(), &mut warnings);
+	let appended = hot_reload::prepare(&request, &mut warnings, &mut vec![])
+		.and_then(hot_reload::append)
+		.map_err(|errors| errors.join("; "))?;
+	hot_reload::apply(appended, &mut HashMap::<_, BTreeMap<(), ()>>::new(), &mut HashMap::new(), &mut warnings);
 	for warning in warnings {
 		eprintln!("auxtools: {}", warning);
 	}
