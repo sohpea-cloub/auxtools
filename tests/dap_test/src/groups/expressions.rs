@@ -91,7 +91,7 @@ fn completions(world: &mut World) {
 		pair("dis", "keyword"),
 		pair("disassemble", "keyword")
 	]);
-	assert_eq!(offered(world, "#", Some(&frame)).len(), 5);
+	assert_eq!(offered(world, "#", Some(&frame)).len(), 4);
 	assert_eq!(offered(world, "#s", Some(&frame)), Vec::<(String, String)>::new());
 	ok("command completion");
 

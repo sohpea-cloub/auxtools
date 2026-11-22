@@ -24,12 +24,6 @@ mod crash_handler_windows;
 #[cfg(windows)]
 mod socket_hold_windows;
 
-#[cfg(windows)]
-mod mem_profiler;
-
-#[cfg(not(windows))]
-mod mem_profiler_stub;
-
 use std::{
 	any::Any,
 	cell::UnsafeCell,
@@ -39,8 +33,6 @@ use std::{
 pub(crate) use ::instruction_hooking::disassemble_env::DisassembleEnv;
 use ::instruction_hooking::{InstructionHook, INSTRUCTION_HOOKS};
 use auxtools::*;
-#[cfg(not(windows))]
-use mem_profiler_stub as mem_profiler;
 
 pub static mut DEBUG_SERVER: UnsafeCell<Option<server::Server>> = UnsafeCell::new(None);
 

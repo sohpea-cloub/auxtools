@@ -342,7 +342,6 @@ dependencies = [
  "interprocess",
  "lazy_static",
  "region",
- "retour",
  "serde",
  "winapi",
 ]

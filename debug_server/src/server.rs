@@ -24,7 +24,7 @@ use super::{
 };
 use crate::{
 	connection::{self, Connection},
-	hot_reload, journal, mem_profiler, resource_reload, unnamed, waker
+	hot_reload, journal, resource_reload, unnamed, waker
 };
 
 mod profile;
@@ -309,16 +309,6 @@ impl Server {
 				Command::new("guest_override")
 					.about("Override the CKey used by guest connections")
 					.arg(Arg::new("ckey"))
-			)
-			.subcommand(
-				Command::new("mem_profiler")
-					.about("Memory profiler")
-					.subcommand(
-						Command::new("begin")
-							.about("Begins memory profiling. Output goes to the specified file path")
-							.arg(Arg::new("path").help("Where to output memory profiler results"))
-					)
-					.subcommand(Command::new("end").about("Finishes current memory profiler."))
 			)
 	}
 
@@ -2033,23 +2023,6 @@ impl Server {
 					},
 
 					None => "no ckey provided".to_owned()
-				},
-
-				Some(("mem_profiler", matches)) => match matches.subcommand() {
-					Some(("begin", matches)) => match matches.get_one::<String>("path").map(String::as_str) {
-						Some(path) => mem_profiler::begin(path)
-							.map(|_| "Memory profiler enabled".to_owned())
-							.unwrap_or_else(|e| format!("Failed: {}", e)),
-
-						None => "no path provided".to_owned()
-					},
-
-					Some(("end", _)) => {
-						mem_profiler::end();
-						"Memory profiler disabled".to_owned()
-					}
-
-					_ => "unknown memory profiler sub-command".to_owned()
 				},
 
 				_ => "unknown command".to_owned()
