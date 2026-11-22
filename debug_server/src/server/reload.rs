@@ -5,7 +5,7 @@ pub(super) struct Reloads {
 	pub(super) pending_script: Option<ScriptRequest>,
 	pub(super) resource_ids: HashMap<String, Vec<u32>>,
 	pub(super) resource_origins: HashMap<String, Vec<u32>>,
-	pub(super) waiting_reloads: Vec<HotReloadRequest>
+	pub(super) waiting_reloads: Vec<(Option<ClientId>, HotReloadRequest)>
 }
 
 impl Reloads {
@@ -91,11 +91,11 @@ impl Server {
 			self.answer(Response::HotReload(refused));
 			return;
 		}
-		let result = self.hot_reload(request);
+		let result = self.hot_reload(request, self.sessions.requester());
 		self.answer(Response::HotReload(result));
 	}
 
-	fn hot_reload(&mut self, request: &HotReloadRequest) -> HotReloadResult {
+	fn hot_reload(&mut self, request: &HotReloadRequest, from: Option<ClientId>) -> HotReloadResult {
 		resource_reload::use_dirs(&request.resource_dirs);
 		if !crate::world_resources::is_loaded() {
 			let mut files = crate::world_resources::not_built(request);
@@ -125,7 +125,7 @@ impl Server {
 						..Default::default()
 					};
 					if crate::world_resources::not_built(&alone).is_empty() {
-						let result = self.apply_hot_reload(&alone);
+						let result = self.apply_hot_reload(&alone, from);
 						if result.applied {
 							waiting.global_init = None;
 							waiting.plan.new_vars = others;
@@ -133,7 +133,7 @@ impl Server {
 						early.extend(result.errors.into_iter().chain(result.warnings));
 					}
 				}
-				self.reloads.waiting_reloads.push(waiting);
+				self.reloads.waiting_reloads.push((from, waiting));
 				let why = if files.is_empty() {
 					"queued behind an earlier reload; applies as world/New starts".to_owned()
 				} else {
@@ -151,10 +151,10 @@ impl Server {
 				};
 			}
 		}
-		self.apply_hot_reload(request)
+		self.apply_hot_reload(request, from)
 	}
 
-	fn apply_hot_reload(&mut self, request: &HotReloadRequest) -> HotReloadResult {
+	fn apply_hot_reload(&mut self, request: &HotReloadRequest, from: Option<ClientId>) -> HotReloadResult {
 		let mut id_warnings = vec![];
 		let mut with_ids;
 		let request = if request.resources.is_empty() {
@@ -244,7 +244,7 @@ impl Server {
 		}
 
 		if result.applied && !request.is_empty() {
-			self.broadcast(Response::CodeChanged, self.sessions.current);
+			self.broadcast(Response::CodeChanged, from);
 		}
 
 		result
@@ -252,8 +252,8 @@ impl Server {
 
 	pub fn world_data_loaded(&mut self) {
 		self.apply_pending_script();
-		for request in std::mem::take(&mut self.reloads.waiting_reloads) {
-			let result = self.hot_reload(&request);
+		for (from, request) in std::mem::take(&mut self.reloads.waiting_reloads) {
+			let result = self.hot_reload(&request, from);
 			if !result.applied {
 				self.notify(format!("Hot reload failed as world/New started: {}", result.errors.join("; ")));
 			}

@@ -370,17 +370,23 @@ impl Server {
 					}
 				};
 				self.answer(Response::Ack);
-				self.broadcast(Response::Resumed, self.sessions.current);
+				self.broadcast(Response::Resumed, self.sessions.requester());
 				self.pause.state = None;
 				self.pause.paused = None;
 				self.sessions.hold = None;
 				self.sessions.hold_max = None;
-				self.pause.stepper = if kind == ContinueKind::Continue { None } else { self.sessions.current };
+				self.pause.stepper = if kind == ContinueKind::Continue {
+					None
+				} else {
+					self.sessions.requester()
+				};
+				self.sessions.request_over();
 				return Some(kind);
 			}
 
 			if let Request::Eval { frame_id, command, ending } = request {
 				self.handle_eval_request(frame_id, &command, ending);
+				self.sessions.request_over();
 				if self.pause.ending() {
 					self.broadcast(Response::Resumed, None);
 					self.pause.state = None;
@@ -395,16 +401,19 @@ impl Server {
 			}
 			if let Request::Render { frame_id, expression, depth } = request {
 				self.handle_render(frame_id, &expression, depth);
+				self.sessions.request_over();
 				self.pause.state.as_mut().unwrap().invalidate_stacks();
 				continue;
 			}
 			if let Request::EvalOn { object, expression, depth } = request {
 				self.handle_eval_on(&object, &expression, depth);
+				self.sessions.request_over();
 				self.pause.state.as_mut().unwrap().invalidate_stacks();
 				continue;
 			}
 
 			self.handle_request(request);
+			self.sessions.request_over();
 		}
 
 		self.broadcast(Response::Resumed, None);

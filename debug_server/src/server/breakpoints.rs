@@ -96,7 +96,10 @@ impl Server {
 		log: Option<Vec<LogPart>>,
 		exactly: bool
 	) {
-		let (Some(proc), Some(client)) = (unnamed::find(&instruction.proc.path, instruction.proc.override_id), self.sessions.current) else {
+		let (Some(proc), Some(client)) = (
+			unnamed::find(&instruction.proc.path, instruction.proc.override_id),
+			self.sessions.requester()
+		) else {
 			self.answer(Response::BreakpointSet {
 				result: BreakpointSetResult::Failed
 			});
@@ -161,7 +164,10 @@ impl Server {
 	}
 
 	pub(super) fn handle_breakpoint_unset(&mut self, instruction: InstructionRef, exactly: bool) {
-		let (Some(proc), Some(client)) = (unnamed::find(&instruction.proc.path, instruction.proc.override_id), self.sessions.current) else {
+		let (Some(proc), Some(client)) = (
+			unnamed::find(&instruction.proc.path, instruction.proc.override_id),
+			self.sessions.requester()
+		) else {
 			self.answer(Response::BreakpointUnset { success: false, skipped: 0 });
 			return;
 		};

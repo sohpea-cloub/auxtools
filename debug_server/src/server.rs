@@ -109,7 +109,7 @@ impl Server {
 		match request {
 			Request::Disconnect => unreachable!(),
 			Request::CatchRuntimes { uncaught, caught } => {
-				if let Some(client) = self.sessions.current.and_then(|id| self.sessions.clients.get_mut(&id)) {
+				if let Some(client) = self.sessions.requester().and_then(|id| self.sessions.clients.get_mut(&id)) {
 					client.uncaught = uncaught;
 					client.caught = caught;
 				}
@@ -181,10 +181,10 @@ impl Server {
 			}
 
 			Request::HoldPause => {
-				self.sessions.hold = self.sessions.current;
+				self.sessions.hold = self.sessions.requester();
 				self.sessions.hold_max = self
 					.sessions
-					.current
+					.requester()
 					.and_then(|id| self.sessions.clients.get(&id))
 					.and_then(|client| client.hold_max);
 				self.answer(Response::Ack);
@@ -233,7 +233,7 @@ impl Server {
 			}
 
 			Request::Watcher => {
-				if let Some(client) = self.sessions.current.and_then(|id| self.sessions.clients.get_mut(&id)) {
+				if let Some(client) = self.sessions.requester().and_then(|id| self.sessions.clients.get_mut(&id)) {
 					client.debugs = false;
 				}
 				self.answer(Response::Ack);
@@ -245,12 +245,12 @@ impl Server {
 			}
 
 			Request::Journal { after, kinds, limit, follow } => self.handle_journal(after, kinds, limit, follow),
-			Request::JournalAdd(event) => self.journal(event, self.sessions.current),
+			Request::JournalAdd(event) => self.journal(event, self.sessions.requester()),
 			Request::HoldMax { seconds } => {
 				let hold_max = seconds
 					.filter(|seconds| seconds.is_finite() && *seconds >= 0.0)
 					.map(Duration::from_secs_f64);
-				if let Some(client) = self.sessions.current.and_then(|id| self.sessions.clients.get_mut(&id)) {
+				if let Some(client) = self.sessions.requester().and_then(|id| self.sessions.clients.get_mut(&id)) {
 					client.hold_max = hold_max;
 				}
 				self.answer(Response::Ack);
@@ -310,6 +310,7 @@ impl Server {
 		if waker::events_pending() {
 			while let Some(request) = self.recv_request(Wait::No) {
 				should_pause |= self.handle_request(request);
+				self.sessions.request_over();
 			}
 		}
 
@@ -323,10 +324,12 @@ impl Server {
 		while let Some(request) = self.recv_request(Wait::Forever) {
 			if let Request::Configured = request {
 				self.answer(Response::Ack);
+				self.sessions.request_over();
 				break;
 			}
 
 			self.handle_request(request);
+			self.sessions.request_over();
 		}
 		self.waiting_to_start = false;
 	}

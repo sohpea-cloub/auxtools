@@ -20,6 +20,12 @@ pub(super) struct Client {
 	pub(super) hold_max: Option<Duration>
 }
 
+#[derive(Clone, Copy)]
+pub(super) struct Asking {
+	pub(super) client: ClientId,
+	pub(super) id: Option<RequestId>
+}
+
 const OUTBOX: usize = 1024;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -40,8 +46,7 @@ static ACCEPTOR: Mutex<Option<Acceptor>> = Mutex::new(None);
 pub(super) struct Sessions {
 	pub(super) events: mpsc::Receiver<Event>,
 	pub(super) clients: BTreeMap<ClientId, Client>,
-	pub(super) current: Option<ClientId>,
-	pub(super) answering: Option<RequestId>,
+	pub(super) asking: Option<Asking>,
 	pub(super) reloader: Option<(ClientId, String)>,
 	pub(super) profiling: Option<ClientId>,
 	pub(super) hold: Option<ClientId>,
@@ -54,8 +59,7 @@ impl Sessions {
 		Ok(Sessions {
 			events,
 			clients: BTreeMap::new(),
-			current: None,
-			answering: None,
+			asking: None,
 			reloader: None,
 			profiling: None,
 			hold: None,
@@ -141,12 +145,20 @@ impl Sessions {
 		});
 	}
 
+	pub(super) fn requester(&self) -> Option<ClientId> {
+		self.asking.map(|asking| asking.client)
+	}
+
+	pub(super) fn request_over(&mut self) {
+		self.asking = None;
+	}
+
 	pub(super) fn has_debuggers(&self) -> bool {
 		self.clients.values().any(|client| client.debugs)
 	}
 
 	pub(super) fn claim_reloads(&mut self, who: String) -> Result<(), String> {
-		let id = self.current.ok_or("no client")?;
+		let id = self.requester().ok_or("no client")?;
 		match &self.reloader {
 			Some((holder, theirs)) if *holder != id && self.clients.contains_key(holder) => Err(format!(
 				"{} already owns hot reload for this world; two watchers would apply each change twice",
@@ -161,7 +173,7 @@ impl Sessions {
 
 	pub(super) fn reloads_refused(&self) -> Option<String> {
 		let (holder, who) = self.reloader.as_ref()?;
-		(Some(*holder) != self.current && self.clients.contains_key(holder)).then(|| format!("{} already owns hot reload for this world", who))
+		(Some(*holder) != self.requester() && self.clients.contains_key(holder)).then(|| format!("{} already owns hot reload for this world", who))
 	}
 
 	pub(super) fn deliver(client: &mut Client, response: &Response) -> bool {
@@ -228,8 +240,10 @@ impl Server {
 
 				Event::Request(id, request_id, request) => {
 					waker::request_taken();
-					self.sessions.current = Some(id);
-					self.sessions.answering = Some(request_id);
+					self.sessions.asking = Some(Asking {
+						client: id,
+						id: Some(request_id)
+					});
 					return Some(request);
 				}
 			}
@@ -246,12 +260,13 @@ impl Server {
 	}
 
 	pub(super) fn answer(&mut self, response: Response) {
-		let Some(request) = self.sessions.answering.take() else {
+		let Some(asking) = self.sessions.asking.as_mut() else {
 			return;
 		};
-		let Some(id) = self.sessions.current else {
+		let Some(request) = asking.id.take() else {
 			return;
 		};
+		let id = asking.client;
 		let Some(client) = self.sessions.clients.get_mut(&id) else {
 			return;
 		};
@@ -287,9 +302,8 @@ impl Server {
 			return;
 		};
 		drop(client);
-		if self.sessions.current == Some(id) {
-			self.sessions.current = None;
-			self.sessions.answering = None;
+		if self.sessions.requester() == Some(id) {
+			self.sessions.request_over();
 		}
 		if self.sessions.hold == Some(id) && self.pause.paused.is_none() {
 			self.sessions.hold = None;

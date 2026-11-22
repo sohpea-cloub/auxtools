@@ -277,7 +277,7 @@ impl Server {
 		if more > 0 {
 			notes.push(format!("and {} more runtime errors in called procs", more));
 		}
-		let Some(client) = self.sessions.current else {
+		let Some(client) = self.sessions.requester() else {
 			return;
 		};
 		for message in notes {

@@ -404,7 +404,7 @@ impl Server {
 	}
 
 	pub(super) fn watch_set(&mut self, place: &WatchPlace, condition: Option<String>, hit: Option<HitCondition>) -> Result<Watch, String> {
-		let client = self.sessions.current.ok_or("nobody asked")?;
+		let client = self.sessions.requester().ok_or("nobody asked")?;
 		let (place, name, now) = self.watched_place(place)?;
 		self.watches.next_watch += 1;
 		let watch = Watch {
@@ -427,7 +427,7 @@ impl Server {
 	}
 
 	pub(super) fn watch_unset(&mut self, id: u32) {
-		let client = self.sessions.current;
+		let client = self.sessions.requester();
 		self.watches.watched.retain(|watch| watch.id != id || Some(watch.client) != client);
 	}
 }

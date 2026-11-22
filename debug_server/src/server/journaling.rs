@@ -81,7 +81,7 @@ impl Server {
 
 	pub(super) fn handle_journal(&mut self, after: u64, kinds: Vec<JournalKind>, limit: Option<u32>, follow: bool) {
 		let (entries, first, last) = journal::read(after, &kinds, limit);
-		if let Some(client) = self.sessions.current.and_then(|id| self.sessions.clients.get_mut(&id)) {
+		if let Some(client) = self.sessions.requester().and_then(|id| self.sessions.clients.get_mut(&id)) {
 			client.follow = follow.then_some(kinds);
 		}
 		self.answer(Response::Journal { entries, first, last });
