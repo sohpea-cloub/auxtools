@@ -6,7 +6,7 @@ use std::{
 	}
 };
 
-use dap_types::{Breakpoint, Event, EventMessage, OutputEvent, ProtocolMessage, ResponseMessage};
+use dap_types::{Breakpoint, Event, EventMessage, ExitedEvent, OutputEvent, ProtocolMessage, ResponseMessage};
 
 pub fn read_message(input: &mut impl BufRead) -> io::Result<Option<String>> {
 	let mut length = None;
@@ -46,7 +46,7 @@ enum To {
 
 pub enum Note {
 	Line { category: String, text: String },
-	Failed { command: String, message: String },
+	LaunchFailed(String),
 	Process(u32),
 	Ready,
 	Unavailable(String),
@@ -86,20 +86,10 @@ impl Output {
 	}
 
 	pub fn event<E: Event>(&self, event: E) {
-		let body = serde_json::to_value(event).expect("a DAP event that can't be encoded");
-		if let To::Plain(to) = &self.to {
-			let text = |name: &str| body[name].as_str().unwrap_or_default().to_owned();
-			match E::EVENT {
-				"output" => to(Note::Line {
-					category: text("category"),
-					text: text("output")
-				}),
-				"process" => to(Note::Process(body["systemProcessId"].as_u64().unwrap_or_default() as u32)),
-				"exited" => to(Note::Exited(body["exitCode"].as_i64().unwrap_or(-1))),
-				_ => {}
-			}
+		if let To::Plain(_) = &self.to {
 			return;
 		}
+		let body = serde_json::to_value(event).expect("a DAP event that can't be encoded");
 		self.send(&EventMessage {
 			protocol_message: self.protocol_message(EventMessage::TYPE),
 			event: E::EVENT.to_owned(),
@@ -108,13 +98,7 @@ impl Output {
 	}
 
 	pub fn response(&self, request_seq: i64, command: &str, result: Result<serde_json::Value, String>) {
-		if let To::Plain(to) = &self.to {
-			if let Err(message) = result {
-				to(Note::Failed {
-					command: command.to_owned(),
-					message
-				});
-			}
+		if let To::Plain(_) = &self.to {
 			return;
 		}
 		let (success, message, body) = match result {
@@ -135,8 +119,41 @@ impl Output {
 		self.output("console", text.into() + "\n");
 	}
 
+	pub fn output_event(&self, event: OutputEvent) {
+		if let To::Plain(to) = &self.to {
+			to(Note::Line {
+				category: event.category.unwrap_or_default(),
+				text: event.output
+			});
+			return;
+		}
+		self.event(event);
+	}
+
+	pub fn process(&self, event: ProcessEvent) {
+		if let To::Plain(to) = &self.to {
+			to(Note::Process(event.systemProcessId));
+			return;
+		}
+		self.event(event);
+	}
+
+	pub fn exited(&self, exit_code: i32) {
+		if let To::Plain(to) = &self.to {
+			to(Note::Exited(exit_code.into()));
+			return;
+		}
+		self.event(ExitedEvent { exitCode: exit_code.into() });
+	}
+
+	pub fn launch_failed(&self, message: String) {
+		if let To::Plain(to) = &self.to {
+			to(Note::LaunchFailed(message));
+		}
+	}
+
 	pub fn console_at(&self, text: impl Into<String>, file: &std::path::Path, line: Option<u32>) {
-		self.event(OutputEvent {
+		self.output_event(OutputEvent {
 			output: text.into() + "\n",
 			category: Some("console".to_owned()),
 			source: Some(dap_types::Source {
@@ -166,7 +183,7 @@ impl Output {
 	}
 
 	pub fn output(&self, category: &str, output: String) {
-		self.event(OutputEvent {
+		self.output_event(OutputEvent {
 			output,
 			category: Some(category.to_owned()),
 			..Default::default()

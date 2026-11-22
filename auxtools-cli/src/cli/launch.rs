@@ -11,11 +11,11 @@ use std::{
 };
 
 use auxtools_cli::byond::Server;
-use serde_json::{json, Value};
+use serde_json::json;
 
 use super::{args, Failure, Result, TIMED_OUT};
 use crate::{
-	adapter::{self, Input},
+	adapter::{self, Ask, CommandLine, Input},
 	dap::{Note, Output}
 };
 
@@ -117,18 +117,6 @@ struct Outcome {
 	ready: bool
 }
 
-fn request(seq: i64, command: &str, arguments: Value) -> Input {
-	Input::Message(
-		json!({
-			"seq": seq,
-			"type": "request",
-			"command": command,
-			"arguments": arguments
-		})
-		.to_string()
-	)
-}
-
 fn run(options: &Options, detached: bool) -> Result<()> {
 	let printer = Arc::new(match &options.log {
 		Some(log) => {
@@ -162,14 +150,13 @@ fn run(options: &Options, detached: bool) -> Result<()> {
 				}
 				outcome.ready = true;
 			}
-			Note::Failed { command, message } if command == "launch" => {
+			Note::LaunchFailed(message) => {
 				if detached {
 					say_to_starter(&format!("failed {}", message));
 				}
 				outcome.failed = Some(message);
 				let _ = quit.send(Input::Quit);
 			}
-			Note::Failed { message, .. } => print.print("stderr", &format!("{}\n", message)),
 			Note::Exited(code) => {
 				outcome.exit_code = Some(code);
 				let _ = quit.send(Input::Quit);
@@ -177,31 +164,24 @@ fn run(options: &Options, detached: bool) -> Result<()> {
 		}
 	});
 
-	let server = options.server.as_deref().map_or(Server::default_for_platform(), |name| {
-		serde_json::from_value(json!(name)).unwrap_or(Server::default_for_platform())
-	});
-	let args = options.args.clone().unwrap_or_else(|| adapter::default_args(server));
-	let mut launch = json!({
-		"noDebug": true,
-		"dmb": options.dmb,
-		"defines": options.defines,
-		"hotReload": options.hot_reload,
-		"args": args
-	});
-	for (name, value) in [("dme", options.dme.as_ref()), ("byondPath", options.byond.as_ref())] {
-		if let Some(value) = value {
-			launch[name] = json!(value);
-		}
-	}
-	if let Some(server) = &options.server {
-		launch["server"] = json!(server);
-	}
-	if let Some(port) = options.port {
-		launch["port"] = json!(port);
-	}
-	let _ = inputs.send(request(1, "initialize", json!({ "clientID": "auxtools launch" })));
-	let _ = inputs.send(request(2, "launch", launch));
-	let _ = inputs.send(request(3, "configurationDone", json!({})));
+	let server = options
+		.server
+		.as_deref()
+		.map(|name| serde_json::from_value(json!(name)).unwrap_or(Server::default_for_platform()));
+	let args = options
+		.args
+		.clone()
+		.unwrap_or_else(|| adapter::default_args(server.unwrap_or(Server::default_for_platform())));
+	let _ = inputs.send(Input::Asked(Ask::Launch(CommandLine {
+		dmb: options.dmb.clone(),
+		dme: options.dme.clone(),
+		server,
+		port: options.port,
+		hot_reload: options.hot_reload,
+		defines: options.defines.clone(),
+		byond: options.byond.clone(),
+		args
+	})));
 
 	interrupts::listen(inputs.clone(), printer.clone());
 	adapter::serve(out, inputs, &receiver, Default::default());
@@ -395,13 +375,13 @@ mod interrupts {
 				}
 				let asked = if seen == 0 {
 					printer.line("Interrupted: requesting graceful shutdown (interrupt again to force exit)");
-					request(4, "terminate", json!({}))
+					Ask::Stop
 				} else {
 					printer.line("Interrupted again: terminating the world");
-					request(5, "disconnect", json!({ "terminateDebuggee": true }))
+					Ask::Kill
 				};
 				seen = now;
-				if inputs.send(asked).is_err() {
+				if inputs.send(Input::Asked(asked)).is_err() {
 					return;
 				}
 			}

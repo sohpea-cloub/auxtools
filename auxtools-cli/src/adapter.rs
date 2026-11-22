@@ -43,7 +43,7 @@ mod skin;
 mod status;
 
 pub use journal::reload_by_another;
-pub use lifecycle::default_args;
+pub use lifecycle::{default_args, Ask, CommandLine};
 
 const RUNTIMES: &str = "runtimes";
 const CAUGHT: &str = "caught";
@@ -61,6 +61,7 @@ const UNAVAILABLE: &str = "debugger initialization failed";
 
 pub enum Input {
 	Message(String),
+	Asked(Ask),
 	StdinClosed,
 	Connected {
 		generation: u64,
@@ -435,6 +436,12 @@ impl Adapter {
 				self.answering = false;
 				return more;
 			}
+			Input::Asked(ask) => {
+				self.answering = true;
+				let more = self.asked(ask);
+				self.answering = false;
+				return more;
+			}
 			Input::StdinClosed | Input::Quit => return false,
 			Input::Connected { generation, stream } => {
 				if generation == self.world.generation && self.debuggee.is_none() {
@@ -457,7 +464,7 @@ impl Adapter {
 			Input::WorldOutput(lines) => self.journal_output(lines),
 			Input::Logged { message, file, line } => {
 				let source = file.map(|file| self.file_source(&file));
-				self.out.event(OutputEvent {
+				self.out.output_event(OutputEvent {
 					output: message + "\n",
 					category: Some("console".to_owned()),
 					line: source.as_ref().and(line).map(i64::from),

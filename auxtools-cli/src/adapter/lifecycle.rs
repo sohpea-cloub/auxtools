@@ -55,6 +55,43 @@ impl Prepared {
 	}
 }
 
+pub enum Ask {
+	Launch(CommandLine),
+	Stop,
+	Kill
+}
+
+pub struct CommandLine {
+	pub dmb: PathBuf,
+	pub dme: Option<PathBuf>,
+	pub server: Option<Server>,
+	pub port: Option<u16>,
+	pub hot_reload: bool,
+	pub defines: Vec<String>,
+	pub byond: Option<PathBuf>,
+	pub args: Vec<String>
+}
+
+impl From<CommandLine> for LaunchArguments {
+	fn from(line: CommandLine) -> Self {
+		Self {
+			no_debug: true,
+			dme: line.dme,
+			dmb: Some(line.dmb),
+			server: line.server,
+			byond_path: line.byond,
+			defines: line.defines,
+			build_flags: vec![],
+			hot_reload: line.hot_reload,
+			port: line.port,
+			args: Some(line.args),
+			env: HashMap::new(),
+			debug_library: None,
+			sleeping_threads: None
+		}
+	}
+}
+
 #[derive(Default)]
 pub(super) struct Lifecycle {
 	pub(super) pid: Option<u32>,
@@ -129,7 +166,7 @@ impl Adapter {
 				match runtime_place(&line) {
 					Some((file, number)) => {
 						let path = files.lock().unwrap().path(file);
-						out.event(OutputEvent {
+						out.output_event(OutputEvent {
 							category: Some(category.to_owned()),
 							source: Some(source_at(&path)),
 							line: Some(number),
@@ -147,7 +184,7 @@ impl Adapter {
 		self.world.pid = Some(game.pid());
 		self.world.game = Some(game);
 		self.world.launched = Some(args);
-		self.out.event(dap::ProcessEvent {
+		self.out.process(dap::ProcessEvent {
 			name: prepared.dmb.to_string_lossy().into_owned(),
 			systemProcessId: self.world.pid.unwrap_or_default(),
 			isLocalProcess: true,
@@ -188,7 +225,7 @@ impl Adapter {
 		});
 		self.world.pid = Some(pid);
 		self.out.console(format!("Attaching to process {}", pid));
-		self.out.event(dap::ProcessEvent {
+		self.out.process(dap::ProcessEvent {
 			name: format!("process {}", pid),
 			systemProcessId: pid,
 			isLocalProcess: true,
@@ -570,6 +607,24 @@ impl Adapter {
 		}
 	}
 
+	pub(super) fn asked(&mut self, ask: Ask) -> bool {
+		match ask {
+			Ask::Launch(line) => {
+				if let Err(e) = self.launch(line.into()) {
+					self.out.launch_failed(e);
+				}
+			}
+			Ask::Stop => {
+				let _ = self.terminate();
+			}
+			Ask::Kill => {
+				self.disconnect(Some(true));
+				return false;
+			}
+		}
+		true
+	}
+
 	pub(super) fn game_exited(&mut self, code: Option<i32>) {
 		self.world.game = None;
 		if let Some((args, prepared)) = self.world.relaunching.take() {
@@ -612,7 +667,7 @@ impl Adapter {
 			self.out.event(dap::ProgressEnd { progressId: id.to_owned() });
 		}
 		self.out.event(TerminatedEvent::default());
-		self.out.event(ExitedEvent { exitCode: exit_code.into() });
+		self.out.exited(exit_code);
 
 		let inputs = self.inputs.clone();
 		std::thread::spawn(move || {
