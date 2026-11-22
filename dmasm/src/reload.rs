@@ -13,7 +13,7 @@ use crate::syntax;
 mod moved;
 #[path = "reload_reparent.rs"]
 mod reparent;
-use crate::{ByondVersion, Instruction, Node};
+use crate::{ByondVersion, Instruction, Node, StaticScope};
 pub use reparent::{Reparented, ReparentedType};
 
 mod global_init;
@@ -54,7 +54,7 @@ pub struct ProcReload {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct StaticVar {
     pub name: String,
-    pub scope: String,
+    pub scope: StaticScope,
     pub value: Option<ConstValue>,
     pub init: Option<Box<ProcReload>>,
 }
@@ -2985,16 +2985,18 @@ fn byond_flags(flags: dreammaker::ast::VarTypeFlags, global: bool) -> u32 {
     byond_flags
 }
 
-fn static_proc_path(scope: &str) -> Option<&str> {
-    let path = scope.strip_prefix("proc:")?;
-    Some(path.rsplit_once('#').map_or(path, |(path, _)| path))
+fn static_proc_path(scope: &StaticScope) -> Option<&str> {
+    match scope {
+        StaticScope::Proc { path, .. } => Some(path),
+        _ => None,
+    }
 }
 
-fn static_number(scope: &str) -> u32 {
-    scope
-        .rsplit_once('#')
-        .and_then(|(_, number)| number.parse().ok())
-        .unwrap_or(0)
+fn static_number(scope: &StaticScope) -> u32 {
+    match scope {
+        StaticScope::Proc { nth, .. } => *nth,
+        _ => 0,
+    }
 }
 
 fn static_initial(

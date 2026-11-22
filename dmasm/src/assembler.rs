@@ -1,4 +1,4 @@
-use crate::{Label, Node};
+use crate::{Label, Node, StaticScope};
 use std::collections::HashMap;
 
 pub trait AssembleEnv {
@@ -7,7 +7,7 @@ pub trait AssembleEnv {
     fn get_proc_index(&mut self, path: &str) -> Option<u32>;
     fn get_type(&mut self, path: &str) -> Option<(u8, u32)>;
 
-    fn get_global_index(&mut self, name: &[u8], _scope: Option<&str>) -> Option<u32> {
+    fn get_global_index(&mut self, name: &[u8], _scope: Option<&StaticScope>) -> Option<u32> {
         self.get_variable_name_index(name)
     }
 

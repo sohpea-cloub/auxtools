@@ -4,7 +4,7 @@ use dreammaker::ast::Block;
 use dreammaker::objtree::{ObjectTree, ProcValue, TypeRef};
 
 use super::{CompileError, Compiler, EvalKind};
-use crate::operands::{DMString, GlobalVar, Variable};
+use crate::operands::{DMString, GlobalVar, StaticScope, Variable};
 use crate::{Instruction, Node};
 
 pub struct ProcSource<'a> {
@@ -38,7 +38,7 @@ pub struct ByondBug {
 #[derive(Debug, Clone)]
 pub struct StaticLocal {
     pub name: String,
-    pub scope: String,
+    pub scope: StaticScope,
     pub value: Option<dreammaker::constants::Constant>,
     pub expression: Option<dreammaker::ast::Expression>,
     pub type_path: String,
@@ -120,7 +120,10 @@ impl ProcCtx<'_> {
         self.static_locals.push(name.to_owned());
         self.statics.push(StaticLocal {
             name: name.to_owned(),
-            scope: format!("proc:{}#{}", self.proc_path, number),
+            scope: StaticScope::Proc {
+                path: self.proc_path.clone(),
+                nth: number,
+            },
             value,
             expression,
             type_path: ty.clone(),
@@ -267,7 +270,10 @@ pub(super) fn find_var(compiler: &Compiler, name: &str) -> Option<EvalKind> {
         return Some(EvalKind::Var(Variable::Arg(index as u32)));
     }
     if let Some(number) = ctx.find_static(name) {
-        let scope = format!("proc:{}#{}", ctx.proc_path, number);
+        let scope = StaticScope::Proc {
+            path: ctx.proc_path.clone(),
+            nth: number,
+        };
         return Some(EvalKind::Var(Variable::Global(GlobalVar::named(
             name.as_bytes(),
             Some(scope),
@@ -294,7 +300,7 @@ pub(super) fn find_var(compiler: &Compiler, name: &str) -> Option<EvalKind> {
     }
     Some(EvalKind::Var(Variable::Global(GlobalVar::named(
         name.as_bytes(),
-        Some(scope),
+        Some(StaticScope::of_type(&scope)),
     ))))
 }
 
@@ -861,7 +867,7 @@ pub(super) fn emit_type_scope(
                 let scope = decl.ty().get().path.clone();
                 return Ok(EvalKind::Var(Variable::Global(GlobalVar::named(
                     name.as_str().as_bytes(),
-                    Some(scope),
+                    Some(StaticScope::of_type(&scope)),
                 ))));
             }
             let value = ty.get_value(name.as_str());

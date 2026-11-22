@@ -24,7 +24,7 @@ fn finds_globals_and_static_locals() {
     };
     let compiled = compile_proc(&source).unwrap();
 
-    let mut found: Vec<(String, Option<String>)> = compiled
+    let mut found: Vec<(String, Option<dmasm::StaticScope>)> = compiled
         .nodes
         .iter()
         .filter_map(|n| match n {
@@ -45,8 +45,14 @@ fn finds_globals_and_static_locals() {
     assert_eq!(
         found,
         [
-            ("g".to_owned(), Some(String::new())),
-            ("s".to_owned(), Some("proc:/proc/f#0".to_owned())),
+            ("g".to_owned(), Some(dmasm::StaticScope::Global)),
+            (
+                "s".to_owned(),
+                Some(dmasm::StaticScope::Proc {
+                    path: "/proc/f".to_owned(),
+                    nth: 0
+                })
+            ),
         ]
     );
 }

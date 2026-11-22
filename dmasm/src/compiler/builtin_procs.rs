@@ -871,7 +871,10 @@ fn initial_static_field(
     compiler.emit_ins(Instruction::SetVar(Variable::Cache));
     Ok(Some(match static_scope {
         Some(scope) => Variable::Initial(Box::new(Variable::Global(
-            crate::operands::GlobalVar::named(name.as_str().as_bytes(), Some(scope)),
+            crate::operands::GlobalVar::named(
+                name.as_str().as_bytes(),
+                Some(crate::operands::StaticScope::of_type(&scope)),
+            ),
         ))),
         None => Variable::Initial(Box::new(Variable::Field(DMString(
             name.as_str().as_bytes().to_vec(),

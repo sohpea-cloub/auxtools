@@ -4,7 +4,7 @@ use dreammaker::ast::{Expression, Field, Follow, Term};
 
 use crate::{
     compiler::{args, builtin_procs, follow, operands, strings, CompileError, Compiler, EvalKind},
-    operands::{DMString, GlobalVar, Label, PickProbParams, Value, Variable},
+    operands::{DMString, GlobalVar, Label, PickProbParams, StaticScope, Value, Variable},
     ByondVersion, Instruction,
 };
 
@@ -54,7 +54,7 @@ pub(super) fn emit(compiler: &mut Compiler<'_>, term: Term) -> Result<EvalKind, 
         }
         Term::GlobalIdent(ident) => Ok(EvalKind::Var(Variable::Global(GlobalVar::named(
             ident.as_str().as_bytes(),
-            Some(String::new()),
+            Some(StaticScope::Global),
         )))),
 
         Term::Resource(resource) => {

@@ -226,8 +226,8 @@ These rules affect generated code and are covered by focused tests:
 - User const variables, including local consts, occupy global slots. Standalone
   reads access the slot; larger constant expressions fold the value. Built-in
   constants such as `NORTH` are emitted directly.
-- Static locals are block-scoped. Scope `proc:PATH#N` identifies the Nth declaration
-  of a given name in that proc.
+- Static locals are block-scoped. Their scope (`StaticScope::Proc`) is the proc's path
+  and which declaration of the name in that proc it is, from 0.
 - Static/const access through `x::a::b` does not evaluate receivers preceding b.
   `/type::proc()` selects that type's override. `:` lookup searches subtypes depth
   first; unknown receiver calls use the first declaration's display name.

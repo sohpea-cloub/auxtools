@@ -1071,7 +1071,11 @@ fn static_locals_come_with_their_initial_values() {
     let before = "/datum/a/proc/f()\n\treturn 1\n";
     let after = "/datum/a/proc/f()\n\tvar/static/n = 3\n\tvar/static/list/l = list()\n\tif (n)\n\t\tvar/static/n = \"x\"\n\t\treturn n\n\treturn l\n";
     let changes = changes("statics", before, after);
-    let statics: Vec<(String, String, Option<ConstValue>)> = changes.plan.reloads[0]
+    let in_f = |nth| dmasm::StaticScope::Proc {
+        path: "/datum/a/proc/f".to_owned(),
+        nth,
+    };
+    let statics: Vec<(String, dmasm::StaticScope, Option<ConstValue>)> = changes.plan.reloads[0]
         .statics
         .iter()
         .map(|s| (s.name.clone(), s.scope.clone(), s.value.clone()))
@@ -1079,15 +1083,11 @@ fn static_locals_come_with_their_initial_values() {
     assert_eq!(
         statics,
         [
+            ("n".to_owned(), in_f(0), Some(ConstValue::Number(3.0))),
+            ("l".to_owned(), in_f(0), None),
             (
                 "n".to_owned(),
-                "proc:/datum/a/proc/f#0".to_owned(),
-                Some(ConstValue::Number(3.0))
-            ),
-            ("l".to_owned(), "proc:/datum/a/proc/f#0".to_owned(), None),
-            (
-                "n".to_owned(),
-                "proc:/datum/a/proc/f#1".to_owned(),
+                in_f(1),
                 Some(ConstValue::String("x".to_owned()))
             ),
         ]
@@ -2996,6 +2996,15 @@ fn a_moved_up_proc_that_names_itself_is_compiled_again() {
     );
 }
 
+fn scope(var: &dmasm::GlobalVar) -> String {
+    match &var.scope {
+        None => "?".to_owned(),
+        Some(dmasm::StaticScope::Global) => String::new(),
+        Some(dmasm::StaticScope::Type(path)) => path.clone(),
+        Some(dmasm::StaticScope::Proc { path, nth }) => format!("{path}#{nth}"),
+    }
+}
+
 fn global_init_sets(changes: &Changes) -> Vec<String> {
     let init = changes.global_init.as_ref().expect("no global init proc");
     let mut line = 0;
@@ -3006,7 +3015,7 @@ fn global_init_sets(changes: &Changes) -> Vec<String> {
             Node::Instruction(Instruction::SetVar(dmasm::Variable::Global(var)), ()) => {
                 sets.push(format!(
                     "{}:{} @{line}",
-                    var.scope.as_deref().unwrap_or("?"),
+                    scope(var),
                     String::from_utf8_lossy(&var.name.0)
                 ))
             }
@@ -3065,18 +3074,14 @@ fn global_init_reads_a_procs_earlier_statics() {
         .nodes
         .iter()
         .filter_map(|node| match node {
-            Node::Instruction(Instruction::GetVar(dmasm::Variable::Global(var)), ()) => {
-                Some(format!(
-                    "{}:{}",
-                    var.scope.as_deref().unwrap_or("?"),
-                    String::from_utf8_lossy(&var.name.0)
-                ))
-            }
+            Node::Instruction(Instruction::GetVar(dmasm::Variable::Global(var)), ()) => Some(
+                format!("{}:{}", scope(var), String::from_utf8_lossy(&var.name.0)),
+            ),
             _ => None,
         })
         .collect();
     read.sort();
-    assert_eq!(read, [":base", ":base", "proc:/proc/f#0:d"]);
+    assert_eq!(read, ["/proc/f#0:d", ":base", ":base"]);
 }
 
 #[test]
@@ -3091,13 +3096,7 @@ fn changed_initializers_give_a_rebuilds_global_init_proc() {
     assert!(changes.refused.is_empty(), "{:?}", changes.refused);
     assert_eq!(
         global_init_sets(&changes),
-        [
-            ":a @1",
-            ":b @2",
-            "/datum/s:x @5",
-            ":t @6",
-            "proc:/proc/f#0:y @8"
-        ]
+        [":a @1", ":b @2", "/datum/s:x @5", ":t @6", "/proc/f#0:y @8"]
     );
     assert_eq!(
         deferred(&changes),
@@ -3111,7 +3110,7 @@ fn changed_initializers_give_a_rebuilds_global_init_proc() {
     );
     assert_eq!(
         global_init_sets(&changes),
-        [":b @2", "/datum/s:x @5", ":t @6", "proc:/proc/f#0:y @8"]
+        [":b @2", "/datum/s:x @5", ":t @6", "/proc/f#0:y @8"]
     );
     let nodes = &changes.global_init.as_ref().unwrap().code.nodes;
     let made: Vec<_> = nodes
@@ -3131,13 +3130,7 @@ fn changed_initializers_give_a_rebuilds_global_init_proc() {
     );
     assert_eq!(
         global_init_sets(&changes),
-        [
-            "/datum/s:x @6",
-            ":b @2",
-            ":c @3",
-            ":t @7",
-            "proc:/proc/f#0:y @9"
-        ]
+        ["/datum/s:x @6", ":b @2", ":c @3", ":t @7", "/proc/f#0:y @9"]
     );
 
     let changes = changes_of(
@@ -3153,7 +3146,7 @@ fn changed_initializers_give_a_rebuilds_global_init_proc() {
             ":b @2",
             "/datum/s:x @5",
             ":t @6",
-            "proc:/proc/f#0:y @8"
+            "/proc/f#0:y @8"
         ]
     );
     assert!(matches!(

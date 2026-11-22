@@ -1898,7 +1898,7 @@ pub(super) fn static_member(
     }
     Some(Variable::Global(crate::operands::GlobalVar::named(
         name.as_str().as_bytes(),
-        Some(decl.ty().get().path.clone()),
+        Some(crate::operands::StaticScope::of_type(&decl.ty().get().path)),
     )))
 }
 

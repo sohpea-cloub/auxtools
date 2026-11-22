@@ -174,7 +174,7 @@ impl dmasm::assembler::AssembleEnv for Named {
 		Some((0x20, 0))
 	}
 
-	fn get_global_index(&mut self, _: &[u8], _: Option<&str>) -> Option<u32> {
+	fn get_global_index(&mut self, _: &[u8], _: Option<&dmasm::StaticScope>) -> Option<u32> {
 		Some(0)
 	}
 

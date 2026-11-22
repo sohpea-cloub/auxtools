@@ -219,7 +219,7 @@ fn same_named_static_locals_in_one_proc_are_different_globals() {
         file_names: None,
     };
     let compiled = compile_proc(&source).unwrap();
-    let scopes: Vec<Option<String>> = compiled
+    let scopes: Vec<Option<dmasm::StaticScope>> = compiled
         .nodes
         .iter()
         .filter_map(|n| match n {
@@ -232,8 +232,14 @@ fn same_named_static_locals_in_one_proc_are_different_globals() {
     assert_eq!(
         scopes,
         vec![
-            Some("proc:/proc/f#0".to_owned()),
-            Some("proc:/proc/f#1".to_owned())
+            Some(dmasm::StaticScope::Proc {
+                path: "/proc/f".to_owned(),
+                nth: 0
+            }),
+            Some(dmasm::StaticScope::Proc {
+                path: "/proc/f".to_owned(),
+                nth: 1
+            })
         ]
     );
 }

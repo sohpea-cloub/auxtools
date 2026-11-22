@@ -3,7 +3,7 @@ use std::fmt;
 use dreammaker::ast::Follow;
 use dreammaker::{ast::Expression, Severity};
 
-use crate::operands::{self, DMString, GlobalVar, Label, Variable};
+use crate::operands::{self, DMString, GlobalVar, Label, StaticScope, Variable};
 use crate::syntax;
 use crate::Instruction;
 use crate::{ByondVersion, Node};
@@ -817,7 +817,7 @@ impl<'a> Compiler<'a> {
         match (scope.global)(name) {
             None => return Err(CompileError::UndefinedVar(name.to_owned())),
             Some(ExprGlobal::Id(id)) => {
-                let mut global = GlobalVar::named(name.as_bytes(), Some(String::new()));
+                let mut global = GlobalVar::named(name.as_bytes(), Some(StaticScope::Global));
                 global.id = Some(id);
                 return Ok(EvalKind::Var(Variable::Global(global)));
             }
@@ -1157,11 +1157,7 @@ impl<'a> Compiler<'a> {
                     )
                 {
                     if let EvalKind::Var(Variable::Global(g)) = &kind {
-                        if let Some(scope) = g
-                            .scope
-                            .as_deref()
-                            .filter(|s| !s.is_empty() && !s.starts_with("proc:"))
-                        {
+                        if let Some(StaticScope::Type(scope)) = &g.scope {
                             let mut marker = chain_builder::STATIC_MARKER.to_vec();
                             marker.extend_from_slice(&g.name.0);
                             marker.push(0);

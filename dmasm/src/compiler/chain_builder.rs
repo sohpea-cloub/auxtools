@@ -1,4 +1,4 @@
-use crate::operands::{DMString, GlobalVar, Variable};
+use crate::operands::{DMString, GlobalVar, StaticScope, Variable};
 
 pub const STATIC_MARKER: &[u8] = b"\0static:";
 
@@ -9,7 +9,7 @@ fn field_var(field: DMString) -> Variable {
             let name = parts.next().unwrap_or_default();
             let scope = parts
                 .next()
-                .map(|s| String::from_utf8_lossy(s).into_owned());
+                .map(|s| StaticScope::of_type(&String::from_utf8_lossy(s)));
             Variable::Global(GlobalVar::named(name, scope))
         }
         None => Variable::Field(field),

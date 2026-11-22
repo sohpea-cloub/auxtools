@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use dreammaker::{FileId, Location};
 
 use super::{const_value, value_location, var_constant, ConstValue, ProcReload, Refusal, Snapshot};
-use crate::operands::{DMString, GlobalVar, Label, Variable};
+use crate::operands::{DMString, GlobalVar, Label, StaticScope, Variable};
 use crate::{syntax, Instruction, Node};
 
 #[derive(Debug, Clone, PartialEq)]
@@ -38,7 +38,7 @@ fn proc_statics<'a>(
 }
 
 struct Initializer<'a> {
-    scope: String,
+    scope: StaticScope,
     name: String,
     location: Location,
     ty: TypeRef<'a>,
@@ -55,11 +55,11 @@ struct Initializer<'a> {
 }
 
 impl Initializer<'_> {
-    fn key(&self) -> (&str, &str) {
+    fn key(&self) -> (&StaticScope, &str) {
         (&self.scope, &self.name)
     }
 
-    fn computed(&self) -> Option<(&str, &str, &str, Option<&Expression>)> {
+    fn computed(&self) -> Option<(&StaticScope, &str, &str, Option<&Expression>)> {
         if self.constant.is_some() {
             return None;
         }
@@ -121,7 +121,10 @@ impl Snapshot {
                     .entry((ty.index().index(), proc_name.to_owned(), *index))
                     .or_default()
                     .push(Initializer {
-                        scope: format!("proc:{proc_path}#{number}"),
+                        scope: StaticScope::Proc {
+                            path: proc_path.clone(),
+                            nth: number as u32,
+                        },
                         name: name.to_owned(),
                         location,
                         ty,
@@ -158,9 +161,9 @@ impl Snapshot {
                     && var_constant(var).is_none()
                 {
                     let scope = if t.is_root() {
-                        String::new()
+                        StaticScope::Global
                     } else {
-                        t.get().path.clone()
+                        StaticScope::Type(t.get().path.clone())
                     };
                     computed.insert((scope, name.to_string()));
                 }
@@ -336,10 +339,10 @@ fn changed(new: &Snapshot, before: &[Initializer<'_>], after: &[Initializer<'_>]
             })
         })
         .map(|init| {
-            let shown = match init.scope.strip_prefix("proc:") {
-                Some(proc) => proc.rsplit_once('#').map_or(proc, |(path, _)| path),
-                None if init.scope.is_empty() => "(global)",
-                None => &init.scope,
+            let shown = match &init.scope {
+                StaticScope::Proc { path, .. } => path,
+                StaticScope::Global => "(global)",
+                StaticScope::Type(path) => path,
             };
             Refusal::new(shown, "changed initializer")
                 .named(init.name.clone())
@@ -408,9 +411,9 @@ struct Walk<'a> {
     last: bool,
     defaults: bool,
     defaults_waiting: HashMap<usize, usize>,
-    computed: HashSet<(String, String)>,
-    set: HashSet<(String, String)>,
-    passed: HashSet<(String, String)>,
+    computed: HashSet<(StaticScope, String)>,
+    set: HashSet<(StaticScope, String)>,
+    passed: HashSet<(StaticScope, String)>,
     declared: HashMap<FileId, Vec<u32>>,
     blocks: HashMap<FileId, HashMap<u32, Vec<u32>>>,
     types: HashSet<usize>,
@@ -589,18 +592,14 @@ impl<'a> Walk<'a> {
                     let declaration = var.declaration.as_ref().unwrap();
                     let flags = declaration.var_type.flags;
                     let scope = if t.is_root() {
-                        String::new()
+                        StaticScope::Global
                     } else {
-                        t.get().path.clone()
+                        StaticScope::Type(t.get().path.clone())
                     };
-                    self.passed.insert((scope, name.to_owned()));
+                    self.passed.insert((scope.clone(), name.to_owned()));
                     if !flags.is_const() && (t.is_root() || flags.is_static()) {
                         let init = Initializer {
-                            scope: if t.is_root() {
-                                String::new()
-                            } else {
-                                t.get().path.clone()
-                            },
+                            scope,
                             name: name.to_owned(),
                             location: var.value.location,
                             ty: t,
@@ -740,7 +739,7 @@ impl<'a> Walk<'a> {
             return;
         }
         let init = Initializer {
-            scope: format!("default:{}", t.get().path),
+            scope: StaticScope::Type(t.get().path.clone()),
             name: name.to_owned(),
             location: var.value.location,
             ty: t,
@@ -869,8 +868,8 @@ impl<'a> Walk<'a> {
     }
 
     fn value_set(&self, init: &Initializer, name: &str, global: bool, finishing: bool) -> bool {
-        let set = |scope: &str| {
-            let key = (scope.to_owned(), name.to_owned());
+        let set = |scope: StaticScope| {
+            let key = (scope, name.to_owned());
             (finishing || self.passed.contains(&key))
                 && (!self.computed.contains(&key) || self.set.contains(&key))
         };
@@ -878,17 +877,19 @@ impl<'a> Walk<'a> {
         if !global {
             if let Some(proc_path) = &init.proc_path {
                 if let Some((_, number)) = init.earlier.iter().rev().find(|(n, _)| n == name) {
-                    let key = (format!("proc:{proc_path}#{number}"), name.to_owned());
+                    let scope = StaticScope::Proc {
+                        path: proc_path.clone(),
+                        nth: *number,
+                    };
+                    let key = (scope, name.to_owned());
                     return !self.computed.contains(&key) || self.set.contains(&key);
                 }
                 if init.siblings.iter().any(|s| s == name) {
-                    let prefix = format!("proc:{proc_path}#");
-                    return finishing
-                        && !self.computed.iter().any(|(scope, n)| {
-                            n == name
-                                && scope.starts_with(&prefix)
-                                && !self.set.contains(&(scope.clone(), n.clone()))
-                        });
+                    return finishing && !self.computed.iter().any(|(scope, n)| {
+                        n == name
+                            && matches!(scope, StaticScope::Proc { path, .. } if path == proc_path)
+                            && !self.set.contains(&(scope.clone(), n.clone()))
+                    });
                 }
             }
             if let Some(declaration) = t
@@ -896,14 +897,16 @@ impl<'a> Walk<'a> {
                 .filter(|d| !t.is_root() && !d.ty().is_root())
             {
                 let flags = declaration.get().var_type.flags;
-                return !flags.is_static() || flags.is_const() || set(&declaration.ty().get().path);
+                return !flags.is_static()
+                    || flags.is_const()
+                    || set(StaticScope::Type(declaration.ty().get().path.clone()));
             }
         }
         match t.tree().root().get().vars.get(name) {
             Some(var)
                 if var.declaration.is_some() && var.value.location.file != FileId::BUILTINS =>
             {
-                set("")
+                set(StaticScope::Global)
             }
             _ => true,
         }
@@ -1380,13 +1383,10 @@ where
     let mut locals: Vec<String> = vec![];
     let mut file = None;
     for (n, (init, expression)) in runs.enumerate() {
-        let shown = match init.scope.as_str() {
-            "" => format!("(global): {}", init.name),
-            scope => format!(
-                "{}: {}",
-                scope.strip_prefix("proc:").unwrap_or(scope),
-                init.name
-            ),
+        let shown = match &init.scope {
+            StaticScope::Global => format!("(global): {}", init.name),
+            StaticScope::Type(path) => format!("{}: {}", path, init.name),
+            StaticScope::Proc { path, nth } => format!("{}#{}: {}", path, nth, init.name),
         };
         let null;
         let expression = match expression {

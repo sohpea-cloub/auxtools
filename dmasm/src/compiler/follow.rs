@@ -4,7 +4,7 @@ use crate::{
     compiler::{
         args, chain_builder::ChainBuilder, operands, unary, CompileError, Compiler, EvalKind,
     },
-    operands::{DMString, GlobalVar, Label, Variable},
+    operands::{DMString, GlobalVar, Label, StaticScope, Variable},
     Instruction,
 };
 
@@ -135,7 +135,7 @@ pub(super) fn emit_typed<'a>(
                         field_buffer.clear();
                         kind = EvalKind::Var(Variable::Global(GlobalVar::named(
                             ident.as_str().as_bytes(),
-                            Some(scope),
+                            Some(StaticScope::of_type(&scope)),
                         )));
                         continue;
                     }
@@ -144,7 +144,7 @@ pub(super) fn emit_typed<'a>(
                         compiler.emit_ins(Instruction::SetVar(Variable::Cache));
                         kind = EvalKind::Var(Variable::Global(GlobalVar::named(
                             ident.as_str().as_bytes(),
-                            Some(scope),
+                            Some(StaticScope::of_type(&scope)),
                         )));
                         continue;
                     }
@@ -404,7 +404,7 @@ pub(super) fn emit_typed<'a>(
                     }
                     kind = EvalKind::Var(Variable::Global(GlobalVar::named(
                         ident.as_str().as_bytes(),
-                        static_scope,
+                        static_scope.as_deref().map(StaticScope::of_type),
                     )));
                 } else {
                     compiler.emit_move_to_stack(kind)?;
@@ -476,7 +476,8 @@ fn commit_field_buffer(
                 let kind = compiler.emit_global_by_name(&name)?;
                 return commit_field_buffer(compiler, kind, field_chain);
             }
-            let var = Variable::Global(GlobalVar::named(name.as_bytes(), Some(String::new())));
+            let var =
+                Variable::Global(GlobalVar::named(name.as_bytes(), Some(StaticScope::Global)));
             return commit_field_buffer(compiler, EvalKind::Var(var), field_chain);
         }
 
@@ -619,7 +620,7 @@ fn emit_safe_inner<'a>(
                         let scope = decl.ty().get().path.clone();
                         kind = EvalKind::Var(Variable::Global(GlobalVar::named(
                             ident.as_str().as_bytes(),
-                            Some(scope),
+                            Some(StaticScope::of_type(&scope)),
                         )));
                     }
                     _ => field_buffer.push(ident.into_owned()),

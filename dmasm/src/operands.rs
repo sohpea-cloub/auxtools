@@ -721,11 +721,33 @@ impl Operand for Value {
 pub struct GlobalVar {
     pub name: DMString,
     pub id: Option<u32>,
-    pub scope: Option<String>,
+    pub scope: Option<StaticScope>,
+}
+
+#[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Clone, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum StaticScope {
+    #[default]
+    Global,
+    Type(String),
+    Proc {
+        path: String,
+        nth: u32,
+    },
+}
+
+impl StaticScope {
+    pub fn of_type(path: &str) -> Self {
+        if path.is_empty() {
+            StaticScope::Global
+        } else {
+            StaticScope::Type(path.to_owned())
+        }
+    }
 }
 
 impl GlobalVar {
-    pub fn named(name: &[u8], scope: Option<String>) -> Self {
+    pub fn named(name: &[u8], scope: Option<StaticScope>) -> Self {
         GlobalVar {
             name: DMString(name.to_vec()),
             id: None,
@@ -838,7 +860,7 @@ impl Operand for Variable {
                     None => {
                         let id = asm
                             .env
-                            .get_global_index(&global.name.0, global.scope.as_deref())
+                            .get_global_index(&global.name.0, global.scope.as_ref())
                             .ok_or_else(|| {
                                 AssembleError::VariableNameNotFound(global.name.0.clone())
                             })?;

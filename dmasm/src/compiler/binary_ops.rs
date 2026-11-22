@@ -388,7 +388,7 @@ fn same_variable(compiler: &Compiler, expr: &Expression) -> Expression {
             if let Follow::Field(_, name) = &first.elem {
                 let global = matches!(
                     super::procs::find_var(compiler, name.as_str()),
-                    Some(EvalKind::Var(crate::operands::Variable::Global(g))) if g.scope.as_deref() == Some("")
+                    Some(EvalKind::Var(crate::operands::Variable::Global(g))) if g.scope == Some(crate::operands::StaticScope::Global)
                 );
                 if base.as_str() == "global" && global {
                     return Expression::Base {

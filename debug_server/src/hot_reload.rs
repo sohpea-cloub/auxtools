@@ -15,7 +15,7 @@ use dmasm::{
 		BuiltinInherited, ConstValue, InList, InitProc, NewProc, NewType, NewVar, Plan, ProcKey, ProcReload, ProcSettings, Redeclared, RemovedProc,
 		RemovedVar, Reparented, VarDefault
 	},
-	Instruction, Node, Opcode
+	Instruction, Node, Opcode, StaticScope
 };
 
 use crate::{
@@ -65,7 +65,7 @@ struct AddedVars {
 	in_lists_before: u32,
 	in_lists: Vec<(u32, ProcEntryWords)>,
 	instances: StagedInstances,
-	statics: HashMap<(String, Vec<u8>), u32>
+	statics: HashMap<(StaticScope, Vec<u8>), u32>
 }
 
 #[derive(Default)]
@@ -187,7 +187,7 @@ impl StagedProcs {
 #[derive(Default)]
 struct Pending {
 	procs: HashMap<String, u32>,
-	globals: HashMap<(String, Vec<u8>), u32>
+	globals: HashMap<(StaticScope, Vec<u8>), u32>
 }
 
 #[derive(Default)]
@@ -565,7 +565,7 @@ pub fn prepare(request: &HotReloadRequest, warnings: &mut Vec<String>, skipped: 
 	prepared.new_globals = pending
 		.globals
 		.iter()
-		.filter(|((scope, _), _)| scope.is_empty())
+		.filter(|((scope, _), _)| *scope == StaticScope::Global)
 		.map(|((_, name), id)| {
 			let name = String::from_utf8_lossy(name).into_owned();
 			let flags = request
@@ -616,7 +616,7 @@ fn assemble_with(
 	name: &str,
 	code: &ProcReload,
 	original: &[u32],
-	known: HashMap<(String, Vec<u8>), u32>,
+	known: HashMap<(StaticScope, Vec<u8>), u32>,
 	pending: &Pending,
 	world_globals: &mut WorldGlobals,
 	added: &mut AddedVars
@@ -753,7 +753,7 @@ fn prepare_global_init(
 }
 
 pub fn early_global_init(init: &dmasm::reload::GlobalInit, rest: &HotReloadRequest) -> (dmasm::reload::GlobalInit, usize) {
-	let later: HashSet<(String, Vec<u8>)> = rest
+	let later: HashSet<(StaticScope, Vec<u8>)> = rest
 		.plan
 		.reloads
 		.iter()
@@ -764,7 +764,7 @@ pub fn early_global_init(init: &dmasm::reload::GlobalInit, rest: &HotReloadReque
 				.new_vars
 				.iter()
 				.filter(|var| !var.type_path.is_empty())
-				.map(|var| (var.type_path.clone(), var.var.as_bytes().to_vec()))
+				.map(|var| (StaticScope::Type(var.type_path.clone()), var.var.as_bytes().to_vec()))
 		)
 		.collect();
 	let added = AddedVars {
@@ -795,7 +795,7 @@ fn global_slots(
 	pending: &Pending,
 	added: &AddedVars,
 	world_globals: &mut WorldGlobals
-) -> HashMap<(String, Vec<u8>), u32> {
+) -> HashMap<(StaticScope, Vec<u8>), u32> {
 	let mut known = HashMap::new();
 	let mut file = vec![];
 	for node in &code.nodes {
@@ -813,18 +813,21 @@ fn global_slots(
 			continue;
 		}
 		let (scope, name) = &key;
-		let id = pending.globals.get(&key).or_else(|| added.statics.get(&key)).copied().or_else(|| {
-			if scope.is_empty() {
-				let globals = runtime_tables::global_var_ids().ok()?;
-				match variable_ids(name).into_iter().filter(|id| globals.contains(id)).collect::<Vec<_>>()[..] {
-					[id] => Some(id),
-					_ => None
+		let id = pending
+			.globals
+			.get(&key)
+			.or_else(|| added.statics.get(&key))
+			.copied()
+			.or_else(|| match scope {
+				StaticScope::Global => {
+					let globals = runtime_tables::global_var_ids().ok()?;
+					match variable_ids(name).into_iter().filter(|id| globals.contains(id)).collect::<Vec<_>>()[..] {
+						[id] => Some(id),
+						_ => None
+					}
 				}
-			} else if scope.starts_with("proc:") {
-				proc_static(scope, name, counts).or_else(|| {
+				StaticScope::Proc { path, nth } => proc_static(path, *nth, name, counts).or_else(|| {
 					let unique = |ids: BTreeSet<u32>| (ids.len() == 1).then(|| ids.first().copied()).flatten();
-					let path = scope.strip_prefix("proc:").unwrap_or(scope);
-					let path = path.rsplit_once('#').map_or(path, |(path, _)| path);
 					let places: Vec<_> = Proc::overrides(&strip_path(path))
 						.iter()
 						.filter_map(|proc| code_place(&original_bytecode(proc)))
@@ -843,11 +846,9 @@ fn global_slots(
 						.map(|(.., id)| *id)
 						.collect();
 					unique(in_proc).or_else(|| unique(in_file))
-				})
-			} else {
-				declared_global(scope, &String::from_utf8_lossy(name))
-			}
-		});
+				}),
+				StaticScope::Type(path) => declared_global(path, &String::from_utf8_lossy(name))
+			});
 		if let Some(id) = id {
 			known.insert(key, id);
 		}
@@ -862,15 +863,13 @@ fn global_init_proc() -> Option<Proc> {
 	(!a_types).then_some(proc)
 }
 
-fn proc_static(scope: &str, name: &[u8], counts: &BTreeMap<String, BTreeMap<String, usize>>) -> Option<u32> {
-	let path = scope.strip_prefix("proc:")?;
-	let path = path.rsplit_once('#').map_or(path, |(path, _)| path);
+fn proc_static(path: &str, nth: u32, name: &[u8], counts: &BTreeMap<String, BTreeMap<String, usize>>) -> Option<u32> {
 	let declared = *counts.get(path)?.get(String::from_utf8_lossy(name).as_ref())?;
 	let ids: BTreeSet<u32> = Proc::overrides(&strip_path(path))
 		.iter()
 		.filter_map(|proc| {
 			let named = globals_in(&original_bytecode(proc)).remove(name)?;
-			(named.len() == declared).then(|| named.get(static_number(scope)).copied())?
+			(named.len() == declared).then(|| named.get(nth as usize).copied())?
 		})
 		.collect();
 	match ids.len() {
@@ -1488,8 +1487,11 @@ fn world_keys(entry: &ProcEntryWords) -> Vec<u32> {
 	keys
 }
 
-fn static_number(scope: &str) -> usize {
-	scope.rsplit_once('#').and_then(|(_, n)| n.parse().ok()).unwrap_or(0)
+const fn static_number(scope: &StaticScope) -> usize {
+	match scope {
+		StaticScope::Proc { nth, .. } => *nth as usize,
+		_ => 0
+	}
 }
 
 fn new_statics(
@@ -1497,7 +1499,7 @@ fn new_statics(
 	proc_globals: &HashMap<Vec<u8>, Vec<u32>>,
 	pending: &Pending,
 	added: &mut AddedVars
-) -> Result<HashMap<(String, Vec<u8>), u32>, String> {
+) -> Result<HashMap<(StaticScope, Vec<u8>), u32>, String> {
 	let mut out = HashMap::new();
 	for local in &code.statics {
 		let name = local.name.as_bytes().to_vec();
@@ -1767,7 +1769,9 @@ fn prepare_new_var(
 				));
 			}
 			if new.flags & STATIC != 0 {
-				pending.globals.insert((new.type_path.clone(), new.var.as_bytes().to_vec()), pair[0]);
+				pending
+					.globals
+					.insert((StaticScope::of_type(&new.type_path), new.var.as_bytes().to_vec()), pair[0]);
 			}
 			warnings.push(format!(
 				"{}: var {} reuses the declaration retained by the running world; existing static values are unchanged",
@@ -1831,7 +1835,9 @@ fn prepare_new_var(
 	}
 
 	if new.type_path.is_empty() || new.flags & STATIC != 0 {
-		pending.globals.insert((new.type_path.clone(), new.var.as_bytes().to_vec()), id);
+		pending
+			.globals
+			.insert((StaticScope::of_type(&new.type_path), new.var.as_bytes().to_vec()), id);
 	}
 
 	added.vars.push(PreparedNewVar { id, name, value });
@@ -1907,7 +1913,9 @@ fn prepare_redeclared(
 	}
 
 	if var.flags & STATIC != 0 {
-		pending.globals.insert((var.type_path.clone(), var.var.as_bytes().to_vec()), id);
+		pending
+			.globals
+			.insert((StaticScope::of_type(&var.type_path), var.var.as_bytes().to_vec()), id);
 		if let Some(init) = &var.init {
 			added.run_once.push((id, format!("{}/var/{}", var.type_path, var.var), (**init).clone()));
 		} else if let Some(value) = &var.value {
@@ -2663,8 +2671,8 @@ struct ReloadEnv<'a> {
 	proc_globals: HashMap<Vec<u8>, Vec<u32>>,
 	world_globals: &'a mut WorldGlobals,
 	pending: &'a Pending,
-	new_statics: HashMap<(String, Vec<u8>), u32>,
-	known: HashMap<(String, Vec<u8>), u32>,
+	new_statics: HashMap<(StaticScope, Vec<u8>), u32>,
+	known: HashMap<(StaticScope, Vec<u8>), u32>,
 	instances: &'a mut StagedInstances,
 	place: Option<(Vec<u8>, u32, u32)>,
 	error: Option<String>
@@ -2711,16 +2719,16 @@ impl dmasm::assembler::AssembleEnv for ReloadEnv<'_> {
 		}
 	}
 
-	fn get_global_index(&mut self, name: &[u8], scope: Option<&str>) -> Option<u32> {
+	fn get_global_index(&mut self, name: &[u8], scope: Option<&StaticScope>) -> Option<u32> {
 		let shown = String::from_utf8_lossy(name).into_owned();
-		if let Some(&id) = self.known.get(&(scope.unwrap_or_default().to_owned(), name.to_vec())) {
+		let key = (scope.cloned().unwrap_or_default(), name.to_vec());
+		if let Some(&id) = self.known.get(&key) {
 			return Some(id);
 		}
 
-		if let Some(scope) = scope.filter(|s| s.starts_with("proc:")) {
-			let n = static_number(scope);
-			let id = self.proc_globals.get(name).and_then(|ids| ids.get(n)).copied();
-			let id = id.or_else(|| self.new_statics.get(&(scope.to_owned(), name.to_vec())).copied());
+		if let Some(StaticScope::Proc { nth, .. }) = scope {
+			let id = self.proc_globals.get(name).and_then(|ids| ids.get(*nth as usize)).copied();
+			let id = id.or_else(|| self.new_statics.get(&key).copied());
 			let id = id.or_else(|| {
 				let (file, first, last) = self.place.as_ref()?;
 				let set: Vec<u32> = self
@@ -2749,7 +2757,6 @@ impl dmasm::assembler::AssembleEnv for ReloadEnv<'_> {
 			return id;
 		}
 
-		let key = (scope.unwrap_or_default().to_owned(), name.to_vec());
 		if let Some(&id) = self.pending.globals.get(&key) {
 			return Some(id);
 		}
@@ -2764,7 +2771,7 @@ impl dmasm::assembler::AssembleEnv for ReloadEnv<'_> {
 			_ => {}
 		}
 
-		if scope == Some("") {
+		if scope == Some(&StaticScope::Global) {
 			if let Ok(globals) = runtime_tables::global_var_ids() {
 				if let [id] = candidates.iter().filter(|id| globals.contains(id)).collect::<Vec<_>>()[..] {
 					return Some(*id);
@@ -2772,7 +2779,11 @@ impl dmasm::assembler::AssembleEnv for ReloadEnv<'_> {
 			}
 		}
 
-		if let Some(id) = scope.filter(|s| s.starts_with('/')).and_then(|ty| declared_global(ty, &shown)) {
+		let declaring = match scope {
+			Some(StaticScope::Type(path)) => Some(path.as_str()),
+			_ => None
+		};
+		if let Some(id) = declaring.and_then(|ty| declared_global(ty, &shown)) {
 			return Some(id);
 		}
 
@@ -2785,7 +2796,7 @@ impl dmasm::assembler::AssembleEnv for ReloadEnv<'_> {
 		if ids.len() == 1 {
 			return ids.first().copied();
 		}
-		if let Some(ty) = scope.filter(|s| !s.is_empty()) {
+		if let Some(ty) = declaring {
 			let prefix = format!("{}/", ty);
 			let ids: BTreeSet<u32> = users.iter().filter(|(_, path)| path.starts_with(&prefix)).map(|(id, _)| *id).collect();
 			if ids.len() == 1 {
@@ -2797,7 +2808,7 @@ impl dmasm::assembler::AssembleEnv for ReloadEnv<'_> {
 			"ambiguous variable: {} runtime slots named {}; no unique reference in {}",
 			candidates.len(),
 			shown,
-			scope.filter(|s| !s.is_empty()).unwrap_or("the world")
+			declaring.unwrap_or("the world")
 		));
 		None
 	}
