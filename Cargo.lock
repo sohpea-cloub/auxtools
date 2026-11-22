@@ -90,6 +90,7 @@ dependencies = [
  "libc",
  "serde",
  "serde_json",
+ "test_support",
  "winapi",
 ]
 

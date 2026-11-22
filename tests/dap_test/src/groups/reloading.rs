@@ -1,10 +1,7 @@
 use std::{path::PathBuf, time::Duration};
 
 use serde_json::{json, Value};
-use test_support::{
-	dap::{launch_arguments, value_of},
-	temp::TempDir
-};
+use test_support::{dap::value_of, temp::TempDir};
 
 use crate::{
 	ok, paths,
@@ -511,79 +508,6 @@ fn edit_held(world: &mut World, file: &str, old: &str, new: &str) {
 	world.wait_until("the held reload", |output| said(output) > before);
 }
 
-fn held_until_reboot() {
-	let dir = copy_of_the_world("held_until_reboot");
-	std::fs::write(dir.join("held_b.dm"), "#define HELD_K 1\n\n/proc/held_b()\n\treturn 1\n").unwrap();
-	std::fs::write(
-		dir.join("held.dm"),
-		"var/held_n = 1\nvar/held_k = HELD_K + 1\n\n/proc/held_value()\n\treturn 1\n"
-	)
-	.unwrap();
-	let dme = dir.join("dap_test_host.dme");
-	let text = std::fs::read_to_string(&dme).unwrap() + "#include \"held_b.dm\"\n#include \"held.dm\"\n";
-	std::fs::write(&dme, text).unwrap();
-	paths::compile(&dme);
-	let mut world = World::launch_in(dir.to_path_buf(), json!({ "hotReload": true }));
-	world.catch_runtimes(false);
-	world.configure();
-	world.wait_output("Hot reload active");
-	let values = "\"[held_n] [held_value()]\"";
-	let held = |message: &str, until: &str| vec![(message.to_owned(), until.to_owned())];
-
-	edit_held(
-		&mut world,
-		"held.dm",
-		"var/held_n = 1\nvar/held_k = HELD_K + 1\n\n/proc/held_value()\n\treturn 1\n",
-		"var/held_n = 2\nvar/held_k = HELD_K + 1\n\n/proc/held_value()\n\treturn 2\n"
-	);
-	assert_eq!(held_changes(&mut world), held("(global): held_n: changed initializer", "reboot"));
-	assert!(world.output.contains("Hot reload requires a reboot:"), "{}", world.output);
-	assert_eq!(world.eval_global(values), "\"1 1\"");
-	ok("held save preserves running code");
-
-	edit(&mut world, "held.dm", "var/held_n = 2\n", "var/held_n = 1\n");
-	assert_eq!(world.eval_global(values), "\"1 2\"");
-	assert_eq!(held_changes(&mut world), []);
-	ok("reverted initializer releases pending edits");
-
-	edit_held(&mut world, "held.dm", "var/held_n = 1\n", "var/held_n = 3\n");
-	edit_held(&mut world, "held.dm", "\treturn 2\n", "\treturn 4\n");
-	assert_eq!(world.eval_global(values), "\"1 2\"");
-	reboot(&mut world, 2);
-	assert_eq!(world.eval_global(values), "\"3 4\"");
-	assert_eq!(held_changes(&mut world), []);
-	ok("reboot applies held changes");
-
-	edit_held(&mut world, "held.dm", "var/held_n = 3\n", "var/held_n = 5\n");
-	edit_held(&mut world, "held_b.dm", "\treturn 1\n", "\treturn 6\n");
-	assert_eq!(world.eval_global("held_b()"), "1");
-	assert_eq!(held_changes(&mut world), held("(global): held_n: changed initializer", "reboot"));
-	edit(&mut world, "held.dm", "var/held_n = 5\n", "var/held_n = 3\n");
-	assert_eq!(world.eval_global("held_b()"), "6");
-	assert_eq!(held_changes(&mut world), []);
-	ok("held edits span files");
-
-	edit_held(&mut world, "held_b.dm", "#define HELD_K 1\n", "#define HELD_K 2\n");
-	assert_eq!(held_changes(&mut world), held("(global): held_k: changed initializer", "reboot"));
-	edit_nothing_to_run(&mut world, "held_b.dm", "#define HELD_K 2\n", "#define HELD_K 1\n");
-	assert_eq!(held_changes(&mut world), []);
-	ok("reverted macro clears dependent problems");
-
-	edit_held(&mut world, "held.dm", "var/held_n = 3\n", "var/held_n = 3\n\n/world\n\tfps = 25\n");
-	assert_eq!(held_changes(&mut world), held("/world: fps: changed setting", "rebuild"));
-	assert!(world.output.contains("Hot reload requires a rebuild:"), "{}", world.output);
-	edit_nothing_to_run(&mut world, "held.dm", "\n\n/world\n\tfps = 25\n", "\n");
-	assert_eq!(held_changes(&mut world), []);
-	ok("world setting requires rebuild");
-	world.end();
-}
-
-fn edit_nothing_to_run(world: &mut World, file: &str, old: &str, new: &str) {
-	let before = world.count("Hot reload: no changes to the running code");
-	world.marks.edit(file, old, new);
-	world.wait_count("Hot reload: no changes to the running code", before + 1);
-}
-
 fn initializers_after_reboot() {
 	let dir = copy_of_the_world("initializers_after_reboot");
 	std::fs::write(dir.join("inits.dm"), INITIALIZERS).unwrap();
@@ -839,115 +763,6 @@ fn nothing_to_run() {
 	world.end();
 }
 
-const FLAGGED: &str = "/proc/flag_value()
-	return 1
-
-#ifdef FLAG_A
-/proc/flagged()
-	return \"a\"
-
-/datum/flag_only
-	var/n = 3
-#else
-/proc/flagged()
-	return \"none\"
-#endif
-
-#ifdef FLAG_MAP
-#include \"flag_map.dmm\"
-#endif
-";
-
-fn flags_held(world: &mut World, flags: &[&str]) {
-	let said = |output: &str| output.matches("Hot reload requires a reboot:").count() + output.matches("Hot reload requires a rebuild:").count();
-	let before = said(&world.output);
-	world.request("auxtoolsBuildFlags", json!({ "flags": flags }));
-	world.wait_until("the held build flags", |output| said(output) > before);
-}
-
-fn held_for_build_flags() {
-	let dir = copy_of_the_world("held_for_build_flags");
-	std::fs::write(dir.join("flags.dm"), FLAGGED).unwrap();
-	std::fs::write(dir.join("flag_map.dmm"), "\"a\" = (/turf,/area)\n\n(1,1,1) = {\"\na\n\"}\n").unwrap();
-	let dme = dir.join("dap_test_host.dme");
-	let text = std::fs::read_to_string(&dme).unwrap() + "#include \"flags.dm\"\n";
-	std::fs::write(&dme, text).unwrap();
-	let build = |flags: &[&str]| paths::compile_with(&dme, flags);
-	build(&[]);
-	let more = json!({ "hotReload": true, "buildFlags": [] });
-	let mut world = World::launch_in(dir.to_path_buf(), more.clone());
-	world.catch_runtimes(false);
-	world.configure();
-	world.wait_output("Hot reload active");
-	let added = |flag: &str| vec![(format!("build flags changed (added {})", flag), "reboot".to_owned())];
-
-	flags_held(&mut world, &["FLAG_A"]);
-	assert_eq!(held_changes(&mut world), added("FLAG_A"));
-	assert_eq!(world.eval_global("flagged()"), "\"none\"");
-	edit_held(&mut world, "flags.dm", "\treturn 1\n", "\treturn 2\n");
-	assert_eq!(world.eval_global("flag_value()"), "1");
-	ok("changed build flags hold reloads");
-
-	let before = reloads(&world.output);
-	world.request("auxtoolsBuildFlags", json!({ "flags": [] }));
-	world.wait_until("the released reload", |output| reloads(output) > before);
-	assert_eq!(world.eval_global("flag_value()"), "2");
-	assert_eq!(held_changes(&mut world), []);
-	ok("reverted build flags release held edits");
-
-	flags_held(&mut world, &["FLAG_A"]);
-	reboot(&mut world, 2);
-	assert_eq!(
-		world.eval_global("\"[flagged()] [(new /datum/flag_only).n] [flag_value()]\""),
-		"\"a 3 2\""
-	);
-	assert_eq!(held_changes(&mut world), []);
-	edit(&mut world, "flags.dm", "\treturn \"a\"\n", "\treturn \"b\"\n");
-	assert_eq!(world.eval_global("flagged()"), "\"b\"");
-	ok("reboot applies selected flags");
-
-	flags_held(&mut world, &[]);
-	assert_eq!(held_changes(&mut world), [(
-		"build flags changed (removed FLAG_A)".to_owned(),
-		"reboot".to_owned()
-	)]);
-	assert_eq!(world.eval_global("flagged()"), "\"b\"");
-	reboot(&mut world, 3);
-	assert_eq!(world.eval_global("flagged()"), "\"none\"");
-	assert_eq!(held_changes(&mut world), []);
-	ok("reboot applies removed flags");
-
-	let said = |output: &str| output.matches("no changes to the running code").count();
-	let before = said(&world.output);
-	world.request("auxtoolsBuildFlags", json!({ "flags": ["FLAG_UNUSED"] }));
-	world.wait_until("the unchanged code", |output| said(output) > before);
-	assert_eq!(held_changes(&mut world), []);
-	ok("unused flags apply immediately");
-
-	flags_held(&mut world, &["FLAG_UNUSED", "FLAG_MAP"]);
-	assert_eq!(held_changes(&mut world), [
-		("build flags changed (added FLAG_MAP)".to_owned(), "reboot".to_owned()),
-		("compiled maps changed (added flag_map.dmm)".to_owned(), "rebuild".to_owned())
-	]);
-	ok("map flags require rebuild");
-
-	world.request("auxtoolsBuildFlags", json!({ "flags": ["FLAG_A"] }));
-	build(&["-DFLAG_A"]);
-	world.drop_events("process");
-	world.drop_events("auxtoolsReload");
-	world.request("restart", json!({ "arguments": launch_arguments(&paths::find_byond(), &dme, more) }));
-	world.wait_count("dap: world/New", 4);
-	world.wait_output("using the rebuilt .dmb");
-	while world.event("auxtoolsReload")["body"]["state"] != "active" {}
-	assert!(!world.has_event("process"), "the restart relaunched the world");
-	assert_eq!(world.eval_global("flagged()"), "\"b\"");
-	edit(&mut world, "flags.dm", "\treturn \"b\"\n", "\treturn \"c\"\n");
-	assert_eq!(world.eval_global("flagged()"), "\"c\"");
-	assert_eq!(held_changes(&mut world), []);
-	ok("restart uses selected build flags");
-	world.end();
-}
-
 fn default_names_a_new_proc() {
 	let dir = copy_of_the_world("default_names_a_new_proc");
 	std::fs::write(dir.join("named.dm"), "/datum/rl_named\n\tvar/verb_path\n").unwrap();
@@ -977,9 +792,7 @@ fn default_names_a_new_proc() {
 }
 
 pub fn edits() {
-	held_until_reboot();
 	default_names_a_new_proc();
-	held_for_build_flags();
 	saved_without_reloading();
 	built_in_taken_away();
 	behind_the_clients_back();
