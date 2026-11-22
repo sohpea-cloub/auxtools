@@ -11,7 +11,9 @@ use interprocess::{
 	ConnectWaitMode
 };
 
-use auxtools_protocol::{read, world_socket_name, world_socket_name_for, write, ClientMessage, Request, Response, ServerMessage, PROTOCOL_VERSION};
+use auxtools_protocol::{
+	old_socket_name, read, world_socket_name, write, ClientMessage, Hello, Request, Response, ServerMessage, LAST_NAMED_PROTOCOL, PROTOCOL_VERSION
+};
 
 pub fn world_name(pid: u32) -> String {
 	world_socket_name(pid)
@@ -25,22 +27,53 @@ fn connect_to(name: String) -> io::Result<Stream> {
 }
 
 pub fn connect(pid: u32) -> io::Result<Stream> {
-	connect_to(world_name(pid)).map_err(|e| match other_protocol(pid) {
-		Some(theirs) => io::Error::other(format!(
-			"its debug library speaks protocol {}, and this auxtools speaks {}: use the auxtools that goes with it (the one that started the \
-			 world), or start the world with this one",
-			theirs, PROTOCOL_VERSION
-		)),
-		None => e
-	})
+	let (stream, hello) = greeted(open(pid)?)?;
+	if hello.protocol != PROTOCOL_VERSION {
+		return Err(incompatible(hello.protocol));
+	}
+	Ok(stream)
 }
 
-const NEWER_PROTOCOLS: u32 = 16;
+pub fn open(pid: u32) -> io::Result<Stream> {
+	connect_to(world_name(pid)).map_err(|e| old_protocol(pid).map_or(e, incompatible))
+}
 
-pub fn other_protocol(pid: u32) -> Option<u32> {
-	(1..=PROTOCOL_VERSION + NEWER_PROTOCOLS)
-		.filter(|version| *version != PROTOCOL_VERSION)
-		.find(|version| connect_to(world_socket_name_for(*version, pid)).is_ok())
+pub fn incompatible(theirs: u32) -> io::Error {
+	io::Error::other(format!(
+		"its debug library speaks protocol {}, and this auxtools speaks {}: use the auxtools that goes with it (the one that started the world), or \
+		 start the world with this one",
+		theirs, PROTOCOL_VERSION
+	))
+}
+
+const HELLO_PATIENCE: Duration = Duration::from_secs(5);
+
+fn greeted(stream: Stream) -> io::Result<(Stream, Hello)> {
+	let stream = Arc::new(stream);
+	let (sender, receiver) = std::sync::mpsc::channel();
+	let mut reader = Shared(stream.clone());
+	std::thread::spawn(move || {
+		let hello = read::<Hello>(&mut reader);
+		drop(reader);
+		let _ = sender.send(hello);
+	});
+	let hello = receiver.recv_timeout(HELLO_PATIENCE).map_err(|_| {
+		io::Error::new(
+			io::ErrorKind::TimedOut,
+			format!(
+				"its debug library said nothing for {} seconds after the connection opened: the process is stopped or hung",
+				HELLO_PATIENCE.as_secs()
+			)
+		)
+	})??;
+	let stream = Arc::try_unwrap(stream).map_err(|_| io::Error::other("the connection is still being read"))?;
+	Ok((stream, hello))
+}
+
+fn old_protocol(pid: u32) -> Option<u32> {
+	(1..=LAST_NAMED_PROTOCOL)
+		.rev()
+		.find(|version| connect_to(old_socket_name(*version, pid)).is_ok())
 }
 
 #[derive(Clone)]
@@ -83,7 +116,8 @@ pub struct World {
 
 enum Probed {
 	Info(Vec<String>, String),
-	Unavailable(String)
+	Unavailable(String),
+	Incompatible(u32)
 }
 
 pub const PROBE_PATIENCE: Duration = Duration::from_secs(5);
@@ -127,8 +161,9 @@ pub fn worlds() -> Vec<World> {
 					unavailable: Some(why),
 					..unknown(PROTOCOL_VERSION, true, Some(true))
 				}),
+				Some(Ok(Ok(Probed::Incompatible(protocol)))) => Some(unknown(protocol, false, None)),
 				Some(Err(_)) => Some(unknown(PROTOCOL_VERSION, true, Some(false))),
-				Some(Ok(Err(_))) | None => other_protocol(pid).map(|protocol| unknown(protocol, false, None))
+				Some(Ok(Err(_))) | None => old_protocol(pid).map(|protocol| unknown(protocol, false, None))
 			}
 		})
 		.collect()
@@ -138,7 +173,13 @@ fn probe(stream: Stream) -> std::sync::mpsc::Receiver<io::Result<Probed>> {
 	let (sender, receiver) = std::sync::mpsc::channel();
 	std::thread::spawn(move || {
 		let mut stream = stream;
+		let mut greeted = false;
 		let answer = (|| {
+			let hello: Hello = read(&mut stream)?;
+			if hello.protocol != PROTOCOL_VERSION {
+				return Ok(Probed::Incompatible(hello.protocol));
+			}
+			greeted = true;
 			write(&mut stream, &ClientMessage {
 				id: 1,
 				request: &Request::WorldInfo
@@ -153,10 +194,12 @@ fn probe(stream: Stream) -> std::sync::mpsc::Receiver<io::Result<Probed>> {
 				}
 			}
 		})();
-		let _ = write(&mut stream, &ClientMessage {
-			id: 2,
-			request: &Request::Disconnect
-		});
+		if greeted {
+			let _ = write(&mut stream, &ClientMessage {
+				id: 2,
+				request: &Request::Disconnect
+			});
+		}
 		let _ = sender.send(answer);
 	});
 	receiver

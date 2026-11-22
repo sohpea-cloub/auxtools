@@ -348,20 +348,26 @@ impl Server {
 			};
 			next_id += 1;
 
-			let events = {
-				let acceptor = ACCEPTOR.lock().unwrap();
-				let Some(acceptor) = acceptor.as_ref() else {
-					return;
-				};
-				let _ = acceptor.events.send(Event::Connected(next_id, connection.clone()));
-				waker::event_sent();
-				acceptor.events.clone()
-			};
-
-			let server_thread = ServerThread { events };
 			let id = next_id;
-			thread::spawn(move || server_thread.run(id, connection));
+			thread::spawn(move || Self::serve(id, connection));
 		}
+	}
+
+	fn serve(id: ClientId, mut connection: Connection) {
+		if auxtools_protocol::write(&mut connection, &Hello::new(env!("CARGO_PKG_VERSION"))).is_err() {
+			return;
+		}
+
+		let events = {
+			let acceptor = ACCEPTOR.lock().unwrap();
+			let Some(acceptor) = acceptor.as_ref() else {
+				return;
+			};
+			let _ = acceptor.events.send(Event::Connected(id, connection.clone()));
+			waker::event_sent();
+			acceptor.events.clone()
+		};
+		ServerThread { events }.run(id, connection);
 	}
 
 	pub fn refuse(reason: String) {
@@ -3659,7 +3665,9 @@ fn local_uses(code: &[u32]) -> std::sync::Arc<HashMap<u32, (u32, u32)>> {
 
 #[cfg(test)]
 mod tests {
-	use std::{io::Read, sync::mpsc, thread, time::Duration};
+	use std::{sync::mpsc, thread, time::Duration};
+
+	use auxtools_protocol::{Hello, Response, ServerMessage};
 
 	use super::{Connection, Server};
 	use crate::connection;
@@ -3684,8 +3692,17 @@ mod tests {
 			.recv_timeout(Duration::from_secs(5))
 			.expect("server drop blocked on client connections");
 		for client in [&mut first, &mut second] {
-			let mut len = [0u8; 4];
-			client.read_exact(&mut len).expect("no Disconnect");
+			let hello: Hello = auxtools_protocol::read(client).expect("no hello");
+			assert_eq!(hello, Hello::new(env!("CARGO_PKG_VERSION")));
+			let told: ServerMessage = auxtools_protocol::read(client).expect("no Disconnect");
+			assert!(
+				matches!(told, ServerMessage {
+					reply_to: None,
+					response: Response::Disconnect
+				}),
+				"{:?}",
+				told
+			);
 		}
 
 		let _third = Connection::connect(&connection::world_name()).expect("listener unavailable between server instances");

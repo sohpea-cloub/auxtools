@@ -10,13 +10,13 @@ const INTERVAL: Duration = Duration::from_millis(50);
 
 const RUNTIME_ERROR: &str = "runtime error: ";
 
-fn ask(world: &mut World, expression: &str) -> Result<()> {
+fn ask(world: &mut World, expression: &str, until: Instant) -> Result<bool> {
 	let request = Request::Eval {
 		frame_id: None,
 		command: expression.to_owned(),
 		context: Some(ENDING_CONTEXT.to_owned())
 	};
-	world.send(&request).map(|_| ())
+	Ok(world.send(&request, Some(until))?.is_some())
 }
 
 fn gone_by(pid: u32, until: Instant) -> bool {
@@ -69,10 +69,16 @@ pub fn stop(world: &mut World, args: &args::Stop) -> Result<()> {
 	let timeout = args.timeout.unwrap_or(args::DEFAULT_STOP_TIMEOUT);
 	let kill_timeout = args.kill_timeout.unwrap_or(args::DEFAULT_KILL_TIMEOUT);
 	let pid = world.pid;
-	if ask(world, "world.Del()").is_err() && local::alive(pid) {
-		return Err(format!("cannot send the shutdown request: the connection to the world with pid {} ended.", pid).into());
+	let until = Instant::now() + timeout;
+	match ask(world, "world.Del()", until) {
+		Ok(_) => {}
+		Err(Failure(HUNG_UP, _)) if !local::alive(pid) => {}
+		Err(Failure(HUNG_UP, _)) => {
+			return Err(format!("cannot send the shutdown request: the connection to the world with pid {} ended.", pid).into())
+		}
+		Err(e) => return Err(e)
 	}
-	let failed = match ended_by(world, Instant::now() + timeout) {
+	let failed = match ended_by(world, until) {
 		Ok(true) => {
 			done(
 				args.json,
@@ -158,7 +164,7 @@ pub fn reboot(world: &mut World, args: &args::Reboot) -> Result<()> {
 	let timeout = args.timeout.unwrap_or(args::DEFAULT_REBOOT_TIMEOUT);
 	let pid = world.pid;
 	let until = Instant::now() + timeout;
-	ask(world, "world.Reboot()")?;
+	ask(world, "world.Reboot()", until)?;
 
 	loop {
 		match world.next(Some(until)) {

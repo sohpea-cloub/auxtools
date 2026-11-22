@@ -160,11 +160,15 @@ impl Follower {
 					limit: None,
 					follow: true
 				};
-				if world.send(&asked).is_err() {
-					world.reconnect(until)?;
-					continue;
+				match world.send(&asked, until) {
+					Ok(Some(_)) => self.asked = true,
+					Ok(None) => return Ok(None),
+					Err(Failure(HUNG_UP, _)) => {
+						world.reconnect(until)?;
+						continue;
+					}
+					Err(e) => return Err(e)
 				}
-				self.asked = true;
 			}
 			match world.next(until) {
 				Ok(None) => return Ok(None),
@@ -194,6 +198,7 @@ impl World {
 			if let Ok(world) = World::connect(self.pid) {
 				self.stream = world.stream;
 				self.received = world.received;
+				self.greeted = world.greeted;
 				self.requests = world.requests;
 				self.events.clear();
 				return Ok(());

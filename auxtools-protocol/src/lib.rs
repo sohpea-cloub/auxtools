@@ -1,17 +1,11 @@
 mod framing;
+mod hello;
 mod ids;
 mod messages;
 
 pub use framing::{frame, read, write, MAX_MESSAGE_LEN};
+pub use hello::{old_socket_name, world_socket_name, Hello, LAST_NAMED_PROTOCOL};
 pub use ids::{ClientMessage, Pending, RequestId, ServerMessage, Sorted};
 pub use messages::*;
 
 pub const PROTOCOL_VERSION: u32 = 13;
-
-pub fn world_socket_name(pid: u32) -> String {
-	world_socket_name_for(PROTOCOL_VERSION, pid)
-}
-
-pub fn world_socket_name_for(protocol: u32, pid: u32) -> String {
-	format!("auxtools-debug-v{}-{}", protocol, pid)
-}

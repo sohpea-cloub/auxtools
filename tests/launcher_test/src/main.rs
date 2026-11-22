@@ -563,6 +563,9 @@ fn protocol(version: &str) -> u32 {
 }
 
 fn another_version() {
+	use auxtools_cli::local;
+	use auxtools_protocol::{old_socket_name, Hello, LAST_NAMED_PROTOCOL};
+
 	let (dir, dme) = attach_host_copy("another_version");
 	let mut plain = KilledOnDrop(
 		Command::new(paths::find_dreamdaemon())
@@ -576,9 +579,47 @@ fn another_version() {
 	);
 	let pid = plain.id();
 	let ours = protocol(&launcher_command(&["version"]).1);
-	let theirs = ours - 1;
-	let stand_in = StandIn::listen(format!("auxtools-debug-v{}-{}", theirs, pid), drop);
+	assert!(ours > LAST_NAMED_PROTOCOL, "this auxtools speaks protocol {}", ours);
 
+	let stand_in = StandIn::listen(old_socket_name(LAST_NAMED_PROTOCOL, pid), drop);
+	listed_and_refused(pid, LAST_NAMED_PROTOCOL, ours);
+	drop(stand_in);
+	println!("ok: incompatible protocol discovery and attach rejection");
+
+	let stand_in = StandIn::listen(local::world_name(pid), |mut client| {
+		let hello = Hello {
+			protocol: auxtools_protocol::PROTOCOL_VERSION + 1,
+			auxtools: "99.0.0".to_owned(),
+			pid: std::process::id()
+		};
+		let _ = auxtools_protocol::write(&mut client, &hello);
+		let mut sent = vec![];
+		let _ = std::io::Read::read_to_end(&mut client, &mut sent);
+		SENT_TO_NEWER.fetch_add(sent.len(), Ordering::SeqCst);
+		GREETED.fetch_add(1, Ordering::SeqCst);
+	});
+	listed_and_refused(pid, ours + 1, ours);
+	let deadline = Instant::now() + Duration::from_secs(10);
+	while GREETED.load(Ordering::SeqCst) < 3 {
+		assert!(
+			Instant::now() < deadline,
+			"the launcher connected {} times",
+			GREETED.load(Ordering::SeqCst)
+		);
+		std::thread::sleep(Duration::from_millis(20));
+	}
+	drop(stand_in);
+	assert_eq!(SENT_TO_NEWER.load(Ordering::SeqCst), 0, "a world of another version was sent requests");
+	let _ = plain.kill();
+	let _ = plain.wait();
+	let _ = std::fs::remove_dir_all(&dir);
+	println!("ok: a hello with another protocol version is listed as incompatible and attach is rejected");
+}
+
+static SENT_TO_NEWER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+static GREETED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+fn listed_and_refused(pid: u32, theirs: u32, ours: u32) {
 	let (code, list) = launcher_command(&["list", "--json"]);
 	assert_eq!(code, 0, "{}", list);
 	let worlds: serde_json::Value = serde_json::from_str(&list).unwrap();
@@ -623,11 +664,6 @@ fn another_version() {
 		"attaching to another version's world said {}",
 		printed
 	);
-	drop(stand_in);
-	let _ = plain.kill();
-	let _ = plain.wait();
-	let _ = std::fs::remove_dir_all(&dir);
-	println!("ok: incompatible protocol discovery and attach rejection");
 }
 
 struct StandIn {
@@ -706,7 +742,7 @@ impl Drop for KilledOnDrop {
 
 fn no_debugger() {
 	use auxtools_cli::local;
-	use auxtools_protocol::{Response, ServerMessage};
+	use auxtools_protocol::{Hello, Response, ServerMessage};
 
 	const WHY: &str = "Couldn't find current_execution_context (BYOND 516.1600 is outside the checked range 1637..=1688)";
 	let (dir, dme) = attach_host_copy("no_debugger");
@@ -722,6 +758,7 @@ fn no_debugger() {
 	);
 	let pid = plain.id();
 	let stand_in = StandIn::listen(local::world_name(pid), |mut client| {
+		let _ = auxtools_protocol::write(&mut client, &Hello::new(env!("CARGO_PKG_VERSION")));
 		let _ = auxtools_protocol::write(&mut client, &ServerMessage::event(Response::Unavailable { reason: WHY.to_owned() }));
 		let _ = auxtools_protocol::write(&mut client, &ServerMessage::event(Response::Disconnect));
 		let _ = std::io::copy(&mut client, &mut std::io::sink());
