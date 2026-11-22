@@ -1,5 +1,6 @@
 mod assemble_env;
 mod client_script;
+mod code_index;
 mod connection;
 mod console;
 mod dmb_tables;

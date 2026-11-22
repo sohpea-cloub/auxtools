@@ -1,4 +1,4 @@
-use std::{cell::UnsafeCell, collections::HashMap, sync::Mutex};
+use std::{borrow::Cow, cell::UnsafeCell, collections::HashMap, sync::Mutex};
 
 use auxtools::*;
 use instruction_hooking::{disassemble_env, InstructionHook};
@@ -701,10 +701,36 @@ pub fn hooked_offsets(proc: &Proc) -> Vec<u32> {
 	offsets
 }
 
+pub fn original_code(proc: &Proc) -> Cow<'_, [u32]> {
+	let mut code = Cow::Borrowed(unsafe { proc.bytecode() });
+	let start = code.as_ptr() as usize;
+	let words = start..start + std::mem::size_of_val::<[u32]>(&code);
+	for (opcode_ptr, original) in ORIGINAL_BYTECODE.lock().unwrap().iter() {
+		if !words.contains(&opcode_ptr.0) {
+			continue;
+		}
+		let offset = (opcode_ptr.0 - start) / std::mem::size_of::<u32>();
+		if let Some(hooked) = code.to_mut().get_mut(offset..offset + original.len()) {
+			hooked.copy_from_slice(original);
+		}
+	}
+	code
+}
+
 pub fn original_bytecode(proc: &Proc) -> Vec<u32> {
-	let (start, count) = unsafe { proc.bytecode_mut_ptr() };
-	let bytecode = unsafe { std::slice::from_raw_parts(start, count as usize) }.to_vec();
-	unpatched(start, bytecode)
+	original_code(proc).into_owned()
+}
+
+pub fn hooked_at(proc: &Proc, offset: usize) -> bool {
+	let code = unsafe { proc.bytecode() };
+	let Some(&word) = code.get(offset) else {
+		return false;
+	};
+	let at = code.as_ptr() as usize + offset * std::mem::size_of::<u32>();
+	ORIGINAL_BYTECODE.lock().unwrap().iter().any(|(opcode_ptr, original)| {
+		let within = at.checked_sub(opcode_ptr.0).map(|bytes| bytes / std::mem::size_of::<u32>());
+		within.and_then(|within| original.get(within)).is_some_and(|&was| was != word)
+	})
 }
 
 pub fn unpatched(start: *const u32, mut bytecode: Vec<u32>) -> Vec<u32> {
