@@ -431,6 +431,13 @@ fn emit_proc_assignment(
         let var = match compiler.emit_place(op, lhs.clone())? {
             EvalKind::Var(var) if is_writable(&var) => var,
             EvalKind::Field(builder, field) => builder.get_field(DMString(field.into())),
+            EvalKind::ListRef => {
+                compiler
+                    .nodes
+                    .insert(start, crate::Node::Instruction(Instruction::PushTop, ()));
+                compiler.emit_ins(Instruction::ListSet);
+                return Ok(());
+            }
             _ => return Err(CompileError::ExpectedLValue),
         };
         let computed = matches!(var, Variable::PtrDeref(_))

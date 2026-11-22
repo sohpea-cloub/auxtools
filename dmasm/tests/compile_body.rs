@@ -505,3 +505,22 @@ fn a_body_refuses_calls_to_the_proc_itself_and_its_parent() {
         );
     }
 }
+
+#[test]
+fn an_assignment_to_a_global_is_a_value_too() {
+    let written = [
+        "PushInt 3",
+        "PushTop",
+        "GetVar arg(3)",
+        "PushVal \"ticks\"",
+        "ListSet",
+    ];
+    for code in [
+        "var/a = (ticks = 3)\na",
+        "by = ticks = 3",
+        "return (global.ticks = 3)",
+    ] {
+        let (compiled, _) = body(code).unwrap_or_else(|e| panic!("{code}: {e}"));
+        assert_has(&compiled, &written);
+    }
+}
