@@ -51,7 +51,8 @@ fn added_type(path: &str) -> Option<(u8, u32)> {
 		.skip(1)
 		.find_map(|parent| AssembleEnv::eval_with_name("text2path(name)", parent))?
 		.raw
-		.tag as u8;
+		.tag
+		.0;
 	Some((tag, id))
 }
 
@@ -71,7 +72,7 @@ fn ancestry(ty: &str) -> Vec<String> {
 
 fn found(proc: Proc, warning: Option<String>) -> dmasm::compiler::FoundProc {
 	dmasm::compiler::FoundProc {
-		tag: raw_types::values::ValueTag::ProcRef as u8,
+		tag: raw_types::values::ValueTag::ProcRef.0,
 		data: proc.id.0,
 		warning
 	}
@@ -143,23 +144,23 @@ impl dmasm::assembler::AssembleEnv for AssembleEnv {
 
 	fn get_type(&mut self, path: &str) -> Option<(u8, u32)> {
 		match path {
-			"/list" => return Some((raw_types::values::ValueTag::ListTypepath as u8, 0)),
-			"/savefile" => return Some((raw_types::values::ValueTag::SaveFileTypepath as u8, 0)),
-			"/client" => return Some((raw_types::values::ValueTag::ClientTypepath as u8, 0)),
+			"/list" => return Some((raw_types::values::ValueTag::ListTypepath.0, 0)),
+			"/savefile" => return Some((raw_types::values::ValueTag::SaveFileTypepath.0, 0)),
+			"/client" => return Some((raw_types::values::ValueTag::ClientTypepath.0, 0)),
 			_ => {}
 		}
 
 		if let Some(res) = Self::eval_with_name("text2path(name)", path) {
-			return Some((res.raw.tag as u8, unsafe { res.raw.data.id }));
+			return Some((res.raw.tag.0, unsafe { res.raw.data.id }));
 		}
 		if let Some(id) = crate::hot_reload::image_type(path) {
-			return Some((raw_types::values::ValueTag::ImageTypepath as u8, id));
+			return Some((raw_types::values::ValueTag::ImageTypepath.0, id));
 		}
 		if let Some(found) = added_type(path) {
 			return Some(found);
 		}
 
-		last_definition(path).map(|proc| (raw_types::values::ValueTag::ProcRef as u8, proc.id.0))
+		last_definition(path).map(|proc| (raw_types::values::ValueTag::ProcRef.0, proc.id.0))
 	}
 
 	fn get_resource_index(&mut self, path: &str) -> Option<u32> {

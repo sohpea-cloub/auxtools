@@ -1729,7 +1729,7 @@ fn const_value(value: &ConstValue, pending: &Pending) -> Result<(u32, u32), Stri
 		ConstValue::Number(n) => (0x2A, n.to_bits()),
 		ConstValue::String(text) => (0x06, leaked_string(text)?),
 		ConstValue::Path(path) if pending.procs.contains_key(&strip_path(path)) => {
-			(raw_types::values::ValueTag::ProcRef as u32, pending.procs[&strip_path(path)])
+			(raw_types::values::ValueTag::ProcRef.0 as u32, pending.procs[&strip_path(path)])
 		}
 		ConstValue::Path(path) => {
 			let (tag, data) = AssembleEnv
@@ -2695,7 +2695,7 @@ impl dmasm::assembler::AssembleEnv for ReloadEnv<'_> {
 
 	fn get_type(&mut self, path: &str) -> Option<(u8, u32)> {
 		if let Some(&id) = self.pending.procs.get(&strip_path(path)) {
-			return Some((raw_types::values::ValueTag::ProcRef as u8, id));
+			return Some((raw_types::values::ValueTag::ProcRef.0, id));
 		}
 		AssembleEnv.get_type(path)
 	}

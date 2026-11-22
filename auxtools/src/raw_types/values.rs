@@ -5,17 +5,27 @@ macro_rules! value_tags {
 	(
 		$($variant:ident = $val:expr),* $(,)?
 	) => {
-		#[repr(u8)]
-		#[derive(PartialEq, Copy, Clone, Debug, Hash)]
-		#[non_exhaustive]
-		pub enum ValueTag {
-			$($variant = $val),*
-		}
+		/// What kind of thing a value is: the byte BYOND itself keeps. A build
+		/// newer than this list has tags it doesn't name, so any byte is a
+		/// tag, and code that goes by the tag has to allow for others.
+		#[repr(transparent)]
+		#[derive(PartialEq, Eq, Copy, Clone, Hash)]
+		pub struct ValueTag(pub u8);
 
+		#[allow(non_upper_case_globals)]
 		impl ValueTag {
+			$(pub const $variant: ValueTag = ValueTag($val);)*
+
 			pub const fn from_u8(value: u8) -> Option<Self> {
 				match value {
-					$($val => Some(Self::$variant),)*
+					$($val => Some(ValueTag($val)),)*
+					_ => None,
+				}
+			}
+
+			pub const fn name(self) -> Option<&'static str> {
+				match self.0 {
+					$($val => Some(stringify!($variant)),)*
 					_ => None,
 				}
 			}
@@ -125,7 +135,7 @@ impl fmt::Display for Value {
 					assert_eq!(funcs::get_string_table_entry(&mut entry, id), 1);
 					write!(f, "{:?}", crate::text_of(CStr::from_ptr((*entry).data).to_bytes()))
 				}
-				_ => write!(f, "Value({}, {})", self.tag as u8, self.data.id)
+				_ => write!(f, "Value({}, {})", self.tag.0, self.data.id)
 			}
 		}
 	}
@@ -143,15 +153,24 @@ impl fmt::Debug for Value {
 					assert_eq!(funcs::get_string_table_entry(&mut entry, id), 1);
 					write!(f, "{:?}", crate::text_of(CStr::from_ptr((*entry).data).to_bytes()))
 				}
-				_ => write!(f, "Value({}, {})", self.tag as u8, self.data.id)
+				_ => write!(f, "Value({}, {})", self.tag.0, self.data.id)
 			}
+		}
+	}
+}
+
+impl fmt::Debug for ValueTag {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		match self.name() {
+			Some(name) => f.write_str(name),
+			None => write!(f, "Unknown({:#04x})", self.0)
 		}
 	}
 }
 
 impl fmt::Display for ValueTag {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-		write!(f, "TODO")
+		fmt::Debug::fmt(self, f)
 	}
 }
 

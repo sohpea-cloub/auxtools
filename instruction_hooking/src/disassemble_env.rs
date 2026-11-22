@@ -18,7 +18,7 @@ impl dmasm::disassembler::DisassembleEnv for DisassembleEnv {
 
 	fn value_to_string_data(&mut self, tag: u32, data: u32) -> Option<Vec<u8>> {
 		unsafe {
-			let value = Value::new(std::mem::transmute(tag as u8), std::mem::transmute(data));
+			let value = Value::new(raw_types::values::ValueTag(tag as u8), raw_types::values::ValueData { id: data });
 			match value.to_dmstring() {
 				Ok(s) => Some(s.data().to_vec()),
 				_ => None

@@ -171,6 +171,6 @@ impl Server {
 
 	pub(super) fn reference(value: &Value) -> String {
 		let id = unsafe { value.raw.data.id };
-		format!("[0x{:x}]", (value.raw.tag as u32) << 24 | id)
+		format!("[0x{:x}]", (value.raw.tag.0 as u32) << 24 | id)
 	}
 }
