@@ -1,6 +1,6 @@
 use auxtools::*;
 
-use super::Server;
+use super::{Codes, Server};
 use auxtools_protocol::*;
 
 use crate::{profiler, unnamed};
@@ -11,7 +11,7 @@ impl Server {
 			ProfileRequest::Start { procs } => {
 				let only: Vec<u32> = procs
 					.iter()
-					.map(|proc| Self::proc_info(proc).map(|info| info.code.proc))
+					.map(|proc| Codes::proc_info(proc).map(|info| info.code.proc))
 					.collect::<Result<_, _>>()?;
 				if profiler::running() {
 					return Err("another profile is running".to_owned());
@@ -34,7 +34,8 @@ impl Server {
 				let proc = Proc::from_id(raw_types::procs::ProcId(code.proc)).ok_or_else(|| format!("the world has no proc {:#x}", code.proc))?;
 				let bytecode = match code.old {
 					0 => unsafe { proc.bytecode_mut_ptr() }.0 as usize,
-					old => (self.old_codes.borrow().get(old as usize - 1).copied()).ok_or_else(|| format!("{} has no old code {}", proc.path, old))?
+					old => (self.codes.old_codes.borrow().get(old as usize - 1).copied())
+						.ok_or_else(|| format!("{} has no old code {}", proc.path, old))?
 				};
 				if !profiler::exists() {
 					return Err(NO_PROFILE.to_owned());
@@ -61,7 +62,7 @@ impl Server {
 			.filter_map(|(proc, bytecode, total)| {
 				let proc = Proc::from_id(raw_types::procs::ProcId(proc))?;
 				let current = unsafe { proc.bytecode_mut_ptr() }.0 as usize;
-				let old = if bytecode == current { 0 } else { self.old_code_number(bytecode) };
+				let old = if bytecode == current { 0 } else { self.codes.old_code_number(bytecode) };
 				let (file, line) = start_of(bytecode, &proc);
 				Some(ProfiledCode {
 					proc: unnamed::proc_ref(&proc),
