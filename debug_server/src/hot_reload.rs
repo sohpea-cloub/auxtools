@@ -20,7 +20,7 @@ use dmasm::{
 
 use crate::{
 	assemble_env::AssembleEnv,
-	instruction_hooking::{hook_instruction, hooked_offsets, original_bytecode, unhook_instruction}
+	instruction_hooking::{hook_instruction, hooked_offsets, original_bytecode, original_code, unhook_instruction}
 };
 
 #[path = "reload_inherit.rs"]
@@ -498,7 +498,7 @@ pub fn prepare(request: &HotReloadRequest, warnings: &mut Vec<String>, skipped: 
 			}
 		};
 
-		if let Some(bytecode) = remap_lines(&original_bytecode(&proc), &moved.lines) {
+		if let Some(bytecode) = remap_lines(&original_code(&proc), &moved.lines) {
 			match runtime_tables::intern_misc(&bytecode) {
 				Ok(bytecode_id) => prepared.code.push(PreparedCode {
 					proc,
@@ -664,8 +664,7 @@ fn prepare_code(
 	if proc.is_hooked() {
 		warnings.push(format!("{}: auxtools has hooked it, so the hook runs instead of the new code", name));
 	}
-	let original = original_bytecode(&proc);
-	let bytecode = assemble(&name, reload, &original, pending, world_globals, added)?;
+	let bytecode = assemble(&name, reload, &original_code(&proc), pending, world_globals, added)?;
 	prepared_code(proc, name, reload, bytecode, pending, world_globals, added)
 }
 
@@ -830,7 +829,7 @@ fn global_slots(
 					let unique = |ids: BTreeSet<u32>| (ids.len() == 1).then(|| ids.first().copied()).flatten();
 					let places: Vec<_> = Proc::overrides(&strip_path(path))
 						.iter()
-						.filter_map(|proc| code_place(&original_bytecode(proc)))
+						.filter_map(|proc| code_place(&original_code(proc)))
 						.collect();
 					let initialized = world_globals.initialized();
 					let in_proc = initialized
@@ -868,7 +867,7 @@ fn proc_static(path: &str, nth: u32, name: &[u8], counts: &BTreeMap<String, BTre
 	let ids: BTreeSet<u32> = Proc::overrides(&strip_path(path))
 		.iter()
 		.filter_map(|proc| {
-			let named = globals_in(&original_bytecode(proc)).remove(name)?;
+			let named = globals_in(&original_code(proc)).remove(name)?;
 			(named.len() == declared).then(|| named.get(nth as usize).copied())?
 		})
 		.collect();
@@ -1143,7 +1142,7 @@ fn prepare_init_proc(
 		None => proc_template().ok()
 	}
 	.ok_or_else(|| fail("couldn't find a proc entry to copy".to_owned()))?;
-	let original = current.as_ref().map(original_bytecode).unwrap_or_default();
+	let original = current.as_ref().map(original_code).unwrap_or_default();
 
 	let bytecode = assemble(&shown, code, &original, pending, world_globals, added)?;
 	let mut entry = template;
@@ -2472,7 +2471,7 @@ fn world_has_debug_info() -> bool {
 	*known.get_or_insert_with(|| {
 		(0..)
 			.map_while(|id| Proc::from_id(raw_types::procs::ProcId(id)))
-			.any(|proc| original_bytecode(&proc).first() == Some(&Opcode::DbgFile.word()))
+			.any(|proc| original_code(&proc).first() == Some(&Opcode::DbgFile.word()))
 	})
 }
 
@@ -2628,7 +2627,7 @@ impl WorldGlobals {
 			let Some(proc) = crate::unnamed::find(auxtools_protocol::GLOBAL_INIT, 0) else {
 				return vec![];
 			};
-			let bytecode = original_bytecode(&proc);
+			let bytecode = original_code(&proc);
 			let (nodes, _) = dmasm::disassembler::disassemble(&bytecode, &mut LenientDisassembleEnv);
 			let (mut file, mut line) = (vec![], 0);
 			let mut set = vec![];
@@ -2657,7 +2656,7 @@ impl WorldGlobals {
 			let mut map: HashMap<Vec<u8>, Vec<(u32, String)>> = HashMap::new();
 			let mut id = 0;
 			while let Some(proc) = Proc::from_id(raw_types::procs::ProcId(id)) {
-				for (name, ids) in globals_in(&original_bytecode(&proc)) {
+				for (name, ids) in globals_in(&original_code(&proc)) {
 					map.entry(name).or_default().extend(ids.into_iter().map(|id| (id, proc.path.clone())));
 				}
 				id += 1;
