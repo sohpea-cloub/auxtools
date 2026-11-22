@@ -5,7 +5,7 @@ use auxtools::{
 	registry, Proc, Value
 };
 
-use crate::server_types::{Reconnected, SkinReloaded, SkinRequest};
+use auxtools_protocol::{Reconnected, SkinReloaded, SkinRequest};
 
 const NO_SKIN: u32 = 0xFFFF;
 

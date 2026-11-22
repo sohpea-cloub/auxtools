@@ -27,10 +27,8 @@ use std::{
 	time::{Duration, Instant}
 };
 
-use auxtools_cli::{
-	local::{self, Shared},
-	server_types::*
-};
+use auxtools_cli::local::{self, Shared};
+use auxtools_protocol::*;
 use serde_json::{json, Map, Value};
 
 use self::args::{Command, WaitFor};
@@ -323,7 +321,7 @@ impl World {
 		let (sender, received) = mpsc::channel();
 		let mut reader = stream.clone();
 		std::thread::spawn(move || loop {
-			let response = local::receive(&mut reader);
+			let response = auxtools_protocol::read(&mut reader);
 			let failed = response.is_err();
 			if sender.send(response).is_err() || failed {
 				break;
@@ -454,7 +452,7 @@ impl World {
 	}
 
 	fn leave(&mut self) {
-		let _ = local::send(&mut self.stream, &Request::Disconnect);
+		let _ = auxtools_protocol::write(&mut self.stream, &Request::Disconnect);
 	}
 
 	fn next(&mut self, until: Option<Instant>) -> Result<Option<Response>> {
@@ -498,7 +496,7 @@ impl World {
 	}
 
 	fn request_by(&mut self, request: Request, until: Instant) -> Result<Option<Response>> {
-		local::send(&mut self.stream, &request).map_err(|_| hung_up())?;
+		auxtools_protocol::write(&mut self.stream, &request).map_err(|_| hung_up())?;
 		loop {
 			match self.next(Some(until))? {
 				None => return Ok(None),
@@ -1126,7 +1124,7 @@ impl World {
 	}
 
 	fn observe(&mut self, patience: Duration) -> Option<Option<BreakpointReason>> {
-		local::send(&mut self.stream, &Request::Status).ok()?;
+		auxtools_protocol::write(&mut self.stream, &Request::Status).ok()?;
 		let until = Instant::now() + patience;
 		loop {
 			match self.next(Some(until)) {
@@ -1196,7 +1194,7 @@ impl World {
 				uncaught: Some(wait.runtime_filter.clone()),
 				caught: wait.caught.then(|| wait.runtime_filter.clone())
 			};
-			local::send(&mut self.stream, &catch).map_err(|_| hung_up())?;
+			auxtools_protocol::write(&mut self.stream, &catch).map_err(|_| hung_up())?;
 		}
 		let until = wait.timeout.map(|t| Instant::now() + t);
 		let triggered = !wait.breaks.is_empty() || !wait.changes.is_empty() || wait.runtimes;

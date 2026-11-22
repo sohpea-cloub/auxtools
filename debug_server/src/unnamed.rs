@@ -1,9 +1,8 @@
 use auxtools::{raw_types::procs::ProcId, runtime_tables, Proc};
 
-use crate::{
-	hot_reload,
-	server_types::{ProcRef, Reloaded, GLOBAL_INIT}
-};
+use auxtools_protocol::{ProcRef, Reloaded, GLOBAL_INIT};
+
+use crate::hot_reload;
 
 const IN_LIST: &str = "(in list)";
 const OTHER: &str = "(var initializer)";

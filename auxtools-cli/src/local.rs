@@ -11,7 +11,7 @@ use interprocess::{
 	ConnectWaitMode
 };
 
-use crate::server_types::{world_socket_name, world_socket_name_for, Request, Response, PROTOCOL_VERSION};
+use auxtools_protocol::{read, world_socket_name, world_socket_name_for, write, Request, Response, PROTOCOL_VERSION};
 
 pub fn world_name(pid: u32) -> String {
 	world_socket_name(pid)
@@ -66,27 +66,6 @@ impl Write for Shared {
 	fn flush(&mut self) -> io::Result<()> {
 		(&*self.0).flush()
 	}
-}
-
-pub fn send(stream: &mut impl Write, message: &impl serde::Serialize) -> io::Result<()> {
-	let data = bincode::serialize(message).map_err(io::Error::other)?;
-	stream.write_all(&(data.len() as u32).to_le_bytes())?;
-	stream.write_all(&data)?;
-	stream.flush()
-}
-
-pub fn receive(stream: &mut impl Read) -> io::Result<Response> {
-	const MAX_MESSAGE_LEN: u32 = 256 * 1024 * 1024;
-
-	let mut len = [0u8; 4];
-	stream.read_exact(&mut len)?;
-	let len = u32::from_le_bytes(len);
-	if len > MAX_MESSAGE_LEN {
-		return Err(io::Error::other(format!("message length {} exceeds the protocol limit", len)));
-	}
-	let mut data = vec![0; len as usize];
-	stream.read_exact(&mut data)?;
-	bincode::deserialize(&data).map_err(io::Error::other)
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -160,9 +139,9 @@ fn probe(stream: Stream) -> std::sync::mpsc::Receiver<io::Result<Probed>> {
 	std::thread::spawn(move || {
 		let mut stream = stream;
 		let answer = (|| {
-			send(&mut stream, &Request::WorldInfo)?;
+			write(&mut stream, &Request::WorldInfo)?;
 			loop {
-				match receive(&mut stream)? {
+				match read(&mut stream)? {
 					Response::WorldInfo { args, cwd, .. } => return Ok(Probed::Info(args, cwd)),
 					Response::Unavailable { reason } => return Ok(Probed::Unavailable(reason)),
 					Response::Disconnect => return Err(io::Error::other("it hung up")),
@@ -170,7 +149,7 @@ fn probe(stream: Stream) -> std::sync::mpsc::Receiver<io::Result<Probed>> {
 				}
 			}
 		})();
-		let _ = send(&mut stream, &Request::Disconnect);
+		let _ = write(&mut stream, &Request::Disconnect);
 		let _ = sender.send(answer);
 	});
 	receiver

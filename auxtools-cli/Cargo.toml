@@ -14,9 +14,9 @@ name = "auxtools"
 path = "src/main.rs"
 
 [dependencies]
+auxtools-protocol = { path = "../auxtools-protocol" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-bincode = "1"
 clap = { version = "4", default-features = false, features = ["std", "help", "usage", "error-context", "derive"] }
 dmasm = { workspace = true }
 dreammaker = { workspace = true }

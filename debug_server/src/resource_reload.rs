@@ -1,10 +1,9 @@
 use auxtools::appearance_tables;
 use dmasm::assembler::AssembleEnv as _;
 
-use crate::{
-	assemble_env::{AssembleEnv, RESOURCE_DIRS},
-	server_types::{HotReloadResource, ReloadedResource}
-};
+use auxtools_protocol::{HotReloadResource, ReloadedResource};
+
+use crate::assemble_env::{AssembleEnv, RESOURCE_DIRS};
 
 pub struct Prepared {
 	path: String,

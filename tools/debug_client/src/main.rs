@@ -1,6 +1,5 @@
 use std::{
 	collections::HashMap,
-	io::{Read, Write},
 	path::{Path, PathBuf},
 	time::Duration
 };
@@ -8,9 +7,9 @@ use std::{
 use auxtools_cli::{
 	byond::{self, Server},
 	game::{Game, Launch},
-	local::{self, Shared},
-	server_types::{ContinueKind, EvalResponse, InstructionRef, ProcRef, Request, Response}
+	local::{self, Shared}
 };
+use auxtools_protocol::{ContinueKind, EvalResponse, InstructionRef, ProcRef, Request, Response};
 
 const USAGE: &str = "\
 usage: debug_client WORLD.dmb --proc PATH --line N [options] [WATCH...]
@@ -103,24 +102,18 @@ struct Connection(Shared);
 
 impl Connection {
 	fn send(&mut self, request: &Request) {
-		let data = bincode::serialize(request).unwrap();
-		self.0.write_all(&(data.len() as u32).to_le_bytes()).unwrap();
-		self.0.write_all(&data).unwrap();
+		auxtools_protocol::write(&mut self.0, request).unwrap();
 		println!(">> {:?}", request);
 	}
 
 	fn recv_any(&mut self) -> Option<Response> {
-		let mut len = [0u8; 4];
-		if let Err(e) = self.0.read_exact(&mut len) {
-			println!("!! connection lost: {}", e);
-			return None;
+		match auxtools_protocol::read(&mut self.0) {
+			Ok(response) => Some(response),
+			Err(e) => {
+				println!("!! connection lost: {}", e);
+				None
+			}
 		}
-		let mut data = vec![0u8; u32::from_le_bytes(len) as usize];
-		if let Err(e) = self.0.read_exact(&mut data) {
-			println!("!! connection lost mid-message: {}", e);
-			return None;
-		}
-		Some(bincode::deserialize(&data).unwrap())
 	}
 
 	fn recv(&mut self) -> Option<Response> {

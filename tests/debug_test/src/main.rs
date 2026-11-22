@@ -4,9 +4,6 @@ mod client;
 #[allow(dead_code)]
 #[path = "../../test_runner/src/paths.rs"]
 mod paths;
-#[allow(dead_code)]
-#[path = "../../../debug_server/src/server_types.rs"]
-mod server_types;
 
 use std::{
 	path::PathBuf,
@@ -14,12 +11,12 @@ use std::{
 	time::{Duration, Instant}
 };
 
-use client::{Client, World};
-use paths::ByondCommand;
-use server_types::{
+use auxtools_protocol::{
 	BreakpointReason, BreakpointSetResult, ContinueKind, InstructionRef, ProcRef, ProfileReply, ProfileRequest, ProfileTotals, ProfiledCode, Request,
 	Response, VariablesRef, ENDING_CONTEXT
 };
+use client::{Client, World};
+use paths::ByondCommand;
 
 const BREAKPOINT_TARGET: &str = "/breakpoint_target";
 const TICK_MARKER: &str = "/tick_marker";

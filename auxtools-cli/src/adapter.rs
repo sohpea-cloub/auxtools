@@ -9,10 +9,10 @@ use std::{
 use auxtools_cli::{
 	byond::{self, Server},
 	game::{Game, Launch},
-	local::{self, Stream},
-	server_types::{
-		self as aux, ContinueKind, InstructionRef, ProcRef, Request as AuxRequest, Response as AuxResponse, ENDING_CONTEXT, GLOBAL_INIT, HELPER_FILE
-	}
+	local::{self, Stream}
+};
+use auxtools_protocol::{
+	self as aux, ContinueKind, InstructionRef, ProcRef, Request as AuxRequest, Response as AuxResponse, ENDING_CONTEXT, GLOBAL_INIT, HELPER_FILE
 };
 use dap_types::*;
 use serde::Deserialize;
@@ -2671,7 +2671,7 @@ fn default_library() -> Result<PathBuf, String> {
 mod tests {
 	use std::path::Path;
 
-	use auxtools_cli::server_types::{HitCondition, LogPart, RuntimeFilter};
+	use auxtools_protocol::{HitCondition, LogPart, RuntimeFilter};
 
 	use super::{changes_things, completion_place, hover_refuses, instruction_window, named_proc, parse_address, runtime_place, shown};
 
@@ -2938,10 +2938,10 @@ mod tests {
 		assert_eq!((proc.path.as_str(), proc.override_id), ("/mob/Login", 0));
 	}
 
-	fn three() -> Vec<auxtools_cli::server_types::BytecodeInstruction> {
+	fn three() -> Vec<auxtools_protocol::BytecodeInstruction> {
 		[(0, 2), (2, 1), (3, 3)]
 			.into_iter()
-			.map(|(offset, length)| auxtools_cli::server_types::BytecodeInstruction {
+			.map(|(offset, length)| auxtools_protocol::BytecodeInstruction {
 				offset,
 				words: vec![0; length],
 				text: "x".to_owned(),
@@ -2952,7 +2952,7 @@ mod tests {
 
 	#[test]
 	fn an_address_is_the_proc_its_code_and_the_offset() {
-		use auxtools_cli::server_types::{address, from_address, CodeRef};
+		use auxtools_protocol::{address, from_address, CodeRef};
 		let code = CodeRef { proc: 0x2a, old: 3 };
 		assert_eq!(address(code, 0x10), 0x0000_002a_0003_0010);
 		assert_eq!(from_address(0x0000_002a_0003_0010), (code, 0x10));
@@ -2963,7 +2963,7 @@ mod tests {
 
 	#[test]
 	fn a_window_has_as_many_places_as_asked_for_in_order() {
-		use auxtools_cli::server_types::{address, CodeRef};
+		use auxtools_protocol::{address, CodeRef};
 		let code = CodeRef { proc: 7, old: 0 };
 		let start = address(code, 0);
 		let listed = three();

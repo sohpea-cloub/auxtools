@@ -5,7 +5,7 @@ use std::{
 
 use interprocess::local_socket::{prelude::*, GenericNamespaced, ListenerOptions, Stream as LocalStream};
 
-use crate::server_types::world_socket_name;
+use auxtools_protocol::world_socket_name;
 
 pub fn world_name() -> String {
 	world_socket_name(std::process::id())

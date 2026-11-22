@@ -1,7 +1,5 @@
 use serde::{Deserialize, Serialize};
 
-pub const PROTOCOL_VERSION: u32 = 12;
-
 pub const WORLD_SHUTTING_DOWN: &str = "The world is shutting down";
 
 pub const ENDING_CONTEXT: &str = "ending";
@@ -9,16 +7,6 @@ pub const ENDING_CONTEXT: &str = "ending";
 pub const GLOBAL_INIT: &str = "(global init)";
 
 pub const HELPER_FILE: &str = "auxtools_launcher.dm";
-
-#[allow(dead_code)]
-pub fn world_socket_name(pid: u32) -> String {
-	world_socket_name_for(PROTOCOL_VERSION, pid)
-}
-
-#[allow(dead_code)]
-pub fn world_socket_name_for(protocol: u32, pid: u32) -> String {
-	format!("auxtools-debug-v{}-{}", protocol, pid)
-}
 
 #[derive(Serialize, Deserialize, Debug)]
 pub enum Request {
@@ -442,12 +430,10 @@ pub struct CodeRef {
 	pub old: u16
 }
 
-#[allow(dead_code)]
 pub const fn address(code: CodeRef, offset: u16) -> u64 {
 	(code.proc as u64) << 32 | (code.old as u64) << 16 | offset as u64
 }
 
-#[allow(dead_code)]
 pub const fn from_address(address: u64) -> (CodeRef, u16) {
 	let code = CodeRef {
 		proc: (address >> 32) as u32,
@@ -552,7 +538,6 @@ pub enum LogPart {
 	Expr(String)
 }
 
-#[allow(dead_code)]
 impl LogPart {
 	pub fn parse(message: &str) -> Vec<Self> {
 		let mut parts = vec![];
@@ -625,7 +610,6 @@ pub enum HitCondition {
 	Every(u32)
 }
 
-#[allow(dead_code)]
 impl HitCondition {
 	pub fn parse(text: &str) -> Result<Self, String> {
 		let text = text.trim();
@@ -672,7 +656,6 @@ pub struct RuntimeFilter {
 	pub without: Vec<String>
 }
 
-#[allow(dead_code)]
 impl RuntimeFilter {
 	pub fn parse(condition: &str) -> Self {
 		let mut filter = Self::default();

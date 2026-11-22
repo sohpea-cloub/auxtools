@@ -1,4 +1,4 @@
-use auxtools_cli::server_types::*;
+use auxtools_protocol::*;
 use serde_json::{json, Map, Value};
 
 use super::proc_name;
@@ -122,7 +122,7 @@ pub fn execution(pid: u32, paused: Option<(&BreakpointReason, &[StackFrame], Opt
 
 #[cfg(test)]
 mod tests {
-	use auxtools_cli::server_types::Rendered;
+	use auxtools_protocol::Rendered;
 	use serde_json::json;
 
 	use super::value;
@@ -134,7 +134,7 @@ mod tests {
 			serde_json::Value::Object(running),
 			json!({ "pid": 12, "paused": false, "reason": null, "message": null, "caught": null, "changes": [], "stack": [], "instruction": null })
 		);
-		let reason = auxtools_cli::server_types::BreakpointReason::Runtime {
+		let reason = auxtools_protocol::BreakpointReason::Runtime {
 			message: "bad index".to_owned(),
 			caught: true
 		};

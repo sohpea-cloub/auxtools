@@ -11,7 +11,7 @@ use winapi::{
 	vc::excpt::EXCEPTION_EXECUTE_HANDLER
 };
 
-use crate::server_types::BreakpointReason;
+use auxtools_protocol::BreakpointReason;
 
 extern "system" fn exception_filter(info: *mut EXCEPTION_POINTERS) -> LONG {
 	let _ = auxtools::guard(|| unsafe { report(info) });

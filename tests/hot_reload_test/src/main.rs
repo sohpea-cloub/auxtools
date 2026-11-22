@@ -4,9 +4,6 @@ mod client;
 #[allow(dead_code)]
 #[path = "../../test_runner/src/paths.rs"]
 mod paths;
-#[allow(dead_code)]
-#[path = "../../../debug_server/src/server_types.rs"]
-mod server_types;
 
 use std::{
 	collections::HashSet,
@@ -15,10 +12,10 @@ use std::{
 	time::{Duration, Instant}
 };
 
+use auxtools_protocol::*;
 use client::{Client, World};
 use dmasm::reload::{diff, Changes, ParseOptions, Snapshot};
 use paths::ByondCommand;
-use server_types::*;
 
 struct Source {
 	dir: PathBuf,

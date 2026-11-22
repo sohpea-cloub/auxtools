@@ -10,7 +10,7 @@ use auxtools_cli::{
 	local::{self, Shared}
 };
 
-use crate::server_types::{BreakpointReason, Request, Response};
+use auxtools_protocol::{BreakpointReason, ContinueKind, Request, Response};
 
 const TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -136,7 +136,7 @@ impl Client {
 	fn new(mut reader: Box<dyn Read + Send>, writer: Box<dyn Write + Send>, watcher: bool) -> Self {
 		let (sender, messages) = mpsc::channel();
 		std::thread::spawn(move || {
-			while let Ok(response) = read_message(&mut reader) {
+			while let Ok(response) = auxtools_protocol::read(&mut reader) {
 				if sender.send(response).is_err() {
 					return;
 				}
@@ -150,9 +150,7 @@ impl Client {
 	}
 
 	fn try_send(&mut self, request: &Request) -> std::io::Result<()> {
-		let data = bincode::serialize(request).unwrap();
-		self.writer.write_all(&(data.len() as u32).to_le_bytes())?;
-		self.writer.write_all(&data)
+		auxtools_protocol::write(&mut self.writer, request)
 	}
 
 	pub fn send_bytes(&mut self, bytes: &[u8]) {
@@ -189,7 +187,7 @@ impl Client {
 
 	pub fn resume(&mut self) {
 		let response = self.request(Request::Continue {
-			kind: crate::server_types::ContinueKind::Continue
+			kind: ContinueKind::Continue
 		});
 		assert!(matches!(response, Response::Ack), "expected Ack for Continue, got {:?}", response);
 	}
@@ -203,14 +201,4 @@ impl Client {
 			}
 		}
 	}
-}
-
-fn read_message(stream: &mut impl Read) -> std::io::Result<Response> {
-	let mut len_bytes = [0u8; 4];
-	stream.read_exact(&mut len_bytes)?;
-
-	let mut data = vec![0; u32::from_le_bytes(len_bytes) as usize];
-	stream.read_exact(&mut data)?;
-
-	Ok(bincode::deserialize(&data).unwrap())
 }

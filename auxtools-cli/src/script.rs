@@ -1,4 +1,4 @@
-use auxtools_cli::server_types::ScriptRequest;
+use auxtools_protocol::ScriptRequest;
 use dmasm::reload::ClientScript;
 
 type Source = Result<Option<ClientScript>, String>;

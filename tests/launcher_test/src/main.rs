@@ -705,7 +705,8 @@ impl Drop for KilledOnDrop {
 }
 
 fn no_debugger() {
-	use auxtools_cli::{local, server_types::Response};
+	use auxtools_cli::local;
+	use auxtools_protocol::Response;
 
 	const WHY: &str = "Couldn't find current_execution_context (BYOND 516.1600 is outside the checked range 1637..=1688)";
 	let (dir, dme) = attach_host_copy("no_debugger");
@@ -721,8 +722,8 @@ fn no_debugger() {
 	);
 	let pid = plain.id();
 	let stand_in = StandIn::listen(local::world_name(pid), |mut client| {
-		let _ = local::send(&mut client, &Response::Unavailable { reason: WHY.to_owned() });
-		let _ = local::send(&mut client, &Response::Disconnect);
+		let _ = auxtools_protocol::write(&mut client, &Response::Unavailable { reason: WHY.to_owned() });
+		let _ = auxtools_protocol::write(&mut client, &Response::Disconnect);
 		let _ = std::io::copy(&mut client, &mut std::io::sink());
 	});
 

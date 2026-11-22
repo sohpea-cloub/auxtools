@@ -6,9 +6,9 @@ authors.workspace = true
 edition.workspace = true
 
 [dependencies]
-bincode = "1"
 dmasm = { workspace = true }
 auxtools-cli = { path = "../../auxtools-cli" }
+auxtools-protocol = { path = "../../auxtools-protocol" }
 
 [lints]
 workspace = true

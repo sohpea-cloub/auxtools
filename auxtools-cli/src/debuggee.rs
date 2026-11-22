@@ -7,10 +7,8 @@ use std::{
 	time::Duration
 };
 
-use auxtools_cli::{
-	local::{self, Shared, Stream},
-	server_types::{BreakpointReason, DataChange, InstructionRef, Request, Response, Stop, ENDING_CONTEXT, WORLD_SHUTTING_DOWN}
-};
+use auxtools_cli::local::{Shared, Stream};
+use auxtools_protocol::{BreakpointReason, DataChange, InstructionRef, Request, Response, Stop, ENDING_CONTEXT, WORLD_SHUTTING_DOWN};
 use dap_types::{ContinuedEvent, StoppedEvent as Reasons};
 
 use crate::{
@@ -151,7 +149,7 @@ impl Debuggee {
 			.name("debuggee reader".to_owned())
 			.spawn(move || {
 				let reason = loop {
-					let response = match local::receive(&mut reader) {
+					let response = match auxtools_protocol::read(&mut reader) {
 						Ok(response) => response,
 						Err(e) => break format!("the connection closed: {}", e)
 					};
@@ -317,7 +315,7 @@ impl Debuggee {
 	}
 
 	pub fn send(&mut self, request: &Request) -> Result<(), String> {
-		local::send(&mut self.writer, request).map_err(|e| format!("couldn't reach the world: {}", e))
+		auxtools_protocol::write(&mut self.writer, request).map_err(|e| format!("couldn't reach the world: {}", e))
 	}
 
 	pub fn eval_unanswered(&mut self, command: String) -> Result<(), String> {
@@ -357,33 +355,21 @@ impl Debuggee {
 
 #[cfg(test)]
 mod tests {
-	use std::{
-		io::{Read, Write},
-		sync::{mpsc, Arc}
-	};
+	use std::sync::{mpsc, Arc};
 
-	use auxtools_cli::{
-		local::Stream,
-		server_types::{Request, Response}
-	};
+	use auxtools_cli::local::Stream;
+	use auxtools_protocol::{Request, Response};
 	use interprocess::local_socket::{prelude::*, GenericNamespaced, ListenerOptions};
 
 	use super::Debuggee;
 	use crate::dap::Output;
 
 	fn read_request(stream: &mut Stream) -> Request {
-		let mut len = [0u8; 4];
-		stream.read_exact(&mut len).unwrap();
-		let mut data = vec![0; u32::from_le_bytes(len) as usize];
-		stream.read_exact(&mut data).unwrap();
-		bincode::deserialize(&data).unwrap()
+		auxtools_protocol::read(stream).unwrap()
 	}
 
 	fn write_response(stream: &mut Stream, response: &Response) {
-		let data = bincode::serialize(response).unwrap();
-		stream.write_all(&(data.len() as u32).to_le_bytes()).unwrap();
-		stream.write_all(&data).unwrap();
-		stream.flush().unwrap();
+		auxtools_protocol::write(stream, response).unwrap();
 	}
 
 	#[test]

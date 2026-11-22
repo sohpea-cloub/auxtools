@@ -9,7 +9,7 @@ use dreammaker::{
 	Context, FileId, Location
 };
 
-use crate::server_types::Macro;
+use auxtools_protocol::Macro;
 
 static MACROS: Mutex<Option<Macros>> = Mutex::new(None);
 

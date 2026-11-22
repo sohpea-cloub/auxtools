@@ -7,14 +7,10 @@ use std::{
 };
 
 use auxtools::{byond_string, Proc, Value, WorldLoad};
+use auxtools_protocol::{HotReloadNewProc, HotReloadProc, HotReloadRequest, ProcRef, HELPER_FILE};
 use dmasm::reload::{ProcKey, Snapshot};
 
-use crate::{
-	connection, hot_reload,
-	server::Server,
-	server_types::{HotReloadNewProc, HotReloadProc, HotReloadRequest, ProcRef, HELPER_FILE},
-	waker
-};
+use crate::{connection, hot_reload, server::Server, waker};
 
 pub const DEBUG_VAR: &str = "AUXTOOLS_DEBUG";
 

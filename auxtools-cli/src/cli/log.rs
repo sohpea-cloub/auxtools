@@ -4,7 +4,8 @@ use std::{
 	time::{Duration, Instant}
 };
 
-use auxtools_cli::{local, server_types::*};
+use auxtools_cli::local;
+use auxtools_protocol::*;
 use serde_json::json;
 
 use super::{args, hung_up, seconds_text, unexpected, Failure, Result, World, HUNG_UP, TIMED_OUT};
@@ -159,7 +160,7 @@ impl Follower {
 					limit: None,
 					follow: true
 				};
-				if local::send(&mut world.stream, &asked).is_err() {
+				if auxtools_protocol::write(&mut world.stream, &asked).is_err() {
 					world.reconnect(until)?;
 					continue;
 				}
@@ -371,7 +372,7 @@ pub fn to_json(entry: &JournalEntry) -> serde_json::Value {
 
 #[cfg(test)]
 mod tests {
-	use auxtools_cli::server_types::{JournalEntry, JournalEvent, JournalFrame};
+	use auxtools_protocol::{JournalEntry, JournalEvent, JournalFrame};
 
 	use super::{block, clock, duration, to_json};
 

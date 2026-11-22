@@ -5,7 +5,7 @@ use auxtools::{
 	*
 };
 
-use crate::server_types::{ProfiledInstruction, ProfiledTotal};
+use auxtools_protocol::{ProfiledInstruction, ProfiledTotal};
 
 const MOST_CALLS: usize = 1024;
 

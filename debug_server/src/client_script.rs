@@ -5,7 +5,7 @@ use auxtools::{
 	registry, shutdown, StringRef, Value
 };
 
-use crate::server_types::{ScriptReloaded, ScriptRequest};
+use auxtools_protocol::{ScriptReloaded, ScriptRequest};
 
 const NO_TEXT: u32 = 0xFFFF;
 

@@ -1,9 +1,7 @@
 use std::time::{Duration, Instant};
 
-use auxtools_cli::{
-	local,
-	server_types::{Reconnected, Request, Response, ENDING_CONTEXT}
-};
+use auxtools_cli::local;
+use auxtools_protocol::{Reconnected, Request, Response, ENDING_CONTEXT};
 use serde_json::json;
 
 use super::{args, seconds_text, Failure, Result, World, HUNG_UP, TIMED_OUT};
@@ -18,7 +16,7 @@ fn ask(world: &mut World, expression: &str) -> Result<()> {
 		command: expression.to_owned(),
 		context: Some(ENDING_CONTEXT.to_owned())
 	};
-	local::send(&mut world.stream, &request).map_err(|_| super::hung_up())
+	auxtools_protocol::write(&mut world.stream, &request).map_err(|_| super::hung_up())
 }
 
 fn gone_by(pid: u32, until: Instant) -> bool {

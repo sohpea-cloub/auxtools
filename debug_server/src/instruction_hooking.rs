@@ -4,11 +4,9 @@ use auxtools::*;
 use instruction_hooking::{disassemble_env, InstructionHook};
 use lazy_static::lazy_static;
 
-use crate::{
-	server::Server,
-	server_types::{BreakpointReason, ContinueKind},
-	DEBUG_SERVER
-};
+use auxtools_protocol::{BreakpointReason, ContinueKind};
+
+use crate::{server::Server, DEBUG_SERVER};
 
 const OPCODE_DBGFILE: u32 = 0x84;
 const OPCODE_DBGLINE: u32 = 0x85;

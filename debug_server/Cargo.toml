@@ -13,10 +13,9 @@ crate-type = ["cdylib"]
 
 [dependencies]
 auxtools = { path = "../auxtools" }
+auxtools-protocol = { path = "../auxtools-protocol" }
 instruction_hooking = { path = "../instruction_hooking" }
 lazy_static = { workspace = true }
-serde = { version = "1", features = ["derive"] }
-bincode = "1"
 dmasm = { workspace = true }
 dreammaker = { workspace = true }
 interprocess = "=2.4.7"

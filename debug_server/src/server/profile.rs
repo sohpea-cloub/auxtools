@@ -1,7 +1,9 @@
 use auxtools::*;
 
 use super::Server;
-use crate::{profiler, server_types::*, unnamed};
+use auxtools_protocol::*;
+
+use crate::{profiler, unnamed};
 
 impl Server {
 	pub(super) fn profile(&mut self, request: ProfileRequest) -> Result<ProfileReply, String> {

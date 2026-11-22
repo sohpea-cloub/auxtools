@@ -1,6 +1,7 @@
 use std::{collections::HashMap, path::PathBuf};
 
-use auxtools_cli::{local, server_types::*};
+use auxtools_cli::local;
+use auxtools_protocol::*;
 use serde_json::json;
 
 pub struct Report {

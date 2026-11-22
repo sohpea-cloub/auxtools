@@ -8,9 +8,7 @@ edition.workspace = true
 [dependencies]
 debug_server = { path = "../../debug_server" }
 auxtools-cli = { path = "../../auxtools-cli" }
-serde = { version = "1", features = ["derive"] }
-dmasm = { workspace = true }
-bincode = "1"
+auxtools-protocol = { path = "../../auxtools-protocol" }
 
 [lints]
 workspace = true

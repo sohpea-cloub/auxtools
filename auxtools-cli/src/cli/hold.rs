@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use auxtools_cli::server_types::{Request, Response};
+use auxtools_protocol::{Request, Response};
 
 use super::{
 	args::{Command, Wait, WaitFor},

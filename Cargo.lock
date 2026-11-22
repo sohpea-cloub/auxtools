@@ -81,7 +81,7 @@ dependencies = [
 name = "auxtools-cli"
 version = "3.1.2-dev"
 dependencies = [
- "bincode",
+ "auxtools-protocol",
  "clap",
  "dap-types",
  "dmasm",
@@ -100,6 +100,15 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
+]
+
+[[package]]
+name = "auxtools-protocol"
+version = "3.1.2-dev"
+dependencies = [
+ "bincode",
+ "dmasm",
+ "serde",
 ]
 
 [[package]]
@@ -273,7 +282,7 @@ name = "debug_client"
 version = "0.1.0"
 dependencies = [
  "auxtools-cli",
- "bincode",
+ "auxtools-protocol",
  "dmasm",
 ]
 
@@ -282,14 +291,13 @@ name = "debug_server"
 version = "3.1.2-dev"
 dependencies = [
  "auxtools",
- "bincode",
+ "auxtools-protocol",
  "dmasm",
  "dreammaker",
  "instruction_hooking",
  "interprocess",
  "lazy_static",
  "region",
- "serde",
  "winapi",
 ]
 
@@ -298,10 +306,8 @@ name = "debug_test"
 version = "0.1.0"
 dependencies = [
  "auxtools-cli",
- "bincode",
+ "auxtools-protocol",
  "debug_server",
- "dmasm",
- "serde",
 ]
 
 [[package]]
@@ -463,10 +469,9 @@ name = "hot_reload_test"
 version = "0.1.0"
 dependencies = [
  "auxtools-cli",
- "bincode",
+ "auxtools-protocol",
  "debug_server",
  "dmasm",
- "serde",
 ]
 
 [[package]]
@@ -540,6 +545,7 @@ name = "launcher_test"
 version = "0.1.0"
 dependencies = [
  "auxtools-cli",
+ "auxtools-protocol",
  "debug_server",
  "interprocess",
  "serde_json",

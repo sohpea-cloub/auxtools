@@ -3,7 +3,7 @@ use std::{
 	path::{Path, PathBuf}
 };
 
-use auxtools_cli::server_types::SkinRequest;
+use auxtools_protocol::SkinRequest;
 
 #[derive(Clone, PartialEq, Eq)]
 struct Text {

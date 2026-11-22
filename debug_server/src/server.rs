@@ -1,8 +1,7 @@
 use std::{
 	cell::{OnceCell, RefCell},
 	collections::{BTreeMap, HashMap, VecDeque},
-	error::Error,
-	io::{Read, Write},
+	io::Write,
 	sync::{
 		atomic::{AtomicU64, Ordering},
 		mpsc, Mutex
@@ -15,12 +14,10 @@ use auxtools::{
 	raw_types::values::{ValueData, ValueTag},
 	*
 };
+use auxtools_protocol::*;
 use instruction_hooking::disassemble_env;
 
-use super::{
-	instruction_hooking::{hook_instruction, original_bytecode, unhook_all, unhook_instruction},
-	server_types::*
-};
+use super::instruction_hooking::{hook_instruction, original_bytecode, unhook_all, unhook_instruction};
 use crate::{
 	connection::{self, Connection},
 	console, hot_reload, journal, resource_reload, unnamed, waker
@@ -221,8 +218,6 @@ struct Acceptor {
 
 static ACCEPTOR: Mutex<Option<Acceptor>> = Mutex::new(None);
 
-const MAX_REQUEST_LEN: u32 = 256 * 1024 * 1024;
-
 const EVAL_CODE_KEPT: usize = 256;
 
 #[derive(PartialEq, Eq, Hash)]
@@ -386,7 +381,7 @@ impl Server {
 			while let Ok(event) = events.recv() {
 				if let Event::Connected(_, mut connection) = event {
 					for response in [Response::Unavailable { reason: reason.clone() }, Response::Disconnect] {
-						if Self::send(&mut connection, &response).is_err() {
+						if auxtools_protocol::write(&mut connection, &response).is_err() {
 							break;
 						}
 					}
@@ -3418,22 +3413,8 @@ impl Server {
 		}
 	}
 
-	pub(crate) fn send(stream: &mut impl Write, response: &Response) -> Result<(), Box<dyn Error>> {
-		stream.write_all(&Self::encode(response)?)?;
-		stream.flush()?;
-		Ok(())
-	}
-
-	fn encode(response: &Response) -> Result<Vec<u8>, Box<dyn Error>> {
-		let data = bincode::serialize(response)?;
-		let mut bytes = Vec::with_capacity(data.len() + 4);
-		bytes.extend_from_slice(&(data.len() as u32).to_le_bytes());
-		bytes.extend_from_slice(&data);
-		Ok(bytes)
-	}
-
 	fn deliver(client: &mut Client, response: &Response) -> bool {
-		Self::encode(response).is_ok_and(|bytes| client.outbox.try_send(bytes).is_ok())
+		auxtools_protocol::frame(response).is_ok_and(|bytes| client.outbox.try_send(bytes).is_ok())
 	}
 
 	fn writer(mut connection: Connection) -> (mpsc::SyncSender<Vec<u8>>, thread::JoinHandle<()>) {
@@ -3444,7 +3425,7 @@ impl Server {
 					return;
 				}
 			}
-			let _ = Self::send(&mut connection, &Response::Disconnect);
+			let _ = auxtools_protocol::write(&mut connection, &Response::Disconnect);
 		});
 		(outbox, writer)
 	}
@@ -3573,7 +3554,7 @@ impl Drop for Server {
 
 		while let Ok(event) = self.events.try_recv() {
 			if let Event::Connected(_, mut connection) = event {
-				thread::spawn(move || Self::send(&mut connection, &Response::Disconnect).is_ok());
+				thread::spawn(move || auxtools_protocol::write(&mut connection, &Response::Disconnect).is_ok());
 			}
 		}
 	}
@@ -3588,26 +3569,11 @@ pub(crate) fn is_expression_frame(ctx: *mut raw_types::procs::ExecutionContext) 
 		.any(|path| Proc::find(path).is_some_and(|stub| stub.id == id))
 }
 
-fn read_request(stream: &mut impl Read, buf: &mut Vec<u8>) -> Result<Request, Box<dyn Error>> {
-	let mut len_bytes = [0u8; 4];
-	stream.read_exact(&mut len_bytes)?;
-	let len = u32::from_le_bytes(len_bytes);
-
-	if len > MAX_REQUEST_LEN {
-		return Err(format!("request length {} exceeds the protocol limit", len).into());
-	}
-
-	buf.resize(len as usize, 0);
-	stream.read_exact(buf)?;
-	Ok(bincode::deserialize::<Request>(buf)?)
-}
-
 impl ServerThread {
 	fn run(&self, id: ClientId, mut stream: Connection) {
-		let mut buf = vec![];
 		waker::client_connected();
 
-		while let Ok(request) = read_request(&mut stream, &mut buf) {
+		while let Ok(request) = auxtools_protocol::read::<Request>(&mut stream) {
 			if let Request::Disconnect = request {
 				break;
 			}

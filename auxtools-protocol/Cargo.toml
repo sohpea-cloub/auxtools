@@ -1,0 +1,18 @@
+[package]
+name = "auxtools-protocol"
+description = "Messages between a world's debug server and its clients"
+version.workspace = true
+publish = false
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+license = "GPL-3.0"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+bincode = "1"
+dmasm = { workspace = true }
+
+[lints]
+workspace = true

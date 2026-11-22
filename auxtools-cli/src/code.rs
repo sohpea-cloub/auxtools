@@ -7,7 +7,7 @@ use std::{
 	time::{Duration, Instant, SystemTime}
 };
 
-use auxtools_cli::server_types::{
+use auxtools_protocol::{
 	HotReloadInitProc, HotReloadLines, HotReloadNewProc, HotReloadProc, HotReloadRequest, HotReloadResource, HotReloadVarDefault, Macro, ProcRef,
 	ReloadedResource, RemovedVar, ScriptRequest, SkinRequest
 };

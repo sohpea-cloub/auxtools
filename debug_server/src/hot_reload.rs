@@ -8,6 +8,7 @@ use auxtools::{
 	runtime_tables::{self, type_fields, ProcEntryWords, NONE},
 	shutdown, Proc, StringRef
 };
+use auxtools_protocol::{HotReloadInitProc, HotReloadNewProc, HotReloadProc, HotReloadRequest, HotReloadVarDefault, ProcRef, Reloaded, RemovedVar};
 use dmasm::{
 	assembler::AssembleEnv as _,
 	reload::{BuiltinInherited, ConstValue, InList, NewType, NewVar, ProcSettings, Redeclared, RemovedProc, Reparented},
@@ -16,8 +17,7 @@ use dmasm::{
 
 use crate::{
 	assemble_env::AssembleEnv,
-	instruction_hooking::{hook_instruction, hooked_offsets, original_bytecode, unhook_instruction},
-	server_types::{HotReloadInitProc, HotReloadNewProc, HotReloadProc, HotReloadRequest, HotReloadVarDefault, ProcRef, Reloaded, RemovedVar}
+	instruction_hooking::{hook_instruction, hooked_offsets, original_bytecode, unhook_instruction}
 };
 
 #[path = "reload_inherit.rs"]
@@ -722,7 +722,7 @@ fn prepare_global_init(
 	added: &mut AddedVars,
 	warnings: &mut Vec<String>
 ) -> Result<Option<StartingInit>, String> {
-	const NAME: &str = crate::server_types::GLOBAL_INIT;
+	const NAME: &str = auxtools_protocol::GLOBAL_INIT;
 	let ran = || {
 		format!(
 			"{}: global initialization has already run; rebuild to apply changed global and static initializers",
@@ -854,7 +854,7 @@ fn global_slots(
 }
 
 fn global_init_proc() -> Option<Proc> {
-	let proc = crate::unnamed::find(crate::server_types::GLOBAL_INIT, 0)?;
+	let proc = crate::unnamed::find(auxtools_protocol::GLOBAL_INIT, 0)?;
 	let types = runtime_tables::type_count().ok()?;
 	let a_types = (0..types).any(|type_id| runtime_tables::type_field(type_id, type_fields::INIT_PROC).ok() == Some(proc.id.0));
 	(!a_types).then_some(proc)
@@ -2623,7 +2623,7 @@ struct WorldGlobals(Option<HashMap<Vec<u8>, Vec<(u32, String)>>>, Option<Vec<(Ve
 impl WorldGlobals {
 	fn initialized(&mut self) -> &[(Vec<u8>, Vec<u8>, u32, u32)] {
 		self.1.get_or_insert_with(|| {
-			let Some(proc) = crate::unnamed::find(crate::server_types::GLOBAL_INIT, 0) else {
+			let Some(proc) = crate::unnamed::find(auxtools_protocol::GLOBAL_INIT, 0) else {
 				return vec![];
 			};
 			let bytecode = original_bytecode(&proc);

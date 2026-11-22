@@ -9,7 +9,7 @@ use std::{
 
 use dmasm::reload::{ConstValue, InList, Param, StaticVar};
 
-use crate::server_types::HotReloadRequest;
+use auxtools_protocol::HotReloadRequest;
 
 static LOADED: AtomicBool = AtomicBool::new(true);
 

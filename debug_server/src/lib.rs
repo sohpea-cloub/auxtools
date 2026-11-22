@@ -11,7 +11,6 @@ mod macros;
 mod profiler;
 mod resource_reload;
 mod server;
-mod server_types;
 mod skin;
 mod stddef;
 mod unnamed;

@@ -6,7 +6,7 @@ use std::{
 
 use auxtools::{byond_string, Value};
 
-use crate::server_types::{JournalEntry, JournalEvent, JournalKind};
+use auxtools_protocol::{JournalEntry, JournalEvent, JournalKind};
 
 pub const CAPACITY: usize = 4000;
 
