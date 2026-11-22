@@ -55,6 +55,10 @@ impl ByondVersion {
     pub(crate) const fn folds_nan_tests_cleanly(self) -> bool {
         self.build == 1670 || self.at_least(1672)
     }
+
+    pub(crate) const fn folds_within_nan_tests(self) -> bool {
+        self.at_least(1670)
+    }
 }
 
 impl ByondVersion {

@@ -100,6 +100,17 @@ fn nan_tests_fold_from_516() {
         ret(ByondVersion::new(516, 1671), "isnan(1)"),
         "PushInt 0\nGetFlag"
     );
+    assert_eq!(
+        ret(ByondVersion::new(516, 1669), "!isnan(1)"),
+        "PushInt 0\nGetFlag\nNot"
+    );
+    for build in [1670, 1671, 1672] {
+        assert_eq!(ret(ByondVersion::new(516, build), "!isnan(1)"), "PushInt 1");
+        assert_eq!(
+            ret(ByondVersion::new(516, build), "-(isnan(31))"),
+            "PushInt 0"
+        );
+    }
     assert_eq!(ret(B516_1688, "!isnan(1)"), "PushInt 1");
     assert_eq!(ret(B516_1688, "isinf(-1e39)"), "PushInt 1");
     assert_eq!(

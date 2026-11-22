@@ -455,6 +455,7 @@
 /proc/f(a)
 	return arctan(0, 0)
 // Guards: nan_tests_fold_from_516 (byond_versions.rs)
+// Known 516.1670-516.1670: /proc/f  516.1670's DreamMaker leaves out reading the flag after an `isnan()` or `isinf()` it runs, which crashes the server (a BYOND bug); dmasm reads it
 /proc/f(a)
 	return isinf(/obj)
 // Guards: rarer_forms_of_builtins (byond_versions.rs)

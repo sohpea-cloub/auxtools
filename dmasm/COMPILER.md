@@ -112,6 +112,7 @@ receiver for `a.b.x`. dmasm matches these reuse and invalidation rules.
 | Empty proc at a file's end | Names the next included file in debug info | Uses the proc's source file |
 | `*p[i] = x` from 516.1668 | Drops the index and writes through the cache | Writes the indexed element |
 | `*(&x)` before 516.1668 | Reads or writes `*x`, dereferencing x's value: a "bad pointer" error unless x holds a pointer | Reads or writes x |
+| `isnan()` or `isinf()` of a value not constant, in 516.1670 | Leaves out reading the test's flag; the server crashes | Reads the flag |
 | Out-of-range constants in `&`, `\|`, `^`, `<<`, `>>` | Inconsistent, build-dependent 24-bit conversion | Uses the low 24 bits of the nearest 32-bit integer |
 | `pick()` ending in a zero-weight entry, before 516.1689 | Jumps outside the proc if no earlier entry is selected | Selects the last entry whose weight is not a constant zero |
 
@@ -192,7 +193,8 @@ platform-sensitive angle/color folding.
 Two copied quirks also warn:
 
 - In 516.1648–516.1669 and 516.1671, constant `isnan`/`isinf` tests emit a result
-  followed by `GetFlag`, returning the previous test flag.
+  followed by `GetFlag`, returning the previous test flag. From 516.1670 a test inside
+  another constant expression (`!isnan(1)`) folds with it, 516.1671 too.
 - Before 516.1685, changing a list element through `?.` with an RHS that uses
   the cache resolves the list from the cache value left by the RHS.
 

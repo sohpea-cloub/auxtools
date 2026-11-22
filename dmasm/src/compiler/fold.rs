@@ -73,6 +73,13 @@ pub(super) fn constant(c: &Compiler, expr: &Expression) -> Option<Constant> {
         {
             return None;
         }
+        if follow.is_empty()
+            && !c.byond.folds_nan_tests_cleanly()
+            && matches!(&term.elem, Term::Call(name, args)
+                if args.len() == 1 && super::versions::nan_test(name.as_str(), 0.0).is_some())
+        {
+            return None;
+        }
         if !follow.is_empty()
             && (follow
                 .iter()
@@ -347,7 +354,7 @@ fn base_value(c: &Compiler, term: &Term) -> Option<Constant> {
         Term::Call(name, args)
             if args.len() == 1
                 && super::versions::nan_test(name.as_str(), 0.0).is_some()
-                && c.byond.folds_nan_tests_cleanly() =>
+                && c.byond.folds_within_nan_tests() =>
         {
             match value(c, &args[0])? {
                 Constant::Number(n) => {

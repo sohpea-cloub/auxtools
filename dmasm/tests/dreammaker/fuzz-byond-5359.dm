@@ -1,4 +1,5 @@
 // Guards: the code of a reduced fuzz case: byond mode on 516.1688, seed 5359, "515.1637: new: globals differ"
+// Known 516.1670-516.1670: /proc/gh41  516.1670's DreamMaker leaves out reading the flag after an `isnan()` or `isinf()` it runs, which crashes the server (a BYOND bug); dmasm reads it
 #define DEBUG
 
 #define FZD3 1
