@@ -1,25 +1,6 @@
 use super::CompileError;
 use crate::{ByondVersion, Instruction};
 
-const NEW_IN_516: &[&str] = &[
-    "astype",
-    "bound_pixloc",
-    "lerp",
-    "load_ext",
-    "sign",
-    "values_cut_over",
-    "values_cut_under",
-    "values_dot",
-    "values_product",
-    "values_sum",
-    "vector",
-    "pixloc",
-];
-
-pub(super) fn has_builtin(byond: ByondVersion, name: &str) -> bool {
-    byond.is_516() || !NEW_IN_516.contains(&name)
-}
-
 pub(super) fn require(
     byond: ByondVersion,
     has: fn(ByondVersion) -> bool,

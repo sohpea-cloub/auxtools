@@ -58,164 +58,82 @@ pub(super) fn emit(
     name: &str,
     args: &Vec<Expression>,
 ) -> Result<Option<EvalKind>, CompileError> {
-    if !super::versions::has_builtin(compiler.byond, name) {
+    let Some(builtin) = builtins::find(name).filter(|builtin| builtin.is_in(compiler.byond)) else {
         return Ok(None);
-    }
-    if matches!(name, "browse" | "browse_rsc" | "output" | "load_resource") && !args.is_empty() {
-        push_args(compiler, &args[..1])?;
-        for arg in &args[1..] {
-            push_args(compiler, std::slice::from_ref(arg))?;
-            compiler.emit_ins(Instruction::Pop);
-        }
-        return Ok(Some(EvalKind::Stack));
-    }
-    if name == "shutdown" && matches!(args.len(), 1 | 2) {
-        push_args(compiler, args)?;
-        for _ in args.len()..2 {
-            push_null(compiler);
-        }
-        compiler.emit_ins(Instruction::ShutdownArgs);
-        return Ok(Some(EvalKind::Stack));
-    }
-    if name == "animate" && !args.is_empty() {
-        if emit_statement_builtin(compiler, name, args)? {
-            let dropped = compiler.nodes.pop();
-            debug_assert!(matches!(
-                dropped,
-                Some(crate::Node::Instruction(Instruction::Pop, _))
-            ));
-            return Ok(Some(EvalKind::Stack));
+    };
+    if builtin.code {
+        if let Some(kind) = emit_code(compiler, name, args)? {
+            return Ok(Some(kind));
         }
     }
-    if name == "statpanel" && args.len() == 1 {
-        push_args(compiler, args)?;
-        compiler.emit_ins(Instruction::StatPanelCheck);
-        compiler.emit_ins(Instruction::GetFlag);
-        return Ok(Some(EvalKind::Stack));
-    }
-    let value = builtins::find(name).map(|builtin| &builtin.value);
-    if let Some(Value::None) = value {
-        return Err(CompileError::UnsupportedBuiltin {
-            proc: name.to_owned(),
-        });
-    }
-
-    if name == "block" && (3..=5).contains(&args.len()) {
-        push_args(compiler, args)?;
-        for _ in args.len()..6 {
-            compiler.emit_ins(Instruction::PushVal(operands::Value::Null));
-        }
-        compiler.emit_ins(Instruction::BlockXYZ);
-        return Ok(Some(EvalKind::Stack));
-    }
-    if (name == "time2text" || name == "round") && args.is_empty() {
-        push_null(compiler);
-        if name == "time2text" {
-            push_null(compiler);
-        }
-        compiler.emit_ins(if name == "time2text" {
-            Instruction::Time2Text
-        } else {
-            Instruction::Round
-        });
-        return Ok(Some(EvalKind::Stack));
-    }
-
-    if name == "rgb2num" {
-        if let Some(channels) = rgb2num_const(compiler, args) {
-            for c in &channels {
-                compiler.emit_ins(Instruction::PushInt(*c as i32));
+    let n = args.len();
+    match &builtin.value {
+        Value::Stack { params, ins } => {
+            emit_stack(compiler, name, params, ins, args)?;
+            if matches!(name, "range" | "orange") {
+                compiler.emit_ins(Instruction::CopyList);
             }
-            compiler.emit_ins(Instruction::NewList(channels.len() as u32));
-            return Ok(Some(EvalKind::Stack));
         }
-    }
-
-    if let Some(Value::Stack { params, ins }) = value {
-        emit_stack(compiler, name, params, ins, args)?;
-        if matches!(name, "range" | "orange") {
-            compiler.emit_ins(Instruction::CopyList);
-        }
-
-        return Ok(Some(EvalKind::Stack));
-    }
-
-    if matches!(name, "min" | "max") && args.len() == 1 {
-        let list = arglist_inner(&args[0]).unwrap_or(&args[0]).clone();
-        args::emit_normal(compiler, args::ArgsContext::Proc, vec![list])?;
-        compiler.emit_ins(if name == "min" {
-            Instruction::MinList
-        } else {
-            Instruction::MaxList
-        });
-        return Ok(Some(EvalKind::Stack));
-    }
-
-    if let Some(Value::Counted { min, max, ins }) = value {
-        emit_counted(compiler, name, (*min, *max), *ins, args)?;
-        return Ok(Some(EvalKind::Stack));
-    }
-
-    let arg_count = args.len() as u32;
-
-    if let Some(kind) = emit_overloaded(compiler, name, args)? {
-        return Ok(Some(kind));
-    }
-
-    match name {
-        "arglist" => {
-            if arg_count != 1 {
-                return Err(CompileError::IncorrectArgCount(name.to_owned()));
-            }
-
-            args::emit_single_normal(compiler, args::ArgsContext::Proc, args[0].clone())?;
-            Ok(Some(EvalKind::ArgList))
-        }
-
-        "initial" => {
-            if arg_count != 1 {
-                return Err(CompileError::IncorrectArgCount(name.to_owned()));
-            }
-
-            if let Some(var) = initial_static_field(compiler, &args[0])? {
-                compiler.emit_ins(Instruction::GetVar(var));
-                return Ok(Some(EvalKind::Stack));
-            }
-            if let Some(var) = initial_safe(compiler, &args[0])? {
-                compiler.emit_ins(Instruction::GetVar(var));
-                return Ok(Some(EvalKind::Stack));
-            }
-            let arg = args[0].clone();
-            let var = match compiler.emit_expr(arg)? {
-                EvalKind::Field(builder, field) => {
-                    builder.get_initial_field(DMString(field.into()))
-                }
-
-                EvalKind::Var(global @ Variable::Global(_)) => Variable::Initial(Box::new(global)),
-
-                EvalKind::Var(
-                    var @ (Variable::Local(_)
-                    | Variable::Arg(_)
-                    | Variable::Src
-                    | Variable::Usr
-                    | Variable::Dot),
-                ) => Variable::Initial(Box::new(var)),
-
-                EvalKind::ListRef => {
-                    compiler.emit_ins(Instruction::SetVar(Variable::CacheKey));
-                    compiler.emit_ins(Instruction::SetVar(Variable::Cache));
-                    Variable::Initial(Box::new(Variable::CacheIndex))
-                }
-
-                _ => return Err(CompileError::ExpectedFieldReference),
+        Value::Counted { min, max, ins } => emit_counted(compiler, name, (*min, *max), *ins, args)?,
+        Value::ByCount { forms } => {
+            let form = forms
+                .iter()
+                .find(|(fewest, most, _)| (*fewest..=*most).contains(&n));
+            let Some((_, most, ins)) = form else {
+                return Ok(None);
             };
-
-            compiler.emit_ins(Instruction::GetVar(var));
-            Ok(Some(EvalKind::Stack))
+            push_args(compiler, args)?;
+            for _ in n..*most {
+                push_null(compiler);
+            }
+            compiler.emit_ins(ins.clone());
         }
-
-        _ => Ok(None),
+        Value::Test { ins } if n >= 1 => emit_tests(compiler, name, ins, args)?,
+        Value::Test { .. } | Value::Code => return Ok(None),
+        Value::None => {
+            return Err(CompileError::UnsupportedBuiltin {
+                proc: name.to_owned(),
+            })
+        }
     }
+    Ok(Some(EvalKind::Stack))
+}
+
+fn emit_tests(
+    compiler: &mut Compiler<'_>,
+    name: &str,
+    test: &Instruction,
+    args: &[Expression],
+) -> Result<(), CompileError> {
+    let n = args.len();
+    if n == 1 && super::versions::folds(compiler.byond, name) {
+        let known = super::fold::number(compiler, &args[0])
+            .and_then(|x| super::versions::nan_test(name, x));
+        if let Some(result) = known {
+            compiler.emit_ins(Instruction::PushInt(result as i32));
+            if !compiler.byond.folds_nan_tests_cleanly() {
+                compiler.warn_bug(
+                    &format!("{name}() of a constant returns the previous test flag on this build"),
+                    ", matching DreamMaker",
+                );
+                compiler.emit_ins(Instruction::GetFlag);
+            }
+            return Ok(());
+        }
+    }
+    let end = compiler.new_label();
+    for arg in args {
+        push_args(compiler, std::slice::from_ref(arg))?;
+        compiler.emit_ins(test.clone());
+        if n > 1 {
+            compiler.emit_ins(Instruction::Jz(Label::Named(end.clone())));
+        }
+    }
+    if n > 1 {
+        compiler.emit_label(end);
+    }
+    compiler.emit_ins(Instruction::GetFlag);
+    Ok(())
 }
 
 fn rgb_slots(args: &[Expression]) -> Option<([Option<Expression>; 5], Option<f32>)> {
@@ -364,112 +282,59 @@ fn push_null(compiler: &mut Compiler<'_>) {
     compiler.emit_ins(Instruction::PushVal(operands::Value::Null));
 }
 
-fn emit_overloaded(
+fn emit_code(
     compiler: &mut Compiler<'_>,
     name: &str,
     args: &[Expression],
 ) -> Result<Option<EvalKind>, CompileError> {
     let n = args.len();
-    let by_count =
-        |ins: &[(usize, Instruction)]| ins.iter().find(|(c, _)| *c == n).map(|(_, i)| i.clone());
-    let simple = match name {
-        "round" => by_count(&[(1, Instruction::Round), (2, Instruction::RoundN)]),
-        "text2num" => by_count(&[(1, Instruction::Text2Num), (2, Instruction::Text2NumRadix)]),
-        "num2text" => by_count(&[
-            (1, Instruction::Num2Text),
-            (2, Instruction::Num2TextSigFigs),
-            (3, Instruction::Num2TextRadix),
-        ]),
-        "log" => by_count(&[(1, Instruction::Log10), (2, Instruction::Log)]),
-        "arctan" => by_count(&[(1, Instruction::ArcTan), (2, Instruction::ArcTan2)]),
-        "ispath" => by_count(&[(1, Instruction::IsPath), (2, Instruction::IsSubPath)]),
-        "roll" => by_count(&[(1, Instruction::RollStr), (2, Instruction::Roll)]),
-        "block" => by_count(&[(2, Instruction::Block), (6, Instruction::BlockXYZ)]),
-        "shell" => by_count(&[(1, Instruction::Shell)]),
-        "icon_states" => by_count(&[
-            (1, Instruction::IconStates),
-            (2, Instruction::IconStatesMode),
-        ]),
-        "json_encode" => by_count(&[
-            (1, Instruction::JsonEncode),
-            (2, Instruction::JsonEncodeFlags(2)),
-        ]),
-        "json_decode" => by_count(&[
-            (1, Instruction::JsonDecode),
-            (2, Instruction::JsonDecodeFlags(2)),
-        ]),
-        "astype" => by_count(&[(2, Instruction::AsType)]),
-        "time2text" if n == 3 => Some(Instruction::Time2TextTZ(3)),
-        "istype" if n == 2 => Some(Instruction::IsType),
-        _ => None,
-    };
-    if let Some(ins) = simple {
-        push_args(compiler, args)?;
-        compiler.emit_ins(ins);
-        return Ok(Some(EvalKind::Stack));
-    }
-
     match name {
-        "time2text" if n == 1 || n == 2 => {
+        "browse" | "browse_rsc" | "output" | "load_resource" if n >= 1 => {
+            push_args(compiler, &args[..1])?;
+            for arg in &args[1..] {
+                push_args(compiler, std::slice::from_ref(arg))?;
+                compiler.emit_ins(Instruction::Pop);
+            }
+        }
+        "shutdown" if matches!(n, 1 | 2) => {
             push_args(compiler, args)?;
-            if n == 1 {
+            for _ in n..2 {
                 push_null(compiler);
             }
-            compiler.emit_ins(Instruction::Time2Text);
+            compiler.emit_ins(Instruction::ShutdownArgs);
         }
-        "rand" if n <= 2 => {
+        "animate" if n >= 1 => {
+            if !emit_statement_builtin(compiler, name, args)? {
+                return Ok(None);
+            }
+            let dropped = compiler.nodes.pop();
+            debug_assert!(matches!(
+                dropped,
+                Some(crate::Node::Instruction(Instruction::Pop, _))
+            ));
+        }
+        "statpanel" if n == 1 => {
             push_args(compiler, args)?;
-            match n {
-                0 => {
-                    push_null(compiler);
-                    compiler.emit_ins(Instruction::Rand);
-                }
-                1 => compiler.emit_ins(Instruction::Rand),
-                _ => compiler.emit_ins(Instruction::RandRange),
-            }
-        }
-        "isturf" | "ismob" | "isarea" | "isobj" | "ismovable" | "isloc" | "isnan" | "isinf"
-            if n >= 1 =>
-        {
-            let test = match name {
-                "isturf" => Instruction::IsTurf,
-                "ismob" => Instruction::IsMob,
-                "isarea" => Instruction::IsArea,
-                "isobj" => Instruction::IsObj,
-                "ismovable" => Instruction::IsMovable,
-                "isloc" => Instruction::IsLoc,
-                "isnan" => Instruction::IsNaN,
-                _ => Instruction::IsInf,
-            };
-            if n == 1 && super::versions::folds(compiler.byond, name) {
-                let known = super::fold::number(compiler, &args[0])
-                    .and_then(|x| super::versions::nan_test(name, x));
-                if let Some(result) = known {
-                    compiler.emit_ins(Instruction::PushInt(result as i32));
-                    if !compiler.byond.folds_nan_tests_cleanly() {
-                        compiler.warn_bug(
-                            &format!(
-                                "{name}() of a constant returns the previous test flag on this build"
-                            ),
-                            ", matching DreamMaker",
-                        );
-                        compiler.emit_ins(Instruction::GetFlag);
-                    }
-                    return Ok(Some(EvalKind::Stack));
-                }
-            }
-            let end = compiler.new_label();
-            for arg in args {
-                push_args(compiler, std::slice::from_ref(arg))?;
-                compiler.emit_ins(test.clone());
-                if n > 1 {
-                    compiler.emit_ins(Instruction::Jz(Label::Named(end.clone())));
-                }
-            }
-            if n > 1 {
-                compiler.emit_label(end);
-            }
+            compiler.emit_ins(Instruction::StatPanelCheck);
             compiler.emit_ins(Instruction::GetFlag);
+        }
+        "rgb2num" => {
+            let Some(channels) = rgb2num_const(compiler, args) else {
+                return Ok(None);
+            };
+            for c in &channels {
+                compiler.emit_ins(Instruction::PushInt(*c as i32));
+            }
+            compiler.emit_ins(Instruction::NewList(channels.len() as u32));
+        }
+        "min" | "max" if n == 1 => {
+            let list = arglist_inner(&args[0]).unwrap_or(&args[0]).clone();
+            args::emit_normal(compiler, args::ArgsContext::Proc, vec![list])?;
+            compiler.emit_ins(if name == "min" {
+                Instruction::MinList
+            } else {
+                Instruction::MaxList
+            });
         }
         "text"
             if n == 1
@@ -546,7 +411,6 @@ fn emit_overloaded(
             compiler.emit_ins(Instruction::PushVal(operands::Value::Path(path)));
             compiler.emit_ins(Instruction::AsType);
         }
-        "shell" if n == 0 => compiler.emit_ins(Instruction::ShellAllowed),
         "issaved" if n == 1 => {
             let var = match compiler.emit_inner_expr(args[0].clone())? {
                 EvalKind::ListRef => {
@@ -727,6 +591,55 @@ fn emit_overloaded(
             push_args(compiler, args)?;
             compiler.emit_ins(Instruction::PushVal(operands::Value::Path(path)));
             compiler.emit_ins(Instruction::IsType);
+        }
+        "arglist" => {
+            if n != 1 {
+                return Err(CompileError::IncorrectArgCount(name.to_owned()));
+            }
+
+            args::emit_single_normal(compiler, args::ArgsContext::Proc, args[0].clone())?;
+            return Ok(Some(EvalKind::ArgList));
+        }
+
+        "initial" => {
+            if n != 1 {
+                return Err(CompileError::IncorrectArgCount(name.to_owned()));
+            }
+
+            if let Some(var) = initial_static_field(compiler, &args[0])? {
+                compiler.emit_ins(Instruction::GetVar(var));
+                return Ok(Some(EvalKind::Stack));
+            }
+            if let Some(var) = initial_safe(compiler, &args[0])? {
+                compiler.emit_ins(Instruction::GetVar(var));
+                return Ok(Some(EvalKind::Stack));
+            }
+            let arg = args[0].clone();
+            let var = match compiler.emit_expr(arg)? {
+                EvalKind::Field(builder, field) => {
+                    builder.get_initial_field(DMString(field.into()))
+                }
+
+                EvalKind::Var(global @ Variable::Global(_)) => Variable::Initial(Box::new(global)),
+
+                EvalKind::Var(
+                    var @ (Variable::Local(_)
+                    | Variable::Arg(_)
+                    | Variable::Src
+                    | Variable::Usr
+                    | Variable::Dot),
+                ) => Variable::Initial(Box::new(var)),
+
+                EvalKind::ListRef => {
+                    compiler.emit_ins(Instruction::SetVar(Variable::CacheKey));
+                    compiler.emit_ins(Instruction::SetVar(Variable::Cache));
+                    Variable::Initial(Box::new(Variable::CacheIndex))
+                }
+
+                _ => return Err(CompileError::ExpectedFieldReference),
+            };
+
+            compiler.emit_ins(Instruction::GetVar(var));
         }
         _ => return Ok(None),
     }
