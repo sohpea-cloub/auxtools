@@ -455,6 +455,24 @@ impl Code {
 			return self.restore_resources(watching, &resource_files) && self.ready();
 		}
 
+		let looked_at = watching.files.unchanged(&self.root);
+		if looked_at && !other_defines && watching.edited_since_built.len() <= MOST_ALONE {
+			let mut files: Vec<&Path> = watching.edited_since_built.iter().map(PathBuf::as_path).collect();
+			files.sort();
+			if let Ok(reload) = watching.built.reload_files(&self.root, &files) {
+				let Some(applied) = self.reload(&reload.changes, &watching.built, vec![], true, true, None) else {
+					return false;
+				};
+				if applied {
+					watching.built.keep(reload);
+					self.watch_named(watching);
+				}
+				if !self.restore_resources(watching, &resource_files) || !self.ready() {
+					return false;
+				}
+				return !applied || self.give_macros(Some(&watching.built));
+			}
+		}
 		let current = match self.parse_with(selected.clone()) {
 			Ok(current) => current,
 			Err(e) => {
@@ -1042,23 +1060,34 @@ impl Watched {
 		Some((dir, name))
 	}
 
+	fn unchanged(&self, root: &Path) -> bool {
+		self.now(root).all(|(file, time)| self.times.get(file).is_none_or(|was| *was == time))
+	}
+
 	fn changed(&mut self, root: &Path) -> HashSet<PathBuf> {
 		let started = Instant::now();
+		let now: Vec<(PathBuf, Option<SystemTime>)> = self
+			.now(root)
+			.filter(|(file, time)| self.times.get(*file).is_some_and(|was| was != time))
+			.map(|(file, time)| (file.clone(), time))
+			.collect();
 		let mut changed = HashSet::new();
-		for (dir, names) in &self.dirs {
-			let listed = listed_times(&root.join(dir), names);
-			for (name, files) in names {
-				for file in files {
-					let time = listed.get(name).copied().unwrap_or_else(|| modified_time(root, file));
-					if let Some(was) = self.times.get_mut(file).filter(|was| **was != time) {
-						*was = time;
-						changed.insert(file.clone());
-					}
-				}
-			}
+		for (file, time) in now {
+			self.times.insert(file.clone(), time);
+			changed.insert(file);
 		}
 		self.took = started.elapsed();
 		changed
+	}
+
+	fn now<'a>(&'a self, root: &'a Path) -> impl Iterator<Item = (&'a PathBuf, Option<SystemTime>)> + 'a {
+		self.dirs.iter().flat_map(move |(dir, names)| {
+			let listed = listed_times(&root.join(dir), names);
+			names.iter().flat_map(move |(name, files)| {
+				let listed = listed.get(name).copied();
+				files.iter().map(move |file| (file, listed.unwrap_or_else(|| modified_time(root, file))))
+			})
+		})
 	}
 }
 
@@ -1203,7 +1232,8 @@ mod tests {
 
 	struct Prepared {
 		summary: String,
-		plan: String
+		plan: String,
+		world: u64
 	}
 
 	const BYOND: (u32, u32) = (516, 1689);
@@ -1251,6 +1281,11 @@ mod tests {
 				.unwrap();
 		}
 
+		fn reboot(&mut self) {
+			self.world += 1;
+			self.connect();
+		}
+
 		fn next<T>(&self, what: &str, wanted: impl Fn(&Event) -> Option<T>) -> T {
 			loop {
 				match self.events.recv_timeout(Duration::from_secs(30)) {
@@ -1270,9 +1305,10 @@ mod tests {
 
 		fn prepared(&self) -> Prepared {
 			self.next("reload", |event| match event {
-				Event::Reload { request, summary, .. } => Some(Prepared {
+				Event::Reload { request, summary, world, .. } => Some(Prepared {
 					summary: summary.text(&[]),
-					plan: format!("{:#?}", request.plan)
+					plan: format!("{:#?}", request.plan),
+					world: *world
 				}),
 				Event::NotReloaded { summary, refused, .. } => panic!("not reloaded: {summary}: {refused:?}"),
 				Event::NothingChanged { .. } => panic!("nothing changed"),
@@ -1413,6 +1449,93 @@ mod tests {
 		assert_eq!(worker.prepared().summary, "reloaded /b, /c");
 		worker.applied(false);
 		assert_eq!(worker.parses(), 6);
+	}
+
+	#[test]
+	fn a_reboot_restores_edits_to_bodies_from_their_files() {
+		let mut worker = Worker::start("reboot");
+		let original = |file: &str| body(file, "return 1");
+
+		worker.write("a", &body("a", "world.log << 1\n\treturn 2"));
+		assert_eq!(worker.prepared().summary, "reloaded /a; remapped lines in 1 additional procs");
+		worker.write("b", &body("b", "return 2"));
+		worker.applied(false);
+		assert_eq!(worker.prepared().summary, "reloaded /b");
+		worker.applied(false);
+		worker.reboot();
+		let restored = worker.prepared();
+		assert_eq!(restored.world, 1);
+		assert_eq!(restored.summary, "reloaded /a, /b; remapped lines in 1 additional procs");
+		assert_eq!(
+			restored.plan,
+			worker.full_plan(&[("a", &original("a")), ("b", &original("b"))], &["a", "b"], true)
+		);
+		worker.applied(true);
+		assert_eq!(worker.parses(), 1);
+		worker.write("a", &body("a", "world.log << 1\n\treturn 3"));
+		assert_eq!(worker.prepared().summary, "reloaded /a");
+		assert_eq!(worker.parses(), 1);
+
+		worker.write("c", &(original("c") + "/proc/more()\n\treturn 1\n"));
+		worker.applied(false);
+		assert_eq!(worker.prepared().summary, "added /more");
+		worker.applied(false);
+		assert_eq!(worker.parses(), 2);
+		worker.write("d", &body("d", "return 2"));
+		assert_eq!(worker.prepared().summary, "reloaded /d");
+		worker.applied(false);
+		worker.reboot();
+		let restored = worker.prepared();
+		assert_eq!(restored.summary, "reloaded /a, /b, /d; added /more; remapped lines in 1 additional procs");
+		let before = [("a", original("a")), ("b", original("b")), ("c", original("c")), ("d", original("d"))];
+		let before: Vec<(&str, &str)> = before.iter().map(|(file, text)| (*file, text.as_str())).collect();
+		assert_eq!(restored.plan, worker.full_plan(&before, &["a", "b", "c", "d"], true));
+		worker.applied(true);
+		assert_eq!(worker.parses(), 3);
+	}
+
+	#[test]
+	fn a_reboot_refuses_a_body_as_its_files_parse_did() {
+		let mut worker = Worker::start("reboot-refused");
+		worker.write("a", &body("a", "return 2"));
+		assert_eq!(worker.prepared().summary, "reloaded /a");
+		worker.write("b", &body("b", "switch(1)\n\t\tif(rand())\n\t\t\treturn 1"));
+		worker.applied(false);
+		let refused = |worker: &Worker| {
+			worker.next("refusal", |event| match event {
+				Event::NotReloaded { refused, .. } => Some(refused.iter().map(|refusal| refusal.path.clone()).collect::<Vec<_>>()),
+				Event::Reload { summary, .. } => panic!("reloaded: {}", summary.text(&[])),
+				_ => None
+			})
+		};
+		assert_eq!(refused(&worker), ["/b"]);
+		worker.next("looked", |event| matches!(event, Event::Looked).then_some(()));
+		worker.reboot();
+		assert_eq!(refused(&worker), ["/b"]);
+		worker.next("ready", |event| matches!(event, Event::Ready).then_some(()));
+		assert_eq!(worker.parses(), 1);
+		worker.write("b", &body("b", "return 2"));
+		assert_eq!(worker.prepared().summary, "reloaded /a, /b");
+		assert_eq!(worker.parses(), 2);
+	}
+
+	#[test]
+	fn a_reboot_parses_for_a_file_saved_and_not_looked_at() {
+		let mut worker = Worker::start("unseen");
+		worker.write("a", &body("a", "return 2"));
+		assert_eq!(worker.prepared().summary, "reloaded /a");
+		worker.applied(false);
+		worker.reboot();
+		assert_eq!(worker.prepared().summary, "reloaded /a");
+		assert_eq!(worker.parses(), 1);
+		worker.write("b", &body("b", "return 2"));
+		worker.reboot();
+		worker.commands.send(Command::Reloaded(true)).unwrap();
+		let restored = worker.prepared();
+		assert_eq!(restored.world, 2);
+		assert_eq!(restored.summary, "reloaded /a, /b");
+		assert_eq!(worker.parses(), 2);
+		worker.applied(true);
 	}
 
 	#[test]
