@@ -1,5 +1,7 @@
 use std::{
 	collections::HashMap,
+	io,
+	ops::ControlFlow,
 	sync::{
 		atomic::{AtomicBool, AtomicU32, Ordering},
 		mpsc, Arc, Mutex
@@ -7,10 +9,11 @@ use std::{
 	time::{Duration, Instant}
 };
 
-use auxtools_cli::local::{Shared, Stream};
-use auxtools_protocol::{
-	BreakpointReason, ClientMessage, DataChange, InstructionRef, Pending, Request, RequestId, Response, ServerMessage, Sorted, Stop
+use auxtools_cli::{
+	client::{Client, Heard, Listener, Lost},
+	local::{self, Stream}
 };
+use auxtools_protocol::{BreakpointReason, DataChange, InstructionRef, Request, Response, Stop};
 use dap_types::{ContinuedEvent, StoppedEvent as Reasons};
 
 use crate::{
@@ -114,10 +117,96 @@ const RESPONSE_TIMEOUT: Duration = Duration::from_secs(60);
 
 const GOODBYE_TIMEOUT: Duration = Duration::from_secs(2);
 
+struct ToAdapter {
+	generation: u64,
+	debugging: bool,
+	out: Arc<Output>,
+	inputs: mpsc::Sender<Input>,
+	ended: Option<&'static str>
+}
+
+impl ToAdapter {
+	fn input(&mut self, number: u64, event: Response) -> ControlFlow<(), Option<Input>> {
+		let generation = self.generation;
+		ControlFlow::Continue(Some(match event {
+			Response::Disconnect => {
+				self.ended = Some("the debug server disconnected");
+				return ControlFlow::Break(());
+			}
+
+			Response::Unavailable { reason } => {
+				let _ = self.inputs.send(Input::Unavailable { generation, reason });
+				self.ended = Some("debugger initialization failed");
+				return ControlFlow::Break(());
+			}
+
+			Response::ShuttingDown => Input::ShuttingDown { generation },
+
+			Response::Notification { message } | Response::ConditionFailed { message } => {
+				self.out.console(message);
+				return ControlFlow::Continue(None);
+			}
+
+			Response::BreakpointHit { .. } | Response::Resumed if !self.debugging => return ControlFlow::Continue(None),
+
+			Response::BreakpointHit(stop) => Input::Stopped { generation, stop, number },
+
+			Response::Log { message, file, line, .. } => Input::Logged { message, file, line },
+
+			Response::WatchEnded { id, reason } => Input::WatchEnded { generation, id, reason },
+
+			Response::CodeChanged if self.debugging => Input::CodeChanged { generation },
+
+			Response::Journaled(entry) => {
+				if let Some(text) = crate::adapter::reload_by_another(&entry) {
+					self.out.console(text);
+				}
+				return ControlFlow::Continue(None);
+			}
+
+			Response::Resumed => Input::Resumed { generation },
+
+			Response::StepEnded => return ControlFlow::Continue(None),
+
+			_ => return ControlFlow::Continue(None)
+		}))
+	}
+}
+
+impl Listener for ToAdapter {
+	fn event(&mut self, number: u64, event: Response) -> ControlFlow<()> {
+		if let Some(input) = self.input(number, event)? {
+			if self.inputs.send(input).is_err() {
+				self.ended = Some("adapter event receiver closed");
+				return ControlFlow::Break(());
+			}
+		}
+		ControlFlow::Continue(())
+	}
+
+	fn closed(self: Box<Self>, error: Option<io::Error>) {
+		let reason = match (self.ended, error) {
+			(Some(reason), _) => reason.to_owned(),
+			(None, Some(error)) => format!("the connection closed: {}", error),
+			(None, None) => "response receiver closed".to_owned()
+		};
+		let _ = self.inputs.send(Input::ConnectionClosed {
+			generation: self.generation,
+			reason
+		});
+	}
+}
+
+fn lost(lost: Lost) -> String {
+	match lost {
+		Lost::Unsent(e) => format!("couldn't reach the world: {}", e),
+		Lost::Closed => "the world disconnected".to_owned(),
+		Lost::Incompatible(theirs) => local::incompatible(theirs).to_string()
+	}
+}
+
 pub struct Debuggee {
-	writer: Shared,
-	answers: mpsc::Receiver<(RequestId, Response, u64)>,
-	requests: Pending,
+	client: Client,
 	stopped: Arc<AtomicBool>,
 	out: Arc<Output>,
 	last_error: Arc<Mutex<LastError>>,
@@ -139,107 +228,17 @@ impl Debuggee {
 		last_error: Arc<Mutex<LastError>>,
 		set: SetBreakpoints
 	) -> Result<Self, String> {
-		let writer = Shared::new(stream);
-		let mut reader = writer.clone();
-		let debuggee_out = out.clone();
-		let (answers_sender, answers) = mpsc::channel();
-		let mut stops_read = 0;
-
-		std::thread::Builder::new()
-			.name("debuggee reader".to_owned())
-			.spawn(move || {
-				let reason = loop {
-					let ServerMessage { reply_to, response } = match auxtools_protocol::read(&mut reader) {
-						Ok(message) => message,
-						Err(e) => break format!("the connection closed: {}", e)
-					};
-
-					if let Some(to) = reply_to {
-						if answers_sender.send((to, response, stops_read)).is_err() {
-							break "response receiver closed".to_owned();
-						}
-						continue;
-					}
-
-					match response {
-						Response::Disconnect => break "the debug server disconnected".to_owned(),
-
-						Response::Unavailable { reason } => {
-							let _ = inputs.send(Input::Unavailable { generation, reason });
-							break "debugger initialization failed".to_owned();
-						}
-
-						Response::ShuttingDown => {
-							if inputs.send(Input::ShuttingDown { generation }).is_err() {
-								break "adapter event receiver closed".to_owned();
-							}
-						}
-
-						Response::Notification { message } => out.console(message),
-
-						Response::ConditionFailed { message } => out.console(message),
-
-						Response::BreakpointHit { .. } | Response::Resumed if !debugging => {}
-
-						Response::BreakpointHit(stop) => {
-							stops_read += 1;
-							if inputs
-								.send(Input::Stopped {
-									generation,
-									stop,
-									number: stops_read
-								})
-								.is_err()
-							{
-								break "adapter event receiver closed".to_owned();
-							}
-						}
-
-						Response::Log { message, file, line, .. } => {
-							if inputs.send(Input::Logged { message, file, line }).is_err() {
-								break "adapter event receiver closed".to_owned();
-							}
-						}
-
-						Response::WatchEnded { id, reason } => {
-							if inputs.send(Input::WatchEnded { generation, id, reason }).is_err() {
-								break "adapter event receiver closed".to_owned();
-							}
-						}
-
-						Response::CodeChanged => {
-							if debugging && inputs.send(Input::CodeChanged { generation }).is_err() {
-								break "adapter event receiver closed".to_owned();
-							}
-						}
-
-						Response::Journaled(entry) => {
-							if let Some(text) = crate::adapter::reload_by_another(&entry) {
-								out.console(text);
-							}
-						}
-
-						Response::StepEnded => {}
-
-						Response::Resumed => {
-							if inputs.send(Input::Resumed { generation }).is_err() {
-								break "adapter event receiver closed".to_owned();
-							}
-						}
-
-						_ => {}
-					}
-				};
-				let _ = inputs.send(Input::ConnectionClosed { generation, reason });
-			})
-			.map_err(|e| e.to_string())?;
-
+		let listener = ToAdapter {
+			generation,
+			debugging,
+			out: out.clone(),
+			inputs,
+			ended: None
+		};
 		Ok(Self {
-			writer,
-			answers,
-			requests: Pending::new(),
+			client: Client::listened_to(stream, listener).map_err(|e| e.to_string())?,
 			stopped: Arc::new(AtomicBool::new(false)),
-			out: debuggee_out,
+			out,
 			last_error,
 			set,
 			thread: Arc::new(AtomicU32::new(0)),
@@ -301,24 +300,13 @@ impl Debuggee {
 	}
 
 	pub fn leave(&mut self) {
-		if self.send(&Request::Disconnect).is_err() {
-			return;
-		}
-		let deadline = Instant::now() + GOODBYE_TIMEOUT;
-		while let Ok(_) | Err(mpsc::RecvTimeoutError::Timeout) = self.answers.recv_timeout(Duration::from_millis(50)) {
-			if Instant::now() >= deadline {
-				return;
-			}
+		if self.client.leave().is_ok() {
+			self.client.closed_by(Instant::now() + GOODBYE_TIMEOUT);
 		}
 	}
 
 	pub fn send(&mut self, request: &Request) -> Result<(), String> {
-		let id = self.requests.tell();
-		self.write(id, request)
-	}
-
-	fn write(&mut self, id: RequestId, request: &Request) -> Result<(), String> {
-		auxtools_protocol::write(&mut self.writer, &ClientMessage { id, request }).map_err(|e| format!("couldn't reach the world: {}", e))
+		self.client.tell(request, None).map(|_| ()).map_err(lost)
 	}
 
 	pub fn eval_unanswered(&mut self, command: String) -> Result<(), String> {
@@ -335,26 +323,23 @@ impl Debuggee {
 			self.caught_up = false;
 			self.stopped.store(false, Ordering::Relaxed);
 		}
-		let id = self.requests.ask();
-		self.write(id, request)?;
 		let deadline = Instant::now() + RESPONSE_TIMEOUT;
+		let Some(id) = self.client.ask(request, Some(deadline)).map_err(lost)? else {
+			return Err("debug server response timed out".to_owned());
+		};
 		loop {
-			let (reply_to, response, stops) = match self.answers.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
-				Ok(answer) => answer,
-				Err(mpsc::RecvTimeoutError::Timeout) => {
-					self.requests.give_up(id);
-					return Err("debug server response timed out".to_owned());
-				}
-				Err(mpsc::RecvTimeoutError::Disconnected) => return Err("the world disconnected".to_owned())
-			};
-			match self.requests.sort(ServerMessage::answer(reply_to, response)) {
-				Sorted::Answer(_, response) => {
+			match self.client.hear(Some(deadline)).map_err(lost)? {
+				Some(Heard::Answer { to, response, after }) if to == id => {
 					if resumes && matches!(response, Response::Ack) {
-						self.resumed_after = stops;
+						self.resumed_after = after;
 					}
 					return Ok(response);
 				}
-				Sorted::Late(..) | Sorted::Event(_) => {}
+				Some(_) => {}
+				None => {
+					self.client.give_up(id);
+					return Err("debug server response timed out".to_owned());
+				}
 			}
 		}
 	}
