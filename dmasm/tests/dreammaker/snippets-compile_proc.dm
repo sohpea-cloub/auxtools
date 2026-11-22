@@ -644,7 +644,7 @@ var/gx = 1
 /proc/f(datum/t/o, list/L)
 	o.n ||= o.m
 // Guards: pointer_to_a_field (compile_proc.rs)
-// Known -516.1667: /proc/f  not by design: before 516.1668 DreamMaker reads `*(&T.v)` as `*T.v`; dmasm makes the pointer and reads it, which gives the same value
+// Known -516.1667: /proc/f  before 516.1668 DreamMaker reads `*(&x)` as `*x`, a "bad pointer" error unless x holds a pointer (a BYOND bug, which dmasm warns of); dmasm reads x
 /datum/t
 	var/v = 1
 /proc/f()
@@ -945,3 +945,21 @@ var/datum/a/A
 	n = b
 /datum/d/proc/operator""(b = 1)
 	n = b
+// Guards: reading_a_pointer_it_makes_warns_before_516_1668 (compile_proc.rs)
+// Known -516.1667: /datum/t/proc/m  before 516.1668 DreamMaker reads `*(&x)` as `*x`, a "bad pointer" error unless x holds a pointer (a BYOND bug, which dmasm warns of); dmasm reads x
+// Known -516.1667: /proc/f  before 516.1668 DreamMaker reads `*(&x)` as `*x`, a "bad pointer" error unless x holds a pointer (a BYOND bug, which dmasm warns of); dmasm reads x
+// Known -516.1667: /proc/w  before 516.1668 DreamMaker reads `*(&x)` as `*x`, a "bad pointer" error unless x holds a pointer (a BYOND bug, which dmasm warns of); dmasm reads x
+/datum/t
+	var/v = 1
+	var/datum/t/w
+var/g = 1
+/datum/t/proc/m()
+	return *(&src.v)
+/proc/f(list/L)
+	var/datum/t/T = new
+	var/l = 1
+	T.v = *&T.w.v
+	return list(*(&l), *(&L[1]), *(&global.g))
+/proc/w()
+	var/datum/t/T = new
+	*(&T.v) = 3

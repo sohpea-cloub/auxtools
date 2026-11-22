@@ -924,6 +924,39 @@ fn pointer_to_a_field() {
 }
 
 #[test]
+fn reading_a_pointer_it_makes_warns_before_516_1668() {
+    let src = "/datum/t\n\tvar/v = 1\n\tvar/datum/t/w\nvar/g = 1\n\
+               /datum/t/proc/m()\n\treturn *(&src.v)\n\
+               /proc/f(list/L)\n\tvar/datum/t/T = new\n\tvar/l = 1\n\
+               \tT.v = *&T.w.v\n\treturn list(*(&l), *(&L[1]), *(&global.g))\n\
+               /proc/w()\n\tvar/datum/t/T = new\n\t*(&T.v) = 3\n";
+    let bugs = |ty: &str, name: &str, build: u32| -> Vec<String> {
+        compiled_of(src, ty, name, dmasm::ByondVersion::new(516, build))
+            .byond_bugs
+            .into_iter()
+            .map(|bug| bug.text)
+            .collect()
+    };
+    let bug = "`*(&x)`: before 516.1668 DreamMaker reads `*x`, which dereferences x's value, a \
+               \"bad pointer\" error unless x holds a pointer";
+    assert_eq!(bugs("", "f", 1667), [bug]);
+    assert_eq!(bugs("/datum/t", "m", 1667), [bug]);
+    assert_eq!(bugs("", "w", 1667), [bug]);
+    assert!(bugs("", "f", 1668).is_empty());
+    assert!(bugs("/datum/t", "m", 1668).is_empty());
+    assert_eq!(
+        compile_on(src, "", "f", dmasm::ByondVersion::new(516, 1667)),
+        compile(src, "", "f")
+    );
+    let held = "/proc/f(a)\n\tvar/p = &a\n\treturn *(p) + *p\n";
+    assert!(
+        compiled_of(held, "", "f", dmasm::ByondVersion::new(516, 1667))
+            .byond_bugs
+            .is_empty()
+    );
+}
+
+#[test]
 fn new_without_arguments_is_true_in_a_test() {
     let src = "/datum/t\n/proc/f(a, b)\n\treturn (new /datum/t ? a : b)\n";
     assert_eq!(compile(src, "", "f"), "GetVar arg(0)\nRet\nEnd");

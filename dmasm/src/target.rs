@@ -58,6 +58,10 @@ impl ByondVersion {
         self.at_least(1668)
     }
 
+    pub(crate) const fn derefs_made_pointer(self) -> bool {
+        self.at_least(1668)
+    }
+
     pub(crate) const fn keeps_safe_logical_null_tests(self) -> bool {
         self.at_least(1673)
     }

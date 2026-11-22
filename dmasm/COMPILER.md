@@ -111,6 +111,7 @@ receiver for `a.b.x`. dmasm matches these reuse and invalidation rules.
 | `/T/name` subtype block where name is a proc of T | Appends the block to the proc | Parses a subtype |
 | Empty proc at a file's end | Names the next included file in debug info | Uses the proc's source file |
 | `*p[i] = x` from 516.1668 | Drops the index and writes through the cache | Writes the indexed element |
+| `*(&x)` before 516.1668 | Reads or writes `*x`, dereferencing x's value: a "bad pointer" error unless x holds a pointer | Reads or writes x |
 | Out-of-range constants in `&`, `\|`, `^`, `<<`, `>>` | Inconsistent, build-dependent 24-bit conversion | Uses the low 24 bits of the nearest 32-bit integer |
 | `pick()` ending in a zero-weight entry, before 516.1689 | Jumps outside the proc if no earlier entry is selected | Selects the last entry whose weight is not a constant zero |
 
@@ -179,13 +180,14 @@ DreamMaker quirks retained for compatibility. Reload forwards these diagnostics.
 `CompiledProc::byond_bugs` contains warnings about bugs affecting DreamMaker
 builds, excluding dmasm workaround details and compatibility-only differences.
 It includes the bugs below, parameter-default division, safe-call receivers,
-logical assignment before 516.1673, indexed pointers from 516.1668, the copied
-quirks, and zero-weight `pick()` endings before 516.1689.
+logical assignment before 516.1673, indexed pointers from 516.1668, `*(&x)`
+before 516.1668, the copied quirks, and zero-weight `pick()` endings before 516.1689.
 `Snapshot::known_bugs` collects these across the project for `auxtools check`.
 
 Warnings cover parameter-default division, safe-call receivers, logical assignment
-before 516.1673, indexed pointer assignment from 516.1668, out-of-range bit operands,
-zero-weight `pick()` endings before 516.1689, and platform-sensitive angle/color folding.
+before 516.1673, indexed pointer assignment from 516.1668, `*(&x)` before 516.1668,
+out-of-range bit operands, zero-weight `pick()` endings before 516.1689, and
+platform-sensitive angle/color folding.
 
 Two copied quirks also warn:
 

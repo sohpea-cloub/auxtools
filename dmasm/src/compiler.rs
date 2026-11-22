@@ -1088,6 +1088,7 @@ impl<'a> Compiler<'a> {
             Expression::Base { term, follow } => {
                 let unspanned_follows: Vec<Follow> =
                     follow.iter().map(|f| f.elem.clone()).collect();
+                unary::warn_made_pointer(self, &term.elem, &unspanned_follows);
                 if !follow.is_empty()
                     && matches!(&term.elem, dreammaker::ast::Term::Ident(i) if i.as_str() == "src")
                 {

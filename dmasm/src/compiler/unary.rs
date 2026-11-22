@@ -1,4 +1,4 @@
-use dreammaker::ast::UnaryOp;
+use dreammaker::ast::{Expression, Follow, Term, UnaryOp};
 
 use crate::{
     compiler::{is_writable, CompileError, Compiler, EvalKind},
@@ -89,6 +89,39 @@ fn emit_single(
     }
 
     Ok(return_kind)
+}
+
+pub(super) fn warn_made_pointer(compiler: &Compiler, term: &Term, follow: &[Follow]) {
+    if compiler.byond.derefs_made_pointer() {
+        return;
+    }
+    let derefs_reference = follow.iter().enumerate().any(|(i, f)| {
+        matches!(f, Follow::Unary(UnaryOp::Dereference))
+            && match i {
+                0 => ends_with_reference(term),
+                _ => matches!(follow[i - 1], Follow::Unary(UnaryOp::Reference)),
+            }
+    });
+    if derefs_reference {
+        compiler.warn_bug(
+            "`*(&x)`: before 516.1668 DreamMaker reads `*x`, which dereferences x's value, a \
+             \"bad pointer\" error unless x holds a pointer",
+            "; dmasm reads x",
+        );
+    }
+}
+
+fn ends_with_reference(term: &Term) -> bool {
+    let Term::Expr(inner) = term else {
+        return false;
+    };
+    match &**inner {
+        Expression::Base { term, follow } => match follow.last() {
+            Some(f) => matches!(f.elem, Follow::Unary(UnaryOp::Reference)),
+            None => ends_with_reference(&term.elem),
+        },
+        _ => false,
+    }
 }
 
 fn reference(var: Variable) -> Variable {
