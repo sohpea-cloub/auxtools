@@ -1750,6 +1750,20 @@ fn a_moved_default_read_with_scope_needs_the_full_read() {
         ),
     }
     let world = World::new(
+        "moved-default-macro",
+        "#define DEFAULT_OF(T, V) T::V\n/proc/g()\n\treturn 1\n/datum/u\n\tvar/x = 3\n/proc/f()\n\treturn DEFAULT_OF(/datum/u, x)\n",
+    );
+    let mut old = world.parse();
+    world.write("#define DEFAULT_OF(T, V) T::V\n/proc/g()\n\tworld.log << 0\n\treturn 1\n/datum/u\n\tvar/x = 3\n/proc/f()\n\treturn DEFAULT_OF(/datum/u, x)\n");
+    match old.reload_file(&world.dir, file) {
+        Ok(_) => panic!("reloaded on its own"),
+        Err(e) => assert!(
+            e.contains("/f reads a var default with :: that moved"),
+            "{}",
+            e
+        ),
+    }
+    let world = World::new(
         "moved-unread-default",
         "/proc/g()\n\treturn 1\n/datum/w\n\tvar/name = \"w\"\n/proc/f(obj/o)\n\treturn o::name\n",
     );

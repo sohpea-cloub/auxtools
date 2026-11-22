@@ -490,8 +490,6 @@ pub struct Snapshot {
     byond: ByondVersion,
     root: Option<PathBuf>,
     debug_names: HashMap<PathBuf, String>,
-    scope_names: HashMap<FileId, Vec<(String, u32)>>,
-    procs_by_file: std::sync::OnceLock<HashMap<FileId, Vec<ProcKey>>>,
     default_lines: std::sync::Mutex<HashMap<ProcKey, Vec<(Vec<u8>, u32)>>>,
     folded: std::collections::BTreeSet<dreammaker::Location>,
     mended: HashSet<FileId>,
@@ -504,7 +502,6 @@ pub struct FileReload {
     pub changes: Changes,
     patched: Vec<(ProcKey, ProcValue)>,
     file: FileId,
-    scope_names: Vec<(String, u32)>,
 }
 
 impl Snapshot {
@@ -553,18 +550,7 @@ impl Snapshot {
         };
         snapshot.skin = skin.map(relative);
         snapshot.maps = maps.into_iter().map(relative).collect();
-        if let Some(root) = &snapshot.root {
-            let mut scope_names = HashMap::new();
-            snapshot.ctx.files().for_each(|path| {
-                if let (Some(id), Ok(text)) = (
-                    snapshot.ctx.files().get_id(path),
-                    std::fs::read(root.join(path)),
-                ) {
-                    scope_names.insert(id, names_after_scope(&String::from_utf8_lossy(&text)));
-                }
-            });
-            snapshot.scope_names = scope_names;
-
+        if snapshot.root.is_some() {
             let read: HashSet<PathBuf> = snapshot
                 .files()
                 .iter()
@@ -594,7 +580,6 @@ impl Snapshot {
             .get_id(file)
             .ok_or("file is not part of the snapshot")?;
         let text = std::fs::read(root.join(file)).map_err(|e| e.to_string())?;
-        let scope_names = names_after_scope(&String::from_utf8_lossy(&text));
         if String::from_utf8_lossy(&text)
             .lines()
             .any(|line| line.trim_start().starts_with("#include"))
@@ -754,7 +739,6 @@ impl Snapshot {
                 .map(|(key, _, new_value)| (key, new_value))
                 .collect(),
             file: id,
-            scope_names,
         })
     }
 
@@ -764,7 +748,6 @@ impl Snapshot {
             default_lines.remove(key);
         }
         self.patched.extend(reload.patched);
-        self.scope_names.insert(reload.file, reload.scope_names);
         self.mended.insert(reload.file);
         self.resource_index = Default::default();
     }
@@ -840,8 +823,6 @@ impl Snapshot {
             byond: ByondVersion::LATEST,
             root: None,
             debug_names: HashMap::new(),
-            scope_names: HashMap::new(),
-            procs_by_file: std::sync::OnceLock::new(),
             default_lines: std::sync::Mutex::new(HashMap::new()),
             folded: Default::default(),
             mended: Default::default(),
@@ -1370,37 +1351,16 @@ impl Snapshot {
 
     fn reads_moved_default(&self, file: FileId, moved: &[(&String, u32)]) -> Option<ProcKey> {
         let file_name = self.debug_file_name(file).into_bytes();
-        let procs_by_file = self.procs_by_file.get_or_init(|| {
-            let mut by_file: HashMap<FileId, Vec<ProcKey>> = HashMap::new();
-            for key in self.procs.keys() {
-                if let Some((_, value)) = self.find(key) {
-                    by_file
-                        .entry(value.location.file)
-                        .or_default()
-                        .push(key.clone());
-                }
-            }
-            by_file
-        });
-        let mut candidates = vec![];
-        for (id, uses) in &self.scope_names {
-            let lines: Vec<u32> = uses
-                .iter()
-                .filter(|(name, _)| moved.iter().any(|(m, _)| *m == name))
-                .map(|(_, line)| *line)
-                .collect();
-            if lines.is_empty() {
-                continue;
-            }
-            for key in procs_by_file.get(id).into_iter().flatten() {
-                let Some((_, value)) = self.find(key) else {
-                    continue;
-                };
-                if lines.iter().any(|l| proc_lines(value).contains(l)) {
-                    candidates.push(key.clone());
-                }
-            }
-        }
+        let names: HashSet<&str> = moved.iter().map(|(name, _)| name.as_str()).collect();
+        let candidates: Vec<ProcKey> = self
+            .procs
+            .keys()
+            .filter(|key| {
+                self.find(key)
+                    .is_some_and(|(_, value)| names_any(value, &HashSet::new(), &names))
+            })
+            .cloned()
+            .collect();
         let mut default_lines = self.default_lines.lock().unwrap();
         for key in candidates {
             if !default_lines.contains_key(&key) {
@@ -3445,21 +3405,6 @@ fn proc_lines(value: &ProcValue) -> std::ops::RangeInclusive<u32> {
         None => start,
     };
     start..=end
-}
-
-fn names_after_scope(text: &str) -> Vec<(String, u32)> {
-    let mut found = vec![];
-    for (i, line) in text.lines().enumerate() {
-        for after in line.split("::").skip(1) {
-            let end = after
-                .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
-                .unwrap_or(after.len());
-            if end > 0 {
-                found.push((after[..end].to_owned(), i as u32 + 1));
-            }
-        }
-    }
-    found
 }
 
 #[cfg(test)]
