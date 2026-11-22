@@ -93,7 +93,12 @@ impl Background {
 		while next_line(&self.errors, &mut self.said, Instant::now()).is_some() {}
 	}
 
-	pub fn finish(mut self) -> (i32, String) {
+	pub fn finish(self) -> (i32, String) {
+		let (code, printed, said) = self.finish_apart();
+		(code, printed + &said)
+	}
+
+	pub fn finish_apart(mut self) -> (i32, String, String) {
 		let deadline = Instant::now() + TIMEOUT;
 		let code = loop {
 			if let Some(status) = self.child.try_wait().unwrap() {
@@ -107,7 +112,7 @@ impl Background {
 		};
 		while next_line(&self.lines, &mut self.printed, deadline).is_some() {}
 		while next_line(&self.errors, &mut self.said, deadline).is_some() {}
-		(code, self.printed + &self.said)
+		(code, self.printed, self.said)
 	}
 
 	#[cfg(unix)]

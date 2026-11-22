@@ -6,7 +6,11 @@ use std::{
 
 use serde_json::{json, Value};
 
-use super::{client::launcher_path, journal::paused_at, line_of};
+use super::{
+	client::launcher_path,
+	journal::{paused_at, Background},
+	line_of
+};
 
 struct Ran {
 	code: i32,
@@ -64,12 +68,8 @@ fn fails(pid: &str, args: &[&str]) -> String {
 	said.trim_end().to_owned()
 }
 
-fn call_soon(dir: &Path) {
-	let call = dir.join("call");
-	std::thread::spawn(move || {
-		std::thread::sleep(std::time::Duration::from_millis(1500));
-		std::fs::write(call, "yes").unwrap();
-	});
+fn paused_in_call(pid: &str, dir: &Path, place: &str) -> String {
+	paused_at(pid.parse().unwrap(), place, || std::fs::write(dir.join("call"), "yes").unwrap())
 }
 
 pub fn evaluations(pid: u64, dir: &Path, code: &Path) {
@@ -452,8 +452,7 @@ fn instruction_at(printed: &str, proc: &str, pid: &str) -> u32 {
 }
 
 fn instruction_steps(pid: &str, dir: &Path) {
-	call_soon(dir);
-	run(pid, &["wait", "pause", "--break", "/proc/fail_in", "--timeout", "60"], 0);
+	paused_in_call(pid, dir, "/proc/fail_in");
 	let printed = run(pid, &["step-over", "--instruction"], 0).out;
 	let mut last = instruction_at(&printed, "/fail_in", pid);
 	let offsets: Vec<u32> = run(pid, &["disassemble", "/fail_in"], 0)
@@ -563,14 +562,17 @@ fn as_json(pid: &str, dir: &Path) {
 	);
 	println!("ok: recursive JSON rendering");
 
-	call_soon(dir);
-	let ran = run(pid, &["wait", "pause", "--json", "--break", "/proc/fail_in", "--timeout", "60"], 0);
+	let mut waiting = Background::start(number, &["wait", "pause", "--json", "--break", "/proc/fail_in", "--timeout", "60"]);
+	waiting.error_with("breakpoint set at ");
+	std::fs::write(dir.join("call"), "yes").unwrap();
+	let (code, out, err) = waiting.finish_apart();
+	assert_eq!(code, 0, "unexpected wait output: {}{}", out, err);
 	assert!(
-		ran.err.starts_with("breakpoint set at /fail_in  attach_host.dm:") && ran.err.lines().count() == 1,
+		err.starts_with("breakpoint set at /fail_in  attach_host.dm:") && err.lines().count() == 1,
 		"unexpected wait output: {}",
-		ran.err
+		err
 	);
-	let paused: Value = serde_json::from_str(&ran.out).unwrap_or_else(|e| panic!("wait pause --json printed {}: {}", ran.out, e));
+	let paused: Value = serde_json::from_str(&out).unwrap_or_else(|e| panic!("wait pause --json printed {}: {}", out, e));
 	assert!(
 		paused["paused"] == true && paused["reason"] == "breakpoint" && paused["already"] == false && paused["pid"] == number,
 		"{}",
@@ -906,8 +908,7 @@ fn spawned(pid: &str, code: &Path) {
 
 fn steps_that_end_elsewhere(pid: &str, dir: &Path) {
 	let number: u64 = pid.parse().unwrap();
-	call_soon(dir);
-	run(pid, &["wait", "pause", "--break", "/proc/fail_in", "--timeout", "60"], 0);
+	paused_in_call(pid, dir, "/proc/fail_in");
 	let out = run(pid, &["step-out", "--timeout", "30"], 0).out;
 	assert!(
 		out.starts_with(&format!("pid {}: paused after a step\n#0 /run_until_stopped  ", pid)),
@@ -925,8 +926,7 @@ fn steps_that_end_elsewhere(pid: &str, dir: &Path) {
 	assert_eq!(json_of(pid, &["status", "--json"])["paused"], false);
 	println!("ok: step exhaustion succeeds with world running");
 
-	call_soon(dir);
-	run(pid, &["wait", "pause", "--break", "/proc/fail_deeper", "--timeout", "60"], 0);
+	paused_in_call(pid, dir, "/proc/fail_deeper");
 	let ran = run(pid, &["step-over", "--timeout", "30"], 0);
 	assert!(ran.err.is_empty(), "step-over said {}", ran.err);
 	let ran = run(pid, &["step-over", "--timeout", "30"], 0);
