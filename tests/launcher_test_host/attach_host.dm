@@ -51,6 +51,7 @@ var/datum/held/held = new
 	if (fexists("slow_reboot"))
 		sleep(3)
 	if (fexists("refuse_reboot"))
+		world.log << "attach test: reboot refused"
 		return
 	return ..()
 

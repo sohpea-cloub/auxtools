@@ -313,9 +313,9 @@ fn command_line(pid: u64, code: &Path) {
 	);
 	let resumed: serde_json::Value = serde_json::from_str(&run(&["continue", "--json"], 0)).unwrap();
 	assert_eq!(resumed, json!({ "pid": pid.parse::<u64>().unwrap(), "resumed": true }));
-	let printed = run(&["wait", "pause", "--break", "/proc/value", "--if", "1 == 2", "--timeout", "2"], 2);
+	let printed = run(&["wait", "pause", "--break", "/proc/value", "--if", "1 == 2", "--timeout", "1.5"], 2);
 	assert!(
-		printed.contains("error: timed out after 2 seconds waiting for the world to pause."),
+		printed.contains("error: timed out after 1.5 seconds waiting for the world to pause."),
 		"unexpected wait output: {}",
 		printed
 	);
@@ -918,7 +918,7 @@ fn command_line_more(pid: u64, dir: &Path) {
 	println!("ok: CLI runtime wait");
 
 	std::fs::write(dir.join("fail"), "yes").unwrap();
-	let printed = run(&["wait", "pause", "--runtime-filter", "!cannot read", "--timeout", "3"], 2);
+	let printed = run(&["wait", "pause", "--runtime-filter", "!cannot read", "--timeout", "1.5"], 2);
 	assert!(printed.contains("timed out"), "wait --runtime-filter said {}", printed);
 	std::fs::write(dir.join("fail"), "yes").unwrap();
 	let printed = run(&["wait", "pause", "--runtime-filter", "bounds, FROM LIST", "--timeout", "60"], 0);
@@ -964,7 +964,7 @@ fn command_line_more(pid: u64, dir: &Path) {
 	println!("ok: wait without retained pause");
 
 	let printed = run(
-		&["wait", "pause", "--break", "/proc/value", "--if", "rounds.len > 0", "--timeout", "2"],
+		&["wait", "pause", "--break", "/proc/value", "--if", "rounds.len > 0", "--timeout", "1"],
 		2
 	);
 	assert_eq!(printed.matches("reported once").count(), 1, "unexpected wait --if output: {}", printed);
@@ -1089,8 +1089,8 @@ fn command_line_trace(pid: u64, code: &Path) {
 	println!("ok: trace message interpolation");
 
 	let started = Instant::now();
-	let printed = run(&["trace", "/proc/tick", "--by", "caller", "--for", "3"], 0);
-	assert!(started.elapsed() >= Duration::from_secs(3), "trace --for 3 ended early");
+	let printed = run(&["trace", "/proc/tick", "--by", "caller", "--for", "1.5"], 0);
+	assert!(started.elapsed() >= Duration::from_millis(1500), "trace --for 1.5 ended early");
 	let lines: Vec<&str> = printed.lines().collect();
 	let count = |line: &str| line.split_whitespace().next().unwrap().parse::<u32>().unwrap();
 	assert!(
@@ -1116,7 +1116,7 @@ fn command_line_trace(pid: u64, code: &Path) {
 	);
 	println!("ok: trace grouping and limits");
 
-	let printed = run(&["trace", "/proc/tick", "--if", "n.len > 0", "--for", "2"], 0);
+	let printed = run(&["trace", "/proc/tick", "--if", "n.len > 0", "--for", "1"], 0);
 	assert_eq!(printed.matches("reported once").count(), 1, "unexpected trace --if output: {}", printed);
 	assert!(
 		printed.contains("failed; skipping affected hits (reported once): runtime error: Cannot read ")
@@ -1824,13 +1824,24 @@ fn launch_from_the_command_line(server: &str) {
 		let rebaselined = || read_log().matches("Hot reload: using the rebuilt .dmb").count();
 		let before = rebaselined();
 		let launcher_text = launcher.to_string();
+		let loads = || {
+			let (_, printed) = launcher_command(&["--pid", &pid_text, "log", "--world", "--json"]);
+			let entries = printed.lines().filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok());
+			entries.filter(|entry| entry["event"] == "loaded").count()
+		};
+		let loaded = loads();
 		assert!(Command::new("kill").args(["-STOP", &launcher_text]).status().unwrap().success());
 		let edited = std::fs::read_to_string(&code).unwrap();
 		std::fs::write(&code, format!("{}\n/proc/zz_agent_probe()\n\treturn 7\n", edited)).unwrap();
 		let built = Command::new(paths::find_dm()).with_byond_paths().arg(&dme).output().unwrap();
 		std::fs::write(dir.join("reboot"), "yes").unwrap();
-		std::thread::sleep(Duration::from_secs(3));
+		let until = Instant::now() + Duration::from_secs(60);
+		while loads() == loaded && Instant::now() < until {
+			std::thread::sleep(Duration::from_millis(100));
+		}
+		let rebooted = loads() > loaded;
 		assert!(Command::new("kill").args(["-CONT", &launcher_text]).status().unwrap().success());
+		assert!(rebooted, "the world didn't reboot:\n{}", read_log());
 		assert!(built.status.success(), "dreammaker build failed");
 		let started = Instant::now();
 		while rebaselined() == before {
@@ -1853,7 +1864,7 @@ fn launch_from_the_command_line(server: &str) {
 	}
 
 	for moment in 0..8u64 {
-		std::thread::sleep(Duration::from_millis(moment * 70));
+		std::thread::sleep(Duration::from_millis(moment * 13));
 		run(&["reboot", "--timeout", "60"], 0);
 	}
 	assert_eq!(run(&["status"], 0).lines().next().unwrap_or_default(), format!("pid {}: running", pid));
@@ -1873,11 +1884,15 @@ fn launch_from_the_command_line(server: &str) {
 	run(&["wait", "pause", "--break", "/proc/value", "--timeout", "60"], 0);
 	println!("ok: paused reboot with sleeping world/Reboot");
 
-	for (files, command) in [(["slow_reboot", "refuse_reboot"], "reboot"), (["slow_del", "fail_del"], "stop")] {
+	for (files, command, over) in [
+		(["slow_reboot", "refuse_reboot"], "reboot", "attach test: reboot refused"),
+		(["slow_del", "fail_del"], "stop", "attach test: world/Del failed")
+	] {
 		for file in files {
 			std::fs::write(dir.join(file), "yes").unwrap();
 		}
-		run(&[command, "--timeout", "6"], 2);
+		run(&[command, "--timeout", "1"], 2);
+		wait_for_text("the background launcher's log", over, read_log);
 		for file in files {
 			std::fs::remove_file(dir.join(file)).unwrap();
 		}
@@ -1959,10 +1974,10 @@ fn launch_from_the_command_line(server: &str) {
 	std::fs::remove_file(dir.join("fail_del")).unwrap();
 	std::fs::write(dir.join("refuse_del"), "yes").unwrap();
 	println!("ok: stop reports a failing world/Del");
-	let printed = run(&["stop", "--timeout", "2"], 2);
+	let printed = run(&["stop", "--timeout", "1"], 2);
 	assert!(
 		printed.starts_with(&format!(
-			"error: timed out after 2 seconds waiting for the world process (pid {}) to exit.",
+			"error: timed out after 1 second waiting for the world process (pid {}) to exit.",
 			pid
 		)),
 		"stop said {}",

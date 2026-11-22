@@ -416,11 +416,11 @@ pub fn world_went_away(waiting: Background) {
 	println!("ok: world exit during reboot wait");
 }
 
-fn until_running(pid: u64) -> Duration {
+fn until_running(pid: u64) {
 	let started = Instant::now();
 	loop {
 		if run(pid, &["status"], 0).starts_with(&format!("pid {}: running\n", pid)) {
-			return started.elapsed();
+			return;
 		}
 		assert!(started.elapsed() < TIMEOUT, "the world stayed paused");
 		std::thread::sleep(Duration::from_millis(200));
@@ -428,21 +428,19 @@ fn until_running(pid: u64) -> Duration {
 }
 
 pub fn hold_max(pid: u64) {
-	let printed = run(pid, &["pause", "--hold-max", "2"], 0);
+	let asked = Instant::now();
+	let printed = run(pid, &["pause", "--hold-max", "1.5"], 0);
 	assert!(
 		printed.starts_with(&format!("pid {}: paused by request", pid)),
 		"unexpected pause output: {}",
 		printed
 	);
-	assert!(
-		run(pid, &["status"], 0).starts_with(&format!("pid {}: paused", pid)),
-		"the pause wasn't held"
-	);
-	let took = until_running(pid);
-	assert!(took > Duration::from_secs(1), "the pause was let go after {:?}", took);
+	until_running(pid);
+	let took = asked.elapsed();
+	assert!(took >= Duration::from_millis(1500), "the pause was let go after {:?}", took);
 	let printed = run(pid, &["log", "--world", "--last", "1"], 0);
 	assert!(
-		printed.contains("retained pause resumed automatically: no debugger was connected for 2 seconds (--hold-max)"),
+		printed.contains("retained pause resumed automatically: no debugger was connected for 1.5 seconds (--hold-max)"),
 		"log --world said {}",
 		printed
 	);
@@ -450,13 +448,13 @@ pub fn hold_max(pid: u64) {
 
 	let out = Command::new(launcher_path())
 		.args(["--pid", &pid.to_string(), "pause"])
-		.env("AUXTOOLS_HOLD_MAX", "1")
+		.env("AUXTOOLS_HOLD_MAX", "0.5")
 		.output()
 		.unwrap();
 	assert!(out.status.success(), "unexpected pause output: {}", String::from_utf8_lossy(&out.stderr));
 	until_running(pid);
 	run(pid, &["pause"], 0);
-	std::thread::sleep(Duration::from_secs(3));
+	std::thread::sleep(Duration::from_secs(2));
 	assert!(
 		run(pid, &["status"], 0).starts_with(&format!("pid {}: paused", pid)),
 		"a pause without --hold-max was let go"

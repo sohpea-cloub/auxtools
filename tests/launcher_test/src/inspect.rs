@@ -209,7 +209,7 @@ fn from_files(pid: &str, dir: &Path) {
 			"--if",
 			&format!("@{}", never),
 			"--timeout",
-			"2"
+			"1"
 		],
 		2
 	);
@@ -963,7 +963,7 @@ fn steps_that_end_elsewhere(pid: &str, dir: &Path) {
 		ran.err
 	);
 	paused_at(number, "/proc/slow_double", || {
-		run(pid, &["eval", "--spawn", "slow_double(7, 40)"], 0);
+		run(pid, &["eval", "--spawn", "slow_double(7, 20)"], 0);
 	});
 	run(pid, &["step-over", "--timeout", "30"], 0);
 	let ran = run(pid, &["step-over", "--timeout", "0.5"], 2);
@@ -974,7 +974,7 @@ fn steps_that_end_elsewhere(pid: &str, dir: &Path) {
 		"step-over said {}",
 		ran.err
 	);
-	std::thread::sleep(std::time::Duration::from_secs(5));
+	std::thread::sleep(std::time::Duration::from_millis(3500));
 	assert_eq!(json_of(pid, &["status", "--json"])["paused"], false);
 	println!("ok: step timeout preserves execution state");
 }
