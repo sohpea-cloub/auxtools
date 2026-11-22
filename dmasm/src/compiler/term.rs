@@ -196,9 +196,7 @@ pub(super) fn emit(compiler: &mut Compiler<'_>, term: Term) -> Result<EvalKind, 
             Ok(EvalKind::Stack)
         }
 
-        Term::SelfCall(args) | Term::ParentCall(args)
-            if compiler.proc.is_some() && !compiler.debugger =>
-        {
+        Term::SelfCall(args) | Term::ParentCall(args) if !compiler.debugger => {
             let parent = matches!(term_kind, RelativeCall::Parent);
             let args = args.into_vec();
             if args.is_empty() {
@@ -244,7 +242,7 @@ pub(super) fn emit(compiler: &mut Compiler<'_>, term: Term) -> Result<EvalKind, 
         }
         Term::NewImplicit { .. } => Err(CompileError::UnsupportedImplicitNew),
         Term::NewMiniExpr { expr, args } => {
-            if expr.ident.as_str() == "src" && !expr.fields.is_empty() && compiler.proc.is_some() {
+            if expr.ident.as_str() == "src" && !expr.fields.is_empty() {
                 compiler.explicit_src = true;
             }
             let var = compiler.emit_find_var(expr.ident.into())?;

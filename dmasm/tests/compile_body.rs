@@ -814,3 +814,48 @@ fn bodies_compiled_one_after_another_see_the_same_types() {
         assert_has(&code, &["PushInt 1", "Add"]);
     }
 }
+
+#[test]
+fn an_expression_is_the_body_that_returns_it() {
+    for code in [
+        "by",
+        "by.hp.len",
+        "hp + ticks",
+        "bump(1, hp)",
+        "by.bump(hp)",
+        "by:bump(a = 1)",
+        "global.ticks",
+        "by[1][2]",
+        "by++",
+        "-by.hp",
+        "~by",
+        "by in list(1, 2)",
+        "by in 1 to 5",
+        "\"[by] and [hp]\"",
+        "list(\"a\" = by)",
+        "new /datum(by)",
+        "new by.hp(1)",
+        "istype(by, /datum)",
+        "locate(/datum) in by",
+        "pick(1, 2, 3)",
+        "length(by)",
+        "sqrt(4) + by",
+        "rgb(1, 2, by)",
+        "call(by, \"f\")(1)",
+        "initial(by.hp)",
+        "by::hp",
+        "/datum/foo::double()",
+        "/datum/foo/proc/double",
+        "&by.hp",
+        "*by",
+        "by ? hp : ticks",
+        "NORTH | by",
+        "by.Copy()",
+        ".",
+        "src",
+        "world.time",
+        "args[1]",
+    ] {
+        same_alone_and_in_a_body(code);
+    }
+}

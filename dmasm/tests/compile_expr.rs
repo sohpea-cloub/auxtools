@@ -624,3 +624,57 @@ fn without_a_scope_an_expression_is_still_the_debugger_s() {
     let code = instructions("4294967296 | 1", &[]);
     assert!(code.contains(&Instruction::Bor), "{:?}", code);
 }
+
+#[test]
+fn a_constant_of_byond_s_own_is_its_value() {
+    assert_eq!(scoped("NORTH", &[]).unwrap()[1], Instruction::PushInt(1));
+    assert_eq!(
+        scoped("NORTH | SOUTH", &[]).unwrap()[1],
+        Instruction::PushInt(3)
+    );
+    assert_eq!(scoped("TRUE", &[]).unwrap()[1], Instruction::PushInt(1));
+    assert_eq!(instructions("FALSE", &[])[1], Instruction::PushInt(0));
+    assert_eq!(
+        scoped("NORTH", &["NORTH"]).unwrap()[1],
+        Instruction::GetVar(dmasm::Variable::Arg(0))
+    );
+}
+
+#[test]
+fn a_proc_of_byond_s_own_types_is_called_as_a_proc_calls_it() {
+    let code = instructions("x.Copy(1, 2)", &["x"]);
+    assert!(
+        matches!(
+            &code[..],
+            [
+                _,
+                Instruction::PushInt(1),
+                Instruction::PushInt(2),
+                Instruction::Call(_, 2),
+                ..
+            ]
+        ),
+        "{:?}",
+        code
+    );
+}
+
+#[test]
+fn an_expression_records_no_lines_and_names_no_line_in_an_error() {
+    let code = compile_expr("x ? \"[x]\" : f(x)", &["x"]).unwrap();
+    assert!(
+        !code
+            .iter()
+            .any(|node| matches!(node, Node::Instruction(Instruction::DbgLine(_), _))),
+        "{:?}",
+        code
+    );
+    assert_eq!(
+        scoped("f(nowhere)", &[]).unwrap_err().to_string(),
+        "undefined var: nowhere"
+    );
+    assert_eq!(
+        compile_expr("..()", &[]).unwrap_err().to_string(),
+        "relative calls are not supported"
+    );
+}

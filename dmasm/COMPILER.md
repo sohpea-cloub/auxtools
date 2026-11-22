@@ -275,65 +275,53 @@ These rules affect generated code and are covered by focused tests:
 
 ## Debugger code
 
-`Compiler` serves three callers. `compile_proc` compiles a proc from source: `proc` holds
-what it can see (the tree, its type, its locals). `compile_body_in` compiles statements typed
-into the debugger: `proc` is a made-up global proc over a tree of BYOND's own types, and
-`expr_scope`, when the caller has a paused frame, says what the world has. `compile_expr_*`
-compiles one expression typed into the debugger: no `proc`, and `expr_scope` or not. The
-debugger sends what `is_body` takes for a body to the second and everything else to the
-third, and both run in its evaluation stub and return `list(result, params...)`.
+`Compiler` compiles a proc from source (`compile_proc`) and what is typed into the debugger:
+a body (`compile_body_in`) and a single expression (`compile_expr_*`). An expression is
+compiled as the one-statement body `return EXPR`, without debug lines, so there is one path
+for expressions and it is the one compared with DreamMaker. The debugger sends what
+`is_body` takes for a body to the first and everything else to the second; both run in its
+evaluation stub and return `list(result, params...)`.
 
-Only the proc path is compared with DreamMaker. The emitters tell the callers apart by
-`proc.is_some()`, `proc.is_none()` and `expr_scope`, in 41 places on `v4` at `b782411`
-(besides the two entry points, the field and its initial value). Each is one of:
+The debugger's code is compiled as a global proc, the stub, over a tree of BYOND's own types
+(parsed once), with `Compiler::debugger` set, and with `expr_scope` when the caller
+has a paused frame to ask about. It differs from a proc's code in these places and no others:
 
-- **A**: the debugger's situation, to keep whichever path compiles its code. It has no
-  parsed tree of the world: names, globals, procs and types are found in the running world
-  or left to it. Its code runs in a stub that is no proc of the world's.
-- **B**: no such reason. The expression path emits other instructions than a body or a proc
-  does for the same text, or one of them refuses what the other takes.
-- **C**: the test decides nothing: no input reaches it with the other answer.
+| Where | Construct | In the debugger's code |
+| --- | --- | --- |
+| `compiler.rs:984`, `term.rs:220` | `__TYPE__`, `__PROC__`, `..()`, `.()` | Refused: the stub is not the paused proc and has no parent |
+| `compiler.rs:1027`, `1051`, `procs.rs:353` | A bare name | A local of the body, a param (the frame's vars), then a var of `src`, then a global, by asking the scope; "undefined var" when nothing has it. A global is read through the world's list of them, or by the id the scope gives. Without a scope, a global |
+| `procs.rs:929` | `vars` | A name like any other: BYOND's types declare it at the root as a const with no value |
+| `term.rs:121`, `procs.rs:433` | `f()` | `src.f()` when the scope says `src` has it, else a global proc |
+| `follow.rs:268` | `x.f()` | Called by name (`CallName`) when BYOND's types have no such proc: the world's types are not known, and a call by name finds verbs too |
+| `follow.rs:510` | `global.x` | As a bare global; `global.vars` is the scope's list |
+| `term.rs:87`, `compiler.rs:1339` | `/type/proc/name`, `/type::name()` | Found in the world through the scope |
+| `compiler.rs:1330`, `fold.rs:219` | `/type::var`, `x::a::b` | Read when the code runs, not folded or resolved from a tree |
+| `builtin_procs.rs:442`, `708`, `statements.rs:1395` | `astype(x)`, `istype(x)`, `var/T/x = new` | A declared type that BYOND's types lack is named as written and found when the code is assembled |
+| `term.rs:814` | `/type{var = value}` | Refused: the instance would stay in the world's tables |
+| `binary_ops.rs:309`, `fold.rs:608` | A bit operand beyond 32 bits | Left for the world to convert as it does |
+| `assignment.rs:58` | `a?.b?.c \|\|= v`, `a?[i] &&= v` as a value | Compiled by older code in `follow.rs` (the `Safe` arms of `emit_typed`) that leaves a place: the proc path writes such an assignment as a value only for a plain `a?.b.c`, and a proc refuses the rest |
 
-| Where | Construct | Class | Bare expression, against body and proc |
-| --- | --- | --- | --- |
-| `compiler.rs:910` | `__TYPE__`, `__PROC__` | A | Refused in the debugger's code: the stub is not the paused proc. Tested by proc and no scope, so a body without a scope names the made-up proc |
-| `compiler.rs:953`, `977` | A bare name | A | A var of `src`, then a global, by asking the world; an error when neither. Without a scope, a global |
-| `compiler.rs:1089` | Folding, and the lines an expression records | B | Folds as a proc does, but not what an assignment writes to, and does not forget the cache where `&&` or `\|\|` folds. Both correct. An expression has no lines |
-| `compiler.rs:1211` | `&(x)`, `*(p)` | B | Goes with `term.rs:23`: needed once parentheses give a value. Both correct |
-| `compiler.rs:1244`, `term.rs:269` | `src.a.b` after a chain from `src` | B | The proc path loads the cache again for a chain written with `src.`. Both correct |
-| `compiler.rs:1268` | `/type::var` | A | Read from the world when the code runs, not from a tree. Tested by scope: a body without one takes BYOND's types and refuses the world's |
-| `compiler.rs:1277` | `/type::proc()` | A | Found in the world through the scope |
-| `compiler.rs:1312` | An argument left empty, `f(a, , b)` | B | Same instruction either way today. Goes with `term.rs:31` |
-| `compiler.rs:1327` | `var/L[n]` | C | A declaration: no expression has one |
-| `term.rs:23` | `(x)` | B | Stays a variable: `(x).y` reads through `x`, where a proc puts `x` on the stack and regroups what is inside (see `binary_ops.rs:171`). Both correct |
-| `term.rs:31` | `null` | B | `PushVal null`, where a proc reads the variable `null`. Both correct |
-| `term.rs:91`, `125` | A proc path; a bare call | A | Found in the world; `f()` is `src.f()` when `src` has it |
-| `term.rs:222` | `..()`, `.()` | A, B | Refused in an expression: the stub has no parent and is not the paused proc. Tested by proc, so a body takes them and calls the stub: the body is wrong |
-| `term.rs:491` | `pick(a; x, b; y)` | B | A jump to the end after the last value too. Both correct |
-| `term.rs:816` | `/type{var = value}` | A | Refused: the instance would stay in the world's tables. Tested by scope: without one it compiles and fails to assemble |
-| `binary_ops.rs:171` | `a + (b + c) + d` | B | Grouped as written, where DreamMaker moves the parentheses in a return value, an argument or parentheses: `a + ((b + c) + d)`. The value differs for lists and in the last bit of a float: the expression is not what the world's code computes |
-| `binary_ops.rs:188` | `(a \|\| b) \|\| c` | B | One jump target a pair of parentheses, where a proc has one for the chain. Both correct |
-| `binary_ops.rs:200` | `1 && x`, `x \|\| 0 \|\| y` | B | Tests the constant when the code runs, where a proc drops it. Both correct |
-| `binary_ops.rs:260`, `276` | `x ** 2`, `x ** -1`, `x * x` | B | `Pow` and `Mul`, where a proc has `PowSquare` and `PowNegativeOne`. The same for numbers |
-| `binary_ops.rs:311` | `K & x`, K a constant | B | The number as written, where a proc stores its 24 bits. They differ when K does not fit: `16777217 & x` |
-| `binary_ops.rs:319`, `fold.rs:608` | A bit operand beyond 32 bits | A | Left for the world to convert as it does. Tested by scope |
-| `binary_ops.rs:325` | `K * x`, K a const var | B | No difference without a tree: the code's consts are not known |
-| `ternary.rs:30` | `a == b ? x : y` | B | Fetches the test flag and tests the value, where a proc jumps on the flag. Both correct |
-| `follow.rs:88` | `a?.b?.c`, `a?[i]`, `a?.b++` | B | Its own code from 2021 unless `!`, `-` or `~` ends the chain: one target for the chain and the cache not saved. Both correct |
-| `follow.rs:267` | `x.f()` | A, B | Called by name (`CallName`), which finds verbs too: the world's types are not known. A body does so only with a scope, and only for names BYOND's types lack; an expression for every name. Both correct |
-| `follow.rs:296` | `x.f()`, the receiver in the call's operand | B | Not reached by an expression, which calls by name |
-| `follow.rs:423` | `x::name` | B | A copy of what the proc path does for a value of unknown type. Same instructions |
-| `follow.rs:524` | `global.x` | A | Through the world's list of globals, or the id it gives |
-| `assignment.rs:250` | `(L[i] = v)`, `(*p = v)`, `a.b \|\|= v` as values | B | `SetVarExpr` through the cache, where a proc copies the value and stores it (`PushTop`, `ListSet`). Both correct. The proc path refuses a global reached through the scope's list: `x = (ticks = 3)` in a body is "expected l-value", which is wrong |
-| `assignment.rs:515` | The cache saved around `\|\|=`'s value | C | Inside what `assignment.rs:250` guards |
-| `builtin_procs.rs:442`, `708`, `statements.rs:1395` | `astype(x)`, `istype(x)`, `var/T/x = new` | A | A type of the world is named and found when the code is assembled. Tested by scope |
-| `fold.rs:219` | `x::a::b`, a const | A | Not folded: the world's types are not known. Tested by scope |
-| `procs.rs:353`, `433` | Names and bare calls in a body | A | Left to the scope, not to the made-up proc's type. Tested by scope |
+Until November 2026 the expression path was code of its own, from 2021, told apart by
+whether the compile had a proc and a scope in 41 places, and never compared with DreamMaker.
+What it did differently, for the record:
 
-Two more differences come from the expression path having no tree at all: a built-in
-constant (`NORTH`, `TRUE`) is a name to look up, so "undefined var: NORTH" with a scope, where
-a body pushes 1; and a body reads `vars` as the root type's const, null, where an expression
-reads `src.vars`. Another 27 places read `proc` and do nothing without one.
+- No reason, both correct: `null` pushed as a value; `(x)` kept as a variable; `&&` and `||`
+  chains with a target a pair of parentheses and constants tested when run; `? :` after `==`
+  testing the flag twice; `?.` chains jumping to one target without saving the cache;
+  assignments as values stored through the cache; a jump after a weighted `pick()`'s last
+  value; `x ** 2` and `x * x` as `Pow` and `Mul`; a call of a proc BYOND's types have by
+  name.
+- Not what the world's code computes: `a + (b + c) + d` was not regrouped as DreamMaker
+  regroups it (a list got two elements for one); a constant on the left of `&`, `|` or `^` was
+  not stored as its 24 bits.
+- Wrong: a built-in constant (`NORTH`, `TRUE`) was "undefined var" with a scope.
+- Wrong in a body, which the expression had right: `..()` and `.()` compiled to calls of the
+  stub; `vars` was null; `x = (ticks = 3)`, for a global, and `return a?.b?.c ||= v` were
+  "expected l-value". Without a scope, an expression compiled `/type{...}`, which the
+  debugger cannot assemble, and a body named the stub for `__PROC__`.
+
+`tests/compile_body.rs` compiles expressions alone and as `return EXPR` and compares the
+instructions.
 
 ## Unsupported forms
 

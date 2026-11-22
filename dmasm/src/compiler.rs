@@ -221,14 +221,37 @@ pub fn compile_expr_warned(
     scope: Option<&ExprScope>,
     byond: ByondVersion,
 ) -> Result<(Vec<Node>, Vec<String>), CompileError> {
-    let mut compiler = Compiler::new(params.iter().map(|x| x.to_string()).collect(), None);
-    compiler.byond = byond;
-    compiler.expr_scope = scope;
-    compiler.debugger = true;
-    compiler.emit_ins(Instruction::DbgFile(DMString(
-        b"<dmasm expression>".to_vec(),
-    )));
+    use dreammaker::ast::{Spanned, Statement};
+    let expr = parse_expr(code, byond)?;
+    let value = proc_value(vec![Spanned::new(
+        dreammaker::Location::BUILTINS,
+        Statement::Return(Some(expr)),
+    )]);
+    let compiled =
+        compile_statements(&value, params, scope, byond, false).map_err(|e| match e {
+            CompileError::AtLine(_, e) => *e,
+            e => e,
+        })?;
+    Ok((compiled.nodes, compiled.warnings))
+}
 
+fn proc_value(
+    code: Vec<dreammaker::ast::Spanned<dreammaker::ast::Statement>>,
+) -> dreammaker::objtree::ProcValue {
+    dreammaker::objtree::ProcValue {
+        location: dreammaker::Location::BUILTINS,
+        parameters: Box::new([]),
+        docs: Default::default(),
+        code: Some(code.into_boxed_slice()),
+        body_range: None,
+        first_line: None,
+        next_lines: Box::new([]),
+        end_lines: Box::new([]),
+        operator_lines: Box::new([]),
+    }
+}
+
+fn parse_expr(code: &str, byond: ByondVersion) -> Result<Expression, CompileError> {
     let ctx = dreammaker::Context::default();
     byond.read_as(&ctx);
 
@@ -262,20 +285,7 @@ pub fn compile_expr_warned(
             return Err(err.clone().into());
         }
     }
-
-    compiler.regroup_root = true;
-    let kind = compiler.emit_expr(expr)?;
-    compiler.emit_move_to_stack(kind)?;
-
-    let param_amt = params.len() as u32;
-    for arg_id in 0..param_amt {
-        compiler.emit_ins(Instruction::GetVar(Variable::Arg(arg_id)));
-    }
-
-    compiler.emit_ins(Instruction::NewList(param_amt + 1));
-    compiler.emit_ins(Instruction::Ret);
-    let warnings = compiler.warnings.into_inner();
-    Ok((compiler.nodes, warnings))
+    Ok(expr)
 }
 
 #[derive(Debug)]
@@ -314,8 +324,9 @@ fn is_statement_builtin(expr: &Expression, byond: ByondVersion) -> bool {
     if !follow.is_empty() {
         return false;
     }
-    let mut compiler = Compiler::new(vec![], None);
-    compiler.byond = byond;
+    let value = proc_value(vec![]);
+    let source = stub_source(&value, byond);
+    let mut compiler = debugger_compiler(&source, &[], None);
     if !matches!(
         builtin_procs::emit(&mut compiler, name.as_str(), &args.to_vec()),
         Ok(None)
@@ -380,35 +391,31 @@ pub fn compile_body_in(
             .value[0]
             .clone()
     };
-    let tree = builtins_tree();
-    let root = tree.root();
-    let source = procs::ProcSource {
-        tree,
-        ty: root,
-        name: BODY_PROC,
-        value: &value,
-        file: BODY_FILE,
-        debug_info: true,
-        index: Some(0),
-        byond,
-        file_names: None,
-    };
+    compile_statements(&value, params, scope, byond, true)
+}
 
-    let ctx = procs::proc_ctx(&source, vec![String::new(); params.len()]);
-    let mut compiler = Compiler::new(params.iter().map(|x| x.to_string()).collect(), Some(ctx));
-    compiler.byond = byond;
-    compiler.expr_scope = scope;
-    compiler.debugger = true;
+fn compile_statements(
+    value: &dreammaker::objtree::ProcValue,
+    params: &[&str],
+    scope: Option<&ExprScope>,
+    byond: ByondVersion,
+    lines: bool,
+) -> Result<CompiledBody, CompileError> {
+    let source = stub_source(value, byond);
+    let mut compiler = debugger_compiler(&source, params, scope);
     compiler.emit_ins(Instruction::DbgFile(DMString(
         BODY_FILE.as_bytes().to_vec(),
     )));
+    compiler.debug_info = lines;
     statements::emit_proc_body(&mut compiler, &source, value.code.as_ref().unwrap()).map_err(
         |e| match e {
             CompileError::AtLine(line, e) => CompileError::AtLine(line.saturating_sub(1), e),
             e => e,
         },
     )?;
-    compiler.emit_ins(Instruction::End);
+    if lines {
+        compiler.emit_ins(Instruction::End);
+    }
     let locals = compiler.proc.take().unwrap().locals;
     let warnings = compiler
         .warnings
@@ -466,6 +473,37 @@ pub fn compile_body_in(
         locals,
         warnings,
     })
+}
+
+fn stub_source(
+    value: &dreammaker::objtree::ProcValue,
+    byond: ByondVersion,
+) -> procs::ProcSource<'_> {
+    let tree = builtins_tree();
+    procs::ProcSource {
+        tree,
+        ty: tree.root(),
+        name: BODY_PROC,
+        value,
+        file: BODY_FILE,
+        debug_info: true,
+        index: Some(0),
+        byond,
+        file_names: None,
+    }
+}
+
+fn debugger_compiler<'a>(
+    source: &procs::ProcSource<'a>,
+    params: &[&str],
+    scope: Option<&'a ExprScope<'a>>,
+) -> Compiler<'a> {
+    let ctx = procs::proc_ctx(source, vec![String::new(); params.len()]);
+    let mut compiler = Compiler::new(params.iter().map(|x| x.to_string()).collect(), Some(ctx));
+    compiler.byond = source.byond;
+    compiler.expr_scope = scope;
+    compiler.debugger = true;
+    compiler
 }
 
 fn parse_body(
@@ -766,7 +804,7 @@ impl<'a> Compiler<'a> {
     }
 
     fn proc_macros_known(&self) -> bool {
-        self.proc.is_some() && !self.debugger
+        !self.debugger
     }
 
     fn static_type_name(&self, expr: &Expression) -> Option<String> {
@@ -929,50 +967,42 @@ impl<'a> Compiler<'a> {
         let root = std::mem::take(&mut self.regroup_root);
         let place = std::mem::take(&mut self.place);
         let safe_place = std::mem::take(&mut self.safe_place);
-        if self.proc.is_some() {
-            if let Some(line) = self.read_on_line(&expr).filter(|_| !place) {
-                if self.read_to.is_some_and(|r| line < r) && self.last_line == self.read_to {
-                    self.emit_ins(Instruction::DbgLine(line));
-                    self.read_on_pending = true;
-                } else {
-                    self.read_on(line);
-                }
-            }
-            let ends = self.proc.as_ref().map_or(&[][..], |p| p.end_lines);
-            let skip = std::mem::take(&mut self.skip_compound);
-            if let Some(line) = compound_line(&expr, ends).filter(|_| !place && !skip) {
-                let term = matches!(expr, Expression::Base { .. });
-                if self.line_pending
-                    || (term && self.read_on_pending)
-                    || self.last_line.is_some_and(|l| line > l)
-                {
-                    self.emit_ins(Instruction::DbgLine(line));
-                }
-            }
-            if let Some(line) = self.named_call_end(&expr).filter(|_| !place) {
+        if let Some(line) = self.read_on_line(&expr).filter(|_| !place) {
+            if self.read_to.is_some_and(|r| line < r) && self.last_line == self.read_to {
+                self.emit_ins(Instruction::DbgLine(line));
+                self.read_on_pending = true;
+            } else {
                 self.read_on(line);
             }
-            let folded = fold::constant(self, &expr);
-            if folded.as_ref().is_some_and(|c| *c != fold::Constant::New) && fold::has_logic(&expr)
+        }
+        let ends = self.proc.as_ref().map_or(&[][..], |p| p.end_lines);
+        let skip = std::mem::take(&mut self.skip_compound);
+        if let Some(line) = compound_line(&expr, ends).filter(|_| !place && !skip) {
+            let term = matches!(expr, Expression::Base { .. });
+            if self.line_pending
+                || (term && self.read_on_pending)
+                || self.last_line.is_some_and(|l| line > l)
             {
-                self.cache = None;
+                self.emit_ins(Instruction::DbgLine(line));
             }
-            if folded.as_ref().is_some_and(|c| *c != fold::Constant::New)
-                && self.debug_info
-                && !self.other_file
-                && syntax::has_static_field(&expr)
-                && self.names_other_file(&expr)
-            {
-                self.other_file = true;
-            }
-            if self.emit_folded(folded) {
-                return Ok(EvalKind::Stack);
-            }
-        } else if !place {
-            let folded = fold::constant(self, &expr);
-            if self.emit_folded(folded) {
-                return Ok(EvalKind::Stack);
-            }
+        }
+        if let Some(line) = self.named_call_end(&expr).filter(|_| !place) {
+            self.read_on(line);
+        }
+        let folded = fold::constant(self, &expr);
+        if folded.as_ref().is_some_and(|c| *c != fold::Constant::New) && fold::has_logic(&expr) {
+            self.cache = None;
+        }
+        if folded.as_ref().is_some_and(|c| *c != fold::Constant::New)
+            && self.debug_info
+            && !self.other_file
+            && syntax::has_static_field(&expr)
+            && self.names_other_file(&expr)
+        {
+            self.other_file = true;
+        }
+        if self.emit_folded(folded) {
+            return Ok(EvalKind::Stack);
         }
         match expr {
             Expression::TernaryOp { cond, if_, else_ } if fold::value(self, &cond).is_some() => {
@@ -1064,8 +1094,7 @@ impl<'a> Compiler<'a> {
             Expression::Base { term, follow } => {
                 let unspanned_follows: Vec<Follow> =
                     follow.iter().map(|f| f.elem.clone()).collect();
-                if self.proc.is_some()
-                    && !follow.is_empty()
+                if !follow.is_empty()
                     && matches!(&term.elem, dreammaker::ast::Term::Ident(i) if i.as_str() == "src")
                 {
                     self.explicit_src = true;
@@ -1084,7 +1113,7 @@ impl<'a> Compiler<'a> {
                     Some(Follow::StaticField(_) | Follow::ProcReference(_)),
                 ) = (type_term, unspanned_follows.first())
                 {
-                    if self.proc.is_some() && prefab.vars.is_empty() && !self.debugger {
+                    if prefab.vars.is_empty() && !self.debugger {
                         self.global_field = true;
                         let path = prefab.path.to_string();
                         let kind = procs::emit_type_scope(self, &path, &unspanned_follows[0])?;
@@ -1136,7 +1165,6 @@ impl<'a> Compiler<'a> {
                     if term.location.file == dreammaker::FileId::UNKNOWN
                         && args.len() == 1
                         && prefab.path.to_string() == "/list"
-                        && self.proc.is_some()
                     {
                         let kind = self.emit_expr(args[0].clone())?;
                         self.emit_move_to_stack(kind)?;
@@ -1445,17 +1473,7 @@ pub(crate) fn fold_initializer(
     byond: ByondVersion,
 ) -> Option<dreammaker::constants::Constant> {
     use dreammaker::constants::Constant as C;
-    let value = dreammaker::objtree::ProcValue {
-        location: dreammaker::Location::BUILTINS,
-        parameters: Box::new([]),
-        docs: Default::default(),
-        code: Some(Box::new([])),
-        body_range: None,
-        first_line: None,
-        next_lines: Box::new([]),
-        end_lines: Box::new([]),
-        operator_lines: Box::new([]),
-    };
+    let value = proc_value(vec![]);
     let source = procs::ProcSource {
         tree,
         ty,

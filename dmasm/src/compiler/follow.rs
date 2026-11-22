@@ -237,9 +237,8 @@ pub(super) fn emit_typed<'a>(
                     }
 
                     access @ (PropertyAccessKind::Dot | PropertyAccessKind::Colon)
-                        if compiler.proc.is_none()
-                            || (compiler.debugger
-                                && !proc_known(compiler, receiver_ty, access, &ident)) =>
+                        if compiler.debugger
+                            && !proc_known(compiler, receiver_ty, access, &ident) =>
                     {
                         kind = commit_field_buffer(compiler, kind, &mut field_buffer)?;
                         compiler.emit_move_to_stack(kind)?;
@@ -263,9 +262,8 @@ pub(super) fn emit_typed<'a>(
                     access @ (PropertyAccessKind::Dot
                     | PropertyAccessKind::Colon
                     | PropertyAccessKind::Scope)
-                        if compiler.proc.is_some()
-                            && (!field_buffer.is_empty()
-                                || matches!(kind, EvalKind::Var(_) | EvalKind::Field(..))) =>
+                        if !field_buffer.is_empty()
+                            || matches!(kind, EvalKind::Var(_) | EvalKind::Field(..)) =>
                     {
                         let callee = callee_var(compiler, receiver_ty, access, &ident);
                         let parked = matches!(kind, EvalKind::Stack | EvalKind::ListRef);
@@ -375,7 +373,7 @@ pub(super) fn emit_typed<'a>(
                 kind = unary::emit(compiler, vec![op], kind)?;
             }
 
-            Follow::StaticField(ident) if compiler.proc.is_some() => {
+            Follow::StaticField(ident) => {
                 let decl = ty.and_then(|t| super::procs::member_var(t, ident.as_str()));
                 let static_scope = decl
                     .filter(super::procs::is_global_member)
@@ -416,17 +414,6 @@ pub(super) fn emit_typed<'a>(
                     kind = EvalKind::Stack;
                 }
                 ty = decl.and_then(|d| super::procs::declared_type(compiler, &d.get().var_type));
-            }
-
-            Follow::StaticField(ident) => {
-                kind = commit_field_buffer(compiler, kind, &mut field_buffer)?;
-                compiler.emit_move_to_stack(kind)?;
-                compiler.emit_ins(Instruction::SetVar(Variable::Cache));
-                compiler.emit_ins(Instruction::GetVar(Variable::Initial(Box::new(
-                    Variable::Field(DMString(ident.as_str().into())),
-                ))));
-                kind = EvalKind::Stack;
-                ty = None;
             }
 
             Follow::ProcReference(_) => {
