@@ -440,3 +440,43 @@ fn a_body_can_end_with_a_bare_label() {
     let (code, _) = body("var/y = 1\ny").expect("compiles");
     assert_has(&code, &["GetVar local(0)"]);
 }
+
+#[test]
+fn a_body_without_a_scope_is_the_debugger_s_code_too() {
+    let unscoped = |code: &str| {
+        compile_body_in(code, &["x"], None, ByondVersion::LATEST).map(|compiled| {
+            dmasm::format(&compiled.nodes)
+                .lines()
+                .map(|l| l.trim().to_owned())
+                .collect::<Vec<_>>()
+        })
+    };
+    for code in ["return __PROC__", "return __TYPE__"] {
+        let error = unscoped(code).unwrap_err().to_string();
+        assert!(
+            error.contains("unsupported compiler macro"),
+            "{code}: {error}"
+        );
+    }
+    assert_has(
+        &unscoped("return x.greet(1)").unwrap(),
+        &[
+            "GetVar arg(0)",
+            "PushVal \"greet\"",
+            "PushInt 1",
+            "CallName 1",
+        ],
+    );
+    assert_has(
+        &unscoped("return /datum/thing::size").unwrap(),
+        &[
+            "PushVal /datum/thing",
+            "SetVar cache",
+            "GetVar initial(cache[\"size\"])",
+        ],
+    );
+    let error = unscoped("return /obj{name = \"a\"}")
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("modified types"), "{error}");
+}

@@ -237,7 +237,7 @@ pub(super) fn emit_typed<'a>(
 
                     access @ (PropertyAccessKind::Dot | PropertyAccessKind::Colon)
                         if compiler.proc.is_none()
-                            || (compiler.expr_scope.is_some()
+                            || (compiler.debugger
                                 && !proc_known(compiler, receiver_ty, access, &ident)) =>
                     {
                         kind = commit_field_buffer(compiler, kind, &mut field_buffer)?;

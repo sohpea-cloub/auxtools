@@ -758,7 +758,7 @@ fn prefab_value(
     compiler: &mut Compiler,
     prefab: &dreammaker::ast::Prefab,
 ) -> Result<Value, CompileError> {
-    if compiler.expr_scope.is_some() && !prefab.vars.is_empty() {
+    if compiler.debugger && !prefab.vars.is_empty() {
         return Err(CompileError::UnsupportedStatement(
             "modified types (/type{var = value}) are unsupported in debugger code; use new and assign the vars",
         ));

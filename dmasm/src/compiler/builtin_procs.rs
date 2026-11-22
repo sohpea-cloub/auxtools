@@ -401,7 +401,7 @@ fn emit_code(
             compiler.emit_ins(Instruction::PushVal(operands::Value::Path(path)));
             compiler.emit_ins(Instruction::AsType);
         }
-        "astype" if n == 1 && compiler.expr_scope.is_some() => {
+        "astype" if n == 1 && compiler.debugger => {
             let path = declared_world_type(compiler, &args[0]).ok_or(
                 CompileError::UnsupportedBuiltin {
                     proc: "astype with an untyped value".to_owned(),
@@ -647,7 +647,9 @@ fn emit_code(
 }
 
 fn declared_world_type(compiler: &Compiler, arg: &Expression) -> Option<String> {
-    compiler.expr_scope?;
+    if !compiler.debugger {
+        return None;
+    }
     let path = super::procs::declared_type_path(compiler, arg).filter(|path| !path.is_empty())?;
     Some(if path.split('/').any(|part| part == "list") {
         "/list".to_owned()

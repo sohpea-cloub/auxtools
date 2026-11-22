@@ -1292,7 +1292,7 @@ fn implicit_type_for(compiler: &Compiler, ty: &str) -> Option<String> {
         .find(ty)
         .map(|t| t.get().path.clone());
     match found {
-        None if compiler.expr_scope.is_some() => Some(ty.to_owned()),
+        None if compiler.debugger => Some(ty.to_owned()),
         found => found,
     }
 }

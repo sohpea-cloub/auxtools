@@ -283,7 +283,7 @@ pub(super) fn find_var(compiler: &Compiler, name: &str) -> Option<EvalKind> {
         "." | "usr" | "src" | "args" | "world" | "caller" | "callee" | "global" => return None,
         _ => {}
     }
-    if compiler.expr_scope.is_some() {
+    if compiler.debugger {
         return None;
     }
     let mut scope = String::new();
@@ -357,7 +357,7 @@ pub(super) fn emit_bare_call(
     let Some(ctx) = compiler.proc.as_ref() else {
         return Ok(None);
     };
-    if compiler.expr_scope.is_some() {
+    if compiler.debugger {
         return Ok(None);
     }
     let ty = ctx.ty;

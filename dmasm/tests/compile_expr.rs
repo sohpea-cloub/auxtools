@@ -611,3 +611,16 @@ fn an_expression_folds_constants_as_a_proc_does() {
     let code = instructions("~x", &["x"]);
     assert!(code.contains(&Instruction::Bnot), "{:?}", code);
 }
+
+#[test]
+fn without_a_scope_an_expression_is_still_the_debugger_s() {
+    let error = compile_expr("/obj{name = \"a\"}", &[]).unwrap_err();
+    assert!(error.to_string().contains("modified types"), "{error}");
+    let error = compile_expr("astype(x)", &["x"]).unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "unsupported built-in proc: astype with an untyped value"
+    );
+    let code = instructions("4294967296 | 1", &[]);
+    assert!(code.contains(&Instruction::Bor), "{:?}", code);
+}

@@ -186,7 +186,7 @@ fn static_const(
     steps: &[dreammaker::ast::Spanned<Follow>],
 ) -> Option<Constant> {
     let ctx = c.proc.as_ref()?;
-    if c.expr_scope.is_some() {
+    if c.debugger {
         return None;
     }
     let ty = match term {
@@ -535,7 +535,7 @@ fn binary_value(c: &Compiler, expr: &Expression) -> Option<Constant> {
             let b = value(c, rhs)?;
             match (a, b) {
                 (Constant::Number(a), Constant::Number(b)) => {
-                    if is_bit_op(*op) && c.expr_scope.is_some() && (wide(a) || wide(b)) {
+                    if is_bit_op(*op) && c.debugger && (wide(a) || wide(b)) {
                         return None;
                     }
                     if is_bit_op(*op) {
