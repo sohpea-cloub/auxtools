@@ -4,7 +4,7 @@ use std::{
 	time::{Duration, Instant}
 };
 
-use auxtools_cli::{client::Client, local};
+use auxtools_cli::client::{when_listening, Client, NotListening};
 use auxtools_protocol::*;
 use serde_json::json;
 
@@ -190,26 +190,19 @@ impl Follower {
 	}
 }
 
-const RECONNECT_INTERVAL: Duration = Duration::from_millis(100);
-
 impl World {
 	pub fn reconnect(&mut self, until: Option<Instant>) -> Result<()> {
-		loop {
-			if let Ok(client) = Client::open(self.pid) {
+		match when_listening(self.pid, until, Client::open) {
+			Ok(client) => {
 				self.client = client;
 				self.events.clear();
-				return Ok(());
+				Ok(())
 			}
-			if !local::alive(self.pid) {
-				return Err(hung_up());
-			}
-			if until.is_some_and(|until| Instant::now() >= until) {
-				return Err(Failure(
-					TIMED_OUT,
-					"timed out waiting for the world to respond after its connection ended.".to_owned()
-				));
-			}
-			std::thread::sleep(RECONNECT_INTERVAL);
+			Err(NotListening::Gone) => Err(hung_up()),
+			Err(NotListening::TimedOut) => Err(Failure(
+				TIMED_OUT,
+				"timed out waiting for the world to respond after its connection ended.".to_owned()
+			))
 		}
 	}
 }

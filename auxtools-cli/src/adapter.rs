@@ -8,7 +8,10 @@ use std::{
 
 use auxtools_cli::{
 	byond::{self, Server},
-	client::ops::{Asks, Ending, Operations, Placed, Trigger},
+	client::{
+		ops::{Asks, Ending, Operations, Placed, Trigger},
+		when_listening
+	},
 	game::{Game, Launch},
 	local::{self, Stream}
 };
@@ -53,7 +56,7 @@ const READING: &str = "reading";
 const RESTARTING: &str = "restarting";
 const RELOADING: &str = "reloading";
 const UNAVAILABLE: &str = "debugger initialization failed";
-const CONNECT_INTERVAL: Duration = Duration::from_millis(100);
+const EXIT_INTERVAL: Duration = Duration::from_millis(100);
 
 pub enum Input {
 	Message(String),
@@ -865,18 +868,14 @@ impl Adapter {
 		let launched = self.game.is_some();
 		std::thread::Builder::new()
 			.name("connect".to_owned())
-			.spawn(move || loop {
-				if let Ok(stream) = local::connect(pid) {
+			.spawn(move || match when_listening(pid, None, local::connect) {
+				Ok(stream) => {
 					let _ = inputs.send(Input::Connected { generation, stream });
-					return;
 				}
-				if !local::alive(pid) {
-					if !launched {
-						let _ = inputs.send(Input::ProcessGone);
-					}
-					return;
+				Err(_) if launched => {}
+				Err(_) => {
+					let _ = inputs.send(Input::ProcessGone);
 				}
-				std::thread::sleep(CONNECT_INTERVAL);
 			})
 			.expect("couldn't start a thread");
 	}
@@ -1421,7 +1420,7 @@ impl Adapter {
 							return;
 						}
 					}
-					std::thread::sleep(CONNECT_INTERVAL);
+					std::thread::sleep(EXIT_INTERVAL);
 				}
 				let _ = inputs.send(Input::ProcessGone);
 			});

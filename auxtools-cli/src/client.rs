@@ -213,7 +213,7 @@ pub enum NotListening {
 	TimedOut
 }
 
-pub fn when_listening<T>(pid: u32, until: Option<Instant>, mut connect: impl FnMut(u32) -> io::Result<T>) -> Result<T, NotListening> {
+pub fn when_listening<T, E>(pid: u32, until: Option<Instant>, mut connect: impl FnMut(u32) -> Result<T, E>) -> Result<T, NotListening> {
 	loop {
 		if let Ok(connected) = connect(pid) {
 			return Ok(connected);
@@ -401,7 +401,7 @@ mod tests {
 		let mut tries = 0;
 		let found = when_listening(nobody, None, |_| {
 			tries += 1;
-			Err::<(), _>(io::Error::other("nothing listens"))
+			Err::<(), _>("nothing listens")
 		});
 		assert_eq!((found, tries), (Err(NotListening::Gone), 1));
 		let this = std::process::id();
@@ -409,13 +409,13 @@ mod tests {
 		let found = when_listening(this, None, |pid| {
 			tries += 1;
 			if tries < 3 {
-				Err(io::Error::other("not yet"))
+				Err("not yet")
 			} else {
 				Ok(pid)
 			}
 		});
 		assert_eq!((found, tries), (Ok(this), 3));
-		let found = when_listening(this, Some(Instant::now()), |_| Err::<(), _>(io::Error::other("never")));
+		let found = when_listening(this, Some(Instant::now()), |_| Err::<(), _>("never"));
 		assert_eq!(found, Err(NotListening::TimedOut));
 	}
 }

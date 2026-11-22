@@ -1,6 +1,9 @@
 use std::time::{Duration, Instant};
 
-use auxtools_cli::{client::ops::Ending, local};
+use auxtools_cli::{
+	client::{ops::Ending, when_listening, NotListening},
+	local
+};
 use auxtools_protocol::{Reconnected, Request, Response};
 use serde_json::json;
 
@@ -175,32 +178,42 @@ pub fn reboot(world: &mut World, args: &args::Reboot) -> Result<()> {
 		}
 	}
 
-	let mut again: Option<World> = None;
+	let exited = || Failure(HUNG_UP, format!("the world process (pid {}) exited instead of rebooting.", pid));
+	let never_ran = || {
+		Failure(
+			TIMED_OUT,
+			format!(
+				"timed out after {} waiting for the rebooted world to start running.",
+				seconds_text(timeout)
+			)
+		)
+	};
 	loop {
-		if !local::alive(pid) {
-			return Err(Failure(HUNG_UP, format!("the world process (pid {}) exited instead of rebooting.", pid)));
-		}
-		if Instant::now() >= until {
-			return Err(Failure(
-				TIMED_OUT,
-				format!(
-					"timed out after {} waiting for the rebooted world to start running.",
-					seconds_text(timeout)
-				)
-			));
-		}
-		match again.as_mut() {
-			None => again = World::connect(pid).ok(),
-			Some(world) => match world.started(Some(until)) {
+		let mut again = match when_listening(pid, Some(until), World::connect) {
+			Ok(world) => world,
+			Err(NotListening::Gone) => return Err(exited()),
+			Err(NotListening::TimedOut) => return Err(never_ran())
+		};
+		loop {
+			let lost = match again.started(Some(until)) {
 				Ok(Some(true)) => {
-					world.leave();
+					again.leave();
 					done(args.json, json!({ "pid": pid, "rebooted": true }), format!("pid {}: rebooted", pid));
 					return Ok(());
 				}
-				Ok(_) => {}
-				Err(_) => again = None
+				Ok(_) => false,
+				Err(_) => true
+			};
+			if !local::alive(pid) {
+				return Err(exited());
+			}
+			if Instant::now() >= until {
+				return Err(never_ran());
+			}
+			std::thread::sleep(INTERVAL);
+			if lost {
+				break;
 			}
 		}
-		std::thread::sleep(INTERVAL);
 	}
 }
