@@ -2172,10 +2172,10 @@ pub fn apply<K: Ord + std::hash::Hash + Copy, T>(
 		};
 		stub.set_bytecode(bytecode);
 		let ends = crate::WORLD_ENDS.load(std::sync::atomic::Ordering::Relaxed);
-		let tries = crate::server::Server::hide_tries();
+		let tries = crate::server::Evaluation::hide_tries();
 		let result = stub.call(&[]);
 		if crate::WORLD_ENDS.load(std::sync::atomic::Ordering::Relaxed) == ends {
-			crate::server::Server::show_tries(tries);
+			crate::server::Evaluation::show_tries(tries);
 		}
 		match result {
 			Ok(value) => {

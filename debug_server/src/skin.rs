@@ -58,7 +58,7 @@ pub(crate) fn run(code: &str, params: &[(&str, &Value)]) -> Result<Value, String
 	let assembly = dmasm::assembler::assemble(&body.nodes, &mut crate::assemble_env::AssembleEnv).map_err(|e| format!("{:?}", e))?;
 	let proc = Proc::find("/proc/auxtools_expr_stub").ok_or("the world has no evaluation stub")?;
 	proc.set_bytecode(assembly);
-	let result = crate::server::Server::call_with_locals(&proc, &body.locals, &values)?.map_err(|e| e.message)?;
+	let result = crate::server::Evaluation::call_with_locals(&proc, &body.locals, &values)?.map_err(|e| e.message)?;
 	result.as_list().and_then(|list| list.get(1)).map_err(|e| e.message)
 }
 

@@ -402,14 +402,14 @@ impl Server {
 		self.pause.state.as_mut().unwrap().invalidate_stacks();
 		let value = value?;
 
-		self.in_eval = true;
+		self.eval.in_eval = true;
 		auxtools::instruction_hook::hear_all();
-		self.eval_error = None;
+		self.eval.eval_error = None;
 		let written = self.pause.write_variable(&container, name, &value);
-		self.in_eval = false;
+		self.eval.in_eval = false;
 		self.refresh_watches();
 		self.pause.state.as_mut().unwrap().invalidate_stacks();
-		if let Some(error) = self.eval_error.take() {
+		if let Some(error) = self.eval.eval_error.take() {
 			return Err(format!("runtime error: {}", error));
 		}
 		written?;

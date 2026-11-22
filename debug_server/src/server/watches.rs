@@ -64,7 +64,7 @@ impl Server {
 		let mut changed: Vec<(usize, RawValue)> = vec![];
 		let mut over: Vec<(u32, &'static str)> = vec![];
 
-		self.in_eval = true;
+		self.eval.in_eval = true;
 		auxtools::instruction_hook::hear_all();
 		for (index, watch) in self.watches.iter().enumerate() {
 			match &watch.place {
@@ -109,8 +109,8 @@ impl Server {
 				}
 			}
 		}
-		self.in_eval = false;
-		self.eval_error = None;
+		self.eval.in_eval = false;
+		self.eval.eval_error = None;
 
 		if changed.is_empty() && over.is_empty() {
 			return None;
@@ -138,7 +138,7 @@ impl Server {
 			};
 			let (name, condition) = (watch.name.clone(), watch.condition.clone());
 			if let Some(condition) = condition {
-				self.eval_given = vec![(CONDITION_NEW.to_owned(), now.clone()), (CONDITION_OLD.to_owned(), before.clone())];
+				self.eval.eval_given = vec![(CONDITION_NEW.to_owned(), now.clone()), (CONDITION_OLD.to_owned(), before.clone())];
 				let passed = self.eval_expr(Some(0), &condition).map(|result| result.is_truthy());
 				if let Some(state) = self.pause.state.as_mut() {
 					state.invalidate_stacks();
@@ -198,7 +198,7 @@ impl Server {
 			}
 			None => vec![]
 		};
-		let was_in_eval = std::mem::replace(&mut self.in_eval, true);
+		let was_in_eval = std::mem::replace(&mut self.eval.in_eval, true);
 		auxtools::instruction_hook::hear_all();
 		for watch in &mut self.watches {
 			let now = match &watch.place {
@@ -212,7 +212,7 @@ impl Server {
 				watch.last = unsafe { Value::from_raw(now) };
 			}
 		}
-		self.in_eval = was_in_eval;
+		self.eval.in_eval = was_in_eval;
 	}
 
 	fn end_watch(&mut self, id: u32, reason: &str) {
@@ -239,7 +239,7 @@ impl Server {
 		if !auxtools::pointer::readable() {
 			return Err("pointer reads are unavailable in this BYOND build".to_owned());
 		}
-		self.eval_given = given;
+		self.eval.eval_given = given;
 		let pointer = self.eval_expr(frame_id, &format!("&({})", expression));
 		if let Some(state) = self.pause.state.as_mut() {
 			state.invalidate_stacks();

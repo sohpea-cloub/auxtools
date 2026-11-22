@@ -47,9 +47,9 @@ impl Server {
 	pub(super) fn handle_render(&mut self, frame_id: Option<u32>, expression: &str, depth: u32) {
 		let rendered = match expression.strip_prefix('#') {
 			Some(command) => {
-				self.eval_warnings.clear();
-				self.eval_callee_errors.clear();
-				self.eval_callee_more = 0;
+				self.eval.eval_warnings.clear();
+				self.eval.eval_callee_errors.clear();
+				self.eval.eval_callee_more = 0;
 				Ok(Rendered::Text(self.handle_command(frame_id, command)))
 			}
 			None => self.eval_expr(frame_id, expression).map(|value| render(&value, depth))

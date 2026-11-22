@@ -1,0 +1,607 @@
+use super::*;
+
+const GLOBALS: &str = "global vars";
+
+const EVAL_CODE_KEPT: usize = 256;
+
+#[derive(PartialEq, Eq, Hash)]
+pub(super) struct EvalCodeKey {
+	generation: u32,
+	command: String,
+	names: Vec<String>,
+	src_type: Option<String>
+}
+
+pub(crate) struct Evaluation {
+	pub(super) in_eval: bool,
+	pub(super) eval_error: Option<String>,
+	pub(super) eval_still_running: bool,
+	pub(super) eval_callee_errors: Vec<String>,
+	pub(super) eval_callee_more: usize,
+	pub(super) eval_ran: *mut raw_types::procs::ExecutionContext,
+	pub(super) eval_given: Vec<(String, Value)>,
+	pub(super) eval_code: HashMap<EvalCodeKey, Result<(Vec<u32>, Vec<String>, Vec<String>), String>>,
+	pub(super) eval_warnings: Vec<String>,
+	pub(super) eval_src: Option<Value>,
+	pub(super) spawning: Option<u64>
+}
+
+impl Evaluation {
+	pub(super) fn new() -> Self {
+		Self {
+			in_eval: false,
+			eval_error: None,
+			eval_still_running: false,
+			eval_callee_errors: vec![],
+			eval_callee_more: 0,
+			eval_ran: std::ptr::null_mut(),
+			eval_given: vec![],
+			eval_code: HashMap::new(),
+			eval_warnings: vec![],
+			eval_src: None,
+			spawning: None
+		}
+	}
+
+	pub(super) fn eval_runs(&mut self, ctx: *mut raw_types::procs::ExecutionContext) {
+		self.eval_ran = ctx;
+	}
+
+	pub(super) fn set_eval_error(&mut self, message: &str, ctx: *mut raw_types::procs::ExecutionContext) {
+		if !Self::called_by_expression(ctx) {
+			self.eval_error = Some(Self::error_with_stack(message, ctx));
+		} else if self.eval_callee_errors.len() < MAX_CALLEE_ERRORS {
+			let error = Self::error_with_stack(message, ctx);
+			self.eval_callee_errors.push(error);
+		} else {
+			self.eval_callee_more += 1;
+		}
+	}
+
+	pub(super) fn called_by_expression(ctx: *mut raw_types::procs::ExecutionContext) -> bool {
+		if ctx.is_null() || is_expression_frame(ctx) {
+			return false;
+		}
+		let mut at = unsafe { *(*ctx).parent_context() };
+		while !at.is_null() {
+			if is_expression_frame(at) {
+				return true;
+			}
+			at = unsafe { *(*at).parent_context() };
+		}
+		false
+	}
+
+	pub(super) fn error_with_stack(message: &str, ctx: *mut raw_types::procs::ExecutionContext) -> String {
+		let mut error = message.to_owned();
+		let mut frames = vec![];
+		let mut at = ctx;
+		while !at.is_null() && !is_expression_frame(at) {
+			frames.push(Self::context_place(at));
+			at = unsafe { *(*at).parent_context() };
+		}
+		if !at.is_null() {
+			for (i, place) in frames.iter().enumerate() {
+				error += &format!("\n  {} {}", if i == 0 { "in" } else { "called by" }, place);
+			}
+			if !frames.is_empty() {
+				error += "\n  called by the expression";
+			}
+		}
+		error
+	}
+
+	pub(super) fn context_place(ctx: *mut raw_types::procs::ExecutionContext) -> String {
+		let proc = Proc::from_id(unsafe { (**(*ctx).proc_instance()).proc });
+		let mut place = match &proc {
+			Some(proc) => unnamed::proc_name(proc),
+			None => "a proc the world doesn't have".to_owned()
+		};
+		let line = unsafe { (*ctx).filename().valid().then(|| *(*ctx).line()) };
+		match (proc.as_ref().and_then(code_index::file_of), line) {
+			(Some(file), Some(line)) => place += &format!("  {}:{}", file, line),
+			(None, Some(line)) => place += &format!("  line {}", line),
+			_ => {}
+		}
+		place
+	}
+
+	pub(super) fn eval_failed(&self, message: String) -> EvalError {
+		EvalError {
+			message,
+			still_running: self.eval_still_running
+		}
+	}
+
+	pub(super) fn unknown_name(error: String) -> String {
+		let name = match (error.strip_prefix("undefined var: "), error.strip_prefix("proc not found: ")) {
+			(Some(name), _) => name,
+			(_, Some(path)) => path.rsplit('/').next().unwrap_or(path),
+			_ => return error
+		};
+		let capitals = name.chars().any(|c| c.is_ascii_uppercase()) && !name.chars().any(|c| c.is_ascii_lowercase());
+		if !capitals || crate::macros::given() {
+			return error;
+		}
+		format!(
+			"{} (if that's a #define: source macros unavailable until the project is parsed for hot reload)",
+			error
+		)
+	}
+
+	pub(super) fn assemble_error(error: dmasm::assembler::AssembleError) -> String {
+		use dmasm::assembler::AssembleError;
+		let text = |bytes: &[u8]| String::from_utf8_lossy(bytes).into_owned();
+		match error {
+			AssembleError::ProcNotFound(path) => format!("proc not found: {}", path),
+			AssembleError::VariableNameNotFound(name) => format!("variable not found: {}", text(&name)),
+			AssembleError::StringNotFound(string) => format!("string not found: {}", text(&string)),
+			AssembleError::TypeNotFound(path) => format!("there's no type {}", path),
+			AssembleError::ResourceNotFound(path) => format!("there's no file '{}'", path),
+			other => format!("{:?}", other)
+		}
+	}
+
+	pub(super) fn compile_eval(
+		command: &str,
+		arg_names: &[&str],
+		scope: &dmasm::compiler::ExprScope
+	) -> Result<(Vec<dmasm::Node>, Vec<String>, Vec<String>), String> {
+		let byond = crate::world_byond();
+		if dmasm::compiler::is_body(command) {
+			let body = dmasm::compiler::compile_body_in(command, arg_names, Some(scope), byond).map_err(|e| e.to_string())?;
+			return Ok((body.nodes, body.locals, body.warnings));
+		}
+		match dmasm::compiler::compile_expr_warned(command, arg_names, Some(scope), byond) {
+			Ok((expr, warnings)) => Ok((expr, vec![], warnings)),
+			Err(_) if command.trim().contains(['\n', ';']) => {
+				let error = dmasm::compiler::compile_body_in(command, arg_names, Some(scope), byond).err();
+				Err(error.map_or_else(|| "invalid expression or proc body".to_owned(), |e| e.to_string()))
+			}
+			Err(e) => Err(e.to_string())
+		}
+	}
+
+	pub(crate) fn call_with_locals(proc: &Proc, locals: &[String], args: &[&Value]) -> Result<Result<Value, Runtime>, String> {
+		use auxtools::runtime_tables::{self, ProcEntryWords};
+		let ends = crate::WORLD_ENDS.load(std::sync::atomic::Ordering::Relaxed);
+		let none = match locals.is_empty() {
+			true => None,
+			false => {
+				let none = runtime_tables::proc_entry(proc.id).ok_or("couldn't read the stub's proc entry")?.0[ProcEntryWords::LOCALS];
+				let table = hot_reload::locals_table(locals, none)?;
+				runtime_tables::set_proc_entry_word(proc.id, ProcEntryWords::LOCALS, table);
+				Some(none)
+			}
+		};
+		let tries = Self::hide_tries();
+		let result = proc.call(args);
+		if crate::WORLD_ENDS.load(std::sync::atomic::Ordering::Relaxed) == ends {
+			Self::show_tries(tries);
+			if let Some(none) = none {
+				runtime_tables::set_proc_entry_word(proc.id, ProcEntryWords::LOCALS, none);
+			}
+		}
+		Ok(result)
+	}
+
+	pub(crate) fn hide_tries() -> Vec<(*mut raw_types::procs::ExecutionContext, u32)> {
+		let mut hidden = vec![];
+		let mut at = unsafe { *raw_types::funcs::CURRENT_EXECUTION_CONTEXT };
+		while !at.is_null() {
+			let handler = unsafe { *(*at).throw_handler() };
+			if handler != 0 {
+				hidden.push((at, handler));
+				unsafe { *(*at).throw_handler_mut() = 0 };
+			}
+			at = unsafe { *(*at).parent_context() };
+		}
+		hidden
+	}
+
+	pub(crate) fn show_tries(tries: Vec<(*mut raw_types::procs::ExecutionContext, u32)>) {
+		for (ctx, handler) in tries {
+			unsafe { *(*ctx).throw_handler_mut() = handler };
+		}
+	}
+
+	pub(super) fn frame_is_live(ctx: *mut raw_types::procs::ExecutionContext) -> bool {
+		let on = |mut at: *mut raw_types::procs::ExecutionContext| {
+			while !at.is_null() {
+				if at == ctx {
+					return true;
+				}
+				at = unsafe { *(*at).parent_context() };
+			}
+			false
+		};
+		on(unsafe { *raw_types::funcs::CURRENT_EXECUTION_CONTEXT })
+			|| debug::CallStacks::suspended_instances()
+				.into_iter()
+				.any(|instance| on(unsafe { (*instance).context }))
+	}
+}
+
+impl Server {
+	pub(super) fn send_callee_errors(&mut self) {
+		let mut notes: Vec<String> = std::mem::take(&mut self.eval.eval_warnings)
+			.into_iter()
+			.map(|warning| format!("warning: {}", warning))
+			.collect();
+		let errors = std::mem::take(&mut self.eval.eval_callee_errors);
+		let more = std::mem::take(&mut self.eval.eval_callee_more);
+		notes.extend(
+			errors
+				.into_iter()
+				.map(|error| format!("runtime error in a called proc (the evaluation carried on): {}", error))
+		);
+		if more > 0 {
+			notes.push(format!("and {} more runtime errors in called procs", more));
+		}
+		let Some(client) = self.sessions.current else {
+			return;
+		};
+		for message in notes {
+			self.tell(client, Response::Notification { message });
+		}
+	}
+
+	pub(super) fn handle_command(&mut self, frame_id: Option<u32>, command: &str) -> String {
+		match console::parse(command) {
+			Ok(console::Command::Disassemble { proc: Some(proc), id }) => self.codes.handle_disassemble(proc, id),
+			Ok(console::Command::Disassemble { proc: None, .. }) => match frame_id {
+				Some(frame_id) => match self.pause.get_stack_frame(frame_id) {
+					Some(frame) => {
+						let proc = unnamed::proc_ref(&frame.proc);
+						self.codes.handle_disassemble(&proc.path, proc.override_id)
+					}
+					None => "couldn't find stack frame (is execution not paused?)".to_owned()
+				},
+				None => "no execution frame selected".to_owned()
+			},
+			#[cfg(feature = "test-commands")]
+			Ok(console::Command::Skin) => match self.evaluating(crate::skin::state) {
+				Ok(None) => "no skin".to_owned(),
+				Ok(Some((resource, text))) => format!("resource {}\n{}", resource, text),
+				Err(e) => format!("Failed: {}", e)
+			},
+			#[cfg(feature = "test-commands")]
+			Ok(console::Command::Script) => self.evaluating(crate::client_script::state).unwrap_or_else(|e| format!("Failed: {}", e)),
+			Ok(console::Command::Help(text)) => text.to_owned(),
+			Err(error) => error
+		}
+	}
+
+	pub(super) fn eval_expr(&mut self, frame_id: Option<u32>, command: &str) -> Result<Value, String> {
+		self.eval_expr_plain(frame_id, command).map_err(Evaluation::unknown_name)
+	}
+
+	pub(super) fn eval_expr_plain(&mut self, frame_id: Option<u32>, command: &str) -> Result<Value, String> {
+		self.eval.in_eval = true;
+		auxtools::instruction_hook::hear_all();
+		self.eval.eval_error = None;
+		self.eval.eval_callee_errors.clear();
+		self.eval.eval_callee_more = 0;
+		self.eval.eval_warnings.clear();
+		self.eval.eval_ran = std::ptr::null_mut();
+		self.eval.eval_still_running = false;
+
+		let result = self.compile_and_run_expr(frame_id, command);
+		self.eval.eval_given.clear();
+		self.eval.eval_src = None;
+		self.refresh_watches();
+
+		self.eval.in_eval = false;
+
+		match self.eval.eval_error.take() {
+			Some(error) => Err(format!("runtime error: {}", error)),
+			None => result
+		}
+	}
+
+	pub(super) fn compile_and_run_expr(&mut self, frame_id: Option<u32>, command: &str) -> Result<Value, String> {
+		enum ArgType {
+			Dot,
+			Usr,
+			Src,
+			Arg(u32),
+			Local(u32),
+			Given
+		}
+
+		let command = &*crate::macros::expand(command)?;
+
+		let globals = unsafe { Value::new(ValueTag::GlobalVars, ValueData { id: 0 }) };
+		let mut src = None;
+		let given_src = self.eval.eval_src.take();
+
+		let (ctx, instance, mut args) = match frame_id {
+			None => {
+				let mut args = vec![];
+				if let Some(object) = given_src {
+					src = Some(object.clone());
+					args.push(("src".to_owned(), object, ArgType::Given));
+				}
+				(std::ptr::null_mut(), std::ptr::null_mut(), args)
+			}
+
+			Some(frame_id) => {
+				let Some(frame) = self.pause.get_stack_frame(frame_id) else {
+					return Err(format!("there's no frame {} (the world isn't paused, or has carried on since)", frame_id));
+				};
+
+				let frame_args = List::new();
+				for (_, value) in &frame.args {
+					frame_args.append(value);
+				}
+				if frame.src != Value::NULL {
+					src = Some(frame.src.clone());
+				}
+
+				let mut args = vec![
+					("args".to_owned(), Value::from(frame_args), ArgType::Given),
+					(".".to_owned(), frame.dot.clone(), ArgType::Dot),
+					("usr".to_owned(), frame.usr.clone(), ArgType::Usr),
+					("src".to_owned(), frame.src.clone(), ArgType::Src),
+				];
+
+				for (idx, arg) in frame.args.iter().enumerate() {
+					if let Some(name) = &arg.0 {
+						args.push((name.into(), arg.1.clone(), ArgType::Arg(idx as u32)));
+					}
+				}
+
+				for (idx, (local, name)) in frame.locals.iter().zip(values::visible_locals(&frame)).enumerate() {
+					if let Some(name) = name {
+						args.push((name, local.1.clone(), ArgType::Local(idx as u32)));
+					}
+				}
+
+				(frame.context, frame.instance, args)
+			}
+		};
+
+		args.push((GLOBALS.to_owned(), globals, ArgType::Given));
+		for (name, value) in std::mem::take(&mut self.eval.eval_given).into_iter().rev() {
+			args.insert(0, (name, value, ArgType::Given));
+		}
+		let arg_names: Vec<&str> = args.iter().map(|(name, ..)| name.as_str()).collect();
+		let arg_values: Vec<&Value> = args.iter().map(|(_, value, _)| value).collect();
+
+		let has_var = |object: &Value, name: &str| StringRef::new(name).is_ok_and(|name| object.get(name).is_ok());
+		let scope = dmasm::compiler::ExprScope {
+			has_src_var: &|name| src.as_ref().is_some_and(|src| has_var(src, name)),
+			has_src_proc: &|name| src.as_ref().is_some_and(|src| crate::assemble_env::AssembleEnv::has_proc(src, name)),
+			global: &|name| {
+				if has_var(&Value::GLOBAL, name) {
+					Some(dmasm::compiler::ExprGlobal::Listed)
+				} else {
+					hot_reload::added_global(name).map(dmasm::compiler::ExprGlobal::Id)
+				}
+			},
+			globals: GLOBALS,
+			proc_ref: &crate::assemble_env::type_proc,
+			proc_path: &crate::assemble_env::proc_path
+		};
+		let key = EvalCodeKey {
+			generation: hot_reload::code_generation(),
+			command: command.to_owned(),
+			names: arg_names.iter().map(|name| (*name).to_owned()).collect(),
+			src_type: src.as_ref().and_then(values::kind)
+		};
+		let compiled = match self.eval.eval_code.get(&key) {
+			Some(compiled) => compiled.clone(),
+			None => {
+				let compiled = Evaluation::compile_eval(command, &arg_names, &scope).and_then(|(code, locals, warnings)| {
+					let assembly = dmasm::assembler::assemble(&code, &mut crate::assemble_env::AssembleEnv).map_err(Evaluation::assemble_error)?;
+					Ok((assembly, locals, warnings))
+				});
+				if self.eval.eval_code.len() >= EVAL_CODE_KEPT {
+					self.eval.eval_code.clear();
+				}
+				self.eval.eval_code.insert(key, compiled.clone());
+				compiled
+			}
+		};
+		let (assembly, locals, warnings) = compiled?;
+		self.eval.eval_warnings = warnings;
+		if let Some(number) = self.eval.spawning.take() {
+			self.spawns.push_back(Spawn {
+				number,
+				bytecode: assembly,
+				locals,
+				args: arg_values.into_iter().cloned().collect()
+			});
+			if let Some(inbox) = self.spawn_inbox.as_ref().and_then(|inbox| List::from_value(inbox).ok()) {
+				inbox.append(Value::from(number as f32));
+			}
+			return Ok(Value::NULL);
+		}
+		let proc = Proc::find("/proc/auxtools_expr_stub").ok_or("the world has no /proc/auxtools_expr_stub to evaluate expressions in")?;
+
+		proc.set_bytecode(assembly);
+
+		let ends = crate::WORLD_ENDS.load(std::sync::atomic::Ordering::Relaxed);
+		let result = Evaluation::call_with_locals(&proc, &locals, &arg_values)?;
+		if crate::WORLD_ENDS.load(std::sync::atomic::Ordering::Relaxed) != ends {
+			std::mem::forget(result);
+			std::mem::forget(args);
+			std::panic::resume_unwind(Box::new(crate::WorldEnded));
+		}
+
+		match result {
+			Ok(res) => {
+				if let Ok(list) = res.as_list() {
+					if frame_id.is_some() && !Evaluation::frame_is_live(ctx) {
+						return Err("evaluation ended the selected frame".to_owned());
+					}
+
+					let len = list.len();
+					for i in 2..=len {
+						let value = list.get(i).unwrap();
+						let slot = &args[i as usize - 2].2;
+
+						unsafe {
+							match slot {
+								ArgType::Dot => {
+									let dot = (*ctx).dot_mut();
+									let _ = Value::from_raw_owned(*dot);
+									*dot = value.raw;
+								}
+								ArgType::Usr => {
+									let _ = Value::from_raw_owned((*instance).usr);
+									(*instance).usr = value.raw;
+								}
+								ArgType::Src => {
+									let _ = Value::from_raw_owned((*instance).src);
+									(*instance).src = value.raw;
+								}
+								ArgType::Arg(idx) => {
+									let args = (*instance).args();
+									let arg = args.add(*idx as usize);
+									let _ = Value::from_raw_owned(*arg);
+									(*arg) = value.raw;
+								}
+								ArgType::Local(idx) => {
+									let locals = *(*ctx).locals();
+									let local = locals.add(*idx as usize);
+									let _ = Value::from_raw_owned(*local);
+									(*local) = value.raw;
+								}
+								ArgType::Given => continue
+							}
+						}
+
+						std::mem::forget(value);
+					}
+
+					Ok(list.get(1).unwrap())
+				} else if !self.eval.eval_ran.is_null() && background_known() && unsafe { *(*self.eval.eval_ran).background() } != 0 {
+					self.eval.eval_still_running = true;
+					Err(
+						"evaluation aborted: BYOND moved the code to the background, so its result is unavailable. This can happen after about a \
+						 million loop iterations (world.loop_checks), or with `set background = 1`. The code is still running. Use `eval --spawn \
+						 --wait` to wait for a result"
+							.to_owned()
+					)
+				} else if !background_known() {
+					self.eval.eval_still_running = true;
+					Err(
+						"evaluation aborted because the code slept or BYOND moved it to the background, so its result is unavailable. BYOND does \
+						 that after about a million loop iterations (world.loop_checks), or with `set background = 1`. Use `eval --spawn --wait` to \
+						 wait for a result"
+							.to_owned()
+					)
+				} else {
+					self.eval.eval_still_running = true;
+					Err("evaluation aborted because the code slept".to_owned())
+				}
+			}
+
+			Err(Runtime { message }) => Err(format!("runtime error: {}", message))
+		}
+	}
+
+	pub(super) fn handle_eval_request(&mut self, frame_id: Option<u32>, command: &str, ending: bool) {
+		if ending {
+			self.pause.ending = Some(Instant::now());
+		}
+		let still_running = self.handle_eval(frame_id, command);
+		if ending && !still_running {
+			self.pause.ending = None;
+		}
+	}
+
+	pub(super) fn handle_eval(&mut self, frame_id: Option<u32>, command: &str) -> bool {
+		#[cfg(feature = "test-commands")]
+		if command == "#panic" {
+			panic!("asked for with #panic");
+		}
+		if let Some(command) = command.strip_prefix('#') {
+			let response = self.handle_command(frame_id, command);
+			self.answer(Response::Eval(Ok(EvalResponse {
+				value: response,
+				variables: None,
+				kind: None,
+				entries: None
+			})));
+			return false;
+		}
+
+		let reached = (!dmasm::compiler::is_body(command)).then(|| format!("({})", command));
+		let response = self
+			.eval_expr(frame_id, command)
+			.map(|result| EvalResponse {
+				value: values::stringify(&result),
+				variables: self.pause.value_to_variables_ref(&result, reached),
+				kind: values::kind(&result),
+				entries: values::entries(&result)
+			})
+			.map_err(|message| self.eval.eval_failed(message));
+		let still_running = matches!(&response, Err(error) if error.still_running);
+		self.send_callee_errors();
+		self.answer(Response::Eval(response));
+		still_running
+	}
+
+	pub(super) fn handle_eval_on(&mut self, object: &str, expression: &str, depth: Option<u32>) {
+		self.eval.eval_still_running = false;
+		let value = self.object_of(object).and_then(|object| {
+			self.eval.eval_src = Some(object);
+			self.eval_expr(None, expression)
+		});
+		let response = match depth {
+			Some(depth) => Response::Render(value.map(|value| render::render(&value, depth))),
+			None => Response::Eval(
+				value
+					.map(|result| EvalResponse {
+						value: values::stringify(&result),
+						variables: self.pause.value_to_variables_ref(&result, None),
+						kind: values::kind(&result),
+						entries: values::entries(&result)
+					})
+					.map_err(|message| self.eval.eval_failed(message))
+			)
+		};
+		self.send_callee_errors();
+		self.answer(response);
+	}
+
+	pub(super) fn object_of(&mut self, reference: &str) -> Result<Value, String> {
+		let text = reference.trim();
+		let inner = text.strip_prefix('[').and_then(|text| text.strip_suffix(']')).unwrap_or(text);
+		let id = inner
+			.strip_prefix("0x")
+			.or_else(|| inner.strip_prefix("0X"))
+			.and_then(|hex| u32::from_str_radix(hex, 16).ok())
+			.ok_or_else(|| format!("invalid object reference {}; expected a ref() value such as [0x2000001]", reference))?;
+		let reference = format!("[0x{:x}]", id);
+		let found = self.eval_expr(None, &format!("locate(\"\\{}\")", reference))?;
+		if found == Value::NULL {
+			return Err(format!("object not found: {}", reference));
+		}
+		Ok(found)
+	}
+
+	pub(super) fn evaluating<T>(&mut self, work: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
+		self.eval.in_eval = true;
+		auxtools::instruction_hook::hear_all();
+		self.eval.eval_error = None;
+		let result = work();
+		self.eval.in_eval = false;
+		result
+	}
+}
+
+fn background_known() -> bool {
+	auxtools::version::get().0 >= 516
+}
+
+const MAX_CALLEE_ERRORS: usize = 5;
+
+pub(crate) fn is_expression_frame(ctx: *mut raw_types::procs::ExecutionContext) -> bool {
+	let id = unsafe { (**(*ctx).proc_instance()).proc };
+	["/proc/auxtools_expr_stub", "/proc/auxtools_spawn_stub"]
+		.into_iter()
+		.any(|path| Proc::find(path).is_some_and(|stub| stub.id == id))
+}
