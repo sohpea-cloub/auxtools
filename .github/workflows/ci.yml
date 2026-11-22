@@ -127,6 +127,9 @@ jobs:
       - name: Build
         run: cargo build --release --locked --target "$TARGET" --workspace
 
+      - name: Build the recipe checker
+        run: cargo build --release --locked --target "$TARGET" -p auxtools --example check_recipes
+
       - name: Unit tests
         run: cargo test --release --locked --target "$TARGET" -p auxtools-cli -p auxtools -p debug_server -p dmasm
 
@@ -146,10 +149,10 @@ jobs:
           cd "target/$TARGET/release"
           "$GITHUB_WORKSPACE/ci/split-debug.sh" auxtools libdebug_server.so
           "$GITHUB_WORKSPACE/ci/check-linux.sh" auxtools libdebug_server.so
-          strip --strip-debug libauxtest.so test_runner debug_test hot_reload_test launcher_test dap_test
+          strip --strip-debug libauxtest.so test_runner debug_test hot_reload_test launcher_test dap_test examples/check_recipes
           tar -czf "$RUNNER_TEMP/auxtools-linux.tar.gz" auxtools libdebug_server.so
           tar -czf "$RUNNER_TEMP/auxtools-linux-symbols.tar.gz" auxtools.debug libdebug_server.so.debug
-          tar -cf "$RUNNER_TEMP/bundle-linux.tar" auxtools libdebug_server.so libauxtest.so test_runner debug_test hot_reload_test launcher_test dap_test
+          tar -cf "$RUNNER_TEMP/bundle-linux.tar" auxtools libdebug_server.so libauxtest.so test_runner debug_test hot_reload_test launcher_test dap_test -C examples check_recipes
 
       - name: Upload the launcher and the debug library
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -235,6 +238,11 @@ jobs:
           . ci/msvc/env.sh
           cargo build --release --locked --target "$TARGET" --workspace
 
+      - name: Build the recipe checker
+        run: |
+          . ci/msvc/env.sh
+          cargo build --release --locked --target "$TARGET" -p auxtools --example check_recipes
+
       - name: Build the unit tests
         run: |
           . ci/msvc/env.sh
@@ -246,7 +254,7 @@ jobs:
           "$GITHUB_WORKSPACE/ci/check-windows.sh" auxtools.exe debug_server.dll
           python3 -m zipfile -c "$RUNNER_TEMP/auxtools-windows.zip" auxtools.exe debug_server.dll
           python3 -m zipfile -c "$RUNNER_TEMP/auxtools-windows-symbols.zip" auxtools.pdb debug_server.pdb
-          tar -cf "$RUNNER_TEMP/bundle-windows.tar" auxtools.exe debug_server.dll auxtest.dll test_runner.exe debug_test.exe hot_reload_test.exe launcher_test.exe dap_test.exe unit
+          tar -cf "$RUNNER_TEMP/bundle-windows.tar" auxtools.exe debug_server.dll auxtest.dll test_runner.exe debug_test.exe hot_reload_test.exe launcher_test.exe dap_test.exe unit -C examples check_recipes.exe
 
       - name: Upload the launcher and the debug library
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -304,11 +312,16 @@ jobs:
       - name: Fetch BYOND
         run: ci/fetch-byond.sh "${{ matrix.byond }}" linux .byond
 
-      - name: Test
+      - name: Unpack the programs
         run: |
           mkdir programs
           tar -xf bundle/bundle-linux.tar -C programs
-          ci/run-tests.sh programs .byond/byond
+
+      - name: Check the registry's patterns
+        run: programs/check_recipes linux "${{ matrix.byond }}" .byond/byond/bin/libbyond.so
+
+      - name: Test
+        run: ci/run-tests.sh programs .byond/byond
 
   test-windows:
     name: Windows, BYOND ${{ matrix.byond }}
@@ -341,11 +354,16 @@ jobs:
       - name: Fetch BYOND
         run: ci/fetch-byond.sh "${{ matrix.byond }}" windows .byond
 
-      - name: Test
+      - name: Unpack the programs
         run: |
           mkdir programs
           tar -xf bundle/bundle-windows.tar -C programs
-          ci/run-tests.sh programs .byond/byond
+
+      - name: Check the registry's patterns
+        run: programs/check_recipes.exe windows "${{ matrix.byond }}" .byond/byond/bin/byondcore.dll
+
+      - name: Test
+        run: ci/run-tests.sh programs .byond/byond
 
   test-wine:
     name: Wine, BYOND ${{ matrix.byond }}
