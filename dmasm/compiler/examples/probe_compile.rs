@@ -1,13 +1,13 @@
-use dmasm::compiler::{compile_proc, ProcSource};
+use dmasm_compiler::compiler::{compile_proc, ProcSource};
 fn main() {
     let a: Vec<String> = std::env::args().collect();
     let code = std::fs::read_to_string(&a[1]).unwrap();
     let byond = match std::env::var("BYOND") {
         Ok(v) => {
             let (major, build) = v.split_once('.').expect("BYOND=MAJOR.BUILD");
-            dmasm::ByondVersion::new(major.parse().unwrap(), build.parse().unwrap())
+            dmasm_compiler::ByondVersion::new(major.parse().unwrap(), build.parse().unwrap())
         }
-        Err(_) => dmasm::ByondVersion::LATEST,
+        Err(_) => dmasm_compiler::ByondVersion::LATEST,
     };
     let ctx = dreammaker::Context::default();
     byond.read_as(&ctx);
@@ -44,7 +44,7 @@ fn main() {
         file_names: None,
     };
     let compiled = compile_proc(&source).expect("compiles");
-    print!("{}", dmasm::format(&compiled.nodes));
+    print!("{}", dmasm_bytecode::format(&compiled.nodes));
     if std::env::var("WARNINGS").is_ok() {
         for w in &compiled.warnings {
             println!("warning: {w}");

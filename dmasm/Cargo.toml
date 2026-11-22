@@ -9,10 +9,9 @@ rust-version.workspace = true
 
 [dependencies]
 dmasm-bytecode = { path = "bytecode" }
+dmasm-compiler = { path = "compiler" }
 serde = { version = "1", features = ["derive"], optional = true }
 dreammaker = { workspace = true }
-md-5 = "0.10.6"
-sha1 = "0.10.7"
 
 [features]
-serde = ["dep:serde", "dmasm-bytecode/serde"]
+serde = ["dep:serde", "dmasm-bytecode/serde", "dmasm-compiler/serde"]

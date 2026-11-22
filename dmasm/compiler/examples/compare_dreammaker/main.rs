@@ -53,7 +53,7 @@ fn main() -> ExitCode {
     let dreammaker = std::fs::canonicalize(&dreammaker).unwrap_or(dreammaker);
 
     let byond = match dreammaker_build(&dreammaker) {
-        Ok((major, build)) => dmasm::ByondVersion::new(major, build),
+        Ok((major, build)) => dmasm_compiler::ByondVersion::new(major, build),
         Err(e) => {
             eprintln!("error: can't run DreamMaker: {e}.");
             return ExitCode::from(2);
@@ -258,7 +258,7 @@ fn run_case(
     known: &HashMap<String, String>,
     dreammaker: &Path,
     out: &Path,
-    byond: dmasm::ByondVersion,
+    byond: dmasm_compiler::ByondVersion,
     show: bool,
 ) -> compare::Outcome {
     let failed = |why: String| compare::Outcome {

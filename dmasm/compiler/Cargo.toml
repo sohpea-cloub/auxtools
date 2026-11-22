@@ -1,0 +1,18 @@
+[package]
+name = "dmasm-compiler"
+version = "0.1.0"
+authors = ["Sophie Wallace <sophie@wiox.me>"]
+edition = "2018"
+license = "GPL-3.0"
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+dmasm-bytecode = { path = "../bytecode" }
+serde = { version = "1", features = ["derive"], optional = true }
+dreammaker = { workspace = true }
+md-5 = "0.10.6"
+sha1 = "0.10.7"
+
+[features]
+serde = ["dep:serde", "dmasm-bytecode/serde"]

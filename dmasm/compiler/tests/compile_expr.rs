@@ -1,5 +1,5 @@
-use dmasm::compiler::{compile_expr, compile_expr_for};
-use dmasm::{Instruction, Node};
+use dmasm_bytecode::{Instruction, Node};
+use dmasm_compiler::compiler::{compile_expr, compile_expr_for};
 
 fn instructions(code: &str, params: &[&str]) -> Vec<Instruction> {
     compile_expr(code, params)
@@ -93,8 +93,8 @@ fn an_expression_ends_where_it_ends() {
     }
 }
 
-use dmasm::compiler::{compile_expr_in, CompileError, ExprGlobal, ExprScope, FoundProc};
-use dmasm::ByondVersion;
+use dmasm_compiler::compiler::{compile_expr_in, CompileError, ExprGlobal, ExprScope, FoundProc};
+use dmasm_compiler::ByondVersion;
 
 fn scoped(code: &str, params: &[&str]) -> Result<Vec<Instruction>, CompileError> {
     let scope = ExprScope {
@@ -222,7 +222,7 @@ fn a_global_that_isnt_listed_is_read_by_its_id() {
     for code in ["added", "global.added"] {
         let ins = scoped(code, &[]).unwrap();
         assert!(
-            matches!(&ins[1], Instruction::GetVar(dmasm::Variable::Global(global)) if global.id == Some(77)),
+            matches!(&ins[1], Instruction::GetVar(dmasm_bytecode::Variable::Global(global)) if global.id == Some(77)),
             "{}: {:?}",
             code,
             ins
@@ -230,7 +230,7 @@ fn a_global_that_isnt_listed_is_read_by_its_id() {
     }
     let ins = scoped("added = 3", &[]).unwrap();
     assert!(
-        ins.iter().any(|i| matches!(i, Instruction::SetVarExpr(dmasm::Variable::Global(global)) if global.id == Some(77))),
+        ins.iter().any(|i| matches!(i, Instruction::SetVarExpr(dmasm_bytecode::Variable::Global(global)) if global.id == Some(77))),
         "{:?}",
         ins
     );
@@ -306,7 +306,7 @@ fn global_dot_is_a_global_whatever_src_has() {
 fn without_a_scope_a_bare_name_is_a_global() {
     let code = instructions("ticks", &[]);
     assert!(
-        matches!(&code[1], Instruction::GetVar(dmasm::Variable::Global(global)) if global.name.0 == b"ticks"),
+        matches!(&code[1], Instruction::GetVar(dmasm_bytecode::Variable::Global(global)) if global.name.0 == b"ticks"),
         "{:?}",
         code
     );
@@ -314,7 +314,7 @@ fn without_a_scope_a_bare_name_is_a_global() {
 
 #[test]
 fn a_pointer_made_in_place_is_read_through() {
-    use dmasm::Variable;
+    use dmasm_bytecode::Variable;
     let code = instructions("*(&x)", &["x"]);
     assert_eq!(
         &code[1..4],
@@ -344,17 +344,17 @@ fn a_pointer_made_in_place_is_read_through() {
 
 #[test]
 fn a_type_s_var_by_double_colon_is_its_initial_value() {
-    use dmasm::Variable;
+    use dmasm_bytecode::Variable;
     let read = |base: Instruction| {
         vec![
             base,
             Instruction::SetVar(Variable::Cache),
             Instruction::GetVar(Variable::Initial(Box::new(Variable::Field(
-                dmasm::DMString(b"throwforce".to_vec()),
+                dmasm_bytecode::DMString(b"throwforce".to_vec()),
             )))),
         ]
     };
-    let path = Instruction::PushVal(dmasm::Value::Path("/obj/item".to_owned()));
+    let path = Instruction::PushVal(dmasm_bytecode::Value::Path("/obj/item".to_owned()));
     for code in [
         "/obj/item::throwforce",
         "initial(/obj/item::throwforce)",
@@ -388,7 +388,7 @@ fn a_type_s_var_by_double_colon_is_its_initial_value() {
 
 #[test]
 fn integers_too_big_for_push_int_are_pushed_whole() {
-    use dmasm::Value;
+    use dmasm_bytecode::Value;
     for (code, pushed) in [
         ("65535", Instruction::PushInt(65535)),
         ("65536", Instruction::PushVal(Value::Number(65536.0))),
@@ -427,8 +427,8 @@ fn global_vars_is_the_globals_list() {
         matches!(
             &code[1..3],
             [
-                Instruction::GetVar(dmasm::Variable::Arg(0)),
-                Instruction::SetVar(dmasm::Variable::Cache)
+                Instruction::GetVar(dmasm_bytecode::Variable::Arg(0)),
+                Instruction::SetVar(dmasm_bytecode::Variable::Cache)
             ]
         ),
         "{:?}",
@@ -469,7 +469,7 @@ fn a_parser_warning_does_not_refuse_an_expression() {
     ] {
         let code = instructions(code, &[]);
         assert!(
-            code.contains(&Instruction::PushVal(dmasm::Value::Number(value)))
+            code.contains(&Instruction::PushVal(dmasm_bytecode::Value::Number(value)))
                 || code.contains(&Instruction::PushInt(value as i32)),
             "{:?}",
             code
@@ -479,7 +479,7 @@ fn a_parser_warning_does_not_refuse_an_expression() {
 
 #[test]
 fn a_types_proc_reference_is_the_one_the_world_finds() {
-    use dmasm::Value;
+    use dmasm_bytecode::Value;
     let pushed = |code: &str| {
         scoped(code, &[])
             .unwrap()
@@ -504,7 +504,7 @@ fn a_types_proc_reference_is_the_one_the_world_finds() {
 
 #[test]
 fn a_proc_path_dreammaker_refuses_is_taken_with_a_warning() {
-    let (_, warnings) = dmasm::compiler::compile_expr_warned(
+    let (_, warnings) = dmasm_compiler::compiler::compile_expr_warned(
         "/datum/foo/bar/proc/twice",
         &["globals"],
         Some(&ExprScope {
@@ -598,7 +598,9 @@ fn an_expression_folds_constants_as_a_proc_does() {
     let code = instructions("~-4", &[]);
     assert!(
         code.contains(&Instruction::PushInt(16777215))
-            || code.contains(&Instruction::PushVal(dmasm::Value::Number(16777215.0))),
+            || code.contains(&Instruction::PushVal(dmasm_bytecode::Value::Number(
+                16777215.0
+            ))),
         "{:?}",
         code
     );
@@ -636,7 +638,7 @@ fn a_constant_of_byond_s_own_is_its_value() {
     assert_eq!(instructions("FALSE", &[])[1], Instruction::PushInt(0));
     assert_eq!(
         scoped("NORTH", &["NORTH"]).unwrap()[1],
-        Instruction::GetVar(dmasm::Variable::Arg(0))
+        Instruction::GetVar(dmasm_bytecode::Variable::Arg(0))
     );
 }
 

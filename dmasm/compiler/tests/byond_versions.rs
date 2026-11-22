@@ -1,5 +1,5 @@
-use dmasm::compiler::{compile_proc, ProcSource};
-use dmasm::ByondVersion;
+use dmasm_compiler::compiler::{compile_proc, ProcSource};
+use dmasm_compiler::ByondVersion;
 
 const B515_1637: ByondVersion = ByondVersion::new(515, 1637);
 const B515_1647: ByondVersion = ByondVersion::new(515, 1647);
@@ -34,7 +34,7 @@ fn compile_for(byond: ByondVersion, code: &str) -> Result<String, String> {
         file_names: None,
     };
     let compiled = compile_proc(&source).map_err(|e| e.to_string())?;
-    Ok(dmasm::format(&compiled.nodes)
+    Ok(dmasm_bytecode::format(&compiled.nodes)
         .lines()
         .map(str::trim)
         .filter(|l| !l.is_empty())
@@ -216,10 +216,13 @@ fn pushed_number(byond: ByondVersion, expr: &str) -> f32 {
         .nodes
         .iter()
         .find_map(|node| match node {
-            dmasm::Node::Instruction(dmasm::Instruction::PushVal(dmasm::Value::Number(n)), _) => {
-                Some(*n)
+            dmasm_bytecode::Node::Instruction(
+                dmasm_bytecode::Instruction::PushVal(dmasm_bytecode::Value::Number(n)),
+                _,
+            ) => Some(*n),
+            dmasm_bytecode::Node::Instruction(dmasm_bytecode::Instruction::PushInt(n), _) => {
+                Some(*n as f32)
             }
-            dmasm::Node::Instruction(dmasm::Instruction::PushInt(n), _) => Some(*n as f32),
             _ => None,
         })
         .unwrap_or_else(|| panic!("{}: no number pushed", expr))

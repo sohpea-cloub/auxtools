@@ -98,15 +98,15 @@ impl ByondVersion {
 }
 
 impl ByondVersion {
-    pub(crate) const fn visits_mutable_appearance_at_root(self) -> bool {
+    pub const fn visits_mutable_appearance_at_root(self) -> bool {
         self.at_least(1643)
     }
 
-    pub(crate) const fn defers_list_proc_initializers(self) -> bool {
+    pub const fn defers_list_proc_initializers(self) -> bool {
         self.at_least(1648)
     }
 
-    pub(crate) const fn runs_scoped_reads_last(self) -> bool {
+    pub const fn runs_scoped_reads_last(self) -> bool {
         self.at_least(1685)
     }
 }

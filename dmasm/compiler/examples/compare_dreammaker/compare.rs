@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use dmasm::compiler::{compile_proc, ProcSource};
-use dmasm::{Instruction, Label, Node, Variable};
+use dmasm_bytecode::{Instruction, Label, Node, Variable};
+use dmasm_compiler::compiler::{compile_proc, ProcSource};
 use dreammaker::objtree::{ProcValue, TypeRef};
 use dreammaker::FileId;
 
@@ -23,7 +23,7 @@ pub struct Outcome {
 pub fn compare(
     dme: &Path,
     dmb: &Dmb,
-    byond: dmasm::ByondVersion,
+    byond: dmasm_compiler::ByondVersion,
     known: &HashMap<String, String>,
     show: bool,
 ) -> Outcome {
@@ -98,7 +98,7 @@ pub fn compare(
                     name: name.as_str(),
                     value,
                     file: &file,
-                    debug_info: theirs.first() == Some(&dmasm::Opcode::DbgFile.word()),
+                    debug_info: theirs.first() == Some(&dmasm_bytecode::Opcode::DbgFile.word()),
                     index: None,
                     byond,
                     file_names: Some(&file_name),
@@ -108,7 +108,7 @@ pub fn compare(
                 })) {
                     Ok(Ok(compiled)) => {
                         asm.set_proc_globals(theirs);
-                        match dmasm::assembler::assemble(&compiled.nodes, &mut asm) {
+                        match dmasm_bytecode::assembler::assemble(&compiled.nodes, &mut asm) {
                             Ok(ours) => judge(dmb, &ours, theirs, &call_names, show),
                             Err(e) => Err(format!("assemble error: {e:?}")),
                         }
@@ -227,7 +227,7 @@ fn is_builtin(value: &ProcValue) -> bool {
 }
 
 fn disassemble(dmb: &Dmb, words: &[u32]) -> Nodes {
-    let (nodes, _) = dmasm::disassembler::disassemble(words, &mut Disassemble(dmb));
+    let (nodes, _) = dmasm_bytecode::disassembler::disassemble(words, &mut Disassemble(dmb));
     nodes.into_iter().map(Node::strip_debug_data).collect()
 }
 
@@ -236,7 +236,7 @@ fn normalize(nodes: &mut Nodes, names: &HashMap<String, Vec<u8>>) -> Vec<usize> 
     fn fix(var: &mut Variable, names: &HashMap<String, Vec<u8>>) {
         match var {
             Variable::StaticProc(p) | Variable::StaticVerb(p) => {
-                let name = dmasm::DMString(
+                let name = dmasm_bytecode::DMString(
                     names
                         .get(&p.0)
                         .cloned()

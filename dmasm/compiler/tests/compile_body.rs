@@ -1,5 +1,7 @@
-use dmasm::compiler::{compile_body_in, is_body, CompileError, ExprGlobal, ExprScope, FoundProc};
-use dmasm::ByondVersion;
+use dmasm_compiler::compiler::{
+    compile_body_in, is_body, CompileError, ExprGlobal, ExprScope, FoundProc,
+};
+use dmasm_compiler::ByondVersion;
 
 const PARAMS: [&str; 4] = [".", "src", "by", "globals"];
 
@@ -39,8 +41,8 @@ fn with_scope<R>(compile: impl FnOnce(&ExprScope) -> R) -> R {
     compile(&scope)
 }
 
-fn lines(nodes: &[dmasm::Node]) -> Vec<String> {
-    dmasm::format(nodes)
+fn lines(nodes: &[dmasm_bytecode::Node]) -> Vec<String> {
+    dmasm_bytecode::format(nodes)
         .lines()
         .map(|l| l.trim().to_owned())
         .filter(|l| !l.is_empty())
@@ -87,7 +89,7 @@ fn until_return(code: Vec<String>) -> Vec<String> {
 #[track_caller]
 fn same_alone_and_in_a_body(code: &str) -> Vec<String> {
     let alone = with_scope(|scope| {
-        dmasm::compiler::compile_expr_in(code, &PARAMS, Some(scope), ByondVersion::LATEST)
+        dmasm_compiler::compiler::compile_expr_in(code, &PARAMS, Some(scope), ByondVersion::LATEST)
     })
     .unwrap_or_else(|e| panic!("{code} alone: {e}"));
     let (in_body, locals) =
@@ -341,9 +343,9 @@ fn bare_vars_is_a_name_like_any_other() {
     assert_eq!(error, "line 1: undefined var: vars");
     let unscoped = compile_body_in("return vars", &[], None, ByondVersion::LATEST).unwrap();
     assert!(
-        dmasm::format(&unscoped.nodes).contains("GetVar global(\"vars\")"),
+        dmasm_bytecode::format(&unscoped.nodes).contains("GetVar global(\"vars\")"),
         "{}",
-        dmasm::format(&unscoped.nodes)
+        dmasm_bytecode::format(&unscoped.nodes)
     );
 }
 
@@ -458,19 +460,19 @@ fn a_bit_operand_beyond_32_bits_is_left_to_the_world() {
 
 #[test]
 fn a_body_gives_its_warnings_with_its_own_lines() {
-    let body = dmasm::compiler::compile_body_in(
+    let body = dmasm_compiler::compiler::compile_body_in(
         "var/x = 1\nvar/list/L = list(1)\nL.Cut()\nreturn L.len",
         &[],
         None,
-        dmasm::ByondVersion::LATEST,
+        dmasm_compiler::ByondVersion::LATEST,
     )
     .unwrap();
     assert!(body.warnings.is_empty(), "{:?}", body.warnings);
-    let (_, warnings) = dmasm::compiler::compile_expr_warned(
+    let (_, warnings) = dmasm_compiler::compiler::compile_expr_warned(
         "isnan(1)",
         &[],
         None,
-        dmasm::ByondVersion::new(516, 1659),
+        dmasm_compiler::ByondVersion::new(516, 1659),
     )
     .unwrap();
     assert!(
@@ -478,11 +480,11 @@ fn a_body_gives_its_warnings_with_its_own_lines() {
         "{:?}",
         warnings
     );
-    let body = dmasm::compiler::compile_body_in(
+    let body = dmasm_compiler::compiler::compile_body_in(
         "var/x = 1\nreturn isnan(x) + isnan(1)",
         &[],
         None,
-        dmasm::ByondVersion::new(516, 1659),
+        dmasm_compiler::ByondVersion::new(516, 1659),
     )
     .unwrap();
     assert_eq!(
@@ -509,7 +511,7 @@ fn a_body_can_end_with_a_bare_label() {
 fn a_body_without_a_scope_is_the_debugger_s_code_too() {
     let unscoped = |code: &str| {
         compile_body_in(code, &["x"], None, ByondVersion::LATEST).map(|compiled| {
-            dmasm::format(&compiled.nodes)
+            dmasm_bytecode::format(&compiled.nodes)
                 .lines()
                 .map(|l| l.trim().to_owned())
                 .collect::<Vec<_>>()

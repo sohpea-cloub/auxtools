@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use dmasm::{Node, StaticScope, Variable};
+use dmasm_bytecode::{Node, StaticScope, Variable};
 
 use crate::dmb::Dmb;
 
@@ -21,7 +21,7 @@ mod tags {
 
 pub struct Disassemble<'a>(pub &'a Dmb);
 
-impl dmasm::disassembler::DisassembleEnv for Disassemble<'_> {
+impl dmasm_bytecode::disassembler::DisassembleEnv for Disassemble<'_> {
     fn get_string_data(&mut self, index: u32) -> Option<Vec<u8>> {
         self.0.string(index).map(<[u8]>::to_vec)
     }
@@ -171,7 +171,8 @@ impl<'a> Assemble<'a> {
             }
         }
         self.proc_globals.clear();
-        let (nodes, _) = dmasm::disassembler::disassemble(bytecode, &mut Disassemble(self.dmb));
+        let (nodes, _) =
+            dmasm_bytecode::disassembler::disassemble(bytecode, &mut Disassemble(self.dmb));
         for node in nodes {
             if let Node::Instruction(mut ins, _) = node {
                 if let Some(v) = crate::compare::var_operand(&mut ins) {
@@ -202,7 +203,7 @@ impl<'a> Assemble<'a> {
     }
 }
 
-impl dmasm::assembler::AssembleEnv for Assemble<'_> {
+impl dmasm_bytecode::assembler::AssembleEnv for Assemble<'_> {
     fn get_string_index(&mut self, string: &[u8]) -> Option<u32> {
         self.strings.get(string).copied()
     }

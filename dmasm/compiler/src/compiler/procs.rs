@@ -151,7 +151,7 @@ pub fn compile_proc(source: &ProcSource) -> Result<CompiledProc, CompileError> {
     compile_proc_as(source, None, &[])
 }
 
-pub(crate) fn compile_proc_as(
+pub fn compile_proc_as(
     source: &ProcSource,
     proc_path: Option<&str>,
     statics: &[(String, u32)],
@@ -201,7 +201,7 @@ pub(crate) fn compile_proc_as(
     })
 }
 
-pub(crate) fn proc_path(ty: TypeRef, name: &str, first: bool) -> String {
+pub fn proc_path(ty: TypeRef, name: &str, first: bool) -> String {
     let ty_path = if ty.is_root() {
         ""
     } else {
@@ -408,7 +408,7 @@ pub(super) fn colon_var<'a>(
 
 static TREES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
-pub(crate) fn new_tree() {
+pub fn new_tree() {
     TREES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 }
 
@@ -736,7 +736,7 @@ pub(super) fn label_targets(ins: &Instruction) -> Vec<String> {
     }
 }
 
-pub(crate) fn labels_mut(ins: &mut Instruction) -> Vec<&mut crate::operands::Label> {
+pub fn labels_mut(ins: &mut Instruction) -> Vec<&mut crate::operands::Label> {
     use Instruction::*;
     match ins {
         Jmp(l)

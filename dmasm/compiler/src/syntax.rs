@@ -7,7 +7,7 @@ use dreammaker::objtree::ProcValue;
 
 #[allow(dead_code)]
 #[derive(Clone, Copy)]
-pub(crate) enum Node<'a> {
+pub enum Node<'a> {
     Parameter(&'a Parameter),
     Statement(&'a Statement),
     Expression(&'a Expression),
@@ -16,7 +16,7 @@ pub(crate) enum Node<'a> {
     Name(&'a str),
 }
 
-pub(crate) fn walk_proc<'a>(value: &'a ProcValue, each: &mut dyn FnMut(Node<'a>)) {
+pub fn walk_proc<'a>(value: &'a ProcValue, each: &mut dyn FnMut(Node<'a>)) {
     for parameter in value.parameters.iter() {
         let Parameter {
             var_type,
@@ -201,7 +201,7 @@ pub(crate) fn walk_statement<'a>(statement: &'a Statement, each: &mut dyn FnMut(
     }
 }
 
-pub(crate) fn walk_expression<'a>(expression: &'a Expression, each: &mut dyn FnMut(Node<'a>)) {
+pub fn walk_expression<'a>(expression: &'a Expression, each: &mut dyn FnMut(Node<'a>)) {
     each(Node::Expression(expression));
     match expression {
         Expression::Base { term, follow } => {
@@ -372,7 +372,7 @@ pub(crate) fn has_static_field(expression: &Expression) -> bool {
     found
 }
 
-pub(crate) fn walk_constant<'a>(constant: &'a Constant, each: &mut dyn FnMut(&'a Constant)) {
+pub fn walk_constant<'a>(constant: &'a Constant, each: &mut dyn FnMut(&'a Constant)) {
     fn arguments<'a>(args: &'a [(Constant, Option<Constant>)], each: &mut dyn FnMut(&'a Constant)) {
         for (key, value) in args {
             walk_constant(key, each);

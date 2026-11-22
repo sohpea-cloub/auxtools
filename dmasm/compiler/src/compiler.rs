@@ -15,7 +15,7 @@ mod procs;
 mod statements;
 
 pub use procs::{compile_proc, ByondBug, CompiledProc, ProcSource, StaticLocal};
-pub(crate) use procs::{compile_proc_as, labels_mut, new_tree, proc_path};
+pub use procs::{compile_proc_as, labels_mut, new_tree, proc_path};
 
 mod args;
 mod binary_ops;
@@ -29,7 +29,7 @@ mod ternary;
 mod unary;
 mod versions;
 
-pub(crate) fn text(raw: &str) -> Option<String> {
+pub fn text(raw: &str) -> Option<String> {
     String::from_utf8(strings::parse(raw).ok()?.0).ok()
 }
 
@@ -1461,7 +1461,7 @@ pub(super) fn first_line(expr: &Expression) -> u32 {
     }
 }
 
-pub(crate) fn fold_initializer(
+pub fn fold_initializer(
     tree: &dreammaker::objtree::ObjectTree,
     ty: dreammaker::objtree::TypeRef,
     expr: &Expression,

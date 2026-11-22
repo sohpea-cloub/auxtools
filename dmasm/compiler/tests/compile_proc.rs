@@ -1,10 +1,10 @@
-use dmasm::compiler::{compile_proc, ProcSource};
+use dmasm_compiler::compiler::{compile_proc, ProcSource};
 
 fn compile(code: &str, ty: &str, name: &str) -> String {
-    compile_on(code, ty, name, dmasm::ByondVersion::LATEST)
+    compile_on(code, ty, name, dmasm_compiler::ByondVersion::LATEST)
 }
 
-fn compile_on(code: &str, ty: &str, name: &str, byond: dmasm::ByondVersion) -> String {
+fn compile_on(code: &str, ty: &str, name: &str, byond: dmasm_compiler::ByondVersion) -> String {
     let ctx = dreammaker::Context::default();
     let pp = dreammaker::Preprocessor::from_buffer(&ctx, "test.dm".into(), code.to_owned());
     let mut parser = dreammaker::Parser::new(&ctx, pp);
@@ -35,7 +35,7 @@ fn compile_on(code: &str, ty: &str, name: &str, byond: dmasm::ByondVersion) -> S
         file_names: None,
     };
     let compiled = compile_proc(&source).expect("compiles");
-    dmasm::format(&compiled.nodes)
+    dmasm_bytecode::format(&compiled.nodes)
         .lines()
         .map(str::trim)
         .filter(|l| !l.is_empty())
@@ -215,28 +215,29 @@ fn same_named_static_locals_in_one_proc_are_different_globals() {
         file: "test.dm",
         debug_info: false,
         index: None,
-        byond: dmasm::ByondVersion::LATEST,
+        byond: dmasm_compiler::ByondVersion::LATEST,
         file_names: None,
     };
     let compiled = compile_proc(&source).unwrap();
-    let scopes: Vec<Option<dmasm::StaticScope>> = compiled
+    let scopes: Vec<Option<dmasm_bytecode::StaticScope>> = compiled
         .nodes
         .iter()
         .filter_map(|n| match n {
-            dmasm::Node::Instruction(dmasm::Instruction::GetVar(dmasm::Variable::Global(g)), _) => {
-                Some(g.scope.clone())
-            }
+            dmasm_bytecode::Node::Instruction(
+                dmasm_bytecode::Instruction::GetVar(dmasm_bytecode::Variable::Global(g)),
+                _,
+            ) => Some(g.scope.clone()),
             _ => None,
         })
         .collect();
     assert_eq!(
         scopes,
         vec![
-            Some(dmasm::StaticScope::Proc {
+            Some(dmasm_bytecode::StaticScope::Proc {
                 path: "/proc/f".to_owned(),
                 nth: 0
             }),
-            Some(dmasm::StaticScope::Proc {
+            Some(dmasm_bytecode::StaticScope::Proc {
                 path: "/proc/f".to_owned(),
                 nth: 1
             })
@@ -520,7 +521,7 @@ fn a_variable_times_itself_is_squared() {
 
 #[test]
 fn a_pick_of_weight_0_and_a_case_of_minus_0() {
-    let v = |build| dmasm::ByondVersion::new(516, build);
+    let v = |build| dmasm_compiler::ByondVersion::new(516, build);
     let middle = "/proc/f(a, b)\n\treturn pick(1; a, 0; b, 2; \"c\")\n";
     let last = "/proc/f(a, b)\n\treturn pick(1; a, 0; b)\n";
     let table = |code: &str| {
@@ -931,7 +932,7 @@ fn reading_a_pointer_it_makes_warns_before_516_1668() {
                \tT.v = *&T.w.v\n\treturn list(*(&l), *(&L[1]), *(&global.g))\n\
                /proc/w()\n\tvar/datum/t/T = new\n\t*(&T.v) = 3\n";
     let bugs = |ty: &str, name: &str, build: u32| -> Vec<String> {
-        compiled_of(src, ty, name, dmasm::ByondVersion::new(516, build))
+        compiled_of(src, ty, name, dmasm_compiler::ByondVersion::new(516, build))
             .byond_bugs
             .into_iter()
             .map(|bug| bug.text)
@@ -945,12 +946,12 @@ fn reading_a_pointer_it_makes_warns_before_516_1668() {
     assert!(bugs("", "f", 1668).is_empty());
     assert!(bugs("/datum/t", "m", 1668).is_empty());
     assert_eq!(
-        compile_on(src, "", "f", dmasm::ByondVersion::new(516, 1667)),
+        compile_on(src, "", "f", dmasm_compiler::ByondVersion::new(516, 1667)),
         compile(src, "", "f")
     );
     let held = "/proc/f(a)\n\tvar/p = &a\n\treturn *(p) + *p\n";
     assert!(
-        compiled_of(held, "", "f", dmasm::ByondVersion::new(516, 1667))
+        compiled_of(held, "", "f", dmasm_compiler::ByondVersion::new(516, 1667))
             .byond_bugs
             .is_empty()
     );
@@ -1462,10 +1463,10 @@ fn compile_with_lines_of(src: &str, ty: &str, name: &str) -> Vec<String> {
         file: "test.dm",
         debug_info: true,
         index: None,
-        byond: dmasm::ByondVersion::LATEST,
+        byond: dmasm_compiler::ByondVersion::LATEST,
         file_names: Some(&|_| "other.dm".to_owned()),
     };
-    let code = dmasm::format(&compile_proc(&source).unwrap().nodes);
+    let code = dmasm_bytecode::format(&compile_proc(&source).unwrap().nodes);
     code.lines()
         .map(str::trim)
         .filter(|l| !l.is_empty() && !l.starts_with("LAB_"))
@@ -1618,10 +1619,10 @@ fn a_folded_default_from_another_file_still_names_the_file_again() {
         file: "test.dm",
         debug_info: true,
         index: None,
-        byond: dmasm::ByondVersion::LATEST,
+        byond: dmasm_compiler::ByondVersion::LATEST,
         file_names: Some(&|_| "other.dm".to_owned()),
     };
-    let code = dmasm::format(&compile_proc(&source).unwrap().nodes);
+    let code = dmasm_bytecode::format(&compile_proc(&source).unwrap().nodes);
     let code: Vec<&str> = code
         .lines()
         .map(str::trim)
@@ -1675,10 +1676,10 @@ fn records_with_default_from_other_file(expr: &str) -> Vec<String> {
         file: "test.dm",
         debug_info: true,
         index: None,
-        byond: dmasm::ByondVersion::LATEST,
+        byond: dmasm_compiler::ByondVersion::LATEST,
         file_names: Some(&|_| "other.dm".to_owned()),
     };
-    dmasm::format(&compile_proc(&source).unwrap().nodes)
+    dmasm_bytecode::format(&compile_proc(&source).unwrap().nodes)
         .lines()
         .map(str::trim)
         .filter(|l| l.starts_with("Dbg"))
@@ -1730,7 +1731,7 @@ fn a_constant_condition_from_another_file_names_the_line_again() {
 
 #[test]
 fn a_fold_that_windows_has_differently_is_warned_about() {
-    let latest = dmasm::ByondVersion::LATEST;
+    let latest = dmasm_compiler::ByondVersion::LATEST;
     let warnings =
         |expr: &str, byond| warnings_for(&format!("/proc/f(a)\n\treturn {expr}\n"), byond);
     let warned = |expr: &str, what: &str| {
@@ -1752,7 +1753,7 @@ fn a_fold_that_windows_has_differently_is_warned_about() {
     quiet("arctan(1)", latest);
     quiet("arcsin(0.5)", latest);
     quiet("arctan(a)", latest);
-    quiet("arctan(2)", dmasm::ByondVersion::new(515, 1637));
+    quiet("arctan(2)", dmasm_compiler::ByondVersion::new(515, 1637));
     warned(
         "rgb(0, 60, 25, space = COLORSPACE_HSV)",
         "rgb() is folded to #401919, matching Linux DreamMaker",
@@ -1766,7 +1767,7 @@ fn a_fold_that_windows_has_differently_is_warned_about() {
     quiet("rgb(0, 60, a, space = COLORSPACE_HSV)", latest);
     quiet(
         "rgb(0, 60, 25, space = COLORSPACE_HSV)",
-        dmasm::ByondVersion::new(515, 1637),
+        dmasm_compiler::ByondVersion::new(515, 1637),
     );
 }
 
@@ -1774,8 +1775,8 @@ fn compiled_of(
     code: &str,
     ty: &str,
     name: &str,
-    byond: dmasm::ByondVersion,
-) -> dmasm::compiler::CompiledProc {
+    byond: dmasm_compiler::ByondVersion,
+) -> dmasm_compiler::compiler::CompiledProc {
     let ctx = dreammaker::Context::default();
     let pp = dreammaker::Preprocessor::from_buffer(&ctx, "test.dm".into(), code.to_owned());
     let mut parser = dreammaker::Parser::new(&ctx, pp);
@@ -1801,7 +1802,12 @@ fn compiled_of(
     compile_proc(&source).unwrap()
 }
 
-fn warnings_of(code: &str, ty: &str, name: &str, byond: dmasm::ByondVersion) -> Vec<String> {
+fn warnings_of(
+    code: &str,
+    ty: &str,
+    name: &str,
+    byond: dmasm_compiler::ByondVersion,
+) -> Vec<String> {
     let compiled = compiled_of(code, ty, name, byond);
     for bug in &compiled.byond_bugs {
         let text = match bug.line {
@@ -1820,7 +1826,7 @@ fn warnings_of(code: &str, ty: &str, name: &str, byond: dmasm::ByondVersion) -> 
 #[test]
 fn warnings_about_byonds_bugs_are_told_from_the_rest() {
     let bugs = |code: &str, build| -> Vec<String> {
-        let compiled = compiled_of(code, "", "f", dmasm::ByondVersion::new(516, build));
+        let compiled = compiled_of(code, "", "f", dmasm_compiler::ByondVersion::new(516, build));
         compiled
             .byond_bugs
             .into_iter()
@@ -1841,7 +1847,12 @@ fn warnings_about_byonds_bugs_are_told_from_the_rest() {
         ["pick() ends with a zero-weight entry, where DreamMaker's code jumps out of the proc"]
     );
     let divided = "/datum/proc/f(a, b = a.len/10)\n\treturn b\n";
-    let compiled = compiled_of(divided, "/datum", "f", dmasm::ByondVersion::new(516, 1688));
+    let compiled = compiled_of(
+        divided,
+        "/datum",
+        "f",
+        dmasm_compiler::ByondVersion::new(516, 1688),
+    );
     assert!(compiled.warnings[0].ends_with("leaves the division out; dmasm divides"));
     assert!(compiled.byond_bugs[0]
         .text
@@ -1849,14 +1860,14 @@ fn warnings_about_byonds_bugs_are_told_from_the_rest() {
     assert_eq!(bugs(weights, 1689), [] as [String; 0]);
     let wide = "/proc/f(a)\n\treturn (-1e10) ^ a\n";
     assert_eq!(bugs(wide, 1688), [] as [String; 0]);
-    let compiled = compiled_of(wide, "", "f", dmasm::ByondVersion::new(516, 1688));
+    let compiled = compiled_of(wide, "", "f", dmasm_compiler::ByondVersion::new(516, 1688));
     assert!(!compiled.warnings.is_empty());
 }
 
 #[test]
 fn code_that_byond_gets_wrong_is_warned_about() {
-    let latest = dmasm::ByondVersion::LATEST;
-    let v = |build| dmasm::ByondVersion::new(516, build);
+    let latest = dmasm_compiler::ByondVersion::LATEST;
+    let v = |build| dmasm_compiler::ByondVersion::new(516, build);
     let warned = |code: &str, ty: &str, name: &str, byond, what: &str| {
         let w = warnings_of(code, ty, name, byond);
         assert!(
@@ -1993,7 +2004,7 @@ fn code_that_byond_gets_wrong_is_warned_about() {
     quiet(types, "/turf/x", "Uncross", latest);
 }
 
-fn warnings_for(code: &str, byond: dmasm::ByondVersion) -> Vec<String> {
+fn warnings_for(code: &str, byond: dmasm_compiler::ByondVersion) -> Vec<String> {
     let ctx = dreammaker::Context::default();
     let pp = dreammaker::Preprocessor::from_buffer(&ctx, "test.dm".into(), code.to_owned());
     let mut parser = dreammaker::Parser::new(&ctx, pp);
@@ -2024,8 +2035,8 @@ fn warnings_for(code: &str, byond: dmasm::ByondVersion) -> Vec<String> {
 
 #[test]
 fn deliberate_differences_and_copied_quirks_are_warned_about() {
-    let latest = dmasm::ByondVersion::LATEST;
-    let v = |build| dmasm::ByondVersion::new(516, build);
+    let latest = dmasm_compiler::ByondVersion::LATEST;
+    let v = |build| dmasm_compiler::ByondVersion::new(516, build);
     let warned = |code: &str, byond, what: &str| {
         let w = warnings_for(code, byond);
         assert!(

@@ -1,5 +1,5 @@
-use dmasm::compiler::{compile_proc, ProcSource};
-use dmasm::{Node, Variable};
+use dmasm_bytecode::{Node, Variable};
+use dmasm_compiler::compiler::{compile_proc, ProcSource};
 
 #[test]
 fn finds_globals_and_static_locals() {
@@ -19,12 +19,12 @@ fn finds_globals_and_static_locals() {
         file: "test.dm",
         debug_info: false,
         index: None,
-        byond: dmasm::ByondVersion::LATEST,
+        byond: dmasm_compiler::ByondVersion::LATEST,
         file_names: None,
     };
     let compiled = compile_proc(&source).unwrap();
 
-    let mut found: Vec<(String, Option<dmasm::StaticScope>)> = compiled
+    let mut found: Vec<(String, Option<dmasm_bytecode::StaticScope>)> = compiled
         .nodes
         .iter()
         .filter_map(|n| match n {
@@ -45,10 +45,10 @@ fn finds_globals_and_static_locals() {
     assert_eq!(
         found,
         [
-            ("g".to_owned(), Some(dmasm::StaticScope::Global)),
+            ("g".to_owned(), Some(dmasm_bytecode::StaticScope::Global)),
             (
                 "s".to_owned(),
-                Some(dmasm::StaticScope::Proc {
+                Some(dmasm_bytecode::StaticScope::Proc {
                     path: "/proc/f".to_owned(),
                     nth: 0
                 })

@@ -7,8 +7,8 @@ fn main() {
             continue;
         }
         println!("== {line}");
-        match dmasm::compiler::compile_expr(&line, &["a", "b"]) {
-            Ok(nodes) => print!("{}", dmasm::format(&nodes)),
+        match dmasm_compiler::compiler::compile_expr(&line, &["a", "b"]) {
+            Ok(nodes) => print!("{}", dmasm_bytecode::format(&nodes)),
             Err(e) => println!("error: {e}"),
         }
     }
