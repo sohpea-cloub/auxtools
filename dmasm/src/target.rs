@@ -48,6 +48,10 @@ impl ByondVersion {
         self.at_least(1647)
     }
 
+    pub(crate) const fn clamps_hsv_colours(self) -> bool {
+        self.at_least(1657)
+    }
+
     pub(crate) const fn folds_nan_tests_cleanly(self) -> bool {
         self.build == 1670 || self.at_least(1672)
     }

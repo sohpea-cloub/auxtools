@@ -645,14 +645,22 @@ fn a_colour_of_constants_is_its_text_in_any_colour_space() {
         text("rgb(h = 120, s = 100, l = 60) + \"x\""),
         "PushVal \"#33ff33x\""
     );
-    assert_eq!(
-        ret(B515_1647, "rgb(h = 90, s = 100.4, v = 64)"),
-        "PushVal \"#51a300\""
-    );
-    assert_eq!(
-        ret(B516_1659, "rgb(h = 90, s = 100.4, v = 64)"),
-        "PushVal \"#52a300\""
-    );
+    for build in [
+        B515_1647,
+        ByondVersion::new(516, 1648),
+        ByondVersion::new(516, 1656),
+    ] {
+        assert_eq!(
+            ret(build, "rgb(h = 90, s = 100.4, v = 64)"),
+            "PushVal \"#51a300\""
+        );
+    }
+    for build in [ByondVersion::new(516, 1657), B516_1659] {
+        assert_eq!(
+            ret(build, "rgb(h = 90, s = 100.4, v = 64)"),
+            "PushVal \"#52a300\""
+        );
+    }
     assert_eq!(
         text("rgb(0, 60, 25, space = COLORSPACE_HSV)"),
         "PushVal \"#401919\""

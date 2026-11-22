@@ -650,7 +650,7 @@ fn channel(share: f64, nudge: f64) -> String {
 }
 
 pub(super) fn hsv_text(byond: crate::ByondVersion, h: f32, s: f32, v: f32, nudge: f64) -> String {
-    let range = if byond.is_516() {
+    let range = if byond.clamps_hsv_colours() {
         (0.0, 100.0)
     } else {
         (f64::MIN, f64::MAX)

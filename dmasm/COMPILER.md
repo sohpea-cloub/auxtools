@@ -68,7 +68,7 @@ Linux angle result on both platforms. The compiler warns when Windows folding di
 
 `rgb()` folds in every color space. RGB and alpha channels truncate to integers;
 HSV, HSL and HCY channels round half up. HSL clamps saturation and luminance to
-0–100; HSV clamps from 516; HCY does not clamp. HCY uses a green weight of 0.557
+0–100; HSV clamps from 516.1657; HCY does not clamp. HCY uses a green weight of 0.557
 for `rgb()` and 0.587 for `rgb2num()`.
 
 Linux DreamMaker from 515.1647 normalizes percentage inputs in f32, computes in f64,
