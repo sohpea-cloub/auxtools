@@ -540,11 +540,8 @@ pub(super) fn emit(compiler: &mut Compiler<'_>, term: Term) -> Result<EvalKind, 
             input_type,
             in_list,
         } => emit_input(compiler, args.into_vec(), input_type, in_list.map(|l| *l)),
-        Term::__TYPE__
-            if compiler.proc_macros_known()
-                && compiler.proc.as_ref().is_some_and(|p| !p.ty.is_root()) =>
-        {
-            let path = compiler.proc.as_ref().unwrap().ty.get().path.clone();
+        Term::__TYPE__ if compiler.proc_macros_known() && !compiler.proc.ty.is_root() => {
+            let path = compiler.proc.ty.get().path.clone();
             compiler.emit_ins(Instruction::PushVal(Value::Path(path)));
             Ok(EvalKind::Stack)
         }
@@ -556,7 +553,7 @@ pub(super) fn emit(compiler: &mut Compiler<'_>, term: Term) -> Result<EvalKind, 
             if !compiler.proc_macro_ok {
                 super::versions::require(compiler.byond, ByondVersion::has_proc_macro, "__PROC__")?;
             }
-            let path = compiler.proc.as_ref().unwrap().proc_path.clone();
+            let path = compiler.proc.proc_path.clone();
             compiler.emit_ins(Instruction::PushVal(Value::Path(path)));
             Ok(EvalKind::Stack)
         }
@@ -776,11 +773,7 @@ fn prefab_value(
                     .is_none_or(|v| v == super::fold::Constant::New)
             {
                 let line = value_line(value);
-                let file = compiler
-                    .proc
-                    .as_ref()
-                    .map(|p| p.file.clone())
-                    .unwrap_or_default();
+                let file = compiler.proc.file.clone();
                 compiler.emit_ins(Instruction::DbgLine(line));
                 compiler.emit_ins(Instruction::DbgFile(crate::operands::DMString(
                     file.into_bytes(),

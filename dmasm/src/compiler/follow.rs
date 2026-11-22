@@ -27,10 +27,7 @@ fn callee_var<'a>(
             Some(super::procs::colon_proc_type(t, name).unwrap_or(t))
         }
         Some(t) => Some(t),
-        None => compiler
-            .proc
-            .as_ref()
-            .and_then(|ctx| super::procs::first_declaring_type(ctx.tree, name)),
+        None => super::procs::first_declaring_type(compiler.proc.tree, name),
     };
     super::procs::call_var(ty, name)
 }
@@ -46,11 +43,7 @@ fn proc_known(
             super::procs::colon_proc_type(t, name).is_some()
         }
         Some(t) => t.get_proc(name).is_some(),
-        None => compiler
-            .proc
-            .as_ref()
-            .and_then(|ctx| super::procs::first_declaring_type(ctx.tree, name))
-            .is_some(),
+        None => super::procs::first_declaring_type(compiler.proc.tree, name).is_some(),
     }
 }
 
@@ -107,8 +100,9 @@ pub(super) fn emit_typed<'a>(
                 {
                     ty = compiler
                         .proc
-                        .as_ref()
-                        .and_then(|p| p.tree.root().get_var_declaration(ident.as_str()))
+                        .tree
+                        .root()
+                        .get_var_declaration(ident.as_str())
                         .and_then(|d| super::procs::declared_type(compiler, &d.get().var_type));
                 }
                 if let Some(decl) = field_ty {

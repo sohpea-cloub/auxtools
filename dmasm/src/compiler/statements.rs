@@ -186,7 +186,7 @@ fn emit_block_inner(
     block: &Block,
     skip_first_line: bool,
 ) -> Result<(), CompileError> {
-    compiler.proc.as_mut().unwrap().scopes.push(vec![]);
+    compiler.proc.scopes.push(vec![]);
     let mut skip_next = false;
     for (i, stmt) in block.iter().enumerate() {
         if skip_next {
@@ -243,12 +243,12 @@ fn emit_block_inner(
             e => CompileError::AtLine(stmt.location.line, Box::new(e)),
         })?;
     }
-    compiler.proc.as_mut().unwrap().scopes.pop();
+    compiler.proc.scopes.pop();
     Ok(())
 }
 
 fn ctx<'c, 'a>(compiler: &'c mut Compiler<'a>) -> &'c mut super::procs::ProcCtx<'a> {
-    compiler.proc.as_mut().unwrap()
+    &mut compiler.proc
 }
 
 fn emit_value(compiler: &mut Compiler, expr: &Expression) -> Result<(), CompileError> {
@@ -1239,12 +1239,7 @@ fn loop_filter(compiler: &Compiler, ty: &str) -> (crate::TypeFilter, Option<Stri
     }
     let ty = match ty.strip_prefix("/list") {
         Some(rest) if rest.starts_with('/') => {
-            if compiler
-                .proc
-                .as_ref()
-                .and_then(|c| c.tree.find(rest))
-                .is_some()
-            {
+            if compiler.proc.tree.find(rest).is_some() {
                 rest
             } else {
                 "/list"
@@ -1254,8 +1249,8 @@ fn loop_filter(compiler: &Compiler, ty: &str) -> (crate::TypeFilter, Option<Stri
     };
     let path = compiler
         .proc
-        .as_ref()
-        .and_then(|c| c.tree.find(ty))
+        .tree
+        .find(ty)
         .map(|t| t.get().path.clone())
         .unwrap_or_else(|| ty.to_owned());
     let under = |root: &str| path == root || path.starts_with(&format!("{}/", root));
@@ -1285,12 +1280,7 @@ fn implicit_type_for(compiler: &Compiler, ty: &str) -> Option<String> {
     if is_list_path(ty) {
         return Some("/list".to_owned());
     }
-    let found = compiler
-        .proc
-        .as_ref()?
-        .tree
-        .find(ty)
-        .map(|t| t.get().path.clone());
+    let found = compiler.proc.tree.find(ty).map(|t| t.get().path.clone());
     match found {
         None if compiler.debugger => Some(ty.to_owned()),
         found => found,

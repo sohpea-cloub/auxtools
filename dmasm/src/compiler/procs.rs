@@ -178,7 +178,7 @@ pub(crate) fn compile_proc_as(
     for (name, number) in statics {
         ctx.scopes[0].push((name.clone(), number | STATIC_LOCAL));
     }
-    let mut compiler = Compiler::new(params.clone(), Some(ctx));
+    let mut compiler = Compiler::new(params.clone(), ctx);
     compiler.debug_info = source.debug_info;
     compiler.byond = source.byond;
     compiler.emit_ins(Instruction::DbgFile(DMString(
@@ -190,7 +190,7 @@ pub(crate) fn compile_proc_as(
     super::statements::emit_proc_body(&mut compiler, source, code)?;
 
     compiler.emit_ins(Instruction::End);
-    let ctx = compiler.proc.take().unwrap();
+    let ctx = compiler.proc;
     Ok(CompiledProc {
         warnings: compiler.warnings.into_inner(),
         byond_bugs: compiler.byond_bugs.into_inner(),
@@ -262,7 +262,7 @@ pub(super) fn proc_ctx<'a>(source: &ProcSource<'a>, param_types: Vec<String>) ->
 }
 
 pub(super) fn find_var(compiler: &Compiler, name: &str) -> Option<EvalKind> {
-    let ctx = compiler.proc.as_ref()?;
+    let ctx = &compiler.proc;
     if let Some(slot) = ctx.find_local(name) {
         return Some(EvalKind::Var(Variable::Local(slot)));
     }
@@ -354,9 +354,7 @@ pub(super) fn emit_bare_call(
     ident: &str,
     args: Vec<dreammaker::ast::Expression>,
 ) -> Result<Option<EvalKind>, CompileError> {
-    let Some(ctx) = compiler.proc.as_ref() else {
-        return Ok(None);
-    };
+    let ctx = &compiler.proc;
     if compiler.debugger {
         return Ok(None);
     }
@@ -450,7 +448,7 @@ pub(super) fn first_declaring_type<'a>(tree: &'a ObjectTree, name: &str) -> Opti
 
 pub(super) fn list_elem_type<'a>(compiler: &Compiler<'a>, path: &str) -> Option<TypeRef<'a>> {
     let rest = path.strip_prefix("/list/")?;
-    compiler.proc.as_ref()?.tree.find(&format!("/{rest}"))
+    compiler.proc.tree.find(&format!("/{rest}"))
 }
 
 pub(super) fn colon_proc_type<'a>(ty: TypeRef<'a>, name: &str) -> Option<TypeRef<'a>> {
@@ -496,7 +494,7 @@ fn find_type<'a>(compiler: &Compiler<'a>, path: &str) -> Option<TypeRef<'a>> {
     } else {
         path
     };
-    compiler.proc.as_ref()?.tree.find(path)
+    compiler.proc.tree.find(path)
 }
 
 pub(super) fn term_type<'a>(
@@ -504,7 +502,7 @@ pub(super) fn term_type<'a>(
     term: &dreammaker::ast::Term,
 ) -> Option<TypeRef<'a>> {
     use dreammaker::ast::Term;
-    let ctx = compiler.proc.as_ref()?;
+    let ctx = &compiler.proc;
     let name = match term {
         Term::Ident(name) => name.as_str(),
         Term::GlobalIdent(name) => {
@@ -557,16 +555,14 @@ pub(super) fn expr_type<'a>(
     let global = matches!(&term.elem, Term::Ident(i) if i.as_str() == "global")
         && matches!(follow.first().map(|f| &f.elem), Some(Follow::Field(..)));
     let mut ty = if global {
-        let decl =
-            compiler
-                .proc
-                .as_ref()?
-                .tree
-                .root()
-                .get_var_declaration(match &follow[0].elem {
-                    Follow::Field(_, name) => name.as_str(),
-                    _ => unreachable!(),
-                })?;
+        let decl = compiler
+            .proc
+            .tree
+            .root()
+            .get_var_declaration(match &follow[0].elem {
+                Follow::Field(_, name) => name.as_str(),
+                _ => unreachable!(),
+            })?;
         declared_type(compiler, &decl.get().var_type)?
     } else {
         term_type(compiler, &term.elem)?
@@ -584,7 +580,7 @@ pub(super) fn expr_type<'a>(
 }
 
 pub(super) fn resolve_proc_path(compiler: &Compiler, path: &str) -> Option<String> {
-    let ctx = compiler.proc.as_ref()?;
+    let ctx = &compiler.proc;
     let (type_part, sep, kind, name) = ["proc", "verb"].iter().find_map(|kind| {
         for sep in ['.', '/', ':'] {
             for end in ['/', '.'] {
@@ -649,7 +645,7 @@ pub(super) fn declared_type_path(
     let Expression::Base { term, follow } = expr else {
         return None;
     };
-    let ctx = compiler.proc.as_ref()?;
+    let ctx = &compiler.proc;
     match follow.last().map(|f| &f.elem) {
         None => {
             let Term::Ident(name) = &term.elem else {
@@ -794,7 +790,7 @@ pub(super) fn global_const_value(
     compiler: &Compiler,
     name: &str,
 ) -> Option<dreammaker::constants::Constant> {
-    let root = compiler.proc.as_ref()?.tree.root();
+    let root = compiler.proc.tree.root();
     let decl = root.get_var_declaration(name)?;
     if !decl.get().var_type.flags.is_const()
         || decl.get().location.file == dreammaker::FileId::BUILTINS
@@ -812,7 +808,7 @@ fn const_lookup(
     compiler: &Compiler,
     name: &str,
 ) -> Option<(dreammaker::constants::Constant, bool)> {
-    let ctx = compiler.proc.as_ref()?;
+    let ctx = &compiler.proc;
     if ctx.find_local(name).is_some() || compiler.params.iter().any(|p| p == name) {
         return None;
     }
@@ -847,7 +843,7 @@ pub(super) fn emit_type_scope(
     follow: &dreammaker::ast::Follow,
 ) -> Result<EvalKind, CompileError> {
     use dreammaker::ast::Follow;
-    let tree = compiler.proc.as_ref().unwrap().tree;
+    let tree = compiler.proc.tree;
     let ty = tree
         .find(path)
         .ok_or(CompileError::UnsupportedStatement("::"))?;
@@ -875,7 +871,7 @@ pub(super) fn emit_type_scope(
             }
             let value = ty.get_value(name.as_str());
             if let Some(at) = value.filter(|v| v.expression.is_some()).map(|v| v.location) {
-                let ctx = compiler.proc.as_ref().unwrap();
+                let ctx = &compiler.proc;
                 if at.file == ctx.file_id {
                     compiler.emit_ins(Instruction::DbgLine(at.line));
                     compiler.line_pending = true;

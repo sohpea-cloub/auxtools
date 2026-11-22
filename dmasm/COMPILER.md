@@ -288,17 +288,17 @@ has a paused frame to ask about. It differs from a proc's code in these places a
 
 | Where | Construct | In the debugger's code |
 | --- | --- | --- |
-| `compiler.rs:984`, `term.rs:220` | `__TYPE__`, `__PROC__`, `..()`, `.()` | Refused: the stub is not the paused proc and has no parent |
-| `compiler.rs:1027`, `1051`, `procs.rs:353` | A bare name | A local of the body, a param (the frame's vars), then a var of `src`, then a global, by asking the scope; "undefined var" when nothing has it. A global is read through the world's list of them, or by the id the scope gives. Without a scope, a global |
-| `procs.rs:929` | `vars` | A name like any other: BYOND's types declare it at the root as a const with no value |
-| `term.rs:121`, `procs.rs:433` | `f()` | `src.f()` when the scope says `src` has it, else a global proc |
-| `follow.rs:268` | `x.f()` | Called by name (`CallName`) when BYOND's types have no such proc: the world's types are not known, and a call by name finds verbs too |
-| `follow.rs:510` | `global.x` | As a bare global; `global.vars` is the scope's list |
-| `term.rs:87`, `compiler.rs:1339` | `/type/proc/name`, `/type::name()` | Found in the world through the scope |
-| `compiler.rs:1330`, `fold.rs:219` | `/type::var`, `x::a::b` | Read when the code runs, not folded or resolved from a tree |
-| `builtin_procs.rs:442`, `708`, `statements.rs:1395` | `astype(x)`, `istype(x)`, `var/T/x = new` | A declared type that BYOND's types lack is named as written and found when the code is assembled |
-| `term.rs:814` | `/type{var = value}` | Refused: the instance would stay in the world's tables |
-| `binary_ops.rs:309`, `fold.rs:608` | A bit operand beyond 32 bits | Left for the world to convert as it does |
+| `compiler.rs:975`, `term.rs:220` | `__TYPE__`, `__PROC__`, `..()`, `.()` | Refused: the stub is not the paused proc and has no parent |
+| `compiler.rs:1018`, `1042`, `procs.rs:355` | A bare name | A local of the body, a param (the frame's vars), then a var of `src`, then a global, by asking the scope; "undefined var" when nothing has it. A global is read through the world's list of them, or by the id the scope gives. Without a scope, a global |
+| `procs.rs:927` | `vars` | A name like any other: BYOND's types declare it at the root as a const with no value |
+| `term.rs:122`, `procs.rs:433` | `f()` | `src.f()` when the scope says `src` has it, else a global proc |
+| `follow.rs:262` | `x.f()` | Called by name (`CallName`) when BYOND's types have no such proc: the world's types are not known, and a call by name finds verbs too |
+| `follow.rs:504` | `global.x` | As a bare global; `global.vars` is the scope's list |
+| `term.rs:88`, `compiler.rs:1330` | `/type/proc/name`, `/type::name()` | Found in the world through the scope |
+| `compiler.rs:1321`, `fold.rs:219` | `/type::var`, `x::a::b` | Read when the code runs, not folded or resolved from a tree |
+| `builtin_procs.rs:442`, `705`, `statements.rs:1385` | `astype(x)`, `istype(x)`, `var/T/x = new` | A declared type that BYOND's types lack is named as written and found when the code is assembled |
+| `term.rs:811` | `/type{var = value}` | Refused: the instance would stay in the world's tables |
+| `binary_ops.rs:309`, `fold.rs:605` | A bit operand beyond 32 bits | Left for the world to convert as it does |
 | `assignment.rs:58` | `a?.b?.c \|\|= v`, `a?[i] &&= v` as a value | Compiled by older code in `follow.rs` (the `Safe` arms of `emit_typed`) that leaves a place: the proc path writes such an assignment as a value only for a plain `a?.b.c`, and a proc refuses the rest |
 
 Until November 2026 the expression path was code of its own, from 2021, told apart by

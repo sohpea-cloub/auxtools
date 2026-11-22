@@ -566,11 +566,8 @@ fn emit_code(
                         name: "__PROC__".to_string(),
                     });
                 }
-                let ctx = compiler
+                name = compiler
                     .proc
-                    .as_ref()
-                    .ok_or(CompileError::ExpectedFieldReference)?;
-                name = ctx
                     .proc_path
                     .rsplit('/')
                     .next()
@@ -858,10 +855,9 @@ fn initial_static_field(
         follow: rest.to_vec().into_boxed_slice(),
     };
     let ty = match &term.elem {
-        Term::Prefab(prefab) if rest.is_empty() && prefab.vars.is_empty() => compiler
-            .proc
-            .as_ref()
-            .and_then(|ctx| ctx.tree.find(&prefab.path.to_string())),
+        Term::Prefab(prefab) if rest.is_empty() && prefab.vars.is_empty() => {
+            compiler.proc.tree.find(&prefab.path.to_string())
+        }
         _ => super::procs::expr_type(compiler, &base),
     };
     let static_scope = ty

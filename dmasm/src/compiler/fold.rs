@@ -185,7 +185,7 @@ fn static_const(
     term: &Term,
     steps: &[dreammaker::ast::Spanned<Follow>],
 ) -> Option<Constant> {
-    let ctx = c.proc.as_ref()?;
+    let ctx = &c.proc;
     if c.debugger {
         return None;
     }
@@ -290,12 +290,12 @@ fn base_value(c: &Compiler, term: &Term) -> Option<Constant> {
         {
             Constant::New
         }
-        Term::__TYPE__ if c.proc_macros_known() => match c.proc.as_ref()? {
+        Term::__TYPE__ if c.proc_macros_known() => match &c.proc {
             p if p.ty.is_root() => Constant::Null,
             p => Constant::Path(p.ty.get().path.clone()),
         },
         Term::__PROC__ if c.proc_macros_known() && c.byond.has_proc_macro() => {
-            Constant::Path(c.proc.as_ref()?.proc_path.clone())
+            Constant::Path(c.proc.proc_path.clone())
         }
         Term::Call(name, args) if name.as_str() == "newlist" && constant_args(c, args) => {
             Constant::New
@@ -369,10 +369,7 @@ fn base_value(c: &Compiler, term: &Term) -> Option<Constant> {
         Term::Call(name, args)
             if name.as_str() == "hsl2rgb"
                 && args.len() == 3
-                && !c
-                    .proc
-                    .as_ref()
-                    .is_some_and(|p| p.tree.root().get_proc("hsl2rgb").is_some()) =>
+                && c.proc.tree.root().get_proc("hsl2rgb").is_none() =>
         {
             let n = |e| match value(c, e)? {
                 Constant::Number(n) => Some(n),
