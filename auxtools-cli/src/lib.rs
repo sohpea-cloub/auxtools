@@ -1,4 +1,5 @@
 pub mod byond;
+pub mod client;
 pub mod game;
 #[cfg(windows)]
 mod inject;
