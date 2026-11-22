@@ -2804,9 +2804,10 @@ impl Server {
 				instruction,
 				condition,
 				hit,
-				log
-			} => self.handle_breakpoint_set(instruction, condition, hit, log, false),
-			Request::BreakpointUnset { instruction } => self.handle_breakpoint_unset(instruction, false),
+				log,
+				exact
+			} => self.handle_breakpoint_set(instruction, condition, hit, log, exact),
+			Request::BreakpointUnset { instruction, exact } => self.handle_breakpoint_unset(instruction, exact),
 			Request::Stacks { sleeping } => self.handle_stacks(sleeping),
 			Request::Scopes { frame_id } => self.handle_scopes(frame_id),
 			Request::Variables { vars, start, count } => self.handle_variables(vars, start, count),
@@ -2943,14 +2944,6 @@ impl Server {
 				let disassembly = self.disassemble(code);
 				self.answer(Response::Disassemble(disassembly));
 			}
-
-			Request::InstructionBreakpointSet {
-				instruction,
-				condition,
-				hit,
-				log
-			} => self.handle_breakpoint_set(instruction, condition, hit, log, true),
-			Request::InstructionBreakpointUnset { instruction } => self.handle_breakpoint_unset(instruction, true),
 
 			Request::Journal { after, kinds, limit, follow } => self.handle_journal(after, kinds, limit, follow),
 			Request::JournalAdd(event) => self.journal(event, self.current),

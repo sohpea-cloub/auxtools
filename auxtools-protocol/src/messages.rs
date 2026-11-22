@@ -20,10 +20,12 @@ pub enum Request {
 		instruction: InstructionRef,
 		condition: Option<String>,
 		hit: Option<HitCondition>,
-		log: Option<Vec<LogPart>>
+		log: Option<Vec<LogPart>>,
+		exact: bool
 	},
 	BreakpointUnset {
-		instruction: InstructionRef
+		instruction: InstructionRef,
+		exact: bool
 	},
 	CatchRuntimes {
 		uncaught: Option<RuntimeFilter>,
@@ -93,15 +95,6 @@ pub enum Request {
 	},
 	Disassemble {
 		code: CodeRef
-	},
-	InstructionBreakpointSet {
-		instruction: InstructionRef,
-		condition: Option<String>,
-		hit: Option<HitCondition>,
-		log: Option<Vec<LogPart>>
-	},
-	InstructionBreakpointUnset {
-		instruction: InstructionRef
 	},
 	Journal {
 		after: u64,

@@ -1327,7 +1327,8 @@ impl World {
 				instruction: instruction.clone(),
 				condition: condition.clone(),
 				hit: None,
-				log: log.clone()
+				log: log.clone(),
+				exact: false
 			})? {
 				Response::BreakpointSet {
 					result: BreakpointSetResult::Success { line, at, file }
@@ -1351,7 +1352,8 @@ impl World {
 
 	fn unset_breakpoint(&mut self, bound: &Bound) -> Result<u32> {
 		match self.request(Request::BreakpointUnset {
-			instruction: bound.asked.clone()
+			instruction: bound.asked.clone(),
+			exact: false
 		})? {
 			Response::BreakpointUnset { skipped, .. } => Ok(skipped),
 			other => Err(unexpected(&other))

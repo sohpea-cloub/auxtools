@@ -1713,7 +1713,8 @@ impl Adapter {
 			instruction: instruction.clone(),
 			condition,
 			hit,
-			log
+			log,
+			exact: false
 		})
 	}
 
@@ -1735,11 +1736,9 @@ impl Adapter {
 	fn unset(&mut self, key: &str) {
 		let set = self.set.lock().unwrap().remove(key).unwrap_or_default();
 		for breakpoint in set {
-			let instruction = breakpoint.asked;
-			let _ = self.request(&if key == INSTRUCTION_BREAKPOINTS {
-				AuxRequest::InstructionBreakpointUnset { instruction }
-			} else {
-				AuxRequest::BreakpointUnset { instruction }
+			let _ = self.request(&AuxRequest::BreakpointUnset {
+				instruction: breakpoint.asked,
+				exact: key == INSTRUCTION_BREAKPOINTS
 			});
 		}
 	}
@@ -1937,11 +1936,12 @@ impl Adapter {
 			let instruction = InstructionRef { proc, offset: offset.into() };
 			let mut at = None;
 			breakpoints.push(
-				match self.breakpoint_set(&AuxRequest::InstructionBreakpointSet {
+				match self.breakpoint_set(&AuxRequest::BreakpointSet {
 					instruction: instruction.clone(),
 					condition: breakpoint.condition.clone(),
 					hit,
-					log: None
+					log: None,
+					exact: true
 				}) {
 					Ok(Some((line, set_at))) => {
 						at = Some(set_at);

@@ -398,7 +398,8 @@ fn main() {
 		},
 		condition: None,
 		hit: None,
-		log: None
+		log: None,
+		exact: false
 	});
 	assert!(matches!(response, Response::BreakpointSet { .. }), "{:?}", response);
 	eval(&mut client, "arm_breakpoint()");
@@ -431,7 +432,8 @@ fn main() {
 				override_id: 0
 			},
 			offset: old_offset
-		}
+		},
+		exact: false
 	});
 	assert!(matches!(response, Response::BreakpointUnset { success: true, .. }), "{:?}", response);
 	eval(&mut client, "arm_breakpoint()");
@@ -451,7 +453,8 @@ fn main() {
 		instruction: at.clone(),
 		condition: None,
 		hit: None,
-		log: None
+		log: None,
+		exact: false
 	});
 	assert!(matches!(response, Response::BreakpointSet { .. }), "{:?}", response);
 	eval(&mut client, "caught_armed = TRUE");
@@ -463,7 +466,10 @@ fn main() {
 	);
 	let result = reload(&mut watcher, &changes);
 	assert!(result.applied, "{:?}", result);
-	let response = client.request(Request::BreakpointUnset { instruction: at });
+	let response = client.request(Request::BreakpointUnset {
+		instruction: at,
+		exact: false
+	});
 	assert!(matches!(response, Response::BreakpointUnset { success: true, .. }), "{:?}", response);
 	client.resume();
 	wait_for(&mut client, "caught_done", "2");
@@ -483,7 +489,8 @@ fn main() {
 		instruction: at.clone(),
 		condition: None,
 		hit: None,
-		log: None
+		log: None,
+		exact: false
 	});
 	assert!(matches!(response, Response::BreakpointSet { .. }), "{:?}", response);
 	const TARGET: &str = "/proc/breakpoint_target()\n\tvar/x = 1\n\tx += 1\n\treturn x\n";
@@ -497,7 +504,10 @@ fn main() {
 		("/breakpoint_target".to_owned(), Some(source.line_of("main.dm", "\tx += 1")))
 	);
 	client.resume();
-	let response = client.request(Request::BreakpointUnset { instruction: at });
+	let response = client.request(Request::BreakpointUnset {
+		instruction: at,
+		exact: false
+	});
 	assert!(matches!(response, Response::BreakpointUnset { success: true, .. }), "{:?}", response);
 	let changes = source.move_code(TARGET, "main.dm", "reload.dm");
 	reload(&mut watcher, &changes);
@@ -516,10 +526,11 @@ fn main() {
 				instruction,
 				condition: None,
 				hit: None,
-				log: None
+				log: None,
+				exact: false
 			}
 		} else {
-			Request::BreakpointUnset { instruction }
+			Request::BreakpointUnset { instruction, exact: false }
 		}) {
 			Response::BreakpointSet {
 				result: BreakpointSetResult::Success { .. }
@@ -629,7 +640,8 @@ fn main() {
 			LogPart::Expr("extra".to_owned()),
 			LogPart::Text(", global ".to_owned()),
 			LogPart::Expr("cache_global".to_owned()),
-		])
+		]),
+		exact: false
 	});
 	assert!(
 		matches!(response, Response::BreakpointSet {

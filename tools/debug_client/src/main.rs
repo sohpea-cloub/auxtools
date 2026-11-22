@@ -235,7 +235,8 @@ fn main() {
 		instruction: instruction.clone(),
 		condition: options.condition.clone(),
 		hit: None,
-		log: None
+		log: None,
+		exact: false
 	});
 	conn.send(&Request::CatchRuntimes {
 		uncaught: None,
@@ -257,7 +258,7 @@ fn main() {
 	}
 
 	println!("== watches done, continuing");
-	conn.request(Request::BreakpointUnset { instruction });
+	conn.request(Request::BreakpointUnset { instruction, exact: false });
 	conn.request(Request::Continue {
 		kind: ContinueKind::Continue
 	});
