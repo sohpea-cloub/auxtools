@@ -4,7 +4,7 @@ use clap::{Args, CommandFactory, FromArgMatches, Parser, Subcommand};
 
 use super::{help, hold, json, launch};
 
-const JSON: &str = "Emit one JSON value on stdout.";
+pub const JSON: &str = "Emit one JSON value on stdout.";
 const HOLD_MAX: &str = "Automatically resume a retained pause after this many\nseconds with no debugger connected.";
 
 pub const DEFAULT_RESPONSE_TIMEOUT: Duration = Duration::from_secs(30);

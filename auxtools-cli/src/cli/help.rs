@@ -661,7 +661,8 @@ fn spec(arg: &clap::Arg) -> String {
 }
 
 fn option_rows(command: &clap::Command, path: &[&str]) -> Vec<(String, String)> {
-	const COMMON_JSON: &str = "Emit one JSON value on stdout.";
+	let row = |arg: &clap::Arg| (spec(arg), arg.get_help().map(ToString::to_string).unwrap_or_default());
+	let shared = |id: &str| command.get_arguments().find(|arg| arg.get_id() == id).map(row);
 	let mut rows = vec![];
 	let mut common_json = false;
 	for arg in command.get_arguments() {
@@ -669,25 +670,24 @@ fn option_rows(command: &clap::Command, path: &[&str]) -> Vec<(String, String)> 
 		if arg.is_positional() || arg.is_hide_set() || matches!(id, "help" | "pid" | "response_timeout") {
 			continue;
 		}
-		let help = arg.get_help().map(ToString::to_string).unwrap_or_default();
-		if id == "json" && help == COMMON_JSON {
+		if id == "json" && arg.get_help().is_some_and(|help| help.to_string() == args::JSON) {
 			common_json = true;
 			continue;
 		}
-		rows.push((spec(arg), help));
+		rows.push(row(arg));
 		for (_, _, more, help) in MORE_ROWS.iter().filter(|(name, after, ..)| path == [*name] && *after == id) {
 			rows.push(((*more).to_owned(), (*help).to_owned()));
 		}
 	}
 	let scope = path.first().and_then(|name| args::scope_of(name));
 	if matches!(scope, Some(Scope::World | Scope::WorldExit)) {
-		rows.push(("--pid PID".to_owned(), "Select the world process.".to_owned()));
+		rows.extend(shared("pid"));
 	}
 	if scope == Some(Scope::World) {
-		rows.push(("--response-timeout SECONDS".to_owned(), args::response_timeout_help()));
+		rows.extend(shared("response_timeout"));
 	}
 	if common_json {
-		rows.push(("--json".to_owned(), COMMON_JSON.to_owned()));
+		rows.extend(shared("json"));
 	}
 	rows.push(("-h, --help".to_owned(), "Show help for this command.".to_owned()));
 	rows
