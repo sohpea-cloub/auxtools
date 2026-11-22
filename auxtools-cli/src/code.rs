@@ -146,6 +146,7 @@ struct Watching {
 	edited_since_built: HashSet<PathBuf>,
 	dmb_modified: Option<SystemTime>,
 	applied: Option<Snapshot>,
+	applied_as: Option<Vec<(String, Option<String>)>>,
 	files: Watched,
 	skin: Skin,
 	script: Script,
@@ -230,6 +231,7 @@ impl Code {
 			dmb_modified,
 			edited_since_built: HashSet::new(),
 			applied: None,
+			applied_as: None,
 			built,
 			built_resources: Resources {
 				files: resources.files.clone(),
@@ -318,6 +320,7 @@ impl Code {
 		let selected = self.selected_defines();
 		let other_defines = selected != *self.running_defines.borrow();
 		let held = !self.outstanding().is_empty();
+		watching.applied_as = None;
 		if !held && !other_defines && (1..=MOST_ALONE).contains(&changed.len()) {
 			let current = match watching.applied.as_mut() {
 				Some(applied) => applied,
@@ -364,7 +367,7 @@ impl Code {
 			watching.files.add(&self.root, &file, self.parse_started.get());
 		}
 
-		let read_with = other_defines.then_some(selected);
+		let read_with = other_defines.then(|| selected.clone());
 		match self.reload(
 			&changes,
 			watching.applied.as_ref().unwrap_or(&watching.built),
@@ -379,6 +382,7 @@ impl Code {
 				self.send(Event::Changed);
 				let given = self.give_macros(Some(&new));
 				watching.applied = Some(new);
+				watching.applied_as = Some(selected);
 				watching.built.clear_patches();
 				given
 			}
@@ -427,11 +431,13 @@ impl Code {
 				Err(e) => self.log(format!("couldn't read the code: {}", e))
 			}
 			watching.applied = None;
+			watching.applied_as = None;
 			watching.edited_since_built.clear();
 			return self.send(Event::Changed) && self.give_macros(read.then_some(&watching.built));
 		}
 
-		watching.applied = None;
+		let applied = watching.applied.take();
+		let applied_as = watching.applied_as.take();
 		*self.running_defines.borrow_mut() = self.parse_options.borrow().defines.clone();
 		let selected = self.selected_defines();
 		let other_defines = selected != *self.running_defines.borrow();
@@ -473,22 +479,29 @@ impl Code {
 				return !applied || self.give_macros(Some(&watching.built));
 			}
 		}
-		let current = match self.parse_with(selected.clone()) {
-			Ok(current) => current,
-			Err(e) => {
-				self.log(format!("couldn't read the code: {}", e));
-				return self.not_reloaded(e) && self.ready();
+		let current = match applied.filter(|applied| looked_at && applied_as.as_ref() == Some(&selected) && !applied.has_patches()) {
+			Some(applied) => {
+				self.parsed.set(true);
+				applied
+			}
+			None => match self.parse_with(selected.clone()) {
+				Ok(current) => current,
+				Err(e) => {
+					self.log(format!("couldn't read the code: {}", e));
+					return self.not_reloaded(e) && self.ready();
+				}
 			}
 		};
 		let mut changes = diff(&watching.built, &current, (!other_defines).then_some(&watching.edited_since_built));
 		refuse_hidden(&watching.built, &current, &mut changes);
 		refuse_other_maps(&watching.built, &current, &mut changes);
-		let read_with = other_defines.then_some(selected);
+		let read_with = other_defines.then(|| selected.clone());
 		let Some(applied) = self.reload(&changes, &watching.built, vec![], true, true, read_with) else {
 			return false;
 		};
 		if applied {
 			watching.applied = Some(current);
+			watching.applied_as = Some(selected);
 			watching.built.clear_patches();
 			self.watch_named(watching);
 		}
@@ -1325,6 +1338,16 @@ mod tests {
 			}
 		}
 
+		fn nothing_changed(&self) {
+			self.next("no changes", |event| match event {
+				Event::NothingChanged { .. } => Some(()),
+				Event::Reload { summary, .. } => panic!("reloaded: {}", summary.text(&[])),
+				Event::NotReloaded { summary, refused, .. } => panic!("not reloaded: {summary}: {refused:?}"),
+				_ => None
+			});
+			self.next("looked", |event| matches!(event, Event::Looked).then_some(()));
+		}
+
 		fn write(&self, file: &str, text: &str) {
 			self.project.write(&format!("code/{file}.dm"), text);
 		}
@@ -1517,6 +1540,68 @@ mod tests {
 		worker.write("b", &body("b", "return 2"));
 		assert_eq!(worker.prepared().summary, "reloaded /a, /b");
 		assert_eq!(worker.parses(), 2);
+	}
+
+	#[test]
+	fn a_reboot_uses_the_last_full_parse_while_no_file_has_changed() {
+		let mut worker = Worker::start("reuse");
+		let original = |file: &str| body(file, "return 1");
+		worker.write("a", &body("a", "world.log << 1\n\treturn 2"));
+		assert_eq!(worker.prepared().summary, "reloaded /a; remapped lines in 1 additional procs");
+		worker.write("c", &(original("c") + "/proc/more()\n\treturn 1\n"));
+		worker.applied(false);
+		assert_eq!(worker.prepared().summary, "added /more");
+		worker.applied(false);
+		assert_eq!(worker.parses(), 2);
+		let before = [("a", original("a")), ("c", original("c"))];
+		let before: Vec<(&str, &str)> = before.iter().map(|(file, text)| (*file, text.as_str())).collect();
+		for world in 1..=2 {
+			worker.reboot();
+			let restored = worker.prepared();
+			assert_eq!(restored.world, world);
+			assert_eq!(restored.summary, "reloaded /a; added /more; remapped lines in 1 additional procs");
+			assert_eq!(restored.plan, worker.full_plan(&before, &["a", "c"], true));
+			worker.applied(true);
+			assert_eq!(worker.parses(), 2);
+		}
+
+		worker.write("d", &body("d", "return 2"));
+		assert_eq!(worker.prepared().summary, "reloaded /d");
+		worker.applied(false);
+		assert_eq!(worker.parses(), 2);
+		worker.reboot();
+		let restored = worker.prepared();
+		assert_eq!(restored.summary, "reloaded /a, /d; added /more; remapped lines in 1 additional procs");
+		assert_eq!(worker.parses(), 3);
+
+		worker.write("e", &body("e", "return 2"));
+		worker.reboot();
+		worker.commands.send(Command::Reloaded(true)).unwrap();
+		let restored = worker.prepared();
+		assert_eq!(restored.world, 4);
+		assert_eq!(restored.summary, "reloaded /a, /d, /e; added /more; remapped lines in 1 additional procs");
+		assert_eq!(worker.parses(), 4);
+
+		worker.commands.send(Command::Defines(vec![("FLAG".to_owned(), None)])).unwrap();
+		worker.reboot();
+		worker.commands.send(Command::Reloaded(true)).unwrap();
+		let restored = worker.prepared();
+		assert_eq!(restored.world, 5);
+		assert_eq!(worker.parses(), 5);
+		worker.applied(true);
+		worker.nothing_changed();
+		worker.nothing_changed();
+		assert_eq!(worker.parses(), 5);
+
+		worker.commands.send(Command::Defines(vec![("OTHER".to_owned(), None)])).unwrap();
+		worker.nothing_changed();
+		assert_eq!(worker.parses(), 6);
+		worker.reboot();
+		let restored = worker.prepared();
+		assert_eq!(restored.world, 6);
+		assert_eq!(restored.summary, "reloaded /a, /d, /e; added /more; remapped lines in 1 additional procs");
+		worker.applied(true);
+		assert_eq!(worker.parses(), 6);
 	}
 
 	#[test]
