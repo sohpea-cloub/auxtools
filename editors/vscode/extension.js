@@ -8,6 +8,7 @@ const { expressionAt } = require("./expression");
 const { UnsavedFiles } = require("./unsaved");
 const buildFlags = require("./buildflags");
 const langclient = require("./langclient");
+const { confined } = require("./report");
 
 const DEBUG_TYPE = "auxtools";
 
@@ -408,7 +409,7 @@ function showProfile(session, report) {
 		}
 		vscode.window.showWarningMessage(`Source file not found: ${message.file}`);
 	});
-	panel.webview.html = report.html;
+	panel.webview.html = confined(report.html);
 }
 
 async function offerAddress(address, started) {

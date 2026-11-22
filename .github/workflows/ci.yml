@@ -135,6 +135,7 @@ jobs:
           node editors/vscode/expression.test.js
           node editors/vscode/unsaved.test.js
           node editors/vscode/buildflags.test.js
+          node editors/vscode/report.test.js
           python3 editors/vscode/package.py --out "$RUNNER_TEMP/auxtools.vsix"
           python3 -m zipfile -e "$RUNNER_TEMP/auxtools.vsix" "$RUNNER_TEMP/vsix"
           node editors/vscode/package.test.js "$RUNNER_TEMP/vsix"
