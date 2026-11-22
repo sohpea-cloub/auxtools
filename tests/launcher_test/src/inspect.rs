@@ -38,6 +38,7 @@ fn auxtools(pid: &str, args: &[&str], input: Option<&str>) -> Ran {
 	}
 }
 
+#[track_caller]
 fn run(pid: &str, args: &[&str], code: i32) -> Ran {
 	let ran = auxtools(pid, args, None);
 	assert_eq!(
@@ -53,6 +54,7 @@ fn run(pid: &str, args: &[&str], code: i32) -> Ran {
 	ran
 }
 
+#[track_caller]
 fn fails(pid: &str, args: &[&str]) -> String {
 	let ran = run(pid, args, 1);
 	assert!(
@@ -61,13 +63,13 @@ fn fails(pid: &str, args: &[&str]) -> String {
 		args.join(" "),
 		ran.out
 	);
-	let said = ran
-		.err
-		.strip_prefix("error: ")
-		.unwrap_or_else(|| panic!("expected error prefix on stderr from `{}`: {:?}", args.join(" "), ran.err));
-	said.trim_end().to_owned()
+	match ran.err.strip_prefix("error: ") {
+		Some(said) => said.trim_end().to_owned(),
+		None => panic!("expected error prefix on stderr from `{}`: {:?}", args.join(" "), ran.err)
+	}
 }
 
+#[track_caller]
 fn paused_in_call(pid: &str, dir: &Path, place: &str) -> String {
 	paused_at(pid.parse().unwrap(), place, || std::fs::write(dir.join("call"), "yes").unwrap())
 }
@@ -424,6 +426,7 @@ fn where_breakpoints_bound(pid: &str, code: &Path) {
 	println!("ok: invalid wait target diagnostics");
 }
 
+#[track_caller]
 fn instruction_at(printed: &str, proc: &str, pid: &str) -> u32 {
 	let mut lines = printed.lines();
 	assert_eq!(
@@ -434,11 +437,10 @@ fn instruction_at(printed: &str, proc: &str, pid: &str) -> u32 {
 	);
 	let top = lines.next().unwrap_or_default();
 	assert!(top.starts_with(&format!("#0 {}  ", proc)), "unexpected step output: {}", printed);
-	let (offset, text) = lines
-		.next()
-		.and_then(|line| line.strip_prefix("   instruction "))
-		.and_then(|line| line.split_once(": "))
-		.unwrap_or_else(|| panic!("missing instruction in step output: {}", printed));
+	let instruction = lines.next().and_then(|line| line.strip_prefix("   instruction "));
+	let Some((offset, text)) = instruction.and_then(|line| line.split_once(": ")) else {
+		panic!("missing instruction in step output: {}", printed)
+	};
 	let offset: u32 = offset.parse().unwrap();
 	let listing = run(pid, &["disassemble", proc], 0).out;
 	assert!(
@@ -489,10 +491,14 @@ fn instruction_steps(pid: &str, dir: &Path) {
 	println!("ok: instruction Step Into");
 }
 
+#[track_caller]
 fn json_of(pid: &str, args: &[&str]) -> Value {
 	let ran = run(pid, args, 0);
 	assert!(ran.err.is_empty(), "unexpected stderr from `{}`: {}", args.join(" "), ran.err);
-	serde_json::from_str(&ran.out).unwrap_or_else(|e| panic!("`{}` printed {}: {}", args.join(" "), ran.out, e))
+	match serde_json::from_str(&ran.out) {
+		Ok(value) => value,
+		Err(e) => panic!("`{}` printed {}: {}", args.join(" "), ran.out, e)
+	}
 }
 
 fn as_json(pid: &str, dir: &Path) {
@@ -652,6 +658,7 @@ fn on_an_object(pid: &str) {
 	println!("ok: invalid object reference diagnostics");
 }
 
+#[track_caller]
 fn eval_becomes(pid: &str, expression: &str, wanted: &str) {
 	let mut got = String::new();
 	for _ in 0..100 {

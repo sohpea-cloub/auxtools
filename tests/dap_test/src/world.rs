@@ -37,6 +37,7 @@ impl Marks {
 		files
 	}
 
+	#[track_caller]
 	pub fn place(&self, name: &str) -> (PathBuf, u64) {
 		let marker = format!("// @{}", name);
 		for file in self.files() {
@@ -48,16 +49,19 @@ impl Marks {
 		panic!("no line marked {} in {}", marker, self.dir.display())
 	}
 
+	#[track_caller]
 	pub fn line(&self, name: &str) -> u64 {
 		self.place(name).1
 	}
 
+	#[track_caller]
 	pub fn file(&self, name: &str) -> PathBuf {
 		let path = self.dir.join(name);
 		assert!(path.is_file(), "there's no {}", path.display());
 		path
 	}
 
+	#[track_caller]
 	pub fn line_starting(&self, file: &str, text: &str) -> u64 {
 		let source = std::fs::read_to_string(self.file(file)).unwrap();
 		source
@@ -67,6 +71,7 @@ impl Marks {
 			+ 1
 	}
 
+	#[track_caller]
 	pub fn edit(&self, file: &str, old: &str, new: &str) {
 		let path = self.file(file);
 		let source = std::fs::read_to_string(&path).unwrap();
@@ -97,14 +102,17 @@ impl DerefMut for World {
 }
 
 impl World {
+	#[track_caller]
 	pub fn launch_in(dir: PathBuf, more: Value) -> Self {
 		Self::launch_as(json!({}), dir, more)
 	}
 
+	#[track_caller]
 	pub fn launch_as(abilities: Value, dir: PathBuf, more: Value) -> Self {
 		Self::launch_from(Launcher::start(), abilities, dir, more)
 	}
 
+	#[track_caller]
 	fn launch_from(mut launcher: Launcher, abilities: Value, dir: PathBuf, more: Value) -> Self {
 		launcher.initialize_as(abilities);
 		launcher.launch(&paths::find_byond(), &dir.join("dap_test_host.dme"), more);
@@ -116,6 +124,7 @@ impl World {
 		}
 	}
 
+	#[track_caller]
 	pub fn attach_in(dir: PathBuf, pid: u64) -> Self {
 		let mut launcher = Launcher::start();
 		launcher.initialize();
@@ -128,23 +137,28 @@ impl World {
 		}
 	}
 
+	#[track_caller]
 	pub fn attach(pid: u64) -> Self {
 		Self::attach_in(host_file(""), pid)
 	}
 
+	#[track_caller]
 	pub fn launch(more: Value) -> Self {
 		Self::launch_in(host_file(""), more)
 	}
 
+	#[track_caller]
 	pub fn configure(&mut self) {
 		self.request("configurationDone", json!({}));
 		self.wait_output("dap: world/New");
 	}
 
+	#[track_caller]
 	pub fn start() -> Self {
 		Self::start_with(&[])
 	}
 
+	#[track_caller]
 	pub fn start_with(env: &[(&str, &str)]) -> Self {
 		let mut world = Self::launch_from(Launcher::start_with(env), json!({}), host_file(""), json!({}));
 		world.catch_runtimes(false);
@@ -152,11 +166,13 @@ impl World {
 		world
 	}
 
+	#[track_caller]
 	pub fn break_on(&mut self, names: &[&str]) {
 		let marked: Vec<(&str, &str)> = names.iter().map(|name| (*name, "")).collect();
 		self.break_if(&marked);
 	}
 
+	#[track_caller]
 	pub fn break_if(&mut self, marked: &[(&str, &str)]) {
 		for (breakpoint, (name, _)) in self.try_break_if(marked).iter().zip(marked) {
 			let mut breakpoint = breakpoint.clone();
@@ -173,6 +189,7 @@ impl World {
 		}
 	}
 
+	#[track_caller]
 	pub fn try_break_if(&mut self, marked: &[(&str, &str)]) -> Vec<Value> {
 		let mut by_file: Vec<(PathBuf, Vec<(usize, Value)>)> = self.with_breakpoints.drain(..).map(|file| (file, vec![])).collect();
 		for (i, (name, condition)) in marked.iter().enumerate() {
@@ -201,16 +218,19 @@ impl World {
 		answered
 	}
 
+	#[track_caller]
 	pub fn stop_on(&mut self, reason: &str, proc: &str, name: &str) {
 		let line = self.marks.line(name);
 		self.launcher.stop_at(reason, proc, line);
 	}
 
+	#[track_caller]
 	pub fn step_on(&mut self, command: &str, proc: &str, name: &str) {
 		let line = self.marks.line(name);
 		self.launcher.step_to(command, proc, line);
 	}
 
+	#[track_caller]
 	pub fn run_to(&mut self, scenario: &str, proc: &str, name: &str) {
 		self.break_on(&[name]);
 		self.run(scenario);
@@ -218,10 +238,12 @@ impl World {
 		self.break_on(&[]);
 	}
 
+	#[track_caller]
 	pub fn argument(&mut self, name: &str) -> String {
 		self.launcher.variable("Arguments", name)["value"].as_str().unwrap().to_owned()
 	}
 
+	#[track_caller]
 	pub fn run(&mut self, scenario: &str) {
 		let finished = self.count(&format!("dap: finished {}\n", scenario));
 		self.finished.insert(scenario.to_owned(), finished);
@@ -229,17 +251,20 @@ impl World {
 		assert_eq!(set, format!("\"{}\"", scenario), "couldn't ask for the scenario");
 	}
 
+	#[track_caller]
 	pub fn finish(&mut self, scenario: &str) {
 		let finished = self.finished[scenario];
 		self.wait_count(&format!("dap: finished {}\n", scenario), finished + 1);
 	}
 
+	#[track_caller]
 	pub fn run_through(&mut self, scenario: &str) {
 		self.run(scenario);
 		self.finish(scenario);
 		assert!(!self.has_event("stopped"), "the world stopped during {}", scenario);
 	}
 
+	#[track_caller]
 	pub fn run_collecting<T>(&mut self, scenario: &str, mut at_stop: impl FnMut(&mut World) -> T) -> Vec<T> {
 		self.run(scenario);
 		let finished = self.finished[scenario];
@@ -257,12 +282,14 @@ impl World {
 		}
 	}
 
+	#[track_caller]
 	pub fn resume_through(&mut self, scenario: &str) {
 		self.resume();
 		self.finish(scenario);
 		assert!(!self.has_event("stopped"), "the world stopped again during {}", scenario);
 	}
 
+	#[track_caller]
 	pub fn end(self) {
 		self.launcher.disconnect(json!({}));
 	}

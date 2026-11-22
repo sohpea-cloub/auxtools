@@ -11,6 +11,7 @@ use serde_json::{json, Value};
 
 pub const TIMEOUT: Duration = Duration::from_secs(90);
 
+#[track_caller]
 pub fn next_to_us(name: &str) -> PathBuf {
 	let mut path = std::env::current_exe().unwrap();
 	path.pop();
@@ -76,15 +77,16 @@ pub fn listed_worlds() -> Vec<Value> {
 		.collect()
 }
 
+#[track_caller]
 pub fn listed_world(dmb: &str) -> u64 {
 	let worlds = listed_worlds();
-	let world = worlds
-		.iter()
-		.find(|world| world["dmb"].as_str().is_some_and(|path| path.ends_with(dmb)))
-		.unwrap_or_else(|| panic!("--list didn't list the world: {:?}", worlds));
-	world["pid"].as_u64().unwrap()
+	match worlds.iter().find(|world| world["dmb"].as_str().is_some_and(|path| path.ends_with(dmb))) {
+		Some(world) => world["pid"].as_u64().unwrap(),
+		None => panic!("--list didn't list the world: {:?}", worlds)
+	}
 }
 
+#[track_caller]
 pub fn kill_process(pid: u64) {
 	let killed = if cfg!(windows) {
 		Command::new("taskkill").args(["/F", "/PID", &pid.to_string()]).output()
@@ -192,11 +194,15 @@ impl Launcher {
 		Some(message)
 	}
 
+	#[track_caller]
 	fn next_message(&mut self, deadline: Instant) -> Value {
-		self.poll_message(deadline)
-			.unwrap_or_else(|| panic!("timed out waiting for launcher response; output:\n{}", self.output))
+		match self.poll_message(deadline) {
+			Some(message) => message,
+			None => panic!("timed out waiting for launcher response; output:\n{}", self.output)
+		}
 	}
 
+	#[track_caller]
 	pub fn send(&mut self, command: &str, arguments: Value) -> i64 {
 		let seq = self.seq;
 		self.seq += 1;
@@ -206,12 +212,14 @@ impl Launcher {
 		seq
 	}
 
+	#[track_caller]
 	pub fn request(&mut self, command: &str, arguments: Value) -> Value {
 		let response = self.try_request(command, arguments);
 		assert_eq!(response["success"], true, "{} failed: {}", command, response);
 		response["body"].clone()
 	}
 
+	#[track_caller]
 	pub fn try_request(&mut self, command: &str, arguments: Value) -> Value {
 		let seq = self.send(command, arguments);
 		let deadline = Instant::now() + TIMEOUT;
@@ -226,15 +234,19 @@ impl Launcher {
 		}
 	}
 
+	#[track_caller]
 	pub fn refused(&mut self, command: &str, arguments: Value) -> String {
 		let response = self.try_request(command, arguments);
 		assert_eq!(response["success"], false, "{} should have failed: {}", command, response);
 		response["message"].as_str().unwrap_or_default().to_owned()
 	}
 
+	#[track_caller]
 	pub fn event(&mut self, name: &str) -> Value {
-		self.event_within(name, TIMEOUT)
-			.unwrap_or_else(|| panic!("missing {} event; output:\n{}", name, self.output))
+		match self.event_within(name, TIMEOUT) {
+			Some(event) => event,
+			None => panic!("missing {} event; output:\n{}", name, self.output)
+		}
 	}
 
 	pub fn event_within(&mut self, name: &str, wait: Duration) -> Option<Value> {
@@ -253,12 +265,13 @@ impl Launcher {
 		}
 	}
 
+	#[track_caller]
 	pub fn reloaded(&mut self, what: &str) -> Value {
 		let deadline = Instant::now() + TIMEOUT;
 		loop {
-			let event = self
-				.event_within("auxtoolsReload", deadline.saturating_duration_since(Instant::now()))
-				.unwrap_or_else(|| panic!("no successful reload reported for {}; output:\n{}", what, self.output));
+			let Some(event) = self.event_within("auxtoolsReload", deadline.saturating_duration_since(Instant::now())) else {
+				panic!("no successful reload reported for {}; output:\n{}", what, self.output)
+			};
 			if event["body"]["state"] == "reloaded" && event["body"]["summary"].as_str().is_some_and(|summary| summary.contains(what)) {
 				return event;
 			}
@@ -283,12 +296,14 @@ impl Launcher {
 		self.events.retain(|e| e["event"] != name);
 	}
 
+	#[track_caller]
 	pub fn stopped(&mut self, reason: &str) -> Value {
 		let event = self.event("stopped");
 		assert_eq!(event["body"]["reason"], reason, "stopped for the wrong reason: {}", event);
 		event
 	}
 
+	#[track_caller]
 	pub fn stop(&mut self) -> Stop {
 		let event = self.event("stopped");
 		let frame = self.top_frame();
@@ -306,6 +321,7 @@ impl Launcher {
 		}
 	}
 
+	#[track_caller]
 	pub fn stop_at(&mut self, reason: &str, proc: &str, line: u64) {
 		let stop = self.stop();
 		assert_eq!(
@@ -315,11 +331,13 @@ impl Launcher {
 		);
 	}
 
+	#[track_caller]
 	pub fn frames(&mut self, thread: u64) -> Vec<Value> {
 		let trace = self.request("stackTrace", json!({ "threadId": thread }));
 		trace["stackFrames"].as_array().unwrap().clone()
 	}
 
+	#[track_caller]
 	pub fn top_frame(&mut self) -> Value {
 		let threads = self.request("threads", json!({}));
 		let names: Vec<&str> = threads["threads"].as_array().unwrap().iter().filter_map(|t| t["name"].as_str()).collect();
@@ -339,76 +357,86 @@ impl Launcher {
 		trace["stackFrames"][0].clone()
 	}
 
+	#[track_caller]
 	pub fn frame_id(&mut self) -> Value {
 		self.top_frame()["id"].clone()
 	}
 
+	#[track_caller]
 	pub fn scope(&mut self, frame: &Value, name: &str) -> Value {
 		let scopes = self.request("scopes", json!({ "frameId": frame }));
-		scopes["scopes"]
-			.as_array()
-			.unwrap()
-			.iter()
-			.find(|s| s["name"] == name)
-			.unwrap_or_else(|| panic!("no {} scope: {}", name, scopes))["variablesReference"]
-			.clone()
+		match scopes["scopes"].as_array().unwrap().iter().find(|s| s["name"] == name) {
+			Some(scope) => scope["variablesReference"].clone(),
+			None => panic!("no {} scope: {}", name, scopes)
+		}
 	}
 
+	#[track_caller]
 	pub fn variables(&mut self, reference: &Value) -> Vec<Value> {
 		let vars = self.request("variables", json!({ "variablesReference": reference }));
 		vars["variables"].as_array().unwrap().clone()
 	}
 
+	#[track_caller]
 	pub fn scope_values(&mut self, name: &str) -> Vec<(String, String)> {
 		let frame = self.frame_id();
 		let reference = self.scope(&frame, name);
 		named(&self.variables(&reference))
 	}
 
+	#[track_caller]
 	pub fn variable(&mut self, scope: &str, name: &str) -> Value {
 		let frame = self.frame_id();
 		let reference = self.scope(&frame, scope);
 		let vars = self.variables(&reference);
-		vars.iter()
-			.find(|v| v["name"] == name)
-			.unwrap_or_else(|| panic!("no {} among the {}: {:?}", name, scope, named(&vars)))
-			.clone()
+		match vars.iter().find(|v| v["name"] == name) {
+			Some(variable) => variable.clone(),
+			None => panic!("no {} among the {}: {:?}", name, scope, named(&vars))
+		}
 	}
 
+	#[track_caller]
 	pub fn local(&mut self, name: &str) -> String {
 		self.variable("Locals", name)["value"].as_str().unwrap().to_owned()
 	}
 
+	#[track_caller]
 	pub fn children(&mut self, variable: &Value) -> Vec<(String, String)> {
 		assert_ne!(variable["variablesReference"], 0, "{} can't be opened", variable["name"]);
 		let vars = self.variables(&variable["variablesReference"].clone());
 		named(&vars)
 	}
 
+	#[track_caller]
 	pub fn evaluate(&mut self, frame: &Value, expression: &str) -> String {
 		let result = self.request("evaluate", json!({ "expression": expression, "frameId": frame["id"], "context": "repl" }));
 		result["result"].as_str().unwrap().to_owned()
 	}
 
+	#[track_caller]
 	pub fn eval(&mut self, expression: &str) -> String {
 		let frame = self.top_frame();
 		self.evaluate(&frame, expression)
 	}
 
+	#[track_caller]
 	pub fn eval_global(&mut self, expression: &str) -> String {
 		let result = self.request("evaluate", json!({ "expression": expression, "context": "repl" }));
 		result["result"].as_str().unwrap().to_owned()
 	}
 
+	#[track_caller]
 	pub fn resume(&mut self) {
 		self.request("continue", json!({ "threadId": self.thread }));
 	}
 
+	#[track_caller]
 	pub fn step(&mut self, command: &str) -> Stop {
 		self.request(command, json!({ "threadId": self.thread }));
 		self.stop()
 	}
 
+	#[track_caller]
 	pub fn step_to(&mut self, command: &str, proc: &str, line: u64) {
 		let stop = self.step(command);
 		assert_eq!(
@@ -419,10 +447,12 @@ impl Launcher {
 		);
 	}
 
+	#[track_caller]
 	pub fn initialize(&mut self) -> Value {
 		self.initialize_as(json!({}))
 	}
 
+	#[track_caller]
 	pub fn initialize_as(&mut self, abilities: Value) -> Value {
 		let mut arguments = json!({ "adapterID": "auxtools", "linesStartAt1": true, "columnsStartAt1": true, "pathFormat": "path" });
 		for (name, value) in abilities.as_object().unwrap() {
@@ -433,11 +463,13 @@ impl Launcher {
 		capabilities
 	}
 
+	#[track_caller]
 	pub fn launch(&mut self, byond: &Path, dme: &Path, more: Value) {
 		self.request("launch", launch_arguments(byond, dme, more));
 		self.event("initialized");
 	}
 
+	#[track_caller]
 	pub fn attach(&mut self, pid: u64, more: Value) {
 		let mut arguments = json!({ "processId": pid });
 		for (name, value) in more.as_object().unwrap() {
@@ -448,6 +480,7 @@ impl Launcher {
 		self.request("configurationDone", json!({}));
 	}
 
+	#[track_caller]
 	pub fn set_breakpoints(&mut self, file: &Path, breakpoints: Value) -> Vec<Value> {
 		let breakpoints: Vec<Value> = breakpoints
 			.as_array()
@@ -459,23 +492,27 @@ impl Launcher {
 		set["breakpoints"].as_array().unwrap().clone()
 	}
 
+	#[track_caller]
 	pub fn break_at(&mut self, file: &Path, lines: &[u64]) {
 		for (breakpoint, line) in self.set_breakpoints(file, json!(lines)).iter().zip(lines) {
 			assert_eq!(breakpoint["verified"], true, "the breakpoint on line {} wasn't set: {}", line, breakpoint);
 		}
 	}
 
+	#[track_caller]
 	pub fn function_breakpoints(&mut self, names: &[&str]) -> Vec<Value> {
 		let breakpoints: Vec<Value> = names.iter().map(|name| json!({ "name": name })).collect();
 		let set = self.request("setFunctionBreakpoints", json!({ "breakpoints": breakpoints }));
 		set["breakpoints"].as_array().unwrap().clone()
 	}
 
+	#[track_caller]
 	pub fn catch_runtimes(&mut self, catch: bool) {
 		let filters: &[&str] = if catch { &["runtimes"] } else { &[] };
 		self.request("setExceptionBreakpoints", json!({ "filters": filters }));
 	}
 
+	#[track_caller]
 	pub fn exception_filters(&mut self, filters: &[&str], with_conditions: &[(&str, &str)]) {
 		let options: Vec<Value> = with_conditions
 			.iter()
@@ -484,6 +521,7 @@ impl Launcher {
 		self.request("setExceptionBreakpoints", json!({ "filters": filters, "filterOptions": options }));
 	}
 
+	#[track_caller]
 	pub fn pipeline(&mut self, requests: &[(&str, Value)]) -> Vec<Value> {
 		let seqs: Vec<i64> = requests
 			.iter()
@@ -504,6 +542,7 @@ impl Launcher {
 		responses.into_iter().flatten().collect()
 	}
 
+	#[track_caller]
 	pub fn threads(&mut self) -> Vec<(u64, String)> {
 		let threads = self.request("threads", json!({}));
 		threads["threads"]
@@ -514,14 +553,17 @@ impl Launcher {
 			.collect()
 	}
 
+	#[track_caller]
 	pub fn evaluate_in(&mut self, frame: &Value, expression: &str, context: &str) -> Value {
 		self.request("evaluate", json!({ "expression": expression, "frameId": frame, "context": context }))
 	}
 
+	#[track_caller]
 	pub fn wait_output(&mut self, text: &str) {
 		self.wait_count(text, 1);
 	}
 
+	#[track_caller]
 	pub fn wait_count(&mut self, text: &str, count: usize) {
 		let deadline = Instant::now() + TIMEOUT;
 		while self.output.matches(text).count() < count {
@@ -532,6 +574,7 @@ impl Launcher {
 		}
 	}
 
+	#[track_caller]
 	pub fn wait_until(&mut self, what: &str, done: impl Fn(&str) -> bool) {
 		let deadline = Instant::now() + TIMEOUT;
 		while !done(&self.output) {
@@ -548,6 +591,7 @@ impl Launcher {
 		self.output.matches(text).count()
 	}
 
+	#[track_caller]
 	pub fn disconnect(mut self, arguments: Value) {
 		self.try_request("disconnect", arguments);
 		let deadline = Instant::now() + Duration::from_secs(20);
@@ -568,9 +612,10 @@ pub fn named(vars: &[Value]) -> Vec<(String, String)> {
 		.collect()
 }
 
+#[track_caller]
 pub fn value_of<'a>(vars: &'a [(String, String)], name: &str) -> &'a str {
-	vars.iter()
-		.find(|(n, _)| n == name)
-		.map(|(_, value)| value.as_str())
-		.unwrap_or_else(|| panic!("no {} in {:?}", name, vars))
+	match vars.iter().find(|(n, _)| n == name) {
+		Some((_, value)) => value.as_str(),
+		None => panic!("no {} in {:?}", name, vars)
+	}
 }

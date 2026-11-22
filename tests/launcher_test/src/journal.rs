@@ -10,6 +10,7 @@ use crate::client::{launcher_command, launcher_path};
 
 const TIMEOUT: Duration = Duration::from_secs(60);
 
+#[track_caller]
 pub fn run(pid: u64, args: &[&str], code: i32) -> String {
 	let pid = pid.to_string();
 	let args: Vec<&str> = ["--pid", pid.as_str()].iter().chain(args).copied().collect();
@@ -64,6 +65,7 @@ impl Background {
 		}
 	}
 
+	#[track_caller]
 	pub fn line_with(&mut self, text: &str) -> String {
 		let deadline = Instant::now() + TIMEOUT;
 		loop {
@@ -78,6 +80,7 @@ impl Background {
 		}
 	}
 
+	#[track_caller]
 	pub fn error_with(&mut self, text: &str) -> String {
 		let deadline = Instant::now() + TIMEOUT;
 		loop {
@@ -93,11 +96,13 @@ impl Background {
 		while next_line(&self.errors, &mut self.said, Instant::now()).is_some() {}
 	}
 
+	#[track_caller]
 	pub fn finish(self) -> (i32, String) {
 		let (code, printed, said) = self.finish_apart();
 		(code, printed + &said)
 	}
 
+	#[track_caller]
 	pub fn finish_apart(mut self) -> (i32, String, String) {
 		let deadline = Instant::now() + TIMEOUT;
 		let code = loop {
@@ -126,12 +131,14 @@ impl Background {
 	}
 }
 
+#[track_caller]
 pub fn wait_at(pid: u64, place: &str) -> Background {
 	let mut waiting = Background::start(pid, &["wait", "pause", "--break", place, "--timeout", "60"]);
 	waiting.error_with("breakpoint set at ");
 	waiting
 }
 
+#[track_caller]
 pub fn paused_at(pid: u64, place: &str, trigger: impl FnOnce()) -> String {
 	let waiting = wait_at(pid, place);
 	trigger();
@@ -140,6 +147,7 @@ pub fn paused_at(pid: u64, place: &str, trigger: impl FnOnce()) -> String {
 	printed
 }
 
+#[track_caller]
 pub fn rounds_pass(pid: u64, more: u64) {
 	let rounds = || run(pid, &["eval", "rounds"], 0).trim().parse::<u64>().unwrap();
 	let (from, deadline) = (rounds(), Instant::now() + TIMEOUT);
@@ -149,6 +157,7 @@ pub fn rounds_pass(pid: u64, more: u64) {
 	}
 }
 
+#[track_caller]
 pub fn newest(pid: u64) -> u64 {
 	let printed = run(pid, &["log", "--last", "1", "--json"], 0);
 	printed.lines().last().map_or(0, |line| {
@@ -399,12 +408,14 @@ pub fn reboot(pid: u64, dir: &Path) {
 	println!("ok: journal continuity across reboot");
 }
 
+#[track_caller]
 pub fn wait_for_reboot(pid: u64) -> Background {
 	let waiting = Background::start(pid, &["wait", "reboot", "--timeout", "60"]);
 	std::thread::sleep(Duration::from_secs(1));
 	waiting
 }
 
+#[track_caller]
 pub fn world_went_away(waiting: Background) {
 	let (exit, printed) = waiting.finish();
 	assert!(
@@ -416,6 +427,7 @@ pub fn world_went_away(waiting: Background) {
 	println!("ok: world exit during reboot wait");
 }
 
+#[track_caller]
 fn until_running(pid: u64) {
 	let started = Instant::now();
 	loop {

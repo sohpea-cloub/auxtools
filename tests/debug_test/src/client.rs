@@ -51,6 +51,7 @@ impl World {
 		Self { game, output, exited }
 	}
 
+	#[track_caller]
 	pub fn exit_code(&self) -> Option<i32> {
 		self.exited.recv_timeout(TIMEOUT).expect("the world is still running")
 	}
@@ -59,14 +60,17 @@ impl World {
 		self.output.lock().unwrap().clone()
 	}
 
+	#[track_caller]
 	pub fn connect(&self) -> Client {
 		self.connect_as(false)
 	}
 
+	#[track_caller]
 	pub fn connect_watcher(&self) -> Client {
 		self.connect_as(true)
 	}
 
+	#[track_caller]
 	pub fn connect_silent(&self) -> Client {
 		let start = Instant::now();
 		loop {
@@ -79,6 +83,7 @@ impl World {
 		}
 	}
 
+	#[track_caller]
 	fn connect_as(&self, watcher: bool) -> Client {
 		let start = Instant::now();
 		loop {
@@ -155,6 +160,7 @@ impl Client {
 		}
 	}
 
+	#[track_caller]
 	pub fn send(&mut self, request: Request) {
 		self.try_send(&request).unwrap();
 	}
@@ -165,15 +171,18 @@ impl Client {
 		Ok(id)
 	}
 
+	#[track_caller]
 	pub fn send_bytes(&mut self, bytes: &[u8]) {
 		self.writer.write_all(bytes).unwrap();
 	}
 
+	#[track_caller]
 	pub fn leave(mut self) {
 		let _ = self.try_send(&Request::Disconnect);
 		self.wait_closed();
 	}
 
+	#[track_caller]
 	pub fn recv(&mut self) -> Response {
 		self.recv_within(TIMEOUT).expect("debug server stopped answering")
 	}
@@ -198,6 +207,7 @@ impl Client {
 		}
 	}
 
+	#[track_caller]
 	pub fn request(&mut self, request: Request) -> Response {
 		self.send(request);
 		self.recv()
@@ -212,6 +222,7 @@ impl Client {
 		answer
 	}
 
+	#[track_caller]
 	pub fn expect_pause(&mut self) -> BreakpointReason {
 		match self.recv() {
 			Response::BreakpointHit(stop) => stop.reason,
@@ -219,6 +230,7 @@ impl Client {
 		}
 	}
 
+	#[track_caller]
 	pub fn resume(&mut self) {
 		let response = self.request(Request::Continue {
 			kind: ContinueKind::Continue
@@ -226,6 +238,7 @@ impl Client {
 		assert!(matches!(response, Response::Ack), "expected Ack for Continue, got {:?}", response);
 	}
 
+	#[track_caller]
 	pub fn wait_closed(self) {
 		loop {
 			match self.messages.recv_timeout(TIMEOUT).map(|message| message.response) {
