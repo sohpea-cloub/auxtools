@@ -54,8 +54,6 @@ const MOB_LOADER_EARLY: &str = "A3 ?? ?? ?? ?? 89 C6 C1 E6 04 89 34 24 E8 ?? ?? 
 
 const INSTANCE_LOADER_EARLY: &str = "A3 ?? ?? ?? ?? 6B C0 0C 31 FF 31 F6 89 04 24 E8 ?? ?? ?? ?? A3 ?? ?? ?? ?? EB ?? A1 ?? ?? ?? ?? 83 C6 01";
 
-const SINCE_515_1647: VersionRange = since(1647);
-
 const APPEARANCE_SEND_EARLY: &str =
 	"55 0F B7 C0 89 E5 57 56 53 89 D3 81 EC 2C 09 00 00 89 04 24 89 8D 74 F7 FF FF 89 85 4C F7 FF FF E8 ?? ?? ?? ?? 85 C0 89";
 
@@ -953,7 +951,7 @@ pub(super) const RECIPES: &[Recipe] = &[
 	},
 	Recipe {
 		name: "appearance_send",
-		versions: SINCE_515_1647,
+		versions: SINCE_515_1644,
 		anchor: Anchor::Signature(SignatureTreatment::NoOffset, APPEARANCE_SEND),
 		hops: &[],
 		extract: Extract::Entry
@@ -967,7 +965,7 @@ pub(super) const RECIPES: &[Recipe] = &[
 	},
 	Recipe {
 		name: "connection_count",
-		versions: SINCE_515_1647,
+		versions: SINCE_515_1644,
 		anchor: Anchor::Signature(SignatureTreatment::NoOffset, APPEARANCE_SEND),
 		hops: &[0],
 		extract: Extract::AbsMem(OperandSelect::NthAbsMem(0))
@@ -981,7 +979,7 @@ pub(super) const RECIPES: &[Recipe] = &[
 	},
 	Recipe {
 		name: "connections",
-		versions: SINCE_515_1647,
+		versions: SINCE_515_1644,
 		anchor: Anchor::Signature(SignatureTreatment::NoOffset, APPEARANCE_SEND),
 		hops: &[0],
 		extract: Extract::AbsMem(OperandSelect::NthAbsMem(1))
@@ -995,7 +993,7 @@ pub(super) const RECIPES: &[Recipe] = &[
 	},
 	Recipe {
 		name: "appearance_manager",
-		versions: SINCE_515_1647,
+		versions: SINCE_515_1644,
 		anchor: Anchor::Signature(SignatureTreatment::NoOffset, APPEARANCE_SEND),
 		hops: &[1],
 		extract: Extract::AbsMem(OperandSelect::FirstAbsMem)
@@ -1009,7 +1007,7 @@ pub(super) const RECIPES: &[Recipe] = &[
 	},
 	Recipe {
 		name: "appearance_compare",
-		versions: SINCE_515_1647,
+		versions: SINCE_515_1644,
 		anchor: Anchor::Signature(SignatureTreatment::NoOffset, APPEARANCE_COMPARE),
 		hops: &[],
 		extract: Extract::Entry
@@ -1023,7 +1021,7 @@ pub(super) const RECIPES: &[Recipe] = &[
 	},
 	Recipe {
 		name: "appearance_update_bounds",
-		versions: SINCE_515_1647,
+		versions: SINCE_515_1644,
 		anchor: Anchor::Signature(SignatureTreatment::NoOffset, APPEARANCE_BOUNDS),
 		hops: &[],
 		extract: Extract::Entry
@@ -1037,7 +1035,7 @@ pub(super) const RECIPES: &[Recipe] = &[
 	},
 	Recipe {
 		name: "appearance_tree_unlink",
-		versions: SINCE_515_1647,
+		versions: SINCE_515_1644,
 		anchor: Anchor::Signature(SignatureTreatment::NoOffset, APPEARANCE_RELEASE),
 		hops: &[1, 0],
 		extract: Extract::Entry
@@ -1051,7 +1049,7 @@ pub(super) const RECIPES: &[Recipe] = &[
 	},
 	Recipe {
 		name: "appearance_tree_rebalance",
-		versions: SINCE_515_1647,
+		versions: SINCE_515_1644,
 		anchor: Anchor::Signature(SignatureTreatment::NoOffset, APPEARANCE_RELEASE),
 		hops: &[1, 3],
 		extract: Extract::Entry

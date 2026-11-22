@@ -206,7 +206,8 @@ mod tests {
 		assert_eq!(range("get_variable", 1648), (1648, u32::MAX));
 		assert_eq!(range("get_variable", 5000), (1648, u32::MAX));
 		assert_eq!(range("get_variable", 1500), (1648, u32::MAX));
-		assert_eq!(range("appearance_send", 1645), (1637, 1643));
+		assert_eq!(range("appearance_send", 1643), (1637, 1643));
+		assert_eq!(range("appearance_send", 1645), (1644, u32::MAX));
 		assert_eq!(range("misc_intern", 1700), (1637, 1643));
 		assert!(recipe_for(Platform::Linux, "no_such_name", 1648).is_none());
 	}
