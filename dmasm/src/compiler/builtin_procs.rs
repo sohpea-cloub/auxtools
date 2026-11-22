@@ -1,334 +1,56 @@
 use dreammaker::ast::{AssignOp, Expression, Term};
 
+use super::builtins::{self, Param, Value};
 use crate::{
     compiler::{args, CompileError, Compiler, EvalKind},
     operands::{self, DMString, Label, Variable},
     Instruction,
 };
 
-#[allow(non_camel_case_types)]
-enum DefaultValue {
-    null,
-    Number(f32),
-}
-
-impl DefaultValue {
-    fn into_value(self) -> operands::Value {
-        match self {
-            Self::null => operands::Value::Null,
-            Self::Number(val) => operands::Value::Number(val),
-        }
-    }
-}
-
-impl From<i32> for DefaultValue {
-    fn from(val: i32) -> Self {
-        Self::Number(val as f32)
-    }
-}
-
-impl From<f32> for DefaultValue {
-    fn from(val: f32) -> Self {
-        Self::Number(val)
-    }
-}
-
-macro_rules! simple_stack_procs {
-    (
-        $(
-            /proc/$proc_name:ident
-            (
-                $(
-                    $param_name:ident
-                    $(
-                        = $param_default:tt
-                    )?
-                ),* $(,)?
-            ) => $instruction:expr
-        ),* $(,)?
-    ) => {
-        fn eval_simple_stack_procs(
-            compiler: &mut Compiler<'_>,
-            name: &str,
-            args: &Vec<Expression>,
-        ) -> Result<Option<EvalKind>, CompileError> {
-            match name {
-                $(
-                    stringify!($proc_name) => {
-                        #[allow(unused_mut)]
-                        let mut arg_idx = 0;
-                        let arg_count = args.len();
-
-                        args::emit_normal(compiler, args::ArgsContext::Proc, args.to_owned())?;
-
-                        $(
-                            arg_idx += 1;
-
-                            if arg_count < arg_idx {
-                                #[allow(unused)]
-                                let mut default: Option<DefaultValue> = None;
-
-                                $(
-                                    #[allow(unused_imports)]
-                                    use DefaultValue::null;
-                                    default = Some(DefaultValue::from($param_default));
-                                )?
-
-                                match default {
-                                    Some(DefaultValue::Number(n)) if n.fract() == 0.0 && n.abs() < 1e9 => {
-                                        compiler.emit_ins(Instruction::PushInt(n as i32));
-                                    }
-                                    Some(default) => {
-                                        compiler.emit_ins(Instruction::PushVal(default.into_value()));
-                                    }
-
-                                    None => {
-                                        return Err(CompileError::MissingArgument {
-                                            proc: stringify!($proc_name).to_owned(),
-                                            index: arg_idx as u32,
-                                        });
-                                    }
-                                }
-                            }
-                        )*
-
-                        if arg_count > arg_idx {
-                            return Err(CompileError::TooManyArguments {
-                                proc: stringify!($proc_name).to_owned(),
-                                expected: arg_idx as u32,
-                            });
-                        }
-
-                        compiler.emit_ins(super::versions::instruction(compiler.byond, $instruction));
-                        Ok(Some(EvalKind::Stack))
-                    }
-                )*
-
-                _ => Ok(None),
+fn emit_stack(
+    compiler: &mut Compiler<'_>,
+    name: &str,
+    params: &[Param],
+    ins: &Instruction,
+    args: &[Expression],
+) -> Result<(), CompileError> {
+    push_args(compiler, args)?;
+    for (at, param) in params.iter().enumerate().skip(args.len()) {
+        match param {
+            Param::Int(default) => compiler.emit_ins(Instruction::PushInt(*default)),
+            Param::Null => push_null(compiler),
+            Param::Required => {
+                return Err(CompileError::MissingArgument {
+                    proc: name.to_owned(),
+                    index: at as u32 + 1,
+                })
             }
         }
     }
-}
-
-simple_stack_procs! {
-    /proc/abs(val) => Instruction::Abs,
-    /proc/alert(param_1, param_2 = null, param_3 = null, param_4 = null, param_5 = null, param_6 = null) => Instruction::Alert,
-    /proc/arccos(val) => Instruction::ArcCos,
-    /proc/arcsin(val) => Instruction::ArcSin,
-    /proc/ascii2text(val) => Instruction::Ascii2Text,
-    /proc/bounds_dist(ref, target) => Instruction::BoundsDist,
-    /proc/ckey(text) => Instruction::CKey,
-    /proc/cKey(text) => Instruction::CKeyEx,
-    /proc/ckeyEx(text) => Instruction::CKeyEx,
-    /proc/clamp(val, low, high) => Instruction::Clamp,
-    /proc/floor(val) => Instruction::Round,
-    /proc/ceil(val) => Instruction::Ceil,
-    /proc/trunc(val) => Instruction::Trunc,
-    /proc/fract(val) => Instruction::Fract,
-    /proc/sign(val) => Instruction::Sign,
-    /proc/trimtext(text) => Instruction::TrimText,
-    /proc/refcount(val) => Instruction::RefCount,
-    /proc/lerp(a, b, t) => Instruction::Lerp,
-    /proc/ftime(file, local = null) => Instruction::FTime,
-    /proc/get_steps_to(ref, target, min = null) => Instruction::GetStepsTo,
-    /proc/viewers(depth = null, center = null) => Instruction::Viewers,
-    /proc/copytext(text, start, end = null) => Instruction::CopyText,
-    /proc/copytext_char(text, start, end = null) => Instruction::CopyTextChar,
-    /proc/cos(val) => Instruction::Cos2,
-    /proc/fcopy(src, dst) => Instruction::FCopy,
-    /proc/fcopy_rsc(path) => Instruction::FCopyRsc,
-    /proc/fdel(path) => Instruction::FDel,
-    /proc/fexists(path) => Instruction::FExists,
-    /proc/file2text(path) => Instruction::File2Text,
-    /proc/findlasttext(haystack, needle, start = 0, end = 1) => Instruction::FindLastText,
-    /proc/findlasttextEx(haystack, needle, start = 0, end = 1) => Instruction::FindLastTextEx,
-    /proc/findlasttext_char(haystack, needle, start = 0, end = 1) => Instruction::FindLastTextChar,
-    /proc/findlasttextEx_char(haystack, needle, start = 0, end = 1) => Instruction::FindLastTextExChar,
-    /proc/findtext(haystack, needle, start = 1, end = null) => Instruction::FindText,
-    /proc/findtext_char(haystack, needle, start = 1, end = null) => Instruction::FindTextChar,
-    /proc/findtextEx(haystack, needle, start = 1, end = null) => Instruction::FindTextEx,
-    /proc/findtextEx_char(haystack, needle, start = 1, end = null) => Instruction::FindTextExChar,
-    /proc/flist(path) => Instruction::FList,
-    /proc/get_dir(loc1, loc2) => Instruction::GetDir,
-    /proc/get_dist(loc1, loc2) => Instruction::GetDist,
-    /proc/get_step(ref, dir) => Instruction::GetStep,
-    /proc/get_step_away(ref, dir, max = null) => Instruction::GetStepAway,
-    /proc/get_step_rand(ref) => Instruction::GetStepRand,
-    /proc/get_step_to(ref, target, min = null) => Instruction::GetStepTo,
-    /proc/get_step_towards(ref, target) => Instruction::GetStepTowards,
-    /proc/hascall(obj, proc_name) => Instruction::HasCall,
-    /proc/ispointer(val) => Instruction::IsPointer,
-    /proc/hearers(depth = null, center = null) => Instruction::Hearers,
-    /proc/html_decode(text) => Instruction::HtmlDecode,
-    /proc/html_encode(text) => Instruction::HtmlEncode,
-    /proc/isfile(val) => Instruction::IsFile,
-    /proc/isicon(val) => Instruction::IsIcon,
-    /proc/islist(val) => Instruction::IsList,
-    /proc/isnull(val) => Instruction::IsNull,
-    /proc/isnum(val) => Instruction::IsNum,
-    /proc/istext(val) => Instruction::IsText,
-    /proc/jointext(list, glue, start = 1, end = null) => Instruction::JoinText,
-    /proc/length(val) => Instruction::Length,
-    /proc/length_char(val) => Instruction::LengthChar,
-    /proc/load_ext(library, function) => Instruction::LoadExt,
-    /proc/lentext(text) => Instruction::Length,
-    /proc/list2params(list) => Instruction::List2Params,
-    /proc/lowertext(text) => Instruction::LowerText,
-    /proc/missile(type, start, end) => Instruction::Missile,
-    /proc/md5(text) => Instruction::Md5,
-    /proc/nonspantext(haystack, needles, start = 1) => Instruction::NonSpanText,
-    /proc/nonspantext_char(haystack, needles, start = 1) => Instruction::NonSpanTextChar,
-    /proc/ohearers(depth = null, center = null) => Instruction::OHearers,
-    /proc/orange(dist = null, center = null) => Instruction::ORange,
-    /proc/oview(dist = null, center = null) => Instruction::OView,
-    /proc/oviewers(depth = null, center = null) => Instruction::OViewers,
-    /proc/params2list(params) => Instruction::Params2List,
-    /proc/prob(val) => Instruction::Prob,
-    /proc/range(dist = null, center = null) => Instruction::Range,
-    /proc/ref(val) => Instruction::Ref,
-    /proc/replacetext(haystack, needle, replacement, start = 1, end = null) => Instruction::ReplaceText,
-    /proc/replacetext_char(haystack, needle, replacement, start = 1, end = null) => Instruction::ReplaceTextChar,
-    /proc/replacetextEx(haystack, needle, replacement, start = 1, end = null) => Instruction::ReplaceTextEx,
-    /proc/replacetextEx_char(haystack, needle, replacement, start = 1, end = null) => Instruction::ReplaceTextExChar,
-    /proc/rgb2num(color, space = 0) => Instruction::Rgb2Num,
-    /proc/sha1(arg) => Instruction::Sha1,
-    /proc/sin(val) => Instruction::Sin2,
-    /proc/spantext(haystack, needles, start = 1) => Instruction::SpanText,
-    /proc/spantext_char(haystack, needles, start = 1) => Instruction::SpanTextChar,
-    /proc/splicetext(text, start, end = null, insert = null) => Instruction::SpliceText,
-    /proc/splicetext_char(text, start, end = null, insert = null) => Instruction::SpliceTextChar,
-    /proc/splittext(text, delimiter, start = 1, end = null, include_delimiters = null) => Instruction::SplitText,
-    /proc/splittext_char(text, delimiter, start = 1, end = null, include_delimiters = null) => Instruction::SplitTextChar,
-    /proc/sqrt(val) => Instruction::Sqrt,
-    /proc/tan(val) => Instruction::Tan2,
-    /proc/text2ascii(text, pos = null) => Instruction::Text2Ascii,
-    /proc/text2ascii_char(text, pos = null) => Instruction::Text2AsciiChar,
-    /proc/text2file(text, file) => Instruction::Text2File,
-    /proc/text2path(text) => Instruction::Text2Path,
-    /proc/turn(var, angle) => Instruction::Turn,
-    /proc/uppertext(text) => Instruction::UpperText,
-    /proc/url_decode(text) => Instruction::UrlDecode,
-    /proc/url_encode(text, format = null) => Instruction::UrlEncode,
-    /proc/view(dist = null, center = null) => Instruction::View,
-    /proc/winexists(player, control_id) => Instruction::WinExists,
-    /proc/winget(player, control_id, params) => Instruction::WinGet,
-    /proc/values_sum(list) => Instruction::ValuesSum,
-    /proc/values_product(list) => Instruction::ValuesProduct,
-    /proc/values_dot(a, b) => Instruction::ValuesDot,
-    /proc/values_cut_under(list, min, inclusive = null) => Instruction::ValuesCutUnder,
-    /proc/values_cut_over(list, max, inclusive = null) => Instruction::ValuesCutOver,
-    /proc/bound_pixloc(atom, dir) => Instruction::BoundPixloc,
-    /proc/_dm_db_new_query() => Instruction::DbNewQuery,
-    /proc/_dm_db_execute(a, b, c, d, e) => Instruction::DbExecute,
-    /proc/_dm_db_next_row(a, b, c) => Instruction::DbNextRow,
-    /proc/_dm_db_rows_affected(a) => Instruction::DbRowsAffected,
-    /proc/_dm_db_row_count(a) => Instruction::DbRowCount,
-    /proc/_dm_db_error_msg(a) => Instruction::DbErrorMsg,
-    /proc/_dm_db_columns(a, b) => Instruction::DbColumns,
-    /proc/_dm_db_close(a) => Instruction::DbClose,
-    /proc/_dm_db_new_con() => Instruction::DbNewConnection,
-    /proc/_dm_db_connect(a, b, c, d, e, f) => Instruction::DbConnect,
-    /proc/_dm_db_quote(a, b) => Instruction::DbQuote,
-    /proc/_dm_db_is_connected(a) => Instruction::DbIsConnected,
-}
-
-macro_rules! simple_vararg_procs {
-    (
-        $(
-            /proc/$proc_name:ident
-            (
-                $($min_args:literal)?
-                $(..= $max_args:literal)?
-            ) => $instruction:expr
-        ),* $(,)?
-    ) => {
-        fn eval_simple_vararg_procs(
-            compiler: &mut Compiler<'_>,
-            name: &str,
-            args: &[Expression],
-        ) -> Result<Option<EvalKind>, CompileError> {
-            let args_len = args.len() as u32;
-
-            match name {
-                $(
-                    stringify!($proc_name) => {
-                        $(
-                            if args_len < $min_args {
-                                return Err(CompileError::IncorrectArgCount(name.to_owned()));
-                            }
-                        )?
-
-                        $(
-                            if args_len > $max_args {
-                                return Err(CompileError::IncorrectArgCount(name.to_owned()));
-                            }
-                        )?
-
-                        args::emit_normal(compiler, args::ArgsContext::Proc, args.to_vec())?;
-                        compiler.emit_ins($instruction(args_len));
-                        Ok(Some(EvalKind::Stack))
-                    }
-                )*
-
-                _ => Ok(None),
-            }
-        }
+    if args.len() > params.len() {
+        return Err(CompileError::TooManyArguments {
+            proc: name.to_owned(),
+            expected: params.len() as u32,
+        });
     }
+    compiler.emit_ins(super::versions::instruction(compiler.byond, ins.clone()));
+    Ok(())
 }
 
-simple_vararg_procs! {
-    /proc/addtext(2) => Instruction::AddText,
-    /proc/bounds(..=5) => Instruction::Bounds,
-    /proc/matrix(..=6) => Instruction::MatrixNew,
-    /proc/max(2) => Instruction::Max,
-    /proc/min(2) => Instruction::Min,
-    /proc/obounds(..=5) => Instruction::OBounds,
-    /proc/regex() => Instruction::RegexNew,
-    /proc/sorttext(2) => Instruction::SortText,
-    /proc/sortText(2) => Instruction::SortTextEx,
-    /proc/sorttextEx(2) => Instruction::SortTextEx,
-    /proc/noise_hash(1) => Instruction::NoiseHash,
-    /proc/startup(1) => Instruction::Startup,
-    /proc/typesof(1) => Instruction::TypesOf,
-}
-
-macro_rules! unsupported_procs {
-    (
-        $(
-            /proc/$proc_name:ident
-        ),* $(,)?
-    ) => {
-        fn is_unsupported_proc(
-            name: &str,
-        ) -> bool {
-            match name {
-                $(
-                    stringify!($proc_name) => true,
-                )*
-
-                _ => false,
-            }
-        }
+fn emit_counted(
+    compiler: &mut Compiler<'_>,
+    name: &str,
+    (min, max): (u32, u32),
+    ins: fn(u32) -> Instruction,
+    args: &[Expression],
+) -> Result<(), CompileError> {
+    let count = args.len() as u32;
+    if count < min || count > max {
+        return Err(CompileError::IncorrectArgCount(name.to_owned()));
     }
-}
-
-unsupported_procs! {
-    /proc/list,
-    /proc/locate,
-    /proc/pick,
-    /proc/input,
-
-    /proc/shutdown,
-
-    /proc/browse,
-    /proc/browse_rsc,
-    /proc/ftp,
-    /proc/link,
-    /proc/load_resource,
-    /proc/output,
-    /proc/rand_seed,
-    /proc/run,
-    /proc/CRASH,
+    push_args(compiler, args)?;
+    compiler.emit_ins(ins(count));
+    Ok(())
 }
 
 pub(super) fn emit(
@@ -371,7 +93,8 @@ pub(super) fn emit(
         compiler.emit_ins(Instruction::GetFlag);
         return Ok(Some(EvalKind::Stack));
     }
-    if is_unsupported_proc(name) {
+    let value = builtins::find(name).map(|builtin| &builtin.value);
+    if let Some(Value::None) = value {
         return Err(CompileError::UnsupportedBuiltin {
             proc: name.to_owned(),
         });
@@ -408,12 +131,13 @@ pub(super) fn emit(
         }
     }
 
-    if let Some(res) = eval_simple_stack_procs(compiler, name, args)? {
+    if let Some(Value::Stack { params, ins }) = value {
+        emit_stack(compiler, name, params, ins, args)?;
         if matches!(name, "range" | "orange") {
             compiler.emit_ins(Instruction::CopyList);
         }
 
-        return Ok(Some(res));
+        return Ok(Some(EvalKind::Stack));
     }
 
     if matches!(name, "min" | "max") && args.len() == 1 {
@@ -427,8 +151,9 @@ pub(super) fn emit(
         return Ok(Some(EvalKind::Stack));
     }
 
-    if let Some(res) = eval_simple_vararg_procs(compiler, name, args)? {
-        return Ok(Some(res));
+    if let Some(Value::Counted { min, max, ins }) = value {
+        emit_counted(compiler, name, (*min, *max), *ins, args)?;
+        return Ok(Some(EvalKind::Stack));
     }
 
     let arg_count = args.len() as u32;

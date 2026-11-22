@@ -20,6 +20,7 @@ pub(crate) use procs::{compile_proc_as, labels_mut, new_tree, proc_path};
 mod args;
 mod binary_ops;
 mod builtin_procs;
+mod builtins;
 mod chain_builder;
 mod follow;
 mod strings;
