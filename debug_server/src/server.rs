@@ -43,6 +43,7 @@ use pause::{Pausing, State};
 use sessions::{ClientId, Sessions, Wait};
 use spawn::{Spawn, Spawns};
 use values::Variables;
+use watches::Watches;
 
 const JOURNAL_FRAMES: usize = 64;
 
@@ -52,8 +53,7 @@ pub struct Server {
 	breakpoints: Breakpoints,
 	eval: Evaluation,
 	spawns: Spawns,
-	watches: Vec<watches::Watched>,
-	next_watch: u32,
+	watches: Watches,
 	waiting_to_start: bool,
 	pending_skin: Option<SkinRequest>,
 	pending_script: Option<ScriptRequest>,
@@ -71,8 +71,7 @@ impl Server {
 			breakpoints: Breakpoints::new(),
 			eval: Evaluation::new(),
 			spawns: Spawns::new(),
-			watches: vec![],
-			next_watch: 0,
+			watches: Watches::new(),
 			waiting_to_start: false,
 			pending_skin: None,
 			pending_script: None,

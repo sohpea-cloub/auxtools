@@ -296,7 +296,7 @@ impl Server {
 			self.sessions.hold_max = None;
 		}
 
-		self.forget_watches_of(id);
+		self.watches.forget_watches_of(id);
 		if self.sessions.profiling == Some(id) {
 			self.sessions.profiling = None;
 			crate::profiler::discard();

@@ -53,10 +53,55 @@ unsafe fn read_slot(ctx: *mut raw_types::procs::ExecutionContext, slot: Slot) ->
 		}
 	}
 }
+pub(super) struct Watches {
+	pub(super) watched: Vec<Watched>,
+	pub(super) next_watch: u32
+}
+
+impl Watches {
+	pub(super) fn new() -> Self {
+		Self {
+			watched: vec![],
+			next_watch: 0
+		}
+	}
+
+	pub(super) fn forget_watches_of(&mut self, client: ClientId) {
+		self.watched.retain(|watch| watch.client != client);
+	}
+
+	fn slot_of(frame: &debug::StackFrame, name: &str) -> Result<Option<Slot>, String> {
+		if name == "." {
+			return Ok(Some(Slot::Dot));
+		}
+		let visible = values::visible_locals(frame);
+		let mut locals = visible.iter().enumerate().filter(|(_, local)| local.as_deref() == Some(name));
+		match (locals.next(), locals.next()) {
+			(Some((index, _)), None) => return Ok(Some(Slot::Local(index))),
+			(Some(_), Some(_)) => return Err(format!("the proc has more than one local called {}", name)),
+			_ => {}
+		}
+		let argument = frame
+			.args
+			.iter()
+			.position(|(argument, _)| argument.as_ref().is_some_and(|argument| String::from(argument) == name));
+		Ok(argument.map(Slot::Argument))
+	}
+
+	fn slot_place(frame: &debug::StackFrame, slot: Slot) -> Result<(Place, Value), String> {
+		let now = unsafe { read_slot(frame.context, slot) }.ok_or("the frame has no such var")?;
+		let place = Place::Slot {
+			instance: unsafe { instance_id(frame.instance) },
+			proc: frame.proc.id,
+			slot
+		};
+		Ok((place, unsafe { Value::from_raw(now) }))
+	}
+}
 
 impl Server {
 	pub fn has_watches(&self) -> bool {
-		!self.watches.is_empty()
+		!self.watches.watched.is_empty()
 	}
 
 	pub fn watched_changes(&mut self, ctx: *mut raw_types::procs::ExecutionContext) -> Option<Vec<DataChange>> {
@@ -66,7 +111,7 @@ impl Server {
 
 		self.eval.in_eval = true;
 		auxtools::instruction_hook::hear_all();
-		for (index, watch) in self.watches.iter().enumerate() {
+		for (index, watch) in self.watches.watched.iter().enumerate() {
 			match &watch.place {
 				Place::Pointer(pointer) => match auxtools::pointer::read_raw(pointer) {
 					Some(now) => {
@@ -118,7 +163,7 @@ impl Server {
 
 		let mut changes = vec![];
 		for (index, now) in changed {
-			let watch = &mut self.watches[index];
+			let watch = &mut self.watches.watched[index];
 			let now = unsafe { Value::from_raw(now) };
 			let before = std::mem::replace(&mut watch.last, now.clone());
 			changes.push((watch.id, before, now));
@@ -133,7 +178,7 @@ impl Server {
 		}
 		let mut wanted = vec![];
 		for (id, before, now) in changes {
-			let Some(watch) = self.watches.iter().find(|watch| watch.id == id) else {
+			let Some(watch) = self.watches.watched.iter().find(|watch| watch.id == id) else {
 				continue;
 			};
 			let (name, condition) = (watch.name.clone(), watch.condition.clone());
@@ -147,7 +192,7 @@ impl Server {
 					Ok(true) => {}
 					Ok(false) => continue,
 					Err(error) => {
-						let Some(watch) = self.watches.iter_mut().find(|watch| watch.id == id) else {
+						let Some(watch) = self.watches.watched.iter_mut().find(|watch| watch.id == id) else {
 							continue;
 						};
 						if !std::mem::replace(&mut watch.told, true) {
@@ -162,7 +207,7 @@ impl Server {
 					}
 				}
 			}
-			let Some(watch) = self.watches.iter_mut().find(|watch| watch.id == id) else {
+			let Some(watch) = self.watches.watched.iter_mut().find(|watch| watch.id == id) else {
 				continue;
 			};
 			watch.hits += 1;
@@ -183,7 +228,7 @@ impl Server {
 	}
 
 	pub(super) fn refresh_watches(&mut self) {
-		if self.watches.is_empty() {
+		if self.watches.watched.is_empty() {
 			return;
 		}
 		let frames: Vec<(u32, *mut raw_types::procs::ExecutionContext)> = match &self.pause.state {
@@ -200,7 +245,7 @@ impl Server {
 		};
 		let was_in_eval = std::mem::replace(&mut self.eval.in_eval, true);
 		auxtools::instruction_hook::hear_all();
-		for watch in &mut self.watches {
+		for watch in &mut self.watches.watched {
 			let now = match &watch.place {
 				Place::Pointer(pointer) => auxtools::pointer::read_raw(pointer),
 				Place::Slot { instance, slot, .. } => frames
@@ -216,10 +261,10 @@ impl Server {
 	}
 
 	fn end_watch(&mut self, id: u32, reason: &str) {
-		let Some(at) = self.watches.iter().position(|watch| watch.id == id) else {
+		let Some(at) = self.watches.watched.iter().position(|watch| watch.id == id) else {
 			return;
 		};
-		let watch = self.watches.remove(at);
+		let watch = self.watches.watched.remove(at);
 		let ended = Response::WatchEnded {
 			id,
 			reason: reason.to_owned()
@@ -229,10 +274,6 @@ impl Server {
 				self.remove_client(watch.client);
 			}
 		}
-	}
-
-	pub(super) fn forget_watches_of(&mut self, client: ClientId) {
-		self.watches.retain(|watch| watch.client != client);
 	}
 
 	fn pointer_to(&mut self, frame_id: Option<u32>, expression: &str, given: Vec<(String, Value)>) -> Result<Value, String> {
@@ -252,34 +293,6 @@ impl Server {
 		Ok(pointer)
 	}
 
-	fn slot_of(frame: &debug::StackFrame, name: &str) -> Result<Option<Slot>, String> {
-		if name == "." {
-			return Ok(Some(Slot::Dot));
-		}
-		let visible = values::visible_locals(frame);
-		let mut locals = visible.iter().enumerate().filter(|(_, local)| local.as_deref() == Some(name));
-		match (locals.next(), locals.next()) {
-			(Some((index, _)), None) => return Ok(Some(Slot::Local(index))),
-			(Some(_), Some(_)) => return Err(format!("the proc has more than one local called {}", name)),
-			_ => {}
-		}
-		let argument = frame
-			.args
-			.iter()
-			.position(|(argument, _)| argument.as_ref().is_some_and(|argument| String::from(argument) == name));
-		Ok(argument.map(Slot::Argument))
-	}
-
-	fn slot_place(frame: &debug::StackFrame, slot: Slot) -> Result<(Place, Value), String> {
-		let now = unsafe { read_slot(frame.context, slot) }.ok_or("the frame has no such var")?;
-		let place = Place::Slot {
-			instance: unsafe { instance_id(frame.instance) },
-			proc: frame.proc.id,
-			slot
-		};
-		Ok((place, unsafe { Value::from_raw(now) }))
-	}
-
 	fn watched_place(&mut self, place: &WatchPlace) -> Result<(Place, String, Value), String> {
 		const ITS_VARS: &str = "select a variable of this value to watch";
 		let pointed = |pointer: Value, name: String| -> Result<(Place, String, Value), String> {
@@ -296,8 +309,8 @@ impl Server {
 						return Err(ITS_VARS.to_owned());
 					}
 					let frame = self.pause.get_stack_frame(*frame_id).ok_or("frame no longer exists")?;
-					if let Some(slot) = Self::slot_of(frame, expression)? {
-						let (place, now) = Self::slot_place(frame, slot)?;
+					if let Some(slot) = Watches::slot_of(frame, expression)? {
+						let (place, now) = Watches::slot_place(frame, slot)?;
 						return Ok((place, expression.to_owned(), now));
 					}
 				}
@@ -324,8 +337,8 @@ impl Server {
 							return Err(ITS_VARS.to_owned());
 						}
 						let frame = self.pause.get_stack_frame(frame).ok_or("frame no longer exists")?;
-						let slot = Self::slot_of(frame, name)?.ok_or_else(|| format!("the frame has no var called {}", name))?;
-						let (place, now) = Self::slot_place(frame, slot)?;
+						let slot = Watches::slot_of(frame, name)?.ok_or_else(|| format!("the frame has no var called {}", name))?;
+						let (place, now) = Watches::slot_place(frame, slot)?;
 						Ok((place, name.clone(), now))
 					}
 					Variables::Globals => {
@@ -386,13 +399,13 @@ impl Server {
 	pub(super) fn watch_set(&mut self, place: &WatchPlace, condition: Option<String>, hit: Option<HitCondition>) -> Result<Watch, String> {
 		let client = self.sessions.current.ok_or("nobody asked")?;
 		let (place, name, now) = self.watched_place(place)?;
-		self.next_watch += 1;
+		self.watches.next_watch += 1;
 		let watch = Watch {
-			id: self.next_watch,
+			id: self.watches.next_watch,
 			name: name.clone(),
 			value: values::stringify(&now)
 		};
-		self.watches.push(Watched {
+		self.watches.watched.push(Watched {
 			id: watch.id,
 			client,
 			name,
@@ -408,6 +421,6 @@ impl Server {
 
 	pub(super) fn watch_unset(&mut self, id: u32) {
 		let client = self.sessions.current;
-		self.watches.retain(|watch| watch.id != id || Some(watch.client) != client);
+		self.watches.watched.retain(|watch| watch.id != id || Some(watch.client) != client);
 	}
 }
