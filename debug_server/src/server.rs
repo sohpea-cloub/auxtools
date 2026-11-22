@@ -3463,12 +3463,7 @@ impl Server {
 	}
 
 	pub fn world_shutting_down(&mut self) {
-		self.broadcast(
-			Response::Notification {
-				message: WORLD_SHUTTING_DOWN.to_owned()
-			},
-			None
-		);
+		self.broadcast(Response::ShuttingDown, None);
 		let writers: Vec<_> = self.clients.values_mut().filter_map(|client| client.writer.take()).collect();
 		self.disconnect_all();
 		let deadline = Instant::now() + Duration::from_secs(1);

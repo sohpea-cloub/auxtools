@@ -561,6 +561,7 @@ impl World {
 					return Err(failure);
 				}
 				Response::Notification { message } => self.notes.push(message),
+				Response::ShuttingDown => self.notes.push(WORLD_SHUTTING_DOWN.to_owned()),
 				Response::CodeChanged => self.reloaded = true,
 				Response::ConditionFailed { message } => {
 					eprintln!("{}", message);

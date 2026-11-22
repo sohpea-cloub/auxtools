@@ -10,7 +10,9 @@ use auxtools_cli::{
 	local::{self, Shared}
 };
 
-use auxtools_protocol::{BreakpointReason, ClientMessage, ContinueKind, Pending, Request, RequestId, Response, ServerMessage, Sorted};
+use auxtools_protocol::{
+	BreakpointReason, ClientMessage, ContinueKind, Pending, Request, RequestId, Response, ServerMessage, Sorted, WORLD_SHUTTING_DOWN
+};
 
 const TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -188,6 +190,7 @@ impl Client {
 				Sorted::Answer(_, response) => return Some(response),
 				Sorted::Late(..) => self.late += 1,
 				Sorted::Event(Response::Notification { message }) => println!("  [debug server] {}", message),
+				Sorted::Event(Response::ShuttingDown) => println!("  [debug server] {}", WORLD_SHUTTING_DOWN),
 				Sorted::Event(Response::Resumed | Response::CodeChanged | Response::StepEnded) => {}
 				Sorted::Event(Response::BreakpointHit { .. }) if self.watcher => {}
 				Sorted::Event(response) => return Some(response)

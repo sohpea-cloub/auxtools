@@ -9,7 +9,7 @@ use auxtools_cli::{
 	game::{Game, Launch},
 	local::{self, Shared}
 };
-use auxtools_protocol::{ClientMessage, ContinueKind, EvalResponse, InstructionRef, ProcRef, Request, Response, ServerMessage};
+use auxtools_protocol::{ClientMessage, ContinueKind, EvalResponse, InstructionRef, ProcRef, Request, Response, ServerMessage, WORLD_SHUTTING_DOWN};
 
 const USAGE: &str = "\
 usage: debug_client WORLD.dmb --proc PATH --line N [options] [WATCH...]
@@ -121,6 +121,7 @@ impl Connection {
 		loop {
 			match self.recv_any()? {
 				Response::Notification { message } => println!("<< notification: {}", message.trim_end()),
+				Response::ShuttingDown => println!("<< notification: {}", WORLD_SHUTTING_DOWN),
 				response => {
 					let text = format!("{:?}", response);
 					if text.len() > 2000 {

@@ -187,6 +187,7 @@ pub enum Response {
 	},
 
 	Disconnect,
+	ShuttingDown,
 	Notification {
 		message: String
 	},

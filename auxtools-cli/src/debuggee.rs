@@ -9,8 +9,7 @@ use std::{
 
 use auxtools_cli::local::{Shared, Stream};
 use auxtools_protocol::{
-	BreakpointReason, ClientMessage, DataChange, InstructionRef, Pending, Request, RequestId, Response, ServerMessage, Sorted, Stop, ENDING_CONTEXT,
-	WORLD_SHUTTING_DOWN
+	BreakpointReason, ClientMessage, DataChange, InstructionRef, Pending, Request, RequestId, Response, ServerMessage, Sorted, Stop, ENDING_CONTEXT
 };
 use dap_types::{ContinuedEvent, StoppedEvent as Reasons};
 
@@ -170,7 +169,7 @@ impl Debuggee {
 							break "debugger initialization failed".to_owned();
 						}
 
-						Response::Notification { message } if message == WORLD_SHUTTING_DOWN => {
+						Response::ShuttingDown => {
 							if inputs.send(Input::ShuttingDown { generation }).is_err() {
 								break "adapter event receiver closed".to_owned();
 							}
