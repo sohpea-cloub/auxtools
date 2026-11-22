@@ -8,6 +8,7 @@ mod instructions;
 mod list_operands;
 mod operands;
 pub mod reload;
+mod syntax;
 
 pub use bytecode::{
     reads_caller, scan, BytecodeError, InstructionSpan, LabelOperand, ScannedBytecode,
