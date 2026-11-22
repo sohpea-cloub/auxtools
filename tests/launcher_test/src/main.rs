@@ -115,6 +115,7 @@ fn main() {
 	let server = dap::server();
 	let library = library_path();
 	let mut attached: Option<Attached> = None;
+	let attach_checked = wanted.is_empty() || wanted.iter().any(|w| w == "attach");
 	for group in GROUPS {
 		if !wanted.is_empty() && !wanted.iter().any(|w| w == group) {
 			continue;
@@ -126,7 +127,7 @@ fn main() {
 			}
 		}
 		if ATTACHED.contains(group) && attached.is_none() {
-			attached = Some(attach_and_reload(&server, &library));
+			attached = Some(attach_and_reload(&server, &library, attach_checked));
 		}
 		match (*group, &attached) {
 			("launch", _) => launch(&server, &library),
@@ -1278,10 +1279,11 @@ struct Attached {
 	runner: Launcher,
 	pid: u64,
 	dir: TempDir,
-	code: PathBuf
+	code: PathBuf,
+	checks: bool
 }
 
-fn attach_and_reload(server: &str, library: &Path) -> Attached {
+fn attach_and_reload(server: &str, library: &Path, checks: bool) -> Attached {
 	let (dir, dme) = attach_host_copy("attach");
 	let code = dir.join("attach_host.dm");
 
@@ -1306,6 +1308,19 @@ fn attach_and_reload(server: &str, library: &Path) -> Attached {
 
 	let pid = listed_world("attach_host.dmb");
 	println!("ok: world discovered with PID {}", pid);
+	if !checks {
+		let source = std::fs::read_to_string(&code).unwrap();
+		std::fs::write(&code, source.replace("\treturn 1", "\treturn 2")).unwrap();
+		runner.wait_output("Hot reload: reloaded /value");
+		runner.wait_output("attach test: 2");
+		return Attached {
+			runner,
+			pid,
+			dir,
+			code,
+			checks
+		};
+	}
 
 	let mut first = Launcher::start();
 	first.initialize();
@@ -1348,12 +1363,30 @@ fn attach_and_reload(server: &str, library: &Path) -> Attached {
 	let seen = runner.output.matches("attach test: 2").count();
 	runner.wait_count("attach test: 2", seen + 2);
 	println!("ok: attached-session disconnect preserves world");
-	Attached { runner, pid, dir, code }
+	Attached {
+		runner,
+		pid,
+		dir,
+		code,
+		checks
+	}
 }
 
 impl Attached {
 	fn finish(self) {
-		let Attached { mut runner, pid, dir, .. } = self;
+		let Attached {
+			mut runner,
+			pid,
+			dir,
+			checks,
+			..
+		} = self;
+		if !checks {
+			std::fs::write(dir.join("stop"), "yes").unwrap();
+			runner.event("terminated");
+			runner.disconnect(json!({}));
+			return;
+		}
 		let (code_given, printed) = launcher_command(&["--pid", &pid.to_string(), "pause"]);
 		assert_eq!(code_given, 0, "unexpected pause output: {}", printed);
 		let mut late = Launcher::start();
