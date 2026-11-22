@@ -2,10 +2,6 @@ use dreammaker::ast::{Block, Statement};
 
 use super::{procs::ProcSource, Compiler};
 
-const FIND_COMPARES: u32 = 1674;
-const EQUIV_DISCARDED: (u32, u32) = (1674, 1688);
-const AREA_UNCROSS: u32 = 1683;
-
 pub(super) fn check(compiler: &Compiler, source: &ProcSource, code: &Block) {
     let line = source.value.location.line;
     if let Some(text) = proc_warning(compiler, source) {
@@ -34,20 +30,18 @@ fn proc_warning(compiler: &Compiler, source: &ProcSource) -> Option<String> {
         "operator**" if source.ty.get_proc("operator*").is_some() => {
             "`operator**`: `a ** 2` calls `operator*(a)` when both overloads exist".to_owned()
         }
-        "operator<=>" if byond.at_least(FIND_COMPARES) => {
+        "operator<=>" if byond.find_calls_compare_operator() => {
             "`operator<=>`: from 516.1674 `list.Find(x)` and `list ^ x` call it for each item, \
              and from 516.1689 treat a result of 0 as a match"
                 .to_owned()
         }
-        "operator~=" | "operator~!"
-            if byond.at_least(EQUIV_DISCARDED.0) && !byond.at_least(EQUIV_DISCARDED.1 + 1) =>
-        {
+        "operator~=" | "operator~!" if byond.discards_equivalence_result() => {
             format!(
                 "`{name}`: 516.1674–516.1688 discard the result and call the opposite \
                  equivalence overload when both exist"
             )
         }
-        "Uncross" if byond.at_least(AREA_UNCROSS) && source.ty.get().is_subpath_of("/area") => {
+        "Uncross" if byond.area_exit_calls_uncross() && source.ty.get().is_subpath_of("/area") => {
             "`Uncross()` of an area: from 516.1683 BYOND calls it and ignores the result; \
              return 0 from `Exit()` to stop a move"
                 .to_owned()

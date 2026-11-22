@@ -1,8 +1,6 @@
 use super::CompileError;
 use crate::{ByondVersion, Instruction};
 
-pub(super) const BYOND_516: u32 = 1648;
-
 const NEW_IN_516: &[&str] = &[
     "astype",
     "bound_pixloc",
@@ -18,21 +16,16 @@ const NEW_IN_516: &[&str] = &[
     "pixloc",
 ];
 
-pub(super) const SAFE_ELEMENT_CACHE: u32 = 1685;
-
-pub(super) const SAFE_LOGICAL_ASSIGN: u32 = 1673;
-
-pub(super) const POINTER_INDEX_DROPPED: u32 = 1668;
-pub(super) const PICK_ZERO_WEIGHT_KEPT: u32 = 1689;
-
-pub(super) const PROC_MACRO: u32 = 1644;
-
 pub(super) fn has_builtin(byond: ByondVersion, name: &str) -> bool {
-    byond.at_least(BYOND_516) || !NEW_IN_516.contains(&name)
+    byond.is_516() || !NEW_IN_516.contains(&name)
 }
 
-pub(super) fn require(byond: ByondVersion, first: u32, what: &str) -> Result<(), CompileError> {
-    if byond.at_least(first) {
+pub(super) fn require(
+    byond: ByondVersion,
+    has: fn(ByondVersion) -> bool,
+    what: &str,
+) -> Result<(), CompileError> {
+    if has(byond) {
         Ok(())
     } else {
         Err(CompileError::NotInByond {
@@ -43,7 +36,7 @@ pub(super) fn require(byond: ByondVersion, first: u32, what: &str) -> Result<(),
 }
 
 pub(super) fn instruction(byond: ByondVersion, ins: Instruction) -> Instruction {
-    if byond.at_least(BYOND_516) {
+    if byond.is_516() {
         return ins;
     }
     match ins {
@@ -54,10 +47,6 @@ pub(super) fn instruction(byond: ByondVersion, ins: Instruction) -> Instruction 
     }
 }
 
-pub(super) fn clean_nan_fold(byond: ByondVersion) -> bool {
-    byond.build == 1670 || byond.at_least(1672)
-}
-
 pub(super) fn nan_test(name: &str, x: f32) -> Option<bool> {
     match name {
         "isnan" => Some(x.is_nan()),
@@ -66,20 +55,16 @@ pub(super) fn nan_test(name: &str, x: f32) -> Option<bool> {
     }
 }
 
-pub(super) const SINGLE_LOG: u32 = 1644;
-
 pub(super) fn log(byond: ByondVersion, x: f32, base: f32) -> f32 {
-    if byond.at_least(SINGLE_LOG) {
+    if byond.folds_log_in_single() {
         x.ln() / base.ln()
     } else {
         ((x as f64).ln() / (base as f64).ln()) as f32
     }
 }
 
-pub(super) const SINGLE_RADIANS: u32 = 1644;
-
 pub(super) fn degrees(byond: ByondVersion, radians: f64) -> f64 {
-    if byond.at_least(SINGLE_RADIANS) {
+    if byond.rounds_radians_to_single() {
         radians as f32 as f64 * 180.0 / std::f64::consts::PI
     } else {
         degrees_on_windows(radians)
@@ -90,12 +75,10 @@ pub(super) fn degrees_on_windows(radians: f64) -> f64 {
     radians / (std::f64::consts::PI / 180.0)
 }
 
-pub(super) const LINUX_COLOURS: u32 = 1647;
-
 pub(super) const DEFAULT_NAN: f64 = f64::from_bits(0xFFF8_0000_0000_0000);
 
 pub(super) fn sin_cos(byond: ByondVersion, sin: bool, x: f64) -> f64 {
-    if !byond.at_least(BYOND_516) {
+    if !byond.is_516() {
         if x.is_infinite() {
             return DEFAULT_NAN;
         }
@@ -131,7 +114,7 @@ pub(super) fn sin_cos(byond: ByondVersion, sin: bool, x: f64) -> f64 {
 }
 
 pub(super) fn tan(byond: ByondVersion, x: f32) -> f32 {
-    if !byond.at_least(BYOND_516) {
+    if !byond.is_516() {
         return (x as f64).to_radians().tan() as f32;
     }
     let mut a = x as f64 % 360.0;
@@ -162,9 +145,7 @@ pub(super) fn tan(byond: ByondVersion, x: f32) -> f32 {
 
 pub(super) fn folds(byond: ByondVersion, name: &str) -> bool {
     match name {
-        "ceil" | "floor" | "round" | "trunc" | "fract" | "isnan" | "isinf" => {
-            byond.at_least(BYOND_516)
-        }
+        "ceil" | "floor" | "round" | "trunc" | "fract" | "isnan" | "isinf" => byond.is_516(),
         _ => true,
     }
 }

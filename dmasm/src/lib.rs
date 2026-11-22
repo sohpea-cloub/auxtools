@@ -9,6 +9,7 @@ mod list_operands;
 mod operands;
 pub mod reload;
 mod syntax;
+mod target;
 
 pub use bytecode::{
     reads_caller, scan, BytecodeError, InstructionSpan, LabelOperand, ScannedBytecode,
@@ -21,41 +22,7 @@ pub use operands::{
     SwitchRangeParams, Value, Variable,
 };
 use std::fmt::Write;
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct ByondVersion {
-    pub major: u32,
-    pub build: u32,
-}
-
-impl ByondVersion {
-    pub const LATEST: ByondVersion = ByondVersion::new(516, 1689);
-
-    pub const fn new(major: u32, build: u32) -> Self {
-        ByondVersion { major, build }
-    }
-
-    pub const fn at_least(self, build: u32) -> bool {
-        self.build >= build
-    }
-
-    pub fn read_as(self, ctx: &dreammaker::Context) {
-        ctx.set_clamp_integer_literals(!self.at_least(1644));
-    }
-}
-
-impl Default for ByondVersion {
-    fn default() -> Self {
-        Self::LATEST
-    }
-}
-
-impl std::fmt::Display for ByondVersion {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}.{}", self.major, self.build)
-    }
-}
+pub use target::ByondVersion;
 
 #[derive(PartialEq, Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]

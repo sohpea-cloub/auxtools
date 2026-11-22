@@ -31,7 +31,8 @@ The offline `.dmb` tooling is not included in this repository.
 
 Set `ProcSource::byond`, `compile_expr_for` or `reload::ParseOptions::byond` to the
 running world's build. `ByondVersion::read_as` configures version-specific parsing.
-Compatibility rules and thresholds are in `src/compiler/versions.rs`.
+Every build at which dmasm does something differently is a predicate on `ByondVersion` in
+`src/target.rs`; the arithmetic that differs is in `src/compiler/versions.rs`.
 
 Probes covered 515.1637, 515.1647, 516.1659, 516.1685, 516.1688 and 516.1689. Additional probes
 located behavior changes across 515.1637–516.1660, and in 516.1664, 1668–1672, 1676,

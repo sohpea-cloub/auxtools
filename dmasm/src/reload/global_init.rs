@@ -387,17 +387,13 @@ const LATE_TYPES: &[&str] = &[
     "/particles",
 ];
 
-const MUTABLE_APPEARANCE_AT_ROOT: u32 = 1643;
-const LIST_PROCS_WAIT: u32 = 1648;
-const SCOPED_RUN_LAST: u32 = 1685;
-
 fn visited_late(byond: crate::ByondVersion, t: TypeRef) -> bool {
     let path = t.get().path.as_str();
     if CORE_TYPES.contains(&path) || super::reparent::builtin_base(t).as_deref() != Some(path) {
         return false;
     }
     if path == "/mutable_appearance" {
-        return !byond.at_least(MUTABLE_APPEARANCE_AT_ROOT);
+        return !byond.visits_mutable_appearance_at_root();
     }
     t.parent_type()
         .filter(|p| !p.is_root())
@@ -700,7 +696,7 @@ impl<'a> Walk<'a> {
                 });
                 for found in scoped
                     .into_iter()
-                    .filter(|_| snapshot.byond.at_least(SCOPED_RUN_LAST))
+                    .filter(|_| snapshot.byond.runs_scoped_reads_last())
                 {
                     let mut above = found.parent_type();
                     while let Some(t) = above.filter(|t| !t.is_root()) {
@@ -1088,7 +1084,7 @@ impl<'a> Walk<'a> {
                     let list = path == "/list" || path.starts_with("/list/");
                     if proc.is_some_and(|proc| LIST_PROCS.contains(&proc))
                         && (list || path == "/")
-                        && snapshot.byond.at_least(LIST_PROCS_WAIT)
+                        && snapshot.byond.defers_list_proc_initializers()
                     {
                         ready &= finishing;
                     } else if path != "/" && !list {

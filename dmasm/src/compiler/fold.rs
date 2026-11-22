@@ -245,7 +245,7 @@ fn math1(name: &str, x: f32, byond: crate::ByondVersion) -> Option<Option<f32>> 
             super::versions::tan(byond, x) as f64
         } else if x.is_infinite() {
             let nan = super::versions::DEFAULT_NAN;
-            if x < 0.0 && byond.at_least(super::versions::BYOND_516) {
+            if x < 0.0 && byond.is_516() {
                 -nan
             } else {
                 nan
@@ -253,7 +253,7 @@ fn math1(name: &str, x: f32, byond: crate::ByondVersion) -> Option<Option<f32>> 
         } else {
             d
         }),
-        "arccos" if d.is_nan() && !byond.at_least(super::versions::BYOND_516) => Some(d.abs()),
+        "arccos" if d.is_nan() && !byond.is_516() => Some(d.abs()),
         "arcsin" | "arccos" | "arctan" if d.is_nan() => Some(d),
         "arcsin" => (!(d < -1.0 || d > 1.0)).then(|| degrees(d.asin())),
         "arccos" => (!(d < -1.0 || d > 1.0)).then(|| degrees(d.acos())),
@@ -294,9 +294,7 @@ fn base_value(c: &Compiler, term: &Term) -> Option<Constant> {
             p if p.ty.is_root() => Constant::Null,
             p => Constant::Path(p.ty.get().path.clone()),
         },
-        Term::__PROC__
-            if c.proc_macros_known() && c.byond.at_least(super::versions::PROC_MACRO) =>
-        {
+        Term::__PROC__ if c.proc_macros_known() && c.byond.has_proc_macro() => {
             Constant::Path(c.proc.as_ref()?.proc_path.clone())
         }
         Term::Call(name, args) if name.as_str() == "newlist" && constant_args(c, args) => {
@@ -349,7 +347,7 @@ fn base_value(c: &Compiler, term: &Term) -> Option<Constant> {
         Term::Call(name, args)
             if args.len() == 1
                 && super::versions::nan_test(name.as_str(), 0.0).is_some()
-                && super::versions::clean_nan_fold(c.byond) =>
+                && c.byond.folds_nan_tests_cleanly() =>
         {
             match value(c, &args[0])? {
                 Constant::Number(n) => {
@@ -655,7 +653,7 @@ fn channel(share: f64, nudge: f64) -> String {
 }
 
 pub(super) fn hsv_text(byond: crate::ByondVersion, h: f32, s: f32, v: f32, nudge: f64) -> String {
-    let range = if byond.at_least(super::versions::BYOND_516) {
+    let range = if byond.is_516() {
         (0.0, 100.0)
     } else {
         (f64::MIN, f64::MAX)
@@ -728,7 +726,7 @@ pub(super) fn rgb_text(
         ),
         1..=3 => {
             boundary = rounded(1e-3) != rounded(-1e-3);
-            if boundary && byond.build < super::versions::LINUX_COLOURS {
+            if boundary && !byond.rounds_colours_as_folded() {
                 return None;
             }
             rounded(0.0)

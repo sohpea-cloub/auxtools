@@ -5,7 +5,7 @@ use dreammaker::ast::{Expression, Field, Follow, Term};
 use crate::{
     compiler::{args, builtin_procs, follow, operands, strings, CompileError, Compiler, EvalKind},
     operands::{DMString, GlobalVar, Label, PickProbParams, Value, Variable},
-    Instruction,
+    ByondVersion, Instruction,
 };
 
 enum RelativeCall {
@@ -360,9 +360,7 @@ pub(super) fn emit(compiler: &mut Compiler<'_>, term: Term) -> Result<EvalKind, 
                         (0..args.len()).map(|_| compiler.new_label()).collect();
                     let mut threshold = 0u32;
                     let mut cases = vec![];
-                    let keeps_zero = compiler
-                        .byond
-                        .at_least(super::versions::PICK_ZERO_WEIGHT_KEPT);
+                    let keeps_zero = compiler.byond.keeps_zero_pick_weight();
                     let zero: Vec<bool> = args
                         .iter()
                         .map(|(w, _)| {
@@ -465,7 +463,7 @@ pub(super) fn emit(compiler: &mut Compiler<'_>, term: Term) -> Result<EvalKind, 
         }
 
         Term::Alist(args) => {
-            super::versions::require(compiler.byond, super::versions::BYOND_516, "alist()")?;
+            super::versions::require(compiler.byond, ByondVersion::is_516, "alist()")?;
             emit_alist(compiler, args.into_vec())
         }
 
@@ -561,7 +559,7 @@ pub(super) fn emit(compiler: &mut Compiler<'_>, term: Term) -> Result<EvalKind, 
         }
         Term::__PROC__ if compiler.proc_macros_known() => {
             if !compiler.proc_macro_ok {
-                super::versions::require(compiler.byond, super::versions::PROC_MACRO, "__PROC__")?;
+                super::versions::require(compiler.byond, ByondVersion::has_proc_macro, "__PROC__")?;
             }
             let path = compiler.proc.as_ref().unwrap().proc_path.clone();
             compiler.emit_ins(Instruction::PushVal(Value::Path(path)));

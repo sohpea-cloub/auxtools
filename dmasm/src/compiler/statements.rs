@@ -5,7 +5,7 @@ use dreammaker::ast::{
 use super::procs::{LoopLabels, ProcSource};
 use super::{CompileError, Compiler, EvalKind};
 use crate::operands::{Label, Value, Variable};
-use crate::{Instruction, Node};
+use crate::{ByondVersion, Instruction, Node};
 
 pub(super) fn emit_proc_body(
     compiler: &mut Compiler,
@@ -890,11 +890,7 @@ fn emit_statement_inner(
         }
 
         Statement::ForKeyValue(kv) => {
-            super::versions::require(
-                compiler.byond,
-                super::versions::BYOND_516,
-                "for (k, v in list)",
-            )?;
+            super::versions::require(compiler.byond, ByondVersion::is_516, "for (k, v in list)")?;
             ctx(compiler).scopes.push(vec![]);
             let (key, value) = if let Some(var_type) = &kv.var_type {
                 let k = ctx(compiler)
@@ -1712,10 +1708,7 @@ pub(super) fn emit_safe_chain_write(
                 }
             }
             SafeWrite::Logical { or } => {
-                if !compiler
-                    .byond
-                    .at_least(super::versions::SAFE_LOGICAL_ASSIGN)
-                {
+                if !compiler.byond.keeps_safe_logical_null_tests() {
                     compiler.warn_bug(SAFE_LOGICAL_BUG, "; dmasm keeps them");
                 }
                 let end = Label::Named(compiler.new_label());
@@ -1784,7 +1777,7 @@ pub(super) fn emit_safe_chain_write(
             ends.pop().map(|end| compiler.emit_label(end));
         }
         (fields, SafeWrite::Change(write), Some(index)) => {
-            let restore_first = compiler.byond.at_least(super::versions::SAFE_ELEMENT_CACHE);
+            let restore_first = compiler.byond.restores_cache_for_safe_element();
             if !restore_first {
                 warn_list_from_cache(compiler);
             }
@@ -1804,14 +1797,10 @@ pub(super) fn emit_safe_chain_write(
             ends.pop().map(|end| compiler.emit_label(end));
         }
         (fields, SafeWrite::Logical { or }, index) => {
-            if !compiler
-                .byond
-                .at_least(super::versions::SAFE_LOGICAL_ASSIGN)
-            {
+            if !compiler.byond.keeps_safe_logical_null_tests() {
                 compiler.warn_bug(SAFE_LOGICAL_BUG, "; dmasm keeps them");
             }
-            let restore_first =
-                index.is_none() || compiler.byond.at_least(super::versions::SAFE_ELEMENT_CACHE);
+            let restore_first = index.is_none() || compiler.byond.restores_cache_for_safe_element();
             if !restore_first {
                 warn_list_from_cache(compiler);
             }
@@ -2393,10 +2382,7 @@ pub(super) fn emit_safe_logical_assign(
     if !chain.segments.is_empty() || chain.index.is_some() || fields.is_empty() {
         return Ok(false);
     }
-    if !compiler
-        .byond
-        .at_least(super::versions::SAFE_LOGICAL_ASSIGN)
-    {
+    if !compiler.byond.keeps_safe_logical_null_tests() {
         compiler.warn_bug(SAFE_LOGICAL_BUG, "; dmasm keeps them");
     }
     let mut builder = super::chain_builder::ChainBuilder::begin(Variable::Cache);
@@ -2486,9 +2472,7 @@ const SAFE_LOGICAL_BUG: &str =
 
 pub(super) fn warn_pointer_index(compiler: &Compiler, place: &Expression) {
     if let Expression::Base { follow, .. } = strip_parens(place) {
-        if compiler
-            .byond
-            .at_least(super::versions::POINTER_INDEX_DROPPED)
+        if compiler.byond.drops_pointer_index()
             && follow.iter().any(|f| matches!(f.elem, Follow::Index(..)))
             && follow
                 .iter()

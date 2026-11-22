@@ -721,7 +721,7 @@ fn emit_overloaded(
                     .and_then(|x| super::versions::nan_test(name, x));
                 if let Some(result) = known {
                     compiler.emit_ins(Instruction::PushInt(result as i32));
-                    if !super::versions::clean_nan_fold(compiler.byond) {
+                    if !compiler.byond.folds_nan_tests_cleanly() {
                         compiler.warn_bug(
                             &format!(
                                 "{name}() of a constant returns the previous test flag on this build"

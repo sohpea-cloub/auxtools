@@ -60,11 +60,7 @@ fn emit_single(
                 EvalKind::Field(builder, field) => builder.get_field(DMString(field.into())),
 
                 EvalKind::ListRef => {
-                    if op == UnaryOp::Dereference
-                        && compiler
-                            .byond
-                            .at_least(super::versions::POINTER_INDEX_DROPPED)
-                    {
+                    if op == UnaryOp::Dereference && compiler.byond.drops_pointer_index() {
                         compiler.warn_bug(
                             super::statements::POINTER_INDEX_BUG,
                             super::statements::POINTER_INDEX_OURS,
