@@ -52,6 +52,7 @@ fn emit_conditional(
     rhs: Expression,
 ) -> Result<EvalKind, CompileError> {
     compiler.place = op != AssignOp::Assign;
+    compiler.safe_place = compiler.debugger;
     let var = match compiler.emit_inner_expr(lhs)? {
         EvalKind::Field(builder, field) => {
             let holder = builder.get();

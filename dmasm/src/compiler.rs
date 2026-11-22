@@ -626,6 +626,7 @@ struct Compiler<'a> {
     warnings: std::cell::RefCell<Vec<String>>,
     byond_bugs: std::cell::RefCell<Vec<ByondBug>>,
     list_elem_type: Option<dreammaker::objtree::TypeRef<'a>>,
+    safe_place: bool,
 }
 
 impl<'a> Compiler<'a> {
@@ -663,6 +664,7 @@ impl<'a> Compiler<'a> {
             no_fold: false,
             live_only: false,
             list_elem_type: None,
+            safe_place: false,
         }
     }
 
@@ -923,6 +925,7 @@ impl<'a> Compiler<'a> {
     fn emit_inner_expr(&mut self, expr: Expression) -> Result<EvalKind, CompileError> {
         let root = std::mem::take(&mut self.regroup_root);
         let place = std::mem::take(&mut self.place);
+        let safe_place = std::mem::take(&mut self.safe_place);
         if self.proc.is_some() {
             if let Some(line) = self.read_on_line(&expr).filter(|_| !place) {
                 if self.read_to.is_some_and(|r| line < r) && self.last_line == self.read_to {
@@ -1172,6 +1175,7 @@ impl<'a> Compiler<'a> {
                     }
                 }
                 self.list_elem_type = elem_ty;
+                self.safe_place = safe_place;
                 let kind = follow::emit_typed(self, unspanned_follows, kind, ty)?;
                 Ok(kind)
             }
@@ -1287,7 +1291,10 @@ fn compiles_safe_field_increment() {
 
     assert_eq!(
         bytecode,
-        vec![0x84, 1337, 0x33, 0xFFD9, 0, 0x13D, 9, 0x63, 1337, 0x33, 0xFFD9, 0, 0x1A, 2, 0x12,]
+        vec![
+            0x84, 1337, 0x33, 0xFFD9, 0, 0x13D, 11, 0x142, 0x143, 0x63, 1337, 0x33, 0xFFD9, 0,
+            0x1A, 2, 0x12,
+        ]
     );
 }
 

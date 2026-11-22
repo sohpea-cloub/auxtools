@@ -63,6 +63,7 @@ pub(super) fn emit_typed<'a>(
     let mut kind = kind;
     let mut ty = ty;
     let mut elem_ty = compiler.list_elem_type.take();
+    let safe_place = std::mem::take(&mut compiler.safe_place);
 
     let mut field_buffer = vec![];
 
@@ -75,7 +76,7 @@ pub(super) fn emit_typed<'a>(
                     | Follow::Call(PropertyAccessKind::Dot | PropertyAccessKind::Colon, _, _)
             )
         );
-        if (compiler.proc.is_some() || ends_in_value_op(follow.as_slice())) && is_safe(&sub_expr) {
+        if is_safe(&sub_expr) && !safe_place {
             kind = commit_field_buffer(compiler, kind, &mut field_buffer)?;
             compiler.emit_move_to_stack(kind)?;
             return emit_safe(compiler, sub_expr, follow.collect(), ty);
@@ -510,13 +511,6 @@ fn is_safe(follow: &Follow) -> bool {
             _,
             _
         ) | Follow::Index(ListAccessKind::Safe, _)
-    )
-}
-
-fn ends_in_value_op(rest: &[Follow]) -> bool {
-    matches!(
-        rest.last(),
-        Some(Follow::Unary(UnaryOp::Not | UnaryOp::Neg | UnaryOp::BitNot))
     )
 }
 

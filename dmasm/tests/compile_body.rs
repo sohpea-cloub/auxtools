@@ -717,3 +717,52 @@ fn a_pick_with_weights_ends_the_same_alone_as_in_a_body() {
         same_alone_and_in_a_body(code);
     }
 }
+
+#[test]
+fn a_safe_chain_is_the_same_alone_as_in_a_body() {
+    assert_has(
+        &same_alone_and_in_a_body("by?.hp?.len"),
+        &[
+            "GetVar arg(2)",
+            "SetCacheJmpIfNull L0",
+            "PushCache",
+            "GetVar cache[\"hp\"]",
+            "SetCacheJmpIfNull L1",
+            "GetVar cache[\"len\"]",
+            "L1:",
+            "PopCache",
+            "L0:",
+        ],
+    );
+    for code in [
+        "by?[1]",
+        "by?.hp[1]",
+        "by?.hp++",
+        "--by?.hp",
+        "by?.bump().hp",
+        "by?.bump()?.bump(hp)",
+        "by?.hp?.len == null",
+        "!by?.hp",
+        "by?.hp = 1",
+        "by?.hp += 1",
+        "by?.hp ||= 1",
+    ] {
+        same_alone_and_in_a_body(code);
+    }
+}
+
+#[test]
+fn a_logical_assignment_to_a_safe_place_is_a_value_in_a_body_too() {
+    for code in [
+        "by?.hp?.len ||= 1",
+        "by?[1] ||= 2",
+        "by?.hp[1] &&= 2",
+        "by?.bump()?.hp ||= 1",
+    ] {
+        let compiled = same_alone_and_in_a_body(code);
+        assert!(
+            compiled.iter().any(|l| l.starts_with("SetVarExpr cache")),
+            "{code}: {compiled:?}"
+        );
+    }
+}
