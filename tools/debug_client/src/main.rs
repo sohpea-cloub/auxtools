@@ -1,15 +1,15 @@
 use std::{
-	collections::HashMap,
+	collections::{HashMap, VecDeque},
 	path::{Path, PathBuf},
 	time::Duration
 };
 
 use auxtools_cli::{
 	byond::{self, Server},
-	game::{Game, Launch},
-	local::{self, Shared}
+	client::{when_listening, Client, Heard},
+	game::{Game, Launch}
 };
-use auxtools_protocol::{ClientMessage, ContinueKind, EvalResponse, InstructionRef, ProcRef, Request, Response, ServerMessage, WORLD_SHUTTING_DOWN};
+use auxtools_protocol::{ContinueKind, EvalResponse, InstructionRef, ProcRef, Request, RequestId, Response, WORLD_SHUTTING_DOWN};
 
 const USAGE: &str = "\
 usage: debug_client WORLD.dmb --proc PATH --line N [options] [WATCH...]
@@ -98,46 +98,64 @@ fn parse_args() -> Result<Options, String> {
 	})
 }
 
-struct Connection(Shared, u64);
+struct Connection(Client, VecDeque<Response>);
 
 impl Connection {
 	fn send(&mut self, request: &Request) {
-		self.1 += 1;
-		auxtools_protocol::write(&mut self.0, &ClientMessage { id: self.1, request }).unwrap();
+		self.0.tell(request, None).unwrap();
 		println!(">> {:?}", request);
 	}
 
-	fn recv_any(&mut self) -> Option<Response> {
-		match auxtools_protocol::read::<ServerMessage>(&mut self.0) {
-			Ok(message) => Some(message.response),
-			Err(e) => {
-				println!("!! connection lost: {}", e);
+	fn recv_any(&mut self) -> Option<(Option<RequestId>, Response)> {
+		match self.0.hear(None) {
+			Ok(Some(Heard::Answer { to, response, .. })) => Some((Some(to), response)),
+			Ok(Some(Heard::Event(event))) => Some((None, event)),
+			Ok(None) | Err(_) => {
+				println!("!! connection lost");
 				None
 			}
 		}
 	}
 
-	fn recv(&mut self) -> Option<Response> {
+	fn recv_shown(&mut self) -> Option<(Option<RequestId>, Response)> {
 		loop {
 			match self.recv_any()? {
-				Response::Notification { message } => println!("<< notification: {}", message.trim_end()),
-				Response::ShuttingDown => println!("<< notification: {}", WORLD_SHUTTING_DOWN),
-				response => {
+				(_, Response::Notification { message }) => println!("<< notification: {}", message.trim_end()),
+				(_, Response::ShuttingDown) => println!("<< notification: {}", WORLD_SHUTTING_DOWN),
+				(to, response) => {
 					let text = format!("{:?}", response);
 					if text.len() > 2000 {
 						println!("<< {}... ({} chars)", &text[..2000], text.len());
 					} else {
 						println!("<< {}", text);
 					}
-					return Some(response);
+					return Some((to, response));
 				}
 			}
 		}
 	}
 
+	fn recv(&mut self) -> Option<Response> {
+		if let Some(event) = self.1.pop_front() {
+			return Some(event);
+		}
+		loop {
+			if let (None, event) = self.recv_shown()? {
+				return Some(event);
+			}
+		}
+	}
+
 	fn request(&mut self, request: Request) -> Option<Response> {
-		self.send(&request);
-		self.recv()
+		let id = self.0.ask(&request, None).unwrap();
+		println!(">> {:?}", request);
+		loop {
+			match self.recv_shown()? {
+				(Some(to), answer) if Some(to) == id => return Some(answer),
+				(Some(_), _) => {}
+				(None, event) => self.1.push_back(event)
+			}
+		}
 	}
 }
 
@@ -205,16 +223,10 @@ fn main() {
 			std::process::exit(1);
 		}
 	};
-	let stream = loop {
-		if let Ok(stream) = local::connect(game.pid()) {
-			break stream;
-		}
-		if !local::alive(game.pid()) {
-			std::process::exit(1);
-		}
-		std::thread::sleep(Duration::from_millis(100));
+	let Ok(client) = when_listening(game.pid(), None, Client::connect) else {
+		std::process::exit(1);
 	};
-	let mut conn = Connection(Shared::new(stream), 0);
+	let mut conn = Connection(client, VecDeque::new());
 	println!("== connected to DreamDaemon");
 
 	let offset = match conn.request(Request::Offset {
