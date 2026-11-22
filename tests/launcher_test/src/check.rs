@@ -1,7 +1,7 @@
-use std::path::PathBuf;
+use std::path::Path;
 
 use serde_json::{json, Value};
-use test_support::cli;
+use test_support::{cli, temp::TempDir};
 
 const CODE: &str = "\
 #ifdef LOOPS
@@ -18,15 +18,13 @@ const CODE: &str = "\
 \treturn &5
 ";
 
-fn project() -> PathBuf {
-	let dir = std::env::temp_dir().join(format!("launcher_test_check-{}", std::process::id()));
-	let _ = std::fs::remove_dir_all(&dir);
-	std::fs::create_dir_all(&dir).unwrap();
+fn project() -> TempDir {
+	let dir = TempDir::new("launcher_test_check");
 	std::fs::write(dir.join("world.dme"), CODE).unwrap();
 	dir
 }
 
-fn check(dir: &PathBuf, args: &[&str]) -> (i32, String, String) {
+fn check(dir: &Path, args: &[&str]) -> (i32, String, String) {
 	let ran = cli::ran(cli::auxtools(["check"]).args(args).current_dir(dir), None);
 	(ran.code, ran.out, ran.err)
 }
@@ -112,5 +110,4 @@ pub fn checks() {
 		(1, "error: more than one .dme in the current directory: specify DME.\n")
 	);
 	println!("ok: check errors");
-	let _ = std::fs::remove_dir_all(&dir);
 }

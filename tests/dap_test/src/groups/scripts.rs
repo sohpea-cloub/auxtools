@@ -27,7 +27,8 @@ fn told(world: &mut World) {
 }
 
 pub fn run() {
-	let dir = super::reloading::long_name(super::reloading::copy_of_the_world("scripts"));
+	let copy = super::reloading::copy_of_the_world("scripts");
+	let dir = super::reloading::long_name(copy.to_path_buf());
 	std::fs::write(dir.join("x.dms"), "<style>x {}</style>\n").unwrap();
 	std::fs::write(dir.join("a.css"), "<style>a {}</style>\n").unwrap();
 	std::fs::write(dir.join("script.dm"), "/client/script = \"<style>first {}</style>\"\n").unwrap();
@@ -79,5 +80,4 @@ pub fn run() {
 	ok("client script reload after reboot");
 
 	world.end();
-	let _ = std::fs::remove_dir_all(&dir);
 }

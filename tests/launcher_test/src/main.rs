@@ -18,7 +18,8 @@ use serde_json::json;
 use test_support::{
 	cli::{auxtools, launcher_command, listed_world, listed_worlds, ran, Background, Cli},
 	dap::{self, test_args, Launcher},
-	paths::{self, library_path, ByondCommand}
+	paths::{self, library_path, ByondCommand},
+	temp::TempDir
 };
 
 const TARGET_LINE: u64 = 28;
@@ -556,7 +557,7 @@ fn another_version() {
 	use auxtools_cli::local;
 	use auxtools_protocol::{old_socket_name, Hello, LAST_NAMED_PROTOCOL};
 
-	let (dir, dme) = attach_host_copy("another_version");
+	let (_dir, dme) = attach_host_copy("another_version");
 	let mut plain = KilledOnDrop(
 		Command::new(paths::find_dreamdaemon())
 			.with_byond_paths()
@@ -602,7 +603,6 @@ fn another_version() {
 	assert_eq!(SENT_TO_NEWER.load(Ordering::SeqCst), 0, "a world of another version was sent requests");
 	let _ = plain.kill();
 	let _ = plain.wait();
-	let _ = std::fs::remove_dir_all(&dir);
 	println!("ok: a hello with another protocol version is listed as incompatible and attach is rejected");
 }
 
@@ -735,7 +735,7 @@ fn no_debugger() {
 	use auxtools_protocol::{Hello, Response, ServerMessage};
 
 	const WHY: &str = "Couldn't find current_execution_context (BYOND 516.1600 is outside the checked range 1637..=1688)";
-	let (dir, dme) = attach_host_copy("no_debugger");
+	let (_dir, dme) = attach_host_copy("no_debugger");
 	let mut plain = KilledOnDrop(
 		Command::new(paths::find_dreamdaemon())
 			.with_byond_paths()
@@ -807,7 +807,6 @@ fn no_debugger() {
 		std::thread::sleep(Duration::from_millis(100));
 	}
 	println!("ok: stop without debugger");
-	let _ = std::fs::remove_dir_all(&dir);
 }
 
 fn command_line_more(pid: u64, dir: &Path) {
@@ -1260,7 +1259,6 @@ fn edited_after_build(server: &str) {
 	assert_eq!(got, 0, "stop said {}", printed);
 	drop(started);
 	println!("ok: code changed after the .dmb was built");
-	let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[track_caller]
@@ -1272,7 +1270,7 @@ fn line_of(file: &Path, text: &str) -> u64 {
 struct Attached {
 	runner: Launcher,
 	pid: u64,
-	dir: PathBuf,
+	dir: TempDir,
 	code: PathBuf
 }
 
@@ -1383,14 +1381,11 @@ impl Attached {
 		assert!(runner.output.contains("attach test: done"), "world did not complete the test");
 		runner.disconnect(json!({}));
 		println!("ok: world and launcher exit");
-		let _ = std::fs::remove_dir_all(&dir);
 	}
 }
 
-fn attach_host_copy(name: &str) -> (PathBuf, PathBuf) {
-	let dir = std::env::temp_dir().join(format!("launcher_test_{}-{}", name, std::process::id()));
-	let _ = std::fs::remove_dir_all(&dir);
-	std::fs::create_dir_all(&dir).unwrap();
+fn attach_host_copy(name: &str) -> (TempDir, PathBuf) {
+	let dir = TempDir::new(&format!("launcher_test_{}", name));
 	for left in [
 		"stop",
 		"fail",
@@ -1579,7 +1574,6 @@ fn errored_baseline(server: &str) {
 	let exit = launcher_exit(&mut started, &output);
 	assert_eq!(exit, 0, "launch exited with {}:\n{}", exit, read());
 	drop(started);
-	let _ = std::fs::remove_dir_all(&dir);
 	println!("ok: repaired baseline errors do not duplicate definitions");
 }
 
@@ -1612,7 +1606,6 @@ fn dmb_elsewhere(server: &str) {
 	assert_eq!(run(&["stop"]).trim(), format!("pid {}: stopped", pid));
 	drop(started);
 	println!("ok: a rebuilt .dmb that isn't beside its .dme");
-	let _ = std::fs::remove_dir_all(&dir);
 }
 
 fn launch_from_the_command_line(server: &str) {
@@ -2000,7 +1993,6 @@ fn launch_from_the_command_line(server: &str) {
 	println!("ok: stop timeout and forced termination");
 
 	let _ = std::fs::remove_file(dir.join("refuse_del"));
-	let _ = std::fs::remove_dir_all(&dir);
 }
 
 fn without_debug_info(server: &str) {
@@ -2032,7 +2024,6 @@ fn without_debug_info(server: &str) {
 	assert_eq!(got, 0, "stop gave {}: {}", got, printed);
 	drop(started);
 	println!("ok: line breakpoints in a world without debug info");
-	let _ = std::fs::remove_dir_all(&dir);
 }
 
 fn unread_statics(server: &str) {
@@ -2088,5 +2079,4 @@ fn unread_statics(server: &str) {
 	cli.run(&["stop", "--timeout", "10", "--kill"], 0);
 	drop(started);
 	println!("ok: reloads keep static locals the code doesn't read");
-	let _ = std::fs::remove_dir_all(&dir);
 }

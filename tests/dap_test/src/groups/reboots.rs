@@ -10,7 +10,7 @@ fn rebooted(world: &mut World, worlds: usize) {
 
 fn told_after_reboot() {
 	let dir = super::reloading::copy_of_the_world("reboots");
-	let mut world = World::launch_in(dir.clone(), json!({ "hotReload": true }));
+	let mut world = World::launch_in(dir.to_path_buf(), json!({ "hotReload": true }));
 	world.catch_runtimes(false);
 	world.configure();
 	world.wait_output("Hot reload active");
@@ -39,7 +39,6 @@ fn told_after_reboot() {
 	world.resume_through("added");
 	ok("breakpoint verification after reboot");
 	world.end();
-	let _ = std::fs::remove_dir_all(&dir);
 }
 
 pub fn run() {

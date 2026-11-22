@@ -20,7 +20,8 @@ fn text_of(dir: &Path, file: &str) -> String {
 }
 
 pub fn run() {
-	let dir = super::reloading::long_name(super::reloading::copy_of_the_world("skins"));
+	let copy = super::reloading::copy_of_the_world("skins");
+	let dir = super::reloading::long_name(copy.to_path_buf());
 	std::fs::write(dir.join("skin.dmf"), SKIN).unwrap();
 	std::fs::write(dir.join("built.png"), b"\x89PNG\r\n\x1a\n").unwrap();
 	let dme = dir.join("dap_test_host.dme");
@@ -87,5 +88,4 @@ pub fn run() {
 	ok("last included skin");
 
 	world.end();
-	let _ = std::fs::remove_dir_all(&dir);
 }

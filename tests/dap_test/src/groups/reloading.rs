@@ -1,33 +1,18 @@
 use std::{path::PathBuf, time::Duration};
 
 use serde_json::{json, Value};
-use test_support::dap::{launch_arguments, value_of};
+use test_support::{
+	dap::{launch_arguments, value_of},
+	temp::TempDir
+};
 
 use crate::{
 	ok, paths,
 	world::{host_file, World}
 };
 
-pub fn copy_of_the_world(name: &str) -> PathBuf {
-	fn copy(from: &std::path::Path, to: &std::path::Path) {
-		std::fs::create_dir_all(to).unwrap();
-		for entry in std::fs::read_dir(from).unwrap() {
-			let path = entry.unwrap().path();
-			let copy_to = to.join(path.file_name().unwrap());
-			if path.is_dir() {
-				copy(&path, &copy_to);
-			} else if path
-				.extension()
-				.is_some_and(|e| ["dm", "dme", "dmb", "rsc", "dmi"].contains(&e.to_str().unwrap_or_default()))
-			{
-				std::fs::copy(&path, copy_to).unwrap();
-			}
-		}
-	}
-	let dir = std::env::temp_dir().join(format!("dap_test_{}-{}", name, std::process::id()));
-	let _ = std::fs::remove_dir_all(&dir);
-	copy(&host_file(""), &dir);
-	dir
+pub fn copy_of_the_world(name: &str) -> TempDir {
+	TempDir::copy_of(&format!("dap_test_{}", name), &host_file(""), &["dm", "dme", "dmb", "rsc", "dmi"])
 }
 
 #[cfg(windows)]
@@ -93,9 +78,9 @@ fn rebooted(world: &mut World, count: usize, restarts: usize) {
 	});
 }
 
-fn watched_world(name: &str) -> (World, PathBuf) {
+fn watched_world(name: &str) -> (World, TempDir) {
 	let dir = copy_of_the_world(name);
-	let mut world = World::launch_in(dir.clone(), json!({ "hotReload": true }));
+	let mut world = World::launch_in(dir.to_path_buf(), json!({ "hotReload": true }));
 	world.catch_runtimes(false);
 	world.configure();
 	world.wait_output("Hot reload active");
@@ -103,7 +88,7 @@ fn watched_world(name: &str) -> (World, PathBuf) {
 }
 
 fn built_in_taken_away() {
-	let (mut world, dir) = watched_world("built_in_taken_away");
+	let (mut world, _dir) = watched_world("built_in_taken_away");
 	edit(
 		&mut world,
 		"main.dm",
@@ -115,12 +100,11 @@ fn built_in_taken_away() {
 	assert_eq!(world.eval_global("(new /obj/layered).layer"), "3");
 	ok("built-in-only override removal");
 	world.end();
-	let _ = std::fs::remove_dir_all(&dir);
 }
 
 fn behind_the_clients_back() {
 	let dir = copy_of_the_world("reloading");
-	let mut world = World::launch_in(dir.clone(), json!({ "hotReload": true }));
+	let mut world = World::launch_in(dir.to_path_buf(), json!({ "hotReload": true }));
 	world.catch_runtimes(false);
 	world.configure();
 	world.wait_output("Hot reload active");
@@ -303,7 +287,7 @@ fn behind_the_clients_back() {
 	ok("reload before save notification");
 
 	let pid = test_support::cli::listed_world("dap_test_host.dmb");
-	let mut other = World::attach_in(dir.clone(), pid);
+	let mut other = World::attach_in(dir.to_path_buf(), pid);
 	other.catch_runtimes(false);
 	other.break_on(&["sc_middle_2"]);
 	let before = at.line("sc_middle_2");
@@ -324,7 +308,6 @@ fn behind_the_clients_back() {
 	ok("attached-session breakpoint remapping");
 
 	world.end();
-	let _ = std::fs::remove_dir_all(&dir);
 }
 
 fn saved_without_reloading() {
@@ -356,9 +339,7 @@ fn saved_without_reloading() {
 }
 
 fn starting_at_world_new() {
-	let dir = std::env::temp_dir().join(format!("dap_test_world_new-{}", std::process::id()));
-	let _ = std::fs::remove_dir_all(&dir);
-	std::fs::create_dir_all(&dir).unwrap();
+	let dir = TempDir::new("dap_test_world_new");
 	std::fs::write(dir.join("dap_test_host.dme"), "#include \"bare.dm\"\n").unwrap();
 	std::fs::write(
 		dir.join("bare.dm"),
@@ -368,7 +349,7 @@ fn starting_at_world_new() {
 	std::fs::copy(host_file("reload_new.dmi"), dir.join("reload_new.dmi")).unwrap();
 	paths::compile(&dir.join("dap_test_host.dme"));
 
-	let mut world = World::launch_in(dir.clone(), json!({ "hotReload": true }));
+	let mut world = World::launch_in(dir.to_path_buf(), json!({ "hotReload": true }));
 	world.configure();
 	world.wait_output("Hot reload active");
 	edit(&mut world, "bare.dm", "\treturn null\n", "\treturn 'reload_new.dmi'\n");
@@ -380,11 +361,10 @@ fn starting_at_world_new() {
 	);
 	ok("resource reload after world/New startup");
 	world.end();
-	let _ = std::fs::remove_dir_all(&dir);
 }
 
 fn parent_changed_alone() {
-	let (mut world, dir) = watched_world("parent_changed_alone");
+	let (mut world, _dir) = watched_world("parent_changed_alone");
 	edit(
 		&mut world,
 		"main.dm",
@@ -397,11 +377,10 @@ fn parent_changed_alone() {
 	assert_eq!(world.eval_global("istype(new /datum/pt, /datum/pb)"), "1");
 	ok("parent-only reload");
 	world.end();
-	let _ = std::fs::remove_dir_all(&dir);
 }
 
 fn types_changed_before_reboot() {
-	let (mut world, dir) = watched_world("types_changed_before_reboot");
+	let (mut world, _dir) = watched_world("types_changed_before_reboot");
 	edit(
 		&mut world,
 		"main.dm",
@@ -435,7 +414,6 @@ fn types_changed_before_reboot() {
 	}
 	ok("type and parent restoration after reboot");
 	world.end();
-	let _ = std::fs::remove_dir_all(&dir);
 }
 
 fn override_restored_before_map() {
@@ -455,7 +433,7 @@ fn override_restored_before_map() {
 	std::fs::write(&dme, text).unwrap();
 	paths::compile(&dme);
 
-	let mut world = World::launch_in(dir.clone(), json!({ "hotReload": true }));
+	let mut world = World::launch_in(dir.to_path_buf(), json!({ "hotReload": true }));
 	world.catch_runtimes(false);
 	world.configure();
 	world.wait_output("Hot reload active");
@@ -474,7 +452,6 @@ fn override_restored_before_map() {
 	}
 	ok("override restoration before map creation");
 	world.end();
-	let _ = std::fs::remove_dir_all(&dir);
 }
 
 const INITIALIZERS: &str = "/proc/rb_late_set()
@@ -546,7 +523,7 @@ fn held_until_reboot() {
 	let text = std::fs::read_to_string(&dme).unwrap() + "#include \"held_b.dm\"\n#include \"held.dm\"\n";
 	std::fs::write(&dme, text).unwrap();
 	paths::compile(&dme);
-	let mut world = World::launch_in(dir.clone(), json!({ "hotReload": true }));
+	let mut world = World::launch_in(dir.to_path_buf(), json!({ "hotReload": true }));
 	world.catch_runtimes(false);
 	world.configure();
 	world.wait_output("Hot reload active");
@@ -599,7 +576,6 @@ fn held_until_reboot() {
 	assert_eq!(held_changes(&mut world), []);
 	ok("world setting requires rebuild");
 	world.end();
-	let _ = std::fs::remove_dir_all(&dir);
 }
 
 fn edit_nothing_to_run(world: &mut World, file: &str, old: &str, new: &str) {
@@ -621,7 +597,7 @@ fn initializers_after_reboot() {
 	std::fs::write(&dme, text).unwrap();
 	paths::compile(&dme);
 
-	let mut world = World::launch_in(dir.clone(), json!({ "hotReload": true }));
+	let mut world = World::launch_in(dir.to_path_buf(), json!({ "hotReload": true }));
 	world.catch_runtimes(false);
 	world.configure();
 	world.wait_output("Hot reload active");
@@ -676,13 +652,10 @@ fn initializers_after_reboot() {
 	assert_eq!(world.eval_global(held), "\"3 3\"");
 	ok("type defaults in deferred restore");
 	world.end();
-	let _ = std::fs::remove_dir_all(&dir);
 }
 
 fn initializer_added_to_a_world_without() {
-	let dir = std::env::temp_dir().join(format!("dap_test_no_inits-{}", std::process::id()));
-	let _ = std::fs::remove_dir_all(&dir);
-	std::fs::create_dir_all(&dir).unwrap();
+	let dir = TempDir::new("dap_test_no_inits");
 	std::fs::write(dir.join("dap_test_host.dme"), "#include \"bare.dm\"\n").unwrap();
 	std::fs::write(
 		dir.join("bare.dm"),
@@ -691,7 +664,7 @@ fn initializer_added_to_a_world_without() {
 	.unwrap();
 	paths::compile(&dir.join("dap_test_host.dme"));
 
-	let mut world = World::launch_in(dir.clone(), json!({ "hotReload": true }));
+	let mut world = World::launch_in(dir.to_path_buf(), json!({ "hotReload": true }));
 	world.catch_runtimes(false);
 	world.configure();
 	world.wait_output("Hot reload active");
@@ -716,7 +689,6 @@ fn initializer_added_to_a_world_without() {
 	}
 	ok("added global init proc after reboot");
 	world.end();
-	let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[track_caller]
@@ -750,7 +722,11 @@ fn file_named_by_a_reload() {
 	let dme = dir.join("dap_test_host.dme");
 	let text = "#define FILE_DIR fzdir\n".to_owned() + &std::fs::read_to_string(&dme).unwrap();
 	std::fs::write(&dme, text).unwrap();
-	let mut world = World::launch_as(json!({ "supportsProgressReporting": true }), dir.clone(), json!({ "hotReload": true }));
+	let mut world = World::launch_as(
+		json!({ "supportsProgressReporting": true }),
+		dir.to_path_buf(),
+		json!({ "hotReload": true })
+	);
 	world.catch_runtimes(false);
 	world.configure();
 	world.wait_output("Hot reload active");
@@ -775,7 +751,6 @@ fn file_named_by_a_reload() {
 	assert_eq!(shown(&mut world), "\"fzdir/named.dmi on,off,new\"");
 	ok("watching newly referenced resources");
 	world.end();
-	let _ = std::fs::remove_dir_all(&dir);
 }
 
 fn resource_saved(world: &mut World, dir: &std::path::Path, version: &str) {
@@ -790,7 +765,7 @@ fn resource_saved(world: &mut World, dir: &std::path::Path, version: &str) {
 
 fn resource_files() {
 	let dir = copy_of_the_world("resources");
-	let mut world = World::launch_in(dir.clone(), json!({ "hotReload": true }));
+	let mut world = World::launch_in(dir.to_path_buf(), json!({ "hotReload": true }));
 	world.configure();
 	world.wait_output("Hot reload active");
 	assert_eq!(world.eval_global("make_lamps()"), "\"made\"");
@@ -819,7 +794,6 @@ fn resource_files() {
 	assert_eq!(world.eval_global("lamp_states()"), third);
 	ok("icon saved again after reboot");
 	world.end();
-	let _ = std::fs::remove_dir_all(&dir);
 }
 
 fn read_ahead_stop(world: &mut World, file: &std::path::Path, line: u64) -> (u64, String) {
@@ -833,7 +807,7 @@ fn read_ahead_stop(world: &mut World, file: &std::path::Path, line: u64) -> (u64
 }
 
 fn nothing_to_run() {
-	let (mut world, dir) = watched_world("nothing_to_run");
+	let (mut world, _dir) = watched_world("nothing_to_run");
 	let at = world.marks.clone();
 	let file = at.file("stepping.dm");
 	let names = ["nothing_macro", "nothing_var", "nothing_set", "nothing_code"];
@@ -863,7 +837,6 @@ fn nothing_to_run() {
 	assert_eq!(after, before, "a breakpoint DreamMaker records ahead stopped elsewhere after the reload");
 	ok("breakpoint on a lookahead line after reload");
 	world.end();
-	let _ = std::fs::remove_dir_all(&dir);
 }
 
 const FLAGGED: &str = "/proc/flag_value()
@@ -902,7 +875,7 @@ fn held_for_build_flags() {
 	let build = |flags: &[&str]| paths::compile_with(&dme, flags);
 	build(&[]);
 	let more = json!({ "hotReload": true, "buildFlags": [] });
-	let mut world = World::launch_in(dir.clone(), more.clone());
+	let mut world = World::launch_in(dir.to_path_buf(), more.clone());
 	world.catch_runtimes(false);
 	world.configure();
 	world.wait_output("Hot reload active");
@@ -973,7 +946,6 @@ fn held_for_build_flags() {
 	assert_eq!(held_changes(&mut world), []);
 	ok("restart uses selected build flags");
 	world.end();
-	let _ = std::fs::remove_dir_all(&dir);
 }
 
 fn default_names_a_new_proc() {
@@ -984,7 +956,7 @@ fn default_names_a_new_proc() {
 	std::fs::write(&dme, text).unwrap();
 	paths::compile(&dme);
 
-	let mut world = World::launch_in(dir.clone(), json!({ "hotReload": true }));
+	let mut world = World::launch_in(dir.to_path_buf(), json!({ "hotReload": true }));
 	world.catch_runtimes(false);
 	world.configure();
 	world.wait_output("Hot reload active");
@@ -1002,7 +974,6 @@ fn default_names_a_new_proc() {
 	);
 	ok("new proc references in type defaults");
 	world.end();
-	let _ = std::fs::remove_dir_all(&dir);
 }
 
 pub fn edits() {
@@ -1050,7 +1021,7 @@ fn initializers_after_reboot_at_an_area() {
 	std::fs::write(&dme, text).unwrap();
 	paths::compile(&dme);
 
-	let mut world = World::launch_in(dir.clone(), json!({ "hotReload": true }));
+	let mut world = World::launch_in(dir.to_path_buf(), json!({ "hotReload": true }));
 	world.catch_runtimes(false);
 	world.configure();
 	world.wait_output("Hot reload active");
@@ -1063,7 +1034,6 @@ fn initializers_after_reboot_at_an_area() {
 	assert!(!world.output.contains("global initialization has already run"), "{}", world.output);
 	ok("held initializers after area startup");
 	world.end();
-	let _ = std::fs::remove_dir_all(&dir);
 }
 
 pub fn files() {
@@ -1078,7 +1048,11 @@ pub fn files() {
 
 pub fn run() {
 	let dir = copy_of_the_world("reloading");
-	let mut world = World::launch_as(json!({ "supportsInvalidatedEvent": true }), dir.clone(), json!({ "hotReload": true }));
+	let mut world = World::launch_as(
+		json!({ "supportsInvalidatedEvent": true }),
+		dir.to_path_buf(),
+		json!({ "hotReload": true })
+	);
 	world.catch_runtimes(false);
 	world.configure();
 	world.wait_output("Hot reload active");
@@ -1402,5 +1376,4 @@ pub fn run() {
 	assert_eq!(states(&mut world, "icon_built"), "\"built1,built2\"");
 	ok("restored reload naming a new resource waits for world/New");
 	world.end();
-	let _ = std::fs::remove_dir_all(&dir);
 }

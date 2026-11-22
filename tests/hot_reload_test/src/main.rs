@@ -8,23 +8,20 @@ use auxtools_protocol::*;
 use dmasm::reload::{diff, Changes, ParseOptions, Snapshot};
 use test_support::{
 	debug::{Client, World},
-	paths
+	paths,
+	temp::TempDir
 };
 
 struct Source {
-	dir: PathBuf,
+	dir: TempDir,
 	options: ParseOptions,
 	snapshot: Option<Snapshot>
 }
 
 impl Source {
 	fn copy_host() -> Source {
-		let dir = std::env::temp_dir().join(format!("hot_reload_test_host-{}", std::process::id()));
-		let _ = std::fs::remove_dir_all(&dir);
-		std::fs::create_dir_all(&dir).unwrap();
-
 		let source = Source {
-			dir,
+			dir: TempDir::new("hot_reload_test_host"),
 			options: ParseOptions::default(),
 			snapshot: None
 		};
@@ -119,12 +116,6 @@ impl Source {
 		let changes = diff(&old, self.snapshot.as_ref().unwrap(), Some(&edited));
 		assert!(changes.refused.is_empty(), "the edit was refused: {:?}", changes.refused);
 		Edit { changes, before: old }
-	}
-}
-
-impl Drop for Source {
-	fn drop(&mut self) {
-		let _ = std::fs::remove_dir_all(&self.dir);
 	}
 }
 

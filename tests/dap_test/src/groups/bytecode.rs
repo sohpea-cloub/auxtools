@@ -253,7 +253,7 @@ fn instruction_breakpoints(world: &mut World, leaf: &[Value]) {
 
 fn old_code() {
 	let dir = copy_of_the_world("bytecode");
-	let mut world = World::launch_in(dir.clone(), json!({ "hotReload": true }));
+	let mut world = World::launch_in(dir.to_path_buf(), json!({ "hotReload": true }));
 	world.catch_runtimes(false);
 	world.configure();
 	world.wait_output("Hot reload active");
@@ -296,7 +296,6 @@ fn old_code() {
 
 	world.resume_through("middle");
 	world.end();
-	let _ = std::fs::remove_dir_all(&dir);
 }
 
 fn instruction_steps(world: &mut World) {
