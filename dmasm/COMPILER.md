@@ -279,6 +279,67 @@ These rules affect generated code and are covered by focused tests:
   by string ID and emit source locations before computed values. Assembly resolves
   the instance through `AssembleEnv::get_instance`.
 
+## State carried between emitters
+
+Some rules go by the source, not by what folding left, so the compiler compiles an
+expression again with nothing folded, looks at the code and throws it away:
+whether a folded `/type::var` default names another file (`names_other_file`) and
+whether the value of `x.y ||= v` uses the cache (`unfolded_has`). Both run through
+`Compiler::speculate`, which drops the code and restores every other field, the
+warnings included, whether the trial compiled or not.
+
+These fields carry something from one emitter to a later one. Each is set just
+before the code that takes it; what would happen if other code came between:
+
+- `regroup_root`: set before a return value, an argument or a parenthesised
+  expression; taken by the next `emit_inner_expr`, which hands it to
+  `binary_ops::emit` as `regroup_chain` when the expression is a binary
+  operation, and drops it otherwise. Code compiled first would be regrouped
+  instead.
+- `place`: set before the place of an assignment that isn't `=` (`emit_place`,
+  the statement form, `emit_conditional`); taken by the next `emit_inner_expr`,
+  which then records no lookahead or compound-term line. The arms that compile a
+  rewritten expression (`&(x)`, `*(p)`, `locate(X) in a in b`) and a place in
+  parentheses compile the inner expression without it, so it records its lines;
+  the statement form strips the parentheses first. Only a place written over
+  several lines could differ, and DreamMaker refused the two such places tried.
+- `safe_place`: set by `emit_conditional` in the debugger's code; taken by
+  `emit_inner_expr` and given back just before `follow::emit_typed` runs on the
+  place's follows, after the term, so nothing compiled for the term sees it.
+- `list_elem_type`: set by `emit_inner_expr` just before `follow::emit_typed`,
+  which takes it first.
+- `skip_compound`: set for `return "[x]"` after its lookahead line; taken by the
+  return value's `emit_inner_expr`. Such a value is never `.`, so it is always
+  taken.
+- `explicit_src`: set where a chain starts with `src` (`src.x`, `new src.a.b()`);
+  cleared by the next instruction, the chain's first load. A call's arguments
+  save and restore it: the receiver's `src.` is not theirs. An instruction
+  emitted before the load would clear it, and the chain would reuse what a bare
+  `x` left in the cache.
+- `line_pending` (a default's line or a text initializer's lookahead line was
+  recorded) and `read_on_pending` (a lookahead line was recorded): the next
+  compound term records its own line. Any line record clears them, so they last
+  until the next line, not the next expression. Without debug info nothing is
+  recorded and they stay set, which changes nothing.
+- `other_file`: the last line record named another file (a default's), or would
+  have if the default hadn't folded; the next one names the proc's file again
+  first. Without debug info it stays set, harmlessly.
+- `mul_lhs`: set for the `*` that is the left operand of a `*`, in parentheses
+  or not; taken by the next binary operation, which is that one, so it doesn't
+  square. Until November 2026 it was set for any left operand, and a `*` inside
+  a call, an index, a `? :` or a negation there lost its square.
+- `condition_chain`: set while an `if` or `while` condition that is a `&&` or `||`
+  compiles; taken by the first `&&` or `||`, the condition itself.
+
+Others are set around one piece of code and cleared after it: `implicit_type`
+(the value assigned to a typed place: the first implicit `new` or `astype()` in
+it takes the type, as in DreamMaker, where `var/T/x = f(new)` makes a T),
+`global_field` (set by field reads, cleared before a `||=` statement's value and
+taken after it), `proc_macro_ok` (the proc of
+`call(x, __PROC__)`, where DreamMaker allows `__PROC__` anywhere before 515.1644
+too), `no_fold` and `live_only` (the trial compiles). `read_to` is reset at each
+statement.
+
 ## Debugger code
 
 `Compiler` compiles a proc from source (`compile_proc`) and what is typed into the debugger:
