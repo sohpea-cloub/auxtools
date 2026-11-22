@@ -630,5 +630,22 @@ pub(super) const RECIPES: &[Recipe] = &[
 		anchor: Anchor::Signature(SignatureTreatment::NoOffset, APPEARANCE_RELEASE),
 		hops: &[1, 1],
 		extract: Extract::Entry
+	},
+	Recipe {
+		name: "execute_instruction",
+		versions: SUPPORTED,
+		anchor: Anchor::Signature(
+			SignatureTreatment::NoOffset,
+			"0F B7 47 ?? 8B 4F ?? 8B F0 8B 14 ?? 89 95 ?? ?? ?? ?? 81 FA ?? 01 00 00"
+		),
+		hops: &[],
+		extract: Extract::Entry
+	},
+	Recipe {
+		name: "Byond_ReadPointer",
+		versions: SUPPORTED,
+		anchor: Anchor::Export(c"Byond_ReadPointer"),
+		hops: &[],
+		extract: Extract::Entry
 	}
 ];

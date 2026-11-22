@@ -1,7 +1,5 @@
 use std::sync::OnceLock;
 
-use byond_scan::{Anchor, Extract, Recipe, VersionRange};
-
 use crate::{
 	raw_types::{
 		funcs,
@@ -10,17 +8,9 @@ use crate::{
 	Value
 };
 
-const READ_POINTER: Recipe = Recipe {
-	name: "Byond_ReadPointer",
-	versions: VersionRange { min: 1637, max: 1688 },
-	anchor: Anchor::Export(c"Byond_ReadPointer"),
-	hops: &[],
-	extract: Extract::Entry
-};
-
 fn found() -> bool {
 	static FOUND: OnceLock<bool> = OnceLock::new();
-	*FOUND.get_or_init(|| match crate::find_recipe(&READ_POINTER) {
+	*FOUND.get_or_init(|| match crate::registry::find!("Byond_ReadPointer") {
 		Ok(address) => {
 			unsafe { funcs::read_pointer_byond = address as *const std::ffi::c_void };
 			true

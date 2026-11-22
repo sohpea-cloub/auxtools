@@ -79,6 +79,12 @@ const APPEARANCE_RELEASE_EARLY: &str =
 const APPEARANCE_RELEASE: &str =
 	"68 ?? ?? ?? ?? E8 ?? ?? ?? ?? 58 5A 53 57 E8 ?? ?? ?? ?? 83 C4 10 C7 85 F4 FE FF FF FF FF 00 00 8B 85 F4 FE FF FF EB 28";
 
+const DISPATCH_MASK_EARLY_515: &str = "0F B7 57 14 8B 47 10 0F B7 DA 8B 0C 98 81 F9 ?? 01 00 00 77 ?? FF 24 8D ?? ?? ?? ??";
+const DISPATCH_MASK_515: &str = "0F B7 46 14 8B 56 10 8D 3C 85 00 00 00 00 66 89 85 ?? ?? ?? ?? 89 85 ?? ?? ?? ?? 8D 04 3A 8B 18 81 FB ?? 01 00 00 \
+                                 0F 87 ?? ?? ?? ?? FF 24 9D ?? ?? ?? ??";
+const DISPATCH_MASK: &str = "0F B7 46 ?? 8B 56 ?? 66 89 85 ?? ?? ?? ?? 89 85 ?? ?? ?? ?? C1 E0 02 89 85 ?? ?? ?? ?? 01 D0 8B 18 81 FB ?? 01 00 00 \
+                             0F 87 ?? ?? ?? ?? FF 24 9D ?? ?? ?? ??";
+
 pub(super) const RECIPES: &[Recipe] = &[
 	Recipe {
 		name: "get_proc_array_entry",
@@ -1038,6 +1044,34 @@ pub(super) const RECIPES: &[Recipe] = &[
 		versions: FROM_515_1647,
 		anchor: Anchor::Signature(SignatureTreatment::NoOffset, APPEARANCE_RELEASE),
 		hops: &[1, 3],
+		extract: Extract::Entry
+	},
+	Recipe {
+		name: "execute_instruction",
+		versions: SUPPORTED,
+		anchor: Anchor::Signature(SignatureTreatment::NoOffset, DISPATCH_MASK),
+		hops: &[],
+		extract: Extract::Entry
+	},
+	Recipe {
+		name: "execute_instruction",
+		versions: LATE_515,
+		anchor: Anchor::Signature(SignatureTreatment::NoOffset, DISPATCH_MASK_515),
+		hops: &[],
+		extract: Extract::Entry
+	},
+	Recipe {
+		name: "execute_instruction",
+		versions: EARLY_515,
+		anchor: Anchor::Signature(SignatureTreatment::NoOffset, DISPATCH_MASK_EARLY_515),
+		hops: &[],
+		extract: Extract::Entry
+	},
+	Recipe {
+		name: "Byond_ReadPointer",
+		versions: EXPORTED,
+		anchor: Anchor::Export(c"Byond_ReadPointer"),
+		hops: &[],
 		extract: Extract::Entry
 	}
 ];

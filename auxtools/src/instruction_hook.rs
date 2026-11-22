@@ -6,55 +6,9 @@ use std::{
 	}
 };
 
-use byond_scan::{Anchor, Extract, Recipe, SignatureTreatment, VersionRange};
 use retour::RawDetour;
 
 use crate::raw_types;
-
-#[cfg(windows)]
-const DISPATCH_MASK: &str = "0F B7 47 ?? 8B 4F ?? 8B F0 8B 14 ?? 89 95 ?? ?? ?? ?? 81 FA ?? 01 00 00";
-#[cfg(unix)]
-const DISPATCH_MASK_EARLY_515: &str = "0F B7 57 14 8B 47 10 0F B7 DA 8B 0C 98 81 F9 ?? 01 00 00 77 ?? FF 24 8D ?? ?? ?? ??";
-#[cfg(unix)]
-const DISPATCH_MASK_515: &str = "0F B7 46 14 8B 56 10 8D 3C 85 00 00 00 00 66 89 85 ?? ?? ?? ?? 89 85 ?? ?? ?? ?? 8D 04 3A 8B 18 81 FB ?? 01 00 00 \
-                                 0F 87 ?? ?? ?? ?? FF 24 9D ?? ?? ?? ??";
-#[cfg(unix)]
-const DISPATCH_MASK: &str = "0F B7 46 ?? 8B 56 ?? 66 89 85 ?? ?? ?? ?? 89 85 ?? ?? ?? ?? C1 E0 02 89 85 ?? ?? ?? ?? 01 D0 8B 18 81 FB ?? 01 00 00 \
-                             0F 87 ?? ?? ?? ?? FF 24 9D ?? ?? ?? ??";
-
-#[cfg(windows)]
-const CHECKED: VersionRange = VersionRange { min: 1637, max: 1688 };
-#[cfg(unix)]
-const CHECKED: VersionRange = VersionRange { min: 1648, max: 1688 };
-
-const EXECUTE_INSTRUCTION: Recipe = Recipe {
-	name: "execute_instruction",
-	versions: CHECKED,
-	anchor: Anchor::Signature(SignatureTreatment::NoOffset, DISPATCH_MASK),
-	hops: &[],
-	extract: Extract::Entry
-};
-
-#[cfg(unix)]
-const EXECUTE_INSTRUCTIONS: &[Recipe] = &[
-	EXECUTE_INSTRUCTION,
-	Recipe {
-		name: "execute_instruction",
-		versions: VersionRange { min: 1644, max: 1647 },
-		anchor: Anchor::Signature(SignatureTreatment::NoOffset, DISPATCH_MASK_515),
-		hops: &[],
-		extract: Extract::Entry
-	},
-	Recipe {
-		name: "execute_instruction",
-		versions: VersionRange { min: 1637, max: 1643 },
-		anchor: Anchor::Signature(SignatureTreatment::NoOffset, DISPATCH_MASK_EARLY_515),
-		hops: &[],
-		extract: Extract::Entry
-	}
-];
-#[cfg(windows)]
-const EXECUTE_INSTRUCTIONS: &[Recipe] = &[EXECUTE_INSTRUCTION];
 
 extern "C" {
 	static mut execute_instruction_original: *const c_void;
@@ -483,7 +437,7 @@ fn detour() -> Result<(), String> {
 			return Ok(());
 		}
 	}
-	let execute_instruction = crate::find_recipe_of(EXECUTE_INSTRUCTIONS)?;
+	let execute_instruction = crate::registry::find!("execute_instruction")?;
 
 	if unsafe { take_table(execute_instruction) }.is_ok() {
 		unsafe {
