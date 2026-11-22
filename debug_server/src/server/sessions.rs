@@ -302,25 +302,10 @@ impl Server {
 			crate::profiler::discard();
 		}
 
-		let mut unclaimed = vec![];
-		for (key, claims) in &mut self.breakpoints {
-			claims.retain(|(client, _), _| *client != id);
-			if claims.is_empty() {
-				unclaimed.push(*key);
-			}
-		}
-		self.moved_breakpoints.retain(|(.., (client, _)), _| *client != id);
-		for (proc, offset) in unclaimed {
-			self.breakpoints.remove(&(proc, offset));
-			if let Some(proc) = Proc::from_id(proc) {
-				let _ = unhook_instruction(&proc, offset as u32);
-			}
-		}
+		self.breakpoints.forget_client(id);
 
 		if self.sessions.clients.is_empty() {
 			self.breakpoints.clear();
-			self.moved_breakpoints.clear();
-			unhook_all();
 		}
 	}
 
