@@ -284,6 +284,20 @@ fn global_vars_is_the_globals_list() {
 }
 
 #[test]
+fn bare_vars_is_a_name_like_any_other() {
+    let error = body("return vars").unwrap_err().to_string();
+    assert_eq!(error, "line 1: undefined var: vars");
+    let error = body("var/n = length(vars)\nn").unwrap_err().to_string();
+    assert_eq!(error, "line 1: undefined var: vars");
+    let unscoped = compile_body_in("return vars", &[], None, ByondVersion::LATEST).unwrap();
+    assert!(
+        dmasm::format(&unscoped.nodes).contains("GetVar global(\"vars\")"),
+        "{}",
+        dmasm::format(&unscoped.nodes)
+    );
+}
+
+#[test]
 fn a_builtin_that_is_only_a_statement_is_a_body() {
     for code in [
         "sleep(1)",

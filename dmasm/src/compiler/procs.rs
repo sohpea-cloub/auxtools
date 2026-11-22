@@ -816,6 +816,9 @@ fn const_lookup(
     if ctx.find_local(name).is_some() || compiler.params.iter().any(|p| p == name) {
         return None;
     }
+    if compiler.debugger && name == "vars" {
+        return None;
+    }
     if let Some(c) = ctx.local_consts.get(name) {
         return Some((c.clone(), false));
     }
