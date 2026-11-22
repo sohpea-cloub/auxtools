@@ -327,7 +327,7 @@ impl Server {
 		let mut found: BTreeMap<String, bool> = BTreeMap::new();
 		match base {
 			Some(base) => {
-				let value = self.eval_expr(frame_id, base);
+				let value = self.eval_expr(EvalRequest::new(frame_id, base)).value;
 				if let Some(state) = self.pause.state.as_mut() {
 					state.invalidate_stacks();
 				}
@@ -387,7 +387,7 @@ impl Server {
 			.collect()
 	}
 
-	pub(super) fn set_variable(&mut self, vars: VariablesRef, name: &str, value: &str) -> Result<Variable, String> {
+	pub(super) fn set_variable(&mut self, vars: VariablesRef, name: &str, value: &str, notes: &mut EvalNotes) -> Result<Variable, String> {
 		let container = self
 			.pause
 			.state
@@ -398,9 +398,10 @@ impl Server {
 			Variables::Arguments { frame } | Variables::Locals { frame } => *frame,
 			_ => 0
 		};
-		let value = self.eval_expr(Some(frame), value);
+		let outcome = self.eval_expr(EvalRequest::new(Some(frame), value));
+		*notes = outcome.notes;
 		self.pause.state.as_mut().unwrap().invalidate_stacks();
-		let value = value?;
+		let value = outcome.value?;
 
 		self.eval.in_eval = true;
 		auxtools::instruction_hook::hear_all();

@@ -45,16 +45,19 @@ impl Pausing {
 
 impl Server {
 	pub(super) fn handle_render(&mut self, frame_id: Option<u32>, expression: &str, depth: u32) {
-		let rendered = match expression.strip_prefix('#') {
+		let (rendered, notes) = match expression.strip_prefix('#') {
 			Some(command) => {
-				self.eval.eval_warnings.clear();
 				self.eval.eval_callee_errors.clear();
 				self.eval.eval_callee_more = 0;
-				Ok(Rendered::Text(self.handle_command(frame_id, command)))
+				let text = self.handle_command(frame_id, command);
+				(Ok(Rendered::Text(text)), self.eval.callee_notes())
 			}
-			None => self.eval_expr(frame_id, expression).map(|value| render(&value, depth))
+			None => {
+				let outcome = self.eval_expr(EvalRequest::new(frame_id, expression));
+				(outcome.value.map(|value| render(&value, depth)), outcome.notes)
+			}
 		};
-		self.send_callee_errors();
+		self.send_callee_errors(notes);
 		self.answer(Response::Render(rendered));
 	}
 

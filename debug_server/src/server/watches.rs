@@ -183,8 +183,11 @@ impl Server {
 			};
 			let (name, condition) = (watch.name.clone(), watch.condition.clone());
 			if let Some(condition) = condition {
-				self.eval.eval_given = vec![(CONDITION_NEW.to_owned(), now.clone()), (CONDITION_OLD.to_owned(), before.clone())];
-				let passed = self.eval_expr(Some(0), &condition).map(|result| result.is_truthy());
+				let passed = self.eval_expr(EvalRequest {
+					given: vec![(CONDITION_NEW.to_owned(), now.clone()), (CONDITION_OLD.to_owned(), before.clone())],
+					..EvalRequest::new(Some(0), &condition)
+				});
+				let passed = passed.value.map(|result| result.is_truthy());
 				if let Some(state) = self.pause.state.as_mut() {
 					state.invalidate_stacks();
 				}
@@ -280,8 +283,12 @@ impl Server {
 		if !auxtools::pointer::readable() {
 			return Err("pointer reads are unavailable in this BYOND build".to_owned());
 		}
-		self.eval.eval_given = given;
-		let pointer = self.eval_expr(frame_id, &format!("&({})", expression));
+		let expression = format!("&({})", expression);
+		let pointer = self.eval_expr(EvalRequest {
+			given,
+			..EvalRequest::new(frame_id, &expression)
+		});
+		let pointer = pointer.value;
 		if let Some(state) = self.pause.state.as_mut() {
 			state.invalidate_stacks();
 		}

@@ -15,15 +15,58 @@ pub(super) struct EvalCodeKey {
 pub(crate) struct Evaluation {
 	pub(super) in_eval: bool,
 	pub(super) eval_error: Option<String>,
-	pub(super) eval_still_running: bool,
 	pub(super) eval_callee_errors: Vec<String>,
 	pub(super) eval_callee_more: usize,
 	pub(super) eval_ran: *mut raw_types::procs::ExecutionContext,
-	pub(super) eval_given: Vec<(String, Value)>,
-	pub(super) eval_code: HashMap<EvalCodeKey, Result<(Vec<u32>, Vec<String>, Vec<String>), String>>,
-	pub(super) eval_warnings: Vec<String>,
-	pub(super) eval_src: Option<Value>,
-	pub(super) spawning: Option<u64>
+	pub(super) eval_code: HashMap<EvalCodeKey, Result<(Vec<u32>, Vec<String>, Vec<String>), String>>
+}
+
+pub(super) struct EvalRequest<'a> {
+	pub(super) frame: Option<u32>,
+	pub(super) command: &'a str,
+	pub(super) src: Option<Value>,
+	pub(super) given: Vec<(String, Value)>,
+	pub(super) mode: EvalMode
+}
+
+pub(super) enum EvalMode {
+	Run,
+	Queue(u64)
+}
+
+impl<'a> EvalRequest<'a> {
+	pub(super) fn new(frame: Option<u32>, command: &'a str) -> Self {
+		Self {
+			frame,
+			command,
+			src: None,
+			given: vec![],
+			mode: EvalMode::Run
+		}
+	}
+}
+
+pub(super) struct EvalOutcome {
+	pub(super) value: Result<Value, String>,
+	pub(super) still_running: bool,
+	pub(super) notes: EvalNotes
+}
+
+impl EvalOutcome {
+	pub(super) fn failed(message: String) -> Self {
+		Self {
+			value: Err(message),
+			still_running: false,
+			notes: EvalNotes::default()
+		}
+	}
+}
+
+#[derive(Default)]
+pub(super) struct EvalNotes {
+	pub(super) warnings: Vec<String>,
+	pub(super) callee_errors: Vec<String>,
+	pub(super) callee_more: usize
 }
 
 impl Evaluation {
@@ -31,15 +74,10 @@ impl Evaluation {
 		Self {
 			in_eval: false,
 			eval_error: None,
-			eval_still_running: false,
 			eval_callee_errors: vec![],
 			eval_callee_more: 0,
 			eval_ran: std::ptr::null_mut(),
-			eval_given: vec![],
-			eval_code: HashMap::new(),
-			eval_warnings: vec![],
-			eval_src: None,
-			spawning: None
+			eval_code: HashMap::new()
 		}
 	}
 
@@ -106,10 +144,11 @@ impl Evaluation {
 		place
 	}
 
-	pub(super) fn eval_failed(&self, message: String) -> EvalError {
-		EvalError {
-			message,
-			still_running: self.eval_still_running
+	pub(super) fn callee_notes(&mut self) -> EvalNotes {
+		EvalNotes {
+			warnings: vec![],
+			callee_errors: std::mem::take(&mut self.eval_callee_errors),
+			callee_more: std::mem::take(&mut self.eval_callee_more)
 		}
 	}
 
@@ -223,13 +262,13 @@ impl Evaluation {
 }
 
 impl Server {
-	pub(super) fn send_callee_errors(&mut self) {
-		let mut notes: Vec<String> = std::mem::take(&mut self.eval.eval_warnings)
-			.into_iter()
-			.map(|warning| format!("warning: {}", warning))
-			.collect();
-		let errors = std::mem::take(&mut self.eval.eval_callee_errors);
-		let more = std::mem::take(&mut self.eval.eval_callee_more);
+	pub(super) fn send_callee_errors(&mut self, notes: EvalNotes) {
+		let EvalNotes {
+			warnings,
+			callee_errors: errors,
+			callee_more: more
+		} = notes;
+		let mut notes: Vec<String> = warnings.into_iter().map(|warning| format!("warning: {}", warning)).collect();
 		notes.extend(
 			errors
 				.into_iter()
@@ -272,34 +311,43 @@ impl Server {
 		}
 	}
 
-	pub(super) fn eval_expr(&mut self, frame_id: Option<u32>, command: &str) -> Result<Value, String> {
-		self.eval_expr_plain(frame_id, command).map_err(Evaluation::unknown_name)
+	pub(super) fn eval_expr(&mut self, request: EvalRequest) -> EvalOutcome {
+		let mut outcome = self.eval_expr_plain(request);
+		outcome.value = outcome.value.map_err(Evaluation::unknown_name);
+		outcome
 	}
 
-	pub(super) fn eval_expr_plain(&mut self, frame_id: Option<u32>, command: &str) -> Result<Value, String> {
+	pub(super) fn eval_expr_plain(&mut self, request: EvalRequest) -> EvalOutcome {
 		self.eval.in_eval = true;
 		auxtools::instruction_hook::hear_all();
 		self.eval.eval_error = None;
 		self.eval.eval_callee_errors.clear();
 		self.eval.eval_callee_more = 0;
-		self.eval.eval_warnings.clear();
 		self.eval.eval_ran = std::ptr::null_mut();
-		self.eval.eval_still_running = false;
+		let mut outcome = EvalOutcome {
+			value: Ok(Value::NULL),
+			still_running: false,
+			notes: EvalNotes::default()
+		};
 
-		let result = self.compile_and_run_expr(frame_id, command);
-		self.eval.eval_given.clear();
-		self.eval.eval_src = None;
+		let result = self.compile_and_run_expr(request, &mut outcome);
 		self.refresh_watches();
 
 		self.eval.in_eval = false;
+		let EvalNotes {
+			callee_errors, callee_more, ..
+		} = self.eval.callee_notes();
+		outcome.notes.callee_errors = callee_errors;
+		outcome.notes.callee_more = callee_more;
 
-		match self.eval.eval_error.take() {
+		outcome.value = match self.eval.eval_error.take() {
 			Some(error) => Err(format!("runtime error: {}", error)),
 			None => result
-		}
+		};
+		outcome
 	}
 
-	pub(super) fn compile_and_run_expr(&mut self, frame_id: Option<u32>, command: &str) -> Result<Value, String> {
+	pub(super) fn compile_and_run_expr(&mut self, request: EvalRequest, outcome: &mut EvalOutcome) -> Result<Value, String> {
 		enum ArgType {
 			Dot,
 			Usr,
@@ -309,11 +357,18 @@ impl Server {
 			Given
 		}
 
+		let EvalRequest {
+			frame: frame_id,
+			command,
+			src: given_src,
+			given,
+			mode
+		} = request;
+
 		let command = &*crate::macros::expand(command)?;
 
 		let globals = unsafe { Value::new(ValueTag::GlobalVars, ValueData { id: 0 }) };
 		let mut src = None;
-		let given_src = self.eval.eval_src.take();
 
 		let (ctx, instance, mut args) = match frame_id {
 			None => {
@@ -362,7 +417,7 @@ impl Server {
 		};
 
 		args.push((GLOBALS.to_owned(), globals, ArgType::Given));
-		for (name, value) in std::mem::take(&mut self.eval.eval_given).into_iter().rev() {
+		for (name, value) in given.into_iter().rev() {
 			args.insert(0, (name, value, ArgType::Given));
 		}
 		let arg_names: Vec<&str> = args.iter().map(|(name, ..)| name.as_str()).collect();
@@ -404,8 +459,8 @@ impl Server {
 			}
 		};
 		let (assembly, locals, warnings) = compiled?;
-		self.eval.eval_warnings = warnings;
-		if let Some(number) = self.eval.spawning.take() {
+		outcome.notes.warnings = warnings;
+		if let EvalMode::Queue(number) = mode {
 			self.spawns.queued.push_back(Spawn {
 				number,
 				bytecode: assembly,
@@ -477,7 +532,7 @@ impl Server {
 
 					Ok(list.get(1).unwrap())
 				} else if !self.eval.eval_ran.is_null() && background_known() && unsafe { *(*self.eval.eval_ran).background() } != 0 {
-					self.eval.eval_still_running = true;
+					outcome.still_running = true;
 					Err(
 						"evaluation aborted: BYOND moved the code to the background, so its result is unavailable. This can happen after about a \
 						 million loop iterations (world.loop_checks), or with `set background = 1`. The code is still running. Use `eval --spawn \
@@ -485,7 +540,7 @@ impl Server {
 							.to_owned()
 					)
 				} else if !background_known() {
-					self.eval.eval_still_running = true;
+					outcome.still_running = true;
 					Err(
 						"evaluation aborted because the code slept or BYOND moved it to the background, so its result is unavailable. BYOND does \
 						 that after about a million loop iterations (world.loop_checks), or with `set background = 1`. Use `eval --spawn --wait` to \
@@ -493,7 +548,7 @@ impl Server {
 							.to_owned()
 					)
 				} else {
-					self.eval.eval_still_running = true;
+					outcome.still_running = true;
 					Err("evaluation aborted because the code slept".to_owned())
 				}
 			}
@@ -529,27 +584,29 @@ impl Server {
 		}
 
 		let reached = (!dmasm::compiler::is_body(command)).then(|| format!("({})", command));
-		let response = self
-			.eval_expr(frame_id, command)
+		let EvalOutcome { value, still_running, notes } = self.eval_expr(EvalRequest::new(frame_id, command));
+		let response = value
 			.map(|result| EvalResponse {
 				value: values::stringify(&result),
 				variables: self.pause.value_to_variables_ref(&result, reached),
 				kind: values::kind(&result),
 				entries: values::entries(&result)
 			})
-			.map_err(|message| self.eval.eval_failed(message));
+			.map_err(|message| EvalError { message, still_running });
 		let still_running = matches!(&response, Err(error) if error.still_running);
-		self.send_callee_errors();
+		self.send_callee_errors(notes);
 		self.answer(Response::Eval(response));
 		still_running
 	}
 
 	pub(super) fn handle_eval_on(&mut self, object: &str, expression: &str, depth: Option<u32>) {
-		self.eval.eval_still_running = false;
-		let value = self.object_of(object).and_then(|object| {
-			self.eval.eval_src = Some(object);
-			self.eval_expr(None, expression)
-		});
+		let EvalOutcome { value, still_running, notes } = match self.object_of(object) {
+			Ok(object) => self.eval_expr(EvalRequest {
+				src: Some(object),
+				..EvalRequest::new(None, expression)
+			}),
+			Err(error) => EvalOutcome::failed(error)
+		};
 		let response = match depth {
 			Some(depth) => Response::Render(value.map(|value| render::render(&value, depth))),
 			None => Response::Eval(
@@ -560,10 +617,10 @@ impl Server {
 						kind: values::kind(&result),
 						entries: values::entries(&result)
 					})
-					.map_err(|message| self.eval.eval_failed(message))
+					.map_err(|message| EvalError { message, still_running })
 			)
 		};
-		self.send_callee_errors();
+		self.send_callee_errors(notes);
 		self.answer(response);
 	}
 
@@ -576,7 +633,7 @@ impl Server {
 			.and_then(|hex| u32::from_str_radix(hex, 16).ok())
 			.ok_or_else(|| format!("invalid object reference {}; expected a ref() value such as [0x2000001]", reference))?;
 		let reference = format!("[0x{:x}]", id);
-		let found = self.eval_expr(None, &format!("locate(\"\\{}\")", reference))?;
+		let found = self.eval_expr(EvalRequest::new(None, &format!("locate(\"\\{}\")", reference))).value?;
 		if found == Value::NULL {
 			return Err(format!("object not found: {}", reference));
 		}

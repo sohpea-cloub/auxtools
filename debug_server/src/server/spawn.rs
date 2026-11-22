@@ -87,11 +87,12 @@ impl Server {
 		crate::launched::can_spawn()?;
 		let object = object.map(|object| self.object_of(object)).transpose()?;
 		let number = NEXT_SPAWN.fetch_add(1, Ordering::Relaxed);
-		self.eval.eval_src = object;
-		self.eval.spawning = Some(number);
-		let compiled = self.eval_expr(None, expression);
-		self.eval.spawning = None;
-		compiled?;
+		let compiled = self.eval_expr(EvalRequest {
+			src: object,
+			mode: EvalMode::Queue(number),
+			..EvalRequest::new(None, expression)
+		});
+		compiled.value?;
 		self.spawns.spawned.insert(number, (expression.to_owned(), None));
 		Ok(number)
 	}

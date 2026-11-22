@@ -41,6 +41,7 @@ mod watches;
 use breakpoints::Breakpoints;
 use code::Codes;
 pub(crate) use eval::{is_expression_frame, Evaluation};
+use eval::{EvalMode, EvalNotes, EvalRequest};
 use pause::{Pausing, State};
 use reload::Reloads;
 use sessions::{ClientId, Sessions, Wait};
@@ -129,8 +130,9 @@ impl Server {
 				self.answer(Response::Complete(names));
 			}
 			Request::SetVariable { vars, name, value } => {
-				let result = self.set_variable(vars, &name, &value);
-				self.send_callee_errors();
+				let mut notes = EvalNotes::default();
+				let result = self.set_variable(vars, &name, &value, &mut notes);
+				self.send_callee_errors(notes);
 				self.answer(Response::SetVariable(result));
 			}
 			Request::Eval { frame_id, command, ending } => self.handle_eval_request(frame_id, &command, ending),

@@ -198,7 +198,7 @@ impl Server {
 			match part {
 				LogPart::Text(text) => message.push_str(text),
 				LogPart::Expr(expression) => {
-					match self.eval_expr_plain(Some(0), expression) {
+					match self.eval_expr_plain(EvalRequest::new(Some(0), expression)).value {
 						Ok(value) => message.push_str(&value.as_string().unwrap_or_else(|_| values::stringify(&value))),
 						Err(error) => message.push_str(&format!("{{{}: {}}}", expression, error))
 					}
@@ -230,7 +230,10 @@ impl Server {
 				continue;
 			};
 			if let Some(condition) = condition {
-				let passed = self.eval_expr(Some(0), &condition).map(|result| result.is_truthy());
+				let passed = self
+					.eval_expr(EvalRequest::new(Some(0), &condition))
+					.value
+					.map(|result| result.is_truthy());
 
 				self.pause.state.as_mut().unwrap().invalidate_stacks();
 				match passed {
