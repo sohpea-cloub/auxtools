@@ -1,9 +1,12 @@
 use byond_scan::{Anchor, Extract, OperandSelect, Recipe, SignatureTreatment, VersionRange};
 
-const SUPPORTED: VersionRange = VersionRange { min: 1648, max: 1688 };
-const FROM_515_1644: VersionRange = VersionRange { min: 1644, max: 1688 };
-const LATE_515: VersionRange = VersionRange { min: 1644, max: 1647 };
-const EARLY_515: VersionRange = VersionRange { min: 1637, max: 1643 };
+use super::builds::{since, until, FIRST_515, FIRST_516, LINUX_FRAMELESS, TYPEPATHS, TYPEPATH_NONE_CHECK};
+
+const SINCE_516: VersionRange = since(FIRST_516);
+const SINCE_515_1644: VersionRange = since(LINUX_FRAMELESS);
+const LATE_515: VersionRange = until(LINUX_FRAMELESS, FIRST_516);
+const EARLY_515: VersionRange = until(FIRST_515, LINUX_FRAMELESS);
+const EVERY_BUILD: VersionRange = since(FIRST_515);
 
 const GLOBAL_VARS_SIG: &str = "89 1D ?? ?? ?? ?? 57 E8 ?? ?? ?? ?? 83 C4 10 85 FF 74 08 85 C0 0F 84 ?? ?? ?? ?? 83 EC 0C C1 E3 02 A3 ?? ?? ?? ?? 53 \
                                E8 ?? ?? ?? ?? 83 C4 10 85 DB 74 08 85 C0 0F 84 ?? ?? ?? ?? A3 ?? ?? ?? ??";
@@ -20,8 +23,6 @@ const STRING_ACCESSOR_SIG: &str = "56 53 83 EC 14 8B 44 24 20 39 05 ?? ?? ?? ?? 
 
 const ALIST_SIG: &str =
 	"8B 54 24 04 8B 4C 24 08 80 FA 0F 74 ?? 31 C0 80 FA 55 75 ?? 3B 0D ?? ?? ?? ?? 73 ?? A1 ?? ?? ?? ?? 8B 04 88 85 C0 74 ?? 8B 00 C3";
-
-const EXPORTED: VersionRange = VersionRange { min: 1637, max: 1688 };
 
 const TYPE_MAP_ACCESSOR: &str = "8B 54 24 04 31 C0 39 15 ?? ?? ?? ?? 72 08 A1 ?? ?? ?? ?? 8D 04 D0 C3";
 
@@ -53,7 +54,7 @@ const MOB_LOADER_EARLY: &str = "A3 ?? ?? ?? ?? 89 C6 C1 E6 04 89 34 24 E8 ?? ?? 
 
 const INSTANCE_LOADER_EARLY: &str = "A3 ?? ?? ?? ?? 6B C0 0C 31 FF 31 F6 89 04 24 E8 ?? ?? ?? ?? A3 ?? ?? ?? ?? EB ?? A1 ?? ?? ?? ?? 83 C6 01";
 
-const FROM_515_1647: VersionRange = VersionRange { min: 1647, max: 1688 };
+const SINCE_515_1647: VersionRange = since(1647);
 
 const APPEARANCE_SEND_EARLY: &str =
 	"55 0F B7 C0 89 E5 57 56 53 89 D3 81 EC 2C 09 00 00 89 04 24 89 8D 74 F7 FF FF 89 85 4C F7 FF FF E8 ?? ?? ?? ?? 85 C0 89";
@@ -88,21 +89,21 @@ const DISPATCH_MASK: &str = "0F B7 46 ?? 8B 56 ?? 66 89 85 ?? ?? ?? ?? 89 85 ?? 
 pub(super) const RECIPES: &[Recipe] = &[
 	Recipe {
 		name: "get_proc_array_entry",
-		versions: FROM_515_1644,
+		versions: SINCE_515_1644,
 		anchor: Anchor::Signature(SignatureTreatment::NoOffset, PROCDEF_ACCESSOR_SIG),
 		hops: &[],
 		extract: Extract::Entry
 	},
 	Recipe {
 		name: "get_string_table_entry",
-		versions: FROM_515_1644,
+		versions: SINCE_515_1644,
 		anchor: Anchor::Signature(SignatureTreatment::NoOffset, STRING_ACCESSOR_SIG),
 		hops: &[],
 		extract: Extract::Entry
 	},
 	Recipe {
 		name: "get_string_id",
-		versions: FROM_515_1644,
+		versions: SINCE_515_1644,
 		anchor: Anchor::Signature(
 			SignatureTreatment::NoOffset,
 			"55 57 56 89 CE 53 89 D3 83 EC ?? 8B 54 24 ?? 88 54 24 ?? 85 C0 0F 84 ?? ?? ?? ?? 89 44 24 ?? 84 DB 0F 88 ?? ?? ?? ?? 88 5C 24 ?? 80 FB \
@@ -113,7 +114,7 @@ pub(super) const RECIPES: &[Recipe] = &[
 	},
 	Recipe {
 		name: "call_proc_by_id",
-		versions: FROM_515_1644,
+		versions: SINCE_515_1644,
 		anchor: Anchor::Signature(
 			SignatureTreatment::NoOffset,
 			"55 31 C0 57 56 53 81 EC ?? ?? ?? ?? F3 0F 7E 8C 24 ?? ?? ?? ?? 8B 8C 24 ?? ?? ?? ?? 8A 84 24 ?? ?? ?? ?? 8B 9C 24 ?? ?? ?? ?? F3 0F 7E \
@@ -124,7 +125,7 @@ pub(super) const RECIPES: &[Recipe] = &[
 	},
 	Recipe {
 		name: "call_datum_proc_by_name",
-		versions: FROM_515_1644,
+		versions: SINCE_515_1644,
 		anchor: Anchor::Signature(
 			SignatureTreatment::NoOffset,
 			"55 31 C9 89 E5 57 56 8D 45 ?? 53 83 EC ?? F3 0F 7E 45 0C 8B 5D 14 C6 45 ?? 00 8B 55 18 8B 75 08 6A 00 66 0F D6 45 ?? 0F B6 FB 66 0F 7E \
@@ -135,7 +136,7 @@ pub(super) const RECIPES: &[Recipe] = &[
 	},
 	Recipe {
 		name: "get_variable",
-		versions: SUPPORTED,
+		versions: SINCE_516,
 		anchor: Anchor::Signature(
 			SignatureTreatment::NoOffset,
 			"55 89 E5 57 56 53 83 EC ?? F3 0F 7E 4D 0C 8B 75 08 8B 5D 14 66 0F 6F C1 66 0F 7E CA 66 0F 73 D0 20 0F B6 C2 66 0F 7E 45 ?? 3C 58 77 ??"
@@ -145,7 +146,7 @@ pub(super) const RECIPES: &[Recipe] = &[
 	},
 	Recipe {
 		name: "set_variable",
-		versions: SUPPORTED,
+		versions: SINCE_516,
 		anchor: Anchor::Signature(
 			SignatureTreatment::NoOffset,
 			"55 89 E5 57 56 53 83 EC ?? F3 0F 7E 55 08 8B 7D 10 66 0F 6F C2 66 0F 7E D2 66 0F 73 D0 20 89 D3 66 0F 7E C6 F3 0F 7E 45 14 89 75 ?? 66 \
@@ -156,7 +157,7 @@ pub(super) const RECIPES: &[Recipe] = &[
 	},
 	Recipe {
 		name: "inc_ref_count",
-		versions: FROM_515_1644,
+		versions: SINCE_515_1644,
 		anchor: Anchor::Signature(
 			SignatureTreatment::NoOffset,
 			"55 89 E5 56 53 83 EC ?? F3 0F 7E 4D 08 66 0F 6F C1 66 0F 7E C9 66 0F 73 D0 20 66 0F 7E C0 80 F9 4A 77 ?? 0F B6 C9 FF 24 8D ?? ?? ?? ??"
@@ -166,14 +167,14 @@ pub(super) const RECIPES: &[Recipe] = &[
 	},
 	Recipe {
 		name: "dec_ref_count",
-		versions: SUPPORTED,
+		versions: SINCE_516,
 		anchor: Anchor::Export(c"ByondValue_DecRef"),
 		hops: &[4],
 		extract: Extract::Entry
 	},
 	Recipe {
 		name: "get_assoc_element",
-		versions: SUPPORTED,
+		versions: SINCE_516,
 		anchor: Anchor::Signature(
 			SignatureTreatment::NoOffset,
 			"55 89 E5 57 56 53 83 EC ?? F3 0F 7E 4D 0C 8B 7D 08 66 0F 6F C1 66 0F 7E C8 66 0F 7E 4D ?? 66 0F 73 D0 20 66 0F 7E 45 ?? 3C 3C 0F 84 ?? \
@@ -184,7 +185,7 @@ pub(super) const RECIPES: &[Recipe] = &[
 	},
 	Recipe {
 		name: "set_assoc_element",
-		versions: FROM_515_1644,
+		versions: SINCE_515_1644,
 		anchor: Anchor::Signature(
 			SignatureTreatment::OffsetByCall,
 			"E8 ?? ?? ?? ?? 83 C4 20 E9 ?? ?? ?? ?? ?? ?? ?? ?? 31 C9 EB ?? D9 43 04 BA 01 00 00 00"
@@ -194,7 +195,7 @@ pub(super) const RECIPES: &[Recipe] = &[
 	},
 	Recipe {
 		name: "create_list",
-		versions: FROM_515_1644,
+		versions: SINCE_515_1644,
 		anchor: Anchor::Signature(
 			SignatureTreatment::NoOffset,
 			"55 57 56 53 83 EC ?? A1 ?? ?? ?? ?? 8B 7C 24 ?? 85 C0 0F 84 ?? ?? ?? ?? 8B 15 ?? ?? ?? ?? 83 E8 01 A3 ?? ?? ?? ?? 8B 1C 82 81 FB FF FF \
@@ -205,7 +206,7 @@ pub(super) const RECIPES: &[Recipe] = &[
 	},
 	Recipe {
 		name: "append_to_list",
-		versions: SUPPORTED,
+		versions: SINCE_516,
 		anchor: Anchor::Signature(
 			SignatureTreatment::NoOffset,
 			"56 66 0F 6E CA 66 0F 6E C0 53 66 0F 62 C1 66 0F 7E C6 66 0F 6F D0 66 0F 73 D0 20 89 F1 83 EC ?? 66 0F 7E C0 F3 0F 7E 4C 24 ?? 66 0F 6F \
@@ -216,7 +217,7 @@ pub(super) const RECIPES: &[Recipe] = &[
 	},
 	Recipe {
 		name: "remove_from_list",
-		versions: SUPPORTED,
+		versions: SINCE_516,
 		anchor: Anchor::Signature(
 			SignatureTreatment::OffsetByCall,
 			"E8 ?? ?? ?? ?? 83 85 ?? ?? ?? ?? 01 8B 8D ?? ?? ?? ?? 83 C4 10 83 85 ?? ?? ?? ?? 08 39"
@@ -226,7 +227,7 @@ pub(super) const RECIPES: &[Recipe] = &[
 	},
 	Recipe {
 		name: "get_length",
-		versions: SUPPORTED,
+		versions: SINCE_516,
 		anchor: Anchor::Signature(
 			SignatureTreatment::NoOffset,
 			"55 89 E5 57 56 53 83 EC ?? F3 0F 7E 4D 0C 8B 5D 08 66 0F 7E CA 83 EA 0C 80 FA 4B 77 ?? 66 0F 6F C1 0F B6 D2 66 0F 73 D0 20 66 0F 7E C0 \
@@ -237,7 +238,7 @@ pub(super) const RECIPES: &[Recipe] = &[
 	},
 	Recipe {
 		name: "value_is_list",
-		versions: SUPPORTED,
+		versions: SINCE_516,
 		anchor: Anchor::Signature(
 			SignatureTreatment::NoOffset,
 			"55 89 E5 56 53 83 EC ?? F3 0F 7E 4D 08 8B 75 10 66 0F 7E CA 80 FA 55 0F 87 ?? ?? ?? ?? 80 FA 3B 76 ?? 8D 4A C4 B8 01 00 00 00 D3 E0 89 \
@@ -248,7 +249,7 @@ pub(super) const RECIPES: &[Recipe] = &[
 	},
 	Recipe {
 		name: "get_misc_by_id",
-		versions: FROM_515_1644,
+		versions: SINCE_515_1644,
 		anchor: Anchor::Signature(
 			SignatureTreatment::OffsetByCall,
 			"E8 ?? ?? ?? ?? 89 85 ?? ?? ?? ?? 83 C4 10 31 DB 85 C0 74 03 0F B7 18 8B 85 ?? ?? ?? ??"
@@ -258,7 +259,7 @@ pub(super) const RECIPES: &[Recipe] = &[
 	},
 	Recipe {
 		name: "to_string",
-		versions: SUPPORTED,
+		versions: SINCE_516,
 		anchor: Anchor::Signature(
 			SignatureTreatment::NoOffset,
 			"55 89 E5 57 56 53 83 EC ?? 0F B6 45 08 3C 45 77 ?? 3C 27 77 ?? 8D 50 FF 80 FA 26 77 ?? FF 24 85 ?? ?? ?? ??"
@@ -268,49 +269,49 @@ pub(super) const RECIPES: &[Recipe] = &[
 	},
 	Recipe {
 		name: "runtime",
-		versions: SUPPORTED,
+		versions: SINCE_516,
 		anchor: Anchor::Signature(SignatureTreatment::NoOffset, RUNTIME_SIG),
 		hops: &[],
 		extract: Extract::Entry
 	},
 	Recipe {
 		name: "current_execution_context",
-		versions: SUPPORTED,
+		versions: SINCE_516,
 		anchor: Anchor::Signature(SignatureTreatment::NoOffset, RUNTIME_SIG),
 		hops: &[],
 		extract: Extract::AbsMem(OperandSelect::NthAbsMem(0))
 	},
 	Recipe {
 		name: "variable_names",
-		versions: FROM_515_1644,
+		versions: SINCE_515_1644,
 		anchor: Anchor::Signature(SignatureTreatment::NoOffset, GLOBAL_VARS_SIG),
 		hops: &[],
 		extract: Extract::AbsMem(OperandSelect::NthAbsMem(2))
 	},
 	Recipe {
 		name: "suspended_procs",
-		versions: FROM_515_1644,
+		versions: SINCE_515_1644,
 		anchor: Anchor::Signature(SignatureTreatment::NoOffset, SUSPENDED_SIG),
 		hops: &[],
 		extract: Extract::AbsMem(OperandSelect::NthAbsMem(0))
 	},
 	Recipe {
 		name: "suspended_procs_buffer",
-		versions: FROM_515_1644,
+		versions: SINCE_515_1644,
 		anchor: Anchor::Signature(SignatureTreatment::NoOffset, SUSPENDED_SIG),
 		hops: &[],
 		extract: Extract::AbsMem(OperandSelect::NthAbsMem(2))
 	},
 	Recipe {
 		name: "alist_table_count",
-		versions: SUPPORTED,
+		versions: SINCE_516,
 		anchor: Anchor::Signature(SignatureTreatment::NoOffset, ALIST_SIG),
 		hops: &[],
 		extract: Extract::AbsMem(OperandSelect::NthAbsMem(0))
 	},
 	Recipe {
 		name: "alist_table_ptr",
-		versions: SUPPORTED,
+		versions: SINCE_516,
 		anchor: Anchor::Signature(SignatureTreatment::NoOffset, ALIST_SIG),
 		hops: &[],
 		extract: Extract::AbsMem(OperandSelect::NthAbsMem(1))
@@ -648,7 +649,7 @@ pub(super) const RECIPES: &[Recipe] = &[
 	},
 	Recipe {
 		name: "procdef_add",
-		versions: FROM_515_1644,
+		versions: SINCE_515_1644,
 		anchor: Anchor::Signature(
 			SignatureTreatment::NoOffset,
 			"57 56 53 83 EC 10 A1 ?? ?? ?? ?? 8B 7C 24 20 85 C0 0F 84 ?? ?? ?? ?? 31 F6 31 DB EB ?? 8D 76 00 A1 ?? ?? ?? ?? 83 C3 01"
@@ -658,7 +659,7 @@ pub(super) const RECIPES: &[Recipe] = &[
 	},
 	Recipe {
 		name: "misc_intern_copy",
-		versions: FROM_515_1644,
+		versions: SINCE_515_1644,
 		anchor: Anchor::Signature(
 			SignatureTreatment::NoOffset,
 			"57 56 53 8B 1D ?? ?? ?? ?? 8B 7C 24 10 8B 74 24 14 85 DB 74 ?? 8B 43 08 A3 ?? ?? ?? ?? 66 89 33 0F B7 F6"
@@ -668,28 +669,28 @@ pub(super) const RECIPES: &[Recipe] = &[
 	},
 	Recipe {
 		name: "obj_type_count",
-		versions: FROM_515_1644,
+		versions: SINCE_515_1644,
 		anchor: Anchor::Signature(SignatureTreatment::NoOffset, TYPE_MAP_ACCESSOR),
 		hops: &[],
 		extract: Extract::AbsMem(OperandSelect::NthAbsMem(0))
 	},
 	Recipe {
 		name: "proc_name_maps",
-		versions: FROM_515_1644,
+		versions: SINCE_515_1644,
 		anchor: Anchor::Signature(SignatureTreatment::NoOffset, TYPE_MAP_ACCESSOR),
 		hops: &[],
 		extract: Extract::AbsMem(OperandSelect::NthAbsMem(1))
 	},
 	Recipe {
 		name: "global_values",
-		versions: FROM_515_1644,
+		versions: SINCE_515_1644,
 		anchor: Anchor::Signature(SignatureTreatment::NoOffset, GLOBAL_VARS_SIG),
 		hops: &[],
 		extract: Extract::AbsMem(OperandSelect::NthAbsMem(1))
 	},
 	Recipe {
 		name: "global_vars",
-		versions: FROM_515_1644,
+		versions: SINCE_515_1644,
 		anchor: Anchor::Signature(
 			SignatureTreatment::NoOffset,
 			"66 D1 EA 0F B7 D2 E8 ?? ?? ?? ?? 59 58 0F B7 07 50 53 E8 ?? ?? ?? ?? 89 C7 89 1C 24 A3 ?? ?? ?? ??"
@@ -699,28 +700,28 @@ pub(super) const RECIPES: &[Recipe] = &[
 	},
 	Recipe {
 		name: "AllocShared",
-		versions: EXPORTED,
+		versions: EVERY_BUILD,
 		anchor: Anchor::Export(c"_Z11AllocSharedm"),
 		hops: &[],
 		extract: Extract::Entry
 	},
 	Recipe {
 		name: "FreeShared",
-		versions: EXPORTED,
+		versions: EVERY_BUILD,
 		anchor: Anchor::Export(c"_Z10FreeSharedPv"),
 		hops: &[],
 		extract: Extract::Entry
 	},
 	Recipe {
 		name: "CopyShared",
-		versions: EXPORTED,
+		versions: EVERY_BUILD,
 		anchor: Anchor::Export(c"_Z10CopySharedPv"),
 		hops: &[],
 		extract: Extract::Entry
 	},
 	Recipe {
 		name: "type_preorder",
-		versions: FROM_515_1644,
+		versions: SINCE_515_1644,
 		anchor: Anchor::Signature(SignatureTreatment::NoOffset, TYPE_LOADER),
 		hops: &[],
 		extract: Extract::AbsMem(OperandSelect::NthAbsMem(4))
@@ -734,7 +735,7 @@ pub(super) const RECIPES: &[Recipe] = &[
 	},
 	Recipe {
 		name: "type_appearance_cache",
-		versions: FROM_515_1644,
+		versions: SINCE_515_1644,
 		anchor: Anchor::Signature(SignatureTreatment::NoOffset, TYPE_LOADER),
 		hops: &[],
 		extract: Extract::AbsMem(OperandSelect::NthAbsMem(6))
@@ -748,21 +749,21 @@ pub(super) const RECIPES: &[Recipe] = &[
 	},
 	Recipe {
 		name: "in_list_count",
-		versions: FROM_515_1644,
+		versions: SINCE_515_1644,
 		anchor: Anchor::Signature(SignatureTreatment::NoOffset, IN_LIST_LOADER),
 		hops: &[],
 		extract: Extract::AbsMem(OperandSelect::NthAbsMem(1))
 	},
 	Recipe {
 		name: "in_list_procs",
-		versions: FROM_515_1644,
+		versions: SINCE_515_1644,
 		anchor: Anchor::Signature(SignatureTreatment::NoOffset, IN_LIST_LOADER),
 		hops: &[],
 		extract: Extract::AbsMem(OperandSelect::NthAbsMem(2))
 	},
 	Recipe {
 		name: "world_name_map",
-		versions: FROM_515_1644,
+		versions: SINCE_515_1644,
 		anchor: Anchor::Signature(
 			SignatureTreatment::NoOffset,
 			"0F B6 45 ?? 89 7D 0C C7 45 08 ?? ?? ?? ?? 89 45 14 89 F0 0F B6 F0 89 75 10 8D 65 F4 5B 5E 5F 5D E9"
@@ -772,35 +773,35 @@ pub(super) const RECIPES: &[Recipe] = &[
 	},
 	Recipe {
 		name: "mob_count",
-		versions: FROM_515_1644,
+		versions: SINCE_515_1644,
 		anchor: Anchor::Signature(SignatureTreatment::NoOffset, MOB_LOADER),
 		hops: &[],
 		extract: Extract::AbsMem(OperandSelect::NthAbsMem(0))
 	},
 	Recipe {
 		name: "mobs",
-		versions: FROM_515_1644,
+		versions: SINCE_515_1644,
 		anchor: Anchor::Signature(SignatureTreatment::NoOffset, MOB_LOADER),
 		hops: &[],
 		extract: Extract::AbsMem(OperandSelect::NthAbsMem(1))
 	},
 	Recipe {
 		name: "instance_count",
-		versions: FROM_515_1644,
+		versions: SINCE_515_1644,
 		anchor: Anchor::Signature(SignatureTreatment::NoOffset, INSTANCE_LOADER),
 		hops: &[],
 		extract: Extract::AbsMem(OperandSelect::NthAbsMem(0))
 	},
 	Recipe {
 		name: "instances",
-		versions: FROM_515_1644,
+		versions: SINCE_515_1644,
 		anchor: Anchor::Signature(SignatureTreatment::NoOffset, INSTANCE_LOADER),
 		hops: &[],
 		extract: Extract::AbsMem(OperandSelect::NthAbsMem(1))
 	},
 	Recipe {
 		name: "register_typepath",
-		versions: VersionRange { min: 1686, max: 1688 },
+		versions: since(TYPEPATH_NONE_CHECK),
 		anchor: Anchor::Signature(
 			SignatureTreatment::NoOffset,
 			"53 83 EC 18 8B 44 24 20 3B 05 ?? ?? ?? ?? 73 ?? 3D FF FF 00 00 74 ?? 69 D8 94 00 00 00 03 1D ?? ?? ?? ?? 74 ?? 80 BB 8C 00 00 00 00 74 \
@@ -811,7 +812,7 @@ pub(super) const RECIPES: &[Recipe] = &[
 	},
 	Recipe {
 		name: "register_typepath",
-		versions: VersionRange { min: 1644, max: 1685 },
+		versions: until(LINUX_FRAMELESS, TYPEPATH_NONE_CHECK),
 		anchor: Anchor::Signature(
 			SignatureTreatment::NoOffset,
 			"53 83 EC 18 8B 44 24 20 3B 05 ?? ?? ?? ?? 73 ?? 69 D8 94 00 00 00 03 1D ?? ?? ?? ?? 74 ?? 80 BB 8C 00 00 00 00 74 ?? 8D 44 24 08 83 EC \
@@ -925,7 +926,7 @@ pub(super) const RECIPES: &[Recipe] = &[
 	},
 	Recipe {
 		name: "register_typepath",
-		versions: VersionRange { min: 1641, max: 1643 },
+		versions: until(TYPEPATHS, LINUX_FRAMELESS),
 		anchor: Anchor::Signature(
 			SignatureTreatment::NoOffset,
 			"55 89 E5 53 83 EC 24 8B 45 08 3B 05 ?? ?? ?? ?? 73 ?? 69 D8 94 00 00 00 03 1D ?? ?? ?? ?? 74 ?? 80 BB 8C 00 00 00 00 74 ?? C7 44 24 08 \
@@ -943,7 +944,7 @@ pub(super) const RECIPES: &[Recipe] = &[
 	},
 	Recipe {
 		name: "appearance_send",
-		versions: FROM_515_1647,
+		versions: SINCE_515_1647,
 		anchor: Anchor::Signature(SignatureTreatment::NoOffset, APPEARANCE_SEND),
 		hops: &[],
 		extract: Extract::Entry
@@ -957,7 +958,7 @@ pub(super) const RECIPES: &[Recipe] = &[
 	},
 	Recipe {
 		name: "connection_count",
-		versions: FROM_515_1647,
+		versions: SINCE_515_1647,
 		anchor: Anchor::Signature(SignatureTreatment::NoOffset, APPEARANCE_SEND),
 		hops: &[0],
 		extract: Extract::AbsMem(OperandSelect::NthAbsMem(0))
@@ -971,7 +972,7 @@ pub(super) const RECIPES: &[Recipe] = &[
 	},
 	Recipe {
 		name: "connections",
-		versions: FROM_515_1647,
+		versions: SINCE_515_1647,
 		anchor: Anchor::Signature(SignatureTreatment::NoOffset, APPEARANCE_SEND),
 		hops: &[0],
 		extract: Extract::AbsMem(OperandSelect::NthAbsMem(1))
@@ -985,7 +986,7 @@ pub(super) const RECIPES: &[Recipe] = &[
 	},
 	Recipe {
 		name: "appearance_manager",
-		versions: FROM_515_1647,
+		versions: SINCE_515_1647,
 		anchor: Anchor::Signature(SignatureTreatment::NoOffset, APPEARANCE_SEND),
 		hops: &[1],
 		extract: Extract::AbsMem(OperandSelect::FirstAbsMem)
@@ -999,7 +1000,7 @@ pub(super) const RECIPES: &[Recipe] = &[
 	},
 	Recipe {
 		name: "appearance_compare",
-		versions: FROM_515_1647,
+		versions: SINCE_515_1647,
 		anchor: Anchor::Signature(SignatureTreatment::NoOffset, APPEARANCE_COMPARE),
 		hops: &[],
 		extract: Extract::Entry
@@ -1013,7 +1014,7 @@ pub(super) const RECIPES: &[Recipe] = &[
 	},
 	Recipe {
 		name: "appearance_update_bounds",
-		versions: FROM_515_1647,
+		versions: SINCE_515_1647,
 		anchor: Anchor::Signature(SignatureTreatment::NoOffset, APPEARANCE_BOUNDS),
 		hops: &[],
 		extract: Extract::Entry
@@ -1027,7 +1028,7 @@ pub(super) const RECIPES: &[Recipe] = &[
 	},
 	Recipe {
 		name: "appearance_tree_unlink",
-		versions: FROM_515_1647,
+		versions: SINCE_515_1647,
 		anchor: Anchor::Signature(SignatureTreatment::NoOffset, APPEARANCE_RELEASE),
 		hops: &[1, 0],
 		extract: Extract::Entry
@@ -1041,14 +1042,14 @@ pub(super) const RECIPES: &[Recipe] = &[
 	},
 	Recipe {
 		name: "appearance_tree_rebalance",
-		versions: FROM_515_1647,
+		versions: SINCE_515_1647,
 		anchor: Anchor::Signature(SignatureTreatment::NoOffset, APPEARANCE_RELEASE),
 		hops: &[1, 3],
 		extract: Extract::Entry
 	},
 	Recipe {
 		name: "execute_instruction",
-		versions: SUPPORTED,
+		versions: SINCE_516,
 		anchor: Anchor::Signature(SignatureTreatment::NoOffset, DISPATCH_MASK),
 		hops: &[],
 		extract: Extract::Entry
@@ -1069,7 +1070,7 @@ pub(super) const RECIPES: &[Recipe] = &[
 	},
 	Recipe {
 		name: "Byond_ReadPointer",
-		versions: EXPORTED,
+		versions: EVERY_BUILD,
 		anchor: Anchor::Export(c"Byond_ReadPointer"),
 		hops: &[],
 		extract: Extract::Entry

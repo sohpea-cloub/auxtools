@@ -449,7 +449,7 @@ fn detour() -> Result<(), String> {
 	#[cfg(windows)]
 	let versioned_hook = execute_instruction_hook as *const ();
 	#[cfg(unix)]
-	let versioned_hook = if crate::version::get().1 < 1644 {
+	let versioned_hook = if crate::version::get().1 < crate::registry::builds::LINUX_FRAMELESS {
 		execute_instruction_hook_edi as *const ()
 	} else {
 		execute_instruction_hook as *const ()

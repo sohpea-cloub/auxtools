@@ -2,12 +2,8 @@ use std::ffi::c_void;
 
 use crate::{
 	raw_types::{funcs, lists, procs},
-	registry::{self, find}
+	registry::{self, builds, find}
 };
-
-const LINUX_FLIPPED_BUILD: u32 = 1644;
-
-pub(crate) const ALIST_BUILD: u32 = 1648;
 
 pub(crate) fn resolve_full() -> Result<(), String> {
 	let build = registry::byond_build()?;
@@ -20,7 +16,7 @@ pub(crate) fn resolve_full() -> Result<(), String> {
 	unsafe {
 		funcs::CURRENT_EXECUTION_CONTEXT = find!("current_execution_context")? as *mut *mut procs::ExecutionContext;
 		let queue = find!("suspended_procs")?;
-		let (front, back) = if cfg!(unix) && build >= LINUX_FLIPPED_BUILD {
+		let (front, back) = if cfg!(unix) && build >= builds::LINUX_FRAMELESS {
 			(queue + 4, queue)
 		} else {
 			(queue, queue + 4)
@@ -28,7 +24,7 @@ pub(crate) fn resolve_full() -> Result<(), String> {
 		funcs::SUSPENDED_FRONT = front as *const usize;
 		funcs::SUSPENDED_BACK = back as *const usize;
 		funcs::SUSPENDED_PROCS_BUFFER = find!("suspended_procs_buffer")? as *mut procs::SuspendedProcsBuffer;
-		if build >= ALIST_BUILD {
+		if build >= builds::FIRST_516 {
 			funcs::ALIST_TABLE = find!("alist_table_ptr")? as *const *const *const lists::Alist;
 			funcs::ALIST_TABLE_COUNT = find!("alist_table_count")? as *const u32;
 		} else {
@@ -52,8 +48,8 @@ pub(crate) fn resolve_full() -> Result<(), String> {
 		funcs::remove_from_list_byond = function!("remove_from_list");
 		#[cfg(unix)]
 		{
-			funcs::remove_from_list_in_registers = build < registry::REMOVE_FROM_LIST_STACK_BUILD;
-			funcs::get_length_returns_count = build < LINUX_FLIPPED_BUILD;
+			funcs::remove_from_list_in_registers = build < builds::LINUX_REMOVE_FROM_LIST_ON_STACK;
+			funcs::get_length_returns_count = build < builds::LINUX_FRAMELESS;
 		}
 		funcs::get_length_byond = function!("get_length");
 		funcs::value_is_list_byond = function!("value_is_list");
@@ -68,7 +64,7 @@ pub(crate) fn resolve_full() -> Result<(), String> {
 pub(crate) fn resolve_partial() -> Result<(), String> {
 	let build = registry::byond_build()?;
 	let names = find!("variable_names")?;
-	let count = if cfg!(unix) && build >= LINUX_FLIPPED_BUILD {
+	let count = if cfg!(unix) && build >= builds::LINUX_FRAMELESS {
 		names - 4
 	} else {
 		names + 4

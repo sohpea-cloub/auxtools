@@ -5,21 +5,19 @@
 //! the calls to follow from it and what to read there. A recipe holds for a
 //! range of builds, and a name has one recipe for each range whose code
 //! differs. `registry/linux.rs` and `registry/windows.rs` list them, and both
-//! lists are compiled on either platform.
+//! lists are compiled on either platform. The builds where something changed
+//! are named in `registry/builds.rs`.
 //!
 //! Every lookup goes through [`resolve`]. A miss is an error that names the
 //! lookup. Nothing here hands back a null pointer, because the C++ shim calls
 //! these functions without checking and `debug.rs` reads the globals the same
 //! way.
 
+pub mod builds;
 mod linux;
 mod windows;
 
 use byond_scan::{resolve_recipe, Module, Recipe};
-
-const SUPPORTED_VERSIONS: &[(u32, u32)] = &[(515, 1637), (516, 1648)];
-
-pub const REMOVE_FROM_LIST_STACK_BUILD: u32 = 1674;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Platform {
@@ -39,7 +37,7 @@ impl Platform {
 }
 
 pub fn accepts(version: u32, build: u32) -> bool {
-	SUPPORTED_VERSIONS.iter().any(|&(major, first)| major == version && build >= first)
+	builds::SUPPORTED.iter().any(|&(major, first)| major == version && build >= first)
 }
 
 /// The recipe a lookup of `name` uses on `build`: the one whose range has the
@@ -66,9 +64,10 @@ fn resolve_checked(module: &Module, (version, build): (u32, u32), recipe: &Recip
 	let name = recipe.name;
 
 	if !accepts(version, build) || build < recipe.versions.min {
+		let last = recipe.versions.max.min(builds::NEWEST_CHECKED);
 		return Err(format!(
-			"Couldn't find {name} (BYOND {version}.{build} is outside the checked range {}..={})",
-			recipe.versions.min, recipe.versions.max
+			"Couldn't find {name} (BYOND {version}.{build} is outside the checked range {}..={last})",
+			recipe.versions.min
 		));
 	}
 
@@ -164,16 +163,38 @@ mod tests {
 	}
 
 	#[test]
+	fn a_names_newest_recipe_has_no_last_build() {
+		const ENDED: [(Platform, &str); 1] = [(Platform::Linux, "misc_intern")];
+		for platform in PLATFORMS {
+			for recipe in platform.recipes() {
+				let newest = platform
+					.recipes()
+					.iter()
+					.filter(|other| other.name == recipe.name)
+					.map(|other| other.versions.max)
+					.max();
+				assert!(
+					newest == Some(u32::MAX) || ENDED.contains(&(platform, recipe.name)),
+					"{platform:?} {} ends at {newest:?}",
+					recipe.name
+				);
+			}
+		}
+	}
+
+	#[test]
 	fn a_lookup_takes_the_recipe_for_the_build() {
 		let range = |name, build| {
 			let versions = recipe_for(Platform::Linux, name, build).unwrap().versions;
 			(versions.min, versions.max)
 		};
-		assert_eq!(range("get_variable", 1637).1, 1643);
+		assert_eq!(range("get_variable", 1637), (1637, 1643));
 		assert_eq!(range("get_variable", 1644), (1644, 1647));
-		assert_eq!(range("get_variable", 1648).0, 1648);
-		assert_eq!(range("get_variable", 5000).0, 1648);
-		assert_eq!(range("get_variable", 1500).0, 1648);
+		assert_eq!(range("get_variable", 1648), (1648, u32::MAX));
+		assert_eq!(range("get_variable", 5000), (1648, u32::MAX));
+		assert_eq!(range("get_variable", 1500), (1648, u32::MAX));
+		assert_eq!(range("appearance_send", 1645), (1637, 1643));
+		assert_eq!(range("misc_intern", 1700), (1637, 1643));
 		assert!(recipe_for(Platform::Linux, "no_such_name", 1648).is_none());
 	}
 
@@ -183,7 +204,14 @@ mod tests {
 		let refused = |platform, version| resolve(&module, platform, version, "current_execution_context").unwrap_err();
 		assert_eq!(
 			refused(Platform::Windows, (515, 1636)),
-			"Couldn't find current_execution_context (BYOND 515.1636 is outside the checked range 1637..=1688)"
+			format!(
+				"Couldn't find current_execution_context (BYOND 515.1636 is outside the checked range 1637..={})",
+				builds::NEWEST_CHECKED
+			)
+		);
+		assert_eq!(
+			resolve(&module, Platform::Linux, (515, 1636), "misc_intern").unwrap_err(),
+			"Couldn't find misc_intern (BYOND 515.1636 is outside the checked range 1637..=1643)"
 		);
 		assert!(refused(Platform::Windows, (516, 1640)).contains("BYOND 516.1640 is outside the checked range"));
 		assert!(refused(Platform::Linux, (517, 1700)).contains("BYOND 517.1700 is outside the checked range"));

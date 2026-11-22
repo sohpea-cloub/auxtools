@@ -3,7 +3,7 @@ use std::{
 	sync::OnceLock
 };
 
-use crate::registry;
+use crate::registry::{self, builds};
 
 const LEFT: usize = 0x0;
 const RIGHT: usize = 0x4;
@@ -26,8 +26,6 @@ const CAPACITY: usize = 0x44;
 
 const POINTERS_515: usize = 0x70;
 const POINTERS_516: usize = 0x74;
-const ICON_W_BUILD: u32 = 1648;
-const NEWEST_CHECKED_BUILD: u32 = 1689;
 const RESOURCE_TAG: u8 = 0x0C;
 
 #[cfg(windows)]
@@ -59,9 +57,10 @@ static TABLES: OnceLock<Result<Tables, String>> = OnceLock::new();
 
 fn find() -> Result<Tables, String> {
 	let build = crate::byond_build()?;
-	if build > NEWEST_CHECKED_BUILD {
+	if build > builds::NEWEST_CHECKED {
 		return Err(format!(
-			"build {build} is newer than the latest validated resource-reload build ({NEWEST_CHECKED_BUILD})"
+			"build {build} is newer than the latest validated resource-reload build ({})",
+			builds::NEWEST_CHECKED
 		));
 	}
 	let tables = unsafe {
@@ -74,7 +73,7 @@ fn find() -> Result<Tables, String> {
 			unlink: std::mem::transmute::<usize, TreeFn>(registry::find!("appearance_tree_unlink")?),
 			rebalance: std::mem::transmute::<usize, TreeFn>(registry::find!("appearance_tree_rebalance")?),
 			bounds: std::mem::transmute::<usize, Bounds>(registry::find!("appearance_update_bounds")?),
-			pointers: if build >= ICON_W_BUILD { POINTERS_516 } else { POINTERS_515 }
+			pointers: if build >= builds::FIRST_516 { POINTERS_516 } else { POINTERS_515 }
 		}
 	};
 	if tables.unlink as usize == tables.rebalance as usize {

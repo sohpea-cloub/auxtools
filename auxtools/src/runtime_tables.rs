@@ -3,15 +3,14 @@
 //! with its cleanup code.
 //!
 //! Layouts are based on 516.1688, with older-build differences documented
-//! locally. Patterns were checked on every Windows and Linux build from
-//! 515.1637 to 516.1688, and the tables on 515.1637, 515.1647, 516.1659,
-//! 516.1685, 516.1686 and 516.1688.
+//! locally. The tables were checked on 515.1637, 515.1647, 516.1659,
+//! 516.1685, 516.1686 and 516.1688. The patterns are the registry's.
 
 use std::ffi::c_void;
 
 use crate::{
 	raw_types::{misc, procs::ProcId},
-	registry::find
+	registry::{builds, find}
 };
 
 /// A proc table entry as BYOND stores it, word by word: path, name, desc and
@@ -115,20 +114,14 @@ pub mod type_fields {
 	pub const PREORDER: usize = 0x84;
 	pub const PREORDER_END: usize = 0x88;
 	/// The type's typepath value (tag, data), from 515.1641 (see
-	/// `TYPEPATH_BUILD`)
+	/// `builds::TYPEPATHS`). Earlier entries end after PREORDER_END.
 	pub const TYPEPATH: usize = 0x8C;
 }
 
-const TYPEPATH_BUILD: u32 = 1641;
-
-#[cfg(unix)]
-const LINUX_SWAPPED_BUILD: u32 = 1644;
-
-const PATH_CACHE_CHECKED_BUILD: u32 = 1689;
 const PROC_VALUE: u32 = 0x26;
 
 unsafe fn path_cache(build: u32, register: Option<usize>) -> Option<*const *mut u8> {
-	if !(TYPEPATH_BUILD..=PATH_CACHE_CHECKED_BUILD).contains(&build) {
+	if !(builds::TYPEPATHS..=builds::NEWEST_CHECKED).contains(&build) {
 		return None;
 	}
 	let code = std::slice::from_raw_parts(register? as *const u8, 0x100);
@@ -169,7 +162,7 @@ pub fn recache_path(path: u32, value: [u32; 2]) {
 }
 
 fn type_stride(build: u32) -> usize {
-	if build < TYPEPATH_BUILD {
+	if build < builds::TYPEPATHS {
 		if cfg!(windows) {
 			0x90
 		} else {
@@ -254,7 +247,7 @@ unsafe fn misc_intern(_build: u32) -> Result<MiscIntern, String> {
 
 #[cfg(unix)]
 unsafe fn misc_intern(build: u32) -> Result<MiscIntern, String> {
-	Ok(if build < LINUX_SWAPPED_BUILD {
+	Ok(if build < builds::LINUX_FRAMELESS {
 		MiscIntern::Take(std::mem::transmute(find!("misc_intern")?))
 	} else {
 		MiscIntern::Copy(std::mem::transmute(find!("misc_intern_copy")?))
@@ -267,8 +260,12 @@ fn resolve() -> Result<Functions, String> {
 	#[cfg(windows)]
 	let type_table = type_count - 4;
 	#[cfg(unix)]
-	let type_table = if build < LINUX_SWAPPED_BUILD { type_count - 4 } else { type_count + 4 };
-	let register_typepath = if build < TYPEPATH_BUILD {
+	let type_table = if build < builds::LINUX_FRAMELESS {
+		type_count - 4
+	} else {
+		type_count + 4
+	};
+	let register_typepath = if build < builds::TYPEPATHS {
 		Ok(None)
 	} else {
 		find!("register_typepath").map(Some)
