@@ -40,6 +40,27 @@ const MOB_LOADER: &str = "89 35 ?? ?? ?? ?? C1 E6 04 56 FF D3 83 C4 04 85 F6 74 
 const INSTANCE_LOADER: &str = "A3 ?? ?? ?? ?? 8D 34 40 C1 E6 02 56 FF D3 83 C4 04 85 F6 74 08 85 C0 0F 84 ?? ?? ?? ?? 33 DB A3 ?? ?? ?? ?? 39 1D ?? \
                                ?? ?? ?? 76 ?? 33 F6 A1 ?? ?? ?? ?? 03 C6 57 50 E8";
 
+const APPEARANCE_SEND_515: &str =
+	"55 8B EC 6A FF 68 ?? ?? ?? ?? 64 A1 00 00 00 00 50 81 EC E4 08 00 00 A1 ?? ?? ?? ?? 33 C5 89 45 F0 53 56 57 50 8D 45 F4 64 A3 00 00 00 00 0F B7";
+
+const APPEARANCE_SEND: &str =
+	"55 8B EC 6A FF 68 ?? ?? ?? ?? 64 A1 00 00 00 00 50 81 EC E4 08 00 00 A1 ?? ?? ?? ?? 33 C5 89 45 F0 53 56 57 50 8D 45 F4";
+
+const APPEARANCE_COMPARE_515: &str =
+	"55 8B EC 56 8B F1 57 8B 7D 08 8B 56 1C 2B 57 1C 0F 85 ?? ?? ?? ?? 8B 56 30 2B 57 30 0F 85 ?? ?? ?? ?? 8B 56 34 2B 57 34";
+
+const APPEARANCE_COMPARE: &str =
+	"55 8B EC 53 56 8B F1 57 8B 7D 08 8B 56 1C 2B 57 1C 0F 85 ?? ?? ?? ?? 8B 56 30 2B 57 30 0F 85 ?? ?? ?? ?? 8B 56 34 2B 57";
+
+const APPEARANCE_BOUNDS_515: &str =
+	"55 8B EC 83 EC 0C 8D 45 F4 56 57 6A 00 68 FF FF 00 00 50 8B F1 E8 ?? ?? ?? ?? 80 BE B1 00 00 00 00 8D BE C8 00 00 00 F3";
+
+const APPEARANCE_BOUNDS: &str =
+	"55 8B EC 83 EC 0C 8D 45 F4 56 57 6A 00 68 FF FF 00 00 50 8B F1 E8 ?? ?? ?? ?? 80 BE B5 00 00 00 00 8D BE CC 00 00 00 F3";
+
+const APPEARANCE_RELEASE: &str =
+	"68 ?? ?? ?? ?? E8 ?? ?? ?? ?? 83 C4 0C 8D 4F 14 56 E8 ?? ?? ?? ?? B8 FF FF 00 00 EB 50 8B 47 44 8B 5E 14 89 85 F8 FE FF";
+
 pub(super) const RECIPES: &[Recipe] = &[
 	Recipe {
 		name: "get_proc_array_entry",
@@ -510,6 +531,104 @@ pub(super) const RECIPES: &[Recipe] = &[
 			 75"
 		),
 		hops: &[],
+		extract: Extract::Entry
+	},
+	Recipe {
+		name: "appearance_send",
+		versions: BYOND_515,
+		anchor: Anchor::Signature(SignatureTreatment::NoOffset, APPEARANCE_SEND_515),
+		hops: &[],
+		extract: Extract::Entry
+	},
+	Recipe {
+		name: "appearance_send",
+		versions: SINCE_516,
+		anchor: Anchor::Signature(SignatureTreatment::NoOffset, APPEARANCE_SEND),
+		hops: &[],
+		extract: Extract::Entry
+	},
+	Recipe {
+		name: "connection_count",
+		versions: BYOND_515,
+		anchor: Anchor::Signature(SignatureTreatment::NoOffset, APPEARANCE_SEND_515),
+		hops: &[0],
+		extract: Extract::AbsMem(OperandSelect::NthAbsMem(0))
+	},
+	Recipe {
+		name: "connection_count",
+		versions: SINCE_516,
+		anchor: Anchor::Signature(SignatureTreatment::NoOffset, APPEARANCE_SEND),
+		hops: &[0],
+		extract: Extract::AbsMem(OperandSelect::NthAbsMem(0))
+	},
+	Recipe {
+		name: "connections",
+		versions: BYOND_515,
+		anchor: Anchor::Signature(SignatureTreatment::NoOffset, APPEARANCE_SEND_515),
+		hops: &[0],
+		extract: Extract::AbsMem(OperandSelect::NthAbsMem(1))
+	},
+	Recipe {
+		name: "connections",
+		versions: SINCE_516,
+		anchor: Anchor::Signature(SignatureTreatment::NoOffset, APPEARANCE_SEND),
+		hops: &[0],
+		extract: Extract::AbsMem(OperandSelect::NthAbsMem(1))
+	},
+	Recipe {
+		name: "appearance_manager",
+		versions: BYOND_515,
+		anchor: Anchor::Signature(SignatureTreatment::NoOffset, APPEARANCE_SEND_515),
+		hops: &[1],
+		extract: Extract::AbsMem(OperandSelect::FirstAbsMem)
+	},
+	Recipe {
+		name: "appearance_manager",
+		versions: SINCE_516,
+		anchor: Anchor::Signature(SignatureTreatment::NoOffset, APPEARANCE_SEND),
+		hops: &[1],
+		extract: Extract::AbsMem(OperandSelect::FirstAbsMem)
+	},
+	Recipe {
+		name: "appearance_compare",
+		versions: BYOND_515,
+		anchor: Anchor::Signature(SignatureTreatment::NoOffset, APPEARANCE_COMPARE_515),
+		hops: &[],
+		extract: Extract::Entry
+	},
+	Recipe {
+		name: "appearance_compare",
+		versions: SINCE_516,
+		anchor: Anchor::Signature(SignatureTreatment::NoOffset, APPEARANCE_COMPARE),
+		hops: &[],
+		extract: Extract::Entry
+	},
+	Recipe {
+		name: "appearance_update_bounds",
+		versions: BYOND_515,
+		anchor: Anchor::Signature(SignatureTreatment::NoOffset, APPEARANCE_BOUNDS_515),
+		hops: &[],
+		extract: Extract::Entry
+	},
+	Recipe {
+		name: "appearance_update_bounds",
+		versions: SINCE_516,
+		anchor: Anchor::Signature(SignatureTreatment::NoOffset, APPEARANCE_BOUNDS),
+		hops: &[],
+		extract: Extract::Entry
+	},
+	Recipe {
+		name: "appearance_tree_unlink",
+		versions: SUPPORTED,
+		anchor: Anchor::Signature(SignatureTreatment::NoOffset, APPEARANCE_RELEASE),
+		hops: &[1, 0],
+		extract: Extract::Entry
+	},
+	Recipe {
+		name: "appearance_tree_rebalance",
+		versions: SUPPORTED,
+		anchor: Anchor::Signature(SignatureTreatment::NoOffset, APPEARANCE_RELEASE),
+		hops: &[1, 1],
 		extract: Extract::Entry
 	}
 ];

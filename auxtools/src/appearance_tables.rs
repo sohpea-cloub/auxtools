@@ -3,7 +3,7 @@ use std::{
 	sync::OnceLock
 };
 
-use byond_scan::{Anchor, Extract, OperandSelect, Recipe, SignatureTreatment, VersionRange};
+use crate::registry;
 
 const LEFT: usize = 0x0;
 const RIGHT: usize = 0x4;
@@ -29,291 +29,6 @@ const POINTERS_516: usize = 0x74;
 const ICON_W_BUILD: u32 = 1648;
 const NEWEST_CHECKED_BUILD: u32 = 1689;
 const RESOURCE_TAG: u8 = 0x0C;
-
-#[cfg(windows)]
-mod recipes {
-	use super::*;
-
-	const OLD: VersionRange = VersionRange { min: 1637, max: 1647 };
-	const NEW: VersionRange = VersionRange { min: 1648, max: 1688 };
-	const ALL: VersionRange = VersionRange { min: 1637, max: 1688 };
-
-	const SEND_OLD: &str = "55 8B EC 6A FF 68 ?? ?? ?? ?? 64 A1 00 00 00 00 50 81 EC E4 08 00 00 A1 ?? ?? ?? ?? 33 C5 89 45 F0 53 56 57 50 8D 45 F4 \
-	                        64 A3 00 00 00 00 0F B7";
-	const SEND_NEW: &str = "55 8B EC 6A FF 68 ?? ?? ?? ?? 64 A1 00 00 00 00 50 81 EC E4 08 00 00 A1 ?? ?? ?? ?? 33 C5 89 45 F0 53 56 57 50 8D 45 F4";
-	const COMPARE_OLD: &str =
-		"55 8B EC 56 8B F1 57 8B 7D 08 8B 56 1C 2B 57 1C 0F 85 ?? ?? ?? ?? 8B 56 30 2B 57 30 0F 85 ?? ?? ?? ?? 8B 56 34 2B 57 34";
-	const COMPARE_NEW: &str =
-		"55 8B EC 53 56 8B F1 57 8B 7D 08 8B 56 1C 2B 57 1C 0F 85 ?? ?? ?? ?? 8B 56 30 2B 57 30 0F 85 ?? ?? ?? ?? 8B 56 34 2B 57";
-	const BOUNDS_OLD: &str =
-		"55 8B EC 83 EC 0C 8D 45 F4 56 57 6A 00 68 FF FF 00 00 50 8B F1 E8 ?? ?? ?? ?? 80 BE B1 00 00 00 00 8D BE C8 00 00 00 F3";
-	const BOUNDS_NEW: &str =
-		"55 8B EC 83 EC 0C 8D 45 F4 56 57 6A 00 68 FF FF 00 00 50 8B F1 E8 ?? ?? ?? ?? 80 BE B5 00 00 00 00 8D BE CC 00 00 00 F3";
-	const RELEASE: &str = "68 ?? ?? ?? ?? E8 ?? ?? ?? ?? 83 C4 0C 8D 4F 14 56 E8 ?? ?? ?? ?? B8 FF FF 00 00 EB 50 8B 47 44 8B 5E 14 89 85 F8 FE FF";
-
-	pub const SEND: [Recipe; 2] = [
-		Recipe {
-			name: "appearance_send",
-			versions: OLD,
-			anchor: Anchor::Signature(SignatureTreatment::NoOffset, SEND_OLD),
-			hops: &[],
-			extract: Extract::Entry
-		},
-		Recipe {
-			name: "appearance_send",
-			versions: NEW,
-			anchor: Anchor::Signature(SignatureTreatment::NoOffset, SEND_NEW),
-			hops: &[],
-			extract: Extract::Entry
-		}
-	];
-	pub const CONNECTION_COUNT: [Recipe; 2] = [
-		Recipe {
-			name: "connection_count",
-			versions: OLD,
-			anchor: Anchor::Signature(SignatureTreatment::NoOffset, SEND_OLD),
-			hops: &[0],
-			extract: Extract::AbsMem(OperandSelect::NthAbsMem(0))
-		},
-		Recipe {
-			name: "connection_count",
-			versions: NEW,
-			anchor: Anchor::Signature(SignatureTreatment::NoOffset, SEND_NEW),
-			hops: &[0],
-			extract: Extract::AbsMem(OperandSelect::NthAbsMem(0))
-		}
-	];
-	pub const CONNECTIONS: [Recipe; 2] = [
-		Recipe {
-			name: "connections",
-			versions: OLD,
-			anchor: Anchor::Signature(SignatureTreatment::NoOffset, SEND_OLD),
-			hops: &[0],
-			extract: Extract::AbsMem(OperandSelect::NthAbsMem(1))
-		},
-		Recipe {
-			name: "connections",
-			versions: NEW,
-			anchor: Anchor::Signature(SignatureTreatment::NoOffset, SEND_NEW),
-			hops: &[0],
-			extract: Extract::AbsMem(OperandSelect::NthAbsMem(1))
-		}
-	];
-	pub const MANAGER: [Recipe; 2] = [
-		Recipe {
-			name: "appearance_manager",
-			versions: OLD,
-			anchor: Anchor::Signature(SignatureTreatment::NoOffset, SEND_OLD),
-			hops: &[1],
-			extract: Extract::AbsMem(OperandSelect::FirstAbsMem)
-		},
-		Recipe {
-			name: "appearance_manager",
-			versions: NEW,
-			anchor: Anchor::Signature(SignatureTreatment::NoOffset, SEND_NEW),
-			hops: &[1],
-			extract: Extract::AbsMem(OperandSelect::FirstAbsMem)
-		}
-	];
-	pub const COMPARE: [Recipe; 2] = [
-		Recipe {
-			name: "appearance_compare",
-			versions: OLD,
-			anchor: Anchor::Signature(SignatureTreatment::NoOffset, COMPARE_OLD),
-			hops: &[],
-			extract: Extract::Entry
-		},
-		Recipe {
-			name: "appearance_compare",
-			versions: NEW,
-			anchor: Anchor::Signature(SignatureTreatment::NoOffset, COMPARE_NEW),
-			hops: &[],
-			extract: Extract::Entry
-		}
-	];
-	pub const BOUNDS: [Recipe; 2] = [
-		Recipe {
-			name: "appearance_update_bounds",
-			versions: OLD,
-			anchor: Anchor::Signature(SignatureTreatment::NoOffset, BOUNDS_OLD),
-			hops: &[],
-			extract: Extract::Entry
-		},
-		Recipe {
-			name: "appearance_update_bounds",
-			versions: NEW,
-			anchor: Anchor::Signature(SignatureTreatment::NoOffset, BOUNDS_NEW),
-			hops: &[],
-			extract: Extract::Entry
-		}
-	];
-	pub const UNLINK: [Recipe; 1] = [Recipe {
-		name: "appearance_tree_unlink",
-		versions: ALL,
-		anchor: Anchor::Signature(SignatureTreatment::NoOffset, RELEASE),
-		hops: &[1, 0],
-		extract: Extract::Entry
-	}];
-	pub const REBALANCE: [Recipe; 1] = [Recipe {
-		name: "appearance_tree_rebalance",
-		versions: ALL,
-		anchor: Anchor::Signature(SignatureTreatment::NoOffset, RELEASE),
-		hops: &[1, 1],
-		extract: Extract::Entry
-	}];
-}
-
-#[cfg(unix)]
-mod recipes {
-	use super::*;
-
-	const OLD: VersionRange = VersionRange { min: 1637, max: 1643 };
-	const NEW: VersionRange = VersionRange { min: 1647, max: 1688 };
-
-	const SEND_OLD: &str = "55 0F B7 C0 89 E5 57 56 53 89 D3 81 EC 2C 09 00 00 89 04 24 89 8D 74 F7 FF FF 89 85 4C F7 FF FF E8 ?? ?? ?? ?? 85 C0 89";
-	const SEND_NEW: &str = "55 0F B7 C0 89 E5 57 56 89 CE 53 89 D3 81 EC F8 04 00 00 89 85 30 FB FF FF 50 E8 ?? ?? ?? ?? 83 C4 10 89 85 24 FB FF FF";
-	const COMPARE_OLD: &str =
-		"55 89 E5 83 EC 28 89 75 F8 8B 75 08 89 5D F4 8B 5D 0C 89 7D FC 8B 46 1C 2B 43 1C 75 08 8B 46 30 2B 43 30 74 13 8B 5D F4";
-	const COMPARE_NEW: &str =
-		"55 57 56 53 83 EC 1C 8B 74 24 30 8B 5C 24 34 8B 46 1C 2B 43 1C 75 42 8B 46 30 2B 43 30 75 3A 8B 46 34 2B 43 34 75 32 0F";
-	const BOUNDS_OLD: &str =
-		"55 89 E5 83 EC 38 89 5D F4 8B 5D 08 8D 45 D8 89 04 24 89 75 F8 89 7D FC C7 44 24 0C 00 00 00 00 C7 44 24 08 FF FF 00 00";
-	const BOUNDS_NEW: &str =
-		"55 57 56 53 83 EC 1C 8B 5C 24 30 89 E0 6A 00 68 FF FF 00 00 53 50 E8 ?? ?? ?? ?? 8B 4C 24 0C 89 8B ?? 00 00 00 8B 54 24";
-	const RELEASE_OLD: &str =
-		"C7 04 24 ?? ?? ?? ?? E8 ?? ?? ?? ?? 8B 95 F4 FE FF FF 89 34 24 89 54 24 04 E8 ?? ?? ?? ?? 89 F8 8B 5D F4 8B 75 F8 8B 7D";
-	const RELEASE_NEW: &str =
-		"68 ?? ?? ?? ?? E8 ?? ?? ?? ?? 58 5A 53 57 E8 ?? ?? ?? ?? 83 C4 10 C7 85 F4 FE FF FF FF FF 00 00 8B 85 F4 FE FF FF EB 28";
-
-	pub const SEND: [Recipe; 2] = [
-		Recipe {
-			name: "appearance_send",
-			versions: OLD,
-			anchor: Anchor::Signature(SignatureTreatment::NoOffset, SEND_OLD),
-			hops: &[],
-			extract: Extract::Entry
-		},
-		Recipe {
-			name: "appearance_send",
-			versions: NEW,
-			anchor: Anchor::Signature(SignatureTreatment::NoOffset, SEND_NEW),
-			hops: &[],
-			extract: Extract::Entry
-		}
-	];
-	pub const CONNECTION_COUNT: [Recipe; 2] = [
-		Recipe {
-			name: "connection_count",
-			versions: OLD,
-			anchor: Anchor::Signature(SignatureTreatment::NoOffset, SEND_OLD),
-			hops: &[0],
-			extract: Extract::AbsMem(OperandSelect::NthAbsMem(0))
-		},
-		Recipe {
-			name: "connection_count",
-			versions: NEW,
-			anchor: Anchor::Signature(SignatureTreatment::NoOffset, SEND_NEW),
-			hops: &[0],
-			extract: Extract::AbsMem(OperandSelect::NthAbsMem(0))
-		}
-	];
-	pub const CONNECTIONS: [Recipe; 2] = [
-		Recipe {
-			name: "connections",
-			versions: OLD,
-			anchor: Anchor::Signature(SignatureTreatment::NoOffset, SEND_OLD),
-			hops: &[0],
-			extract: Extract::AbsMem(OperandSelect::NthAbsMem(1))
-		},
-		Recipe {
-			name: "connections",
-			versions: NEW,
-			anchor: Anchor::Signature(SignatureTreatment::NoOffset, SEND_NEW),
-			hops: &[0],
-			extract: Extract::AbsMem(OperandSelect::NthAbsMem(1))
-		}
-	];
-	pub const MANAGER: [Recipe; 2] = [
-		Recipe {
-			name: "appearance_manager",
-			versions: OLD,
-			anchor: Anchor::Signature(SignatureTreatment::NoOffset, SEND_OLD),
-			hops: &[1],
-			extract: Extract::AbsMem(OperandSelect::FirstAbsMem)
-		},
-		Recipe {
-			name: "appearance_manager",
-			versions: NEW,
-			anchor: Anchor::Signature(SignatureTreatment::NoOffset, SEND_NEW),
-			hops: &[1],
-			extract: Extract::AbsMem(OperandSelect::FirstAbsMem)
-		}
-	];
-	pub const COMPARE: [Recipe; 2] = [
-		Recipe {
-			name: "appearance_compare",
-			versions: OLD,
-			anchor: Anchor::Signature(SignatureTreatment::NoOffset, COMPARE_OLD),
-			hops: &[],
-			extract: Extract::Entry
-		},
-		Recipe {
-			name: "appearance_compare",
-			versions: NEW,
-			anchor: Anchor::Signature(SignatureTreatment::NoOffset, COMPARE_NEW),
-			hops: &[],
-			extract: Extract::Entry
-		}
-	];
-	pub const BOUNDS: [Recipe; 2] = [
-		Recipe {
-			name: "appearance_update_bounds",
-			versions: OLD,
-			anchor: Anchor::Signature(SignatureTreatment::NoOffset, BOUNDS_OLD),
-			hops: &[],
-			extract: Extract::Entry
-		},
-		Recipe {
-			name: "appearance_update_bounds",
-			versions: NEW,
-			anchor: Anchor::Signature(SignatureTreatment::NoOffset, BOUNDS_NEW),
-			hops: &[],
-			extract: Extract::Entry
-		}
-	];
-	pub const UNLINK: [Recipe; 2] = [
-		Recipe {
-			name: "appearance_tree_unlink",
-			versions: OLD,
-			anchor: Anchor::Signature(SignatureTreatment::NoOffset, RELEASE_OLD),
-			hops: &[1, 0],
-			extract: Extract::Entry
-		},
-		Recipe {
-			name: "appearance_tree_unlink",
-			versions: NEW,
-			anchor: Anchor::Signature(SignatureTreatment::NoOffset, RELEASE_NEW),
-			hops: &[1, 0],
-			extract: Extract::Entry
-		}
-	];
-	pub const REBALANCE: [Recipe; 2] = [
-		Recipe {
-			name: "appearance_tree_rebalance",
-			versions: OLD,
-			anchor: Anchor::Signature(SignatureTreatment::NoOffset, RELEASE_OLD),
-			hops: &[1, 1],
-			extract: Extract::Entry
-		},
-		Recipe {
-			name: "appearance_tree_rebalance",
-			versions: NEW,
-			anchor: Anchor::Signature(SignatureTreatment::NoOffset, RELEASE_NEW),
-			hops: &[1, 3],
-			extract: Extract::Entry
-		}
-	];
-}
 
 #[cfg(windows)]
 type Compare = extern "thiscall" fn(*const u8, *const u8) -> i32;
@@ -343,24 +58,22 @@ struct Tables {
 static TABLES: OnceLock<Result<Tables, String>> = OnceLock::new();
 
 fn find() -> Result<Tables, String> {
-	use recipes::*;
 	let build = crate::byond_build()?;
 	if build > NEWEST_CHECKED_BUILD {
 		return Err(format!(
 			"build {build} is newer than the latest validated resource-reload build ({NEWEST_CHECKED_BUILD})"
 		));
 	}
-	let find = |recipes: &[Recipe]| crate::find_recipe_of(recipes);
 	let tables = unsafe {
 		Tables {
-			manager: find(&MANAGER)?,
-			connection_count: find(&CONNECTION_COUNT)?,
-			connections: find(&CONNECTIONS)?,
-			send: find(&SEND)?,
-			compare: std::mem::transmute::<usize, Compare>(find(&COMPARE)?),
-			unlink: std::mem::transmute::<usize, TreeFn>(find(&UNLINK)?),
-			rebalance: std::mem::transmute::<usize, TreeFn>(find(&REBALANCE)?),
-			bounds: std::mem::transmute::<usize, Bounds>(find(&BOUNDS)?),
+			manager: registry::find!("appearance_manager")?,
+			connection_count: registry::find!("connection_count")?,
+			connections: registry::find!("connections")?,
+			send: registry::find!("appearance_send")?,
+			compare: std::mem::transmute::<usize, Compare>(registry::find!("appearance_compare")?),
+			unlink: std::mem::transmute::<usize, TreeFn>(registry::find!("appearance_tree_unlink")?),
+			rebalance: std::mem::transmute::<usize, TreeFn>(registry::find!("appearance_tree_rebalance")?),
+			bounds: std::mem::transmute::<usize, Bounds>(registry::find!("appearance_update_bounds")?),
 			pointers: if build >= ICON_W_BUILD { POINTERS_516 } else { POINTERS_515 }
 		}
 	};
