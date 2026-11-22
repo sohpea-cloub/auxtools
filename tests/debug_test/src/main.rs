@@ -18,6 +18,12 @@ use auxtools_protocol::{
 use client::{Client, World};
 use paths::ByondCommand;
 
+const BUSY: &str = "var/start = world.timeofday
+var/turns = 0
+while (turns < 300000 && world.timeofday >= start && world.timeofday - start < 3)
+	turns++
+return turns";
+
 const BREAKPOINT_TARGET: &str = "/breakpoint_target";
 const TICK_MARKER: &str = "/tick_marker";
 
@@ -496,6 +502,25 @@ fn protocol(world: &World, mut client: Client) -> Client {
 	}
 	drop(quiet);
 	println!("ok: bytes that aren't a request get that client hung up on, and a client that says nothing is left alone");
+
+	let late = client.late;
+	let started = Instant::now();
+	let busy = Request::Eval {
+		frame_id: None,
+		command: BUSY.to_owned(),
+		context: None
+	};
+	let answer = client.request_within(busy, Duration::from_millis(20));
+	assert!(
+		answer.is_none(),
+		"the world wasn't busy for long enough: {:?} after {:?}",
+		answer,
+		started.elapsed()
+	);
+	assert_eq!(status(&mut client), None);
+	assert_eq!(client.late, late + 1, "the evaluation's answer didn't come before the next request's");
+	assert_eq!(eval(&mut client, None, "1 + 1"), "2");
+	println!("ok: an answer that comes after its request timed out isn't taken for the next request's");
 
 	set_breakpoint(&mut client, BREAKPOINT_TARGET, None);
 	expect_breakpoint_in(&mut client, BREAKPOINT_TARGET);

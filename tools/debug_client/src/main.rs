@@ -9,7 +9,7 @@ use auxtools_cli::{
 	game::{Game, Launch},
 	local::{self, Shared}
 };
-use auxtools_protocol::{ContinueKind, EvalResponse, InstructionRef, ProcRef, Request, Response};
+use auxtools_protocol::{ClientMessage, ContinueKind, EvalResponse, InstructionRef, ProcRef, Request, Response, ServerMessage};
 
 const USAGE: &str = "\
 usage: debug_client WORLD.dmb --proc PATH --line N [options] [WATCH...]
@@ -98,17 +98,18 @@ fn parse_args() -> Result<Options, String> {
 	})
 }
 
-struct Connection(Shared);
+struct Connection(Shared, u64);
 
 impl Connection {
 	fn send(&mut self, request: &Request) {
-		auxtools_protocol::write(&mut self.0, request).unwrap();
+		self.1 += 1;
+		auxtools_protocol::write(&mut self.0, &ClientMessage { id: self.1, request }).unwrap();
 		println!(">> {:?}", request);
 	}
 
 	fn recv_any(&mut self) -> Option<Response> {
-		match auxtools_protocol::read(&mut self.0) {
-			Ok(response) => Some(response),
+		match auxtools_protocol::read::<ServerMessage>(&mut self.0) {
+			Ok(message) => Some(message.response),
 			Err(e) => {
 				println!("!! connection lost: {}", e);
 				None
@@ -215,7 +216,7 @@ fn main() {
 		}
 		std::thread::sleep(Duration::from_millis(100));
 	};
-	let mut conn = Connection(Shared::new(stream));
+	let mut conn = Connection(Shared::new(stream), 0);
 	println!("== connected to DreamDaemon");
 
 	let offset = match conn.request(Request::Offset {

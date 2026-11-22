@@ -1,10 +1,12 @@
 mod framing;
+mod ids;
 mod messages;
 
 pub use framing::{frame, read, write, MAX_MESSAGE_LEN};
+pub use ids::{ClientMessage, Pending, RequestId, ServerMessage, Sorted};
 pub use messages::*;
 
-pub const PROTOCOL_VERSION: u32 = 12;
+pub const PROTOCOL_VERSION: u32 = 13;
 
 pub fn world_socket_name(pid: u32) -> String {
 	world_socket_name_for(PROTOCOL_VERSION, pid)

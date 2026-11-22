@@ -4,11 +4,14 @@ use std::{
 		atomic::{AtomicBool, AtomicU32, Ordering},
 		mpsc, Arc, Mutex
 	},
-	time::Duration
+	time::{Duration, Instant}
 };
 
 use auxtools_cli::local::{Shared, Stream};
-use auxtools_protocol::{BreakpointReason, DataChange, InstructionRef, Request, Response, Stop, ENDING_CONTEXT, WORLD_SHUTTING_DOWN};
+use auxtools_protocol::{
+	BreakpointReason, ClientMessage, DataChange, InstructionRef, Pending, Request, RequestId, Response, ServerMessage, Sorted, Stop, ENDING_CONTEXT,
+	WORLD_SHUTTING_DOWN
+};
 use dap_types::{ContinuedEvent, StoppedEvent as Reasons};
 
 use crate::{
@@ -114,7 +117,8 @@ const GOODBYE_TIMEOUT: Duration = Duration::from_secs(2);
 
 pub struct Debuggee {
 	writer: Shared,
-	responses: mpsc::Receiver<(Response, u64)>,
+	answers: mpsc::Receiver<(RequestId, Response, u64)>,
+	requests: Pending,
 	stopped: Arc<AtomicBool>,
 	out: Arc<Output>,
 	last_error: Arc<Mutex<LastError>>,
@@ -123,7 +127,6 @@ pub struct Debuggee {
 	caught_up: bool,
 	stops: u32,
 	resumed_after: u64,
-	unanswered: Arc<AtomicU32>,
 	pub generation: u64
 }
 
@@ -140,19 +143,24 @@ impl Debuggee {
 		let writer = Shared::new(stream);
 		let mut reader = writer.clone();
 		let debuggee_out = out.clone();
-		let (responses_sender, responses) = mpsc::channel();
-		let unanswered = Arc::new(AtomicU32::new(0));
-		let reader_unanswered = unanswered.clone();
+		let (answers_sender, answers) = mpsc::channel();
 		let mut stops_read = 0;
 
 		std::thread::Builder::new()
 			.name("debuggee reader".to_owned())
 			.spawn(move || {
 				let reason = loop {
-					let response = match auxtools_protocol::read(&mut reader) {
-						Ok(response) => response,
+					let ServerMessage { reply_to, response } = match auxtools_protocol::read(&mut reader) {
+						Ok(message) => message,
 						Err(e) => break format!("the connection closed: {}", e)
 					};
+
+					if let Some(to) = reply_to {
+						if answers_sender.send((to, response, stops_read)).is_err() {
+							break "response receiver closed".to_owned();
+						}
+						continue;
+					}
 
 					match response {
 						Response::Disconnect => break "the debug server disconnected".to_owned(),
@@ -220,16 +228,7 @@ impl Debuggee {
 							}
 						}
 
-						Response::Eval(_)
-							if reader_unanswered
-								.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_sub(1))
-								.is_ok() => {}
-
-						response => {
-							if responses_sender.send((response, stops_read)).is_err() {
-								break "response receiver closed".to_owned();
-							}
-						}
+						_ => {}
 					}
 				};
 				let _ = inputs.send(Input::ConnectionClosed { generation, reason });
@@ -238,7 +237,8 @@ impl Debuggee {
 
 		Ok(Self {
 			writer,
-			responses,
+			answers,
+			requests: Pending::new(),
 			stopped: Arc::new(AtomicBool::new(false)),
 			out: debuggee_out,
 			last_error,
@@ -247,7 +247,6 @@ impl Debuggee {
 			caught_up: false,
 			stops: 0,
 			resumed_after: 0,
-			unanswered,
 			generation
 		})
 	}
@@ -306,49 +305,58 @@ impl Debuggee {
 		if self.send(&Request::Disconnect).is_err() {
 			return;
 		}
-		let deadline = std::time::Instant::now() + GOODBYE_TIMEOUT;
-		while let Ok(_) | Err(mpsc::RecvTimeoutError::Timeout) = self.responses.recv_timeout(Duration::from_millis(50)) {
-			if std::time::Instant::now() >= deadline {
+		let deadline = Instant::now() + GOODBYE_TIMEOUT;
+		while let Ok(_) | Err(mpsc::RecvTimeoutError::Timeout) = self.answers.recv_timeout(Duration::from_millis(50)) {
+			if Instant::now() >= deadline {
 				return;
 			}
 		}
 	}
 
 	pub fn send(&mut self, request: &Request) -> Result<(), String> {
-		auxtools_protocol::write(&mut self.writer, request).map_err(|e| format!("couldn't reach the world: {}", e))
+		let id = self.requests.tell();
+		self.write(id, request)
+	}
+
+	fn write(&mut self, id: RequestId, request: &Request) -> Result<(), String> {
+		auxtools_protocol::write(&mut self.writer, &ClientMessage { id, request }).map_err(|e| format!("couldn't reach the world: {}", e))
 	}
 
 	pub fn eval_unanswered(&mut self, command: String) -> Result<(), String> {
-		self.unanswered.fetch_add(1, Ordering::Relaxed);
-		let sent = self.send(&Request::Eval {
+		self.send(&Request::Eval {
 			frame_id: None,
 			command,
 			context: Some(ENDING_CONTEXT.to_owned())
-		});
-		if sent.is_err() {
-			self.unanswered.fetch_sub(1, Ordering::Relaxed);
-		}
-		sent
+		})
 	}
 
 	pub fn request(&mut self, request: &Request) -> Result<Response, String> {
-		while self.responses.try_recv().is_ok() {}
-
 		let resumes = matches!(request, Request::Continue { .. });
 		if resumes {
 			self.caught_up = false;
 			self.stopped.store(false, Ordering::Relaxed);
 		}
-		self.send(request)?;
-		match self.responses.recv_timeout(RESPONSE_TIMEOUT) {
-			Ok((response, stops)) => {
-				if resumes && matches!(response, Response::Ack) {
-					self.resumed_after = stops;
+		let id = self.requests.ask();
+		self.write(id, request)?;
+		let deadline = Instant::now() + RESPONSE_TIMEOUT;
+		loop {
+			let (reply_to, response, stops) = match self.answers.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
+				Ok(answer) => answer,
+				Err(mpsc::RecvTimeoutError::Timeout) => {
+					self.requests.give_up(id);
+					return Err("debug server response timed out".to_owned());
 				}
-				Ok(response)
+				Err(mpsc::RecvTimeoutError::Disconnected) => return Err("the world disconnected".to_owned())
+			};
+			match self.requests.sort(ServerMessage::answer(reply_to, response)) {
+				Sorted::Answer(_, response) => {
+					if resumes && matches!(response, Response::Ack) {
+						self.resumed_after = stops;
+					}
+					return Ok(response);
+				}
+				Sorted::Late(..) | Sorted::Event(_) => {}
 			}
-			Err(mpsc::RecvTimeoutError::Timeout) => Err("debug server response timed out".to_owned()),
-			Err(mpsc::RecvTimeoutError::Disconnected) => Err("the world disconnected".to_owned())
 		}
 	}
 }
@@ -358,18 +366,18 @@ mod tests {
 	use std::sync::{mpsc, Arc};
 
 	use auxtools_cli::local::Stream;
-	use auxtools_protocol::{Request, Response};
+	use auxtools_protocol::{ClientMessage, Request, Response, ServerMessage};
 	use interprocess::local_socket::{prelude::*, GenericNamespaced, ListenerOptions};
 
 	use super::Debuggee;
 	use crate::dap::Output;
 
-	fn read_request(stream: &mut Stream) -> Request {
+	fn read_request(stream: &mut Stream) -> ClientMessage {
 		auxtools_protocol::read(stream).unwrap()
 	}
 
-	fn write_response(stream: &mut Stream, response: &Response) {
-		auxtools_protocol::write(stream, response).unwrap();
+	fn answer(stream: &mut Stream, to: &ClientMessage, response: &Response) {
+		auxtools_protocol::write(stream, &ServerMessage::answer(to.id, response)).unwrap();
 	}
 
 	#[test]
@@ -386,14 +394,24 @@ mod tests {
 		let mut debuggee = Debuggee::new(client, 1, true, Arc::new(Output::new()), inputs, Default::default(), Default::default()).unwrap();
 		debuggee.eval_unanswered("world.Del()".to_owned()).unwrap();
 		let answering = std::thread::spawn(move || {
-			assert!(matches!(read_request(&mut world), Request::Eval { .. }));
-			assert!(matches!(read_request(&mut world), Request::Pause));
-			write_response(&mut world, &Response::Eval(Err("world/Del() slept".to_owned())));
-			write_response(&mut world, &Response::Ack);
+			let eval = read_request(&mut world);
+			assert!(matches!(eval.request, Request::Eval { .. }));
+			let pause = read_request(&mut world);
+			assert!(matches!(pause.request, Request::Pause));
+			assert_ne!(eval.id, pause.id);
+			answer(&mut world, &eval, &Response::Eval(Err("world/Del() slept".to_owned())));
+			answer(&mut world, &pause, &Response::Ack);
+			let status = read_request(&mut world);
+			assert!(matches!(status.request, Request::Status));
+			answer(&mut world, &eval, &Response::Ack);
+			auxtools_protocol::write(&mut world, &ServerMessage::event(&Response::Ack)).unwrap();
+			answer(&mut world, &status, &Response::Status { paused: None });
 			world
 		});
 		let answer = debuggee.request(&Request::Pause).unwrap();
 		assert!(matches!(answer, Response::Ack), "{:?}", answer);
+		let answer = debuggee.request(&Request::Status).unwrap();
+		assert!(matches!(answer, Response::Status { paused: None }), "{:?}", answer);
 		answering.join().unwrap();
 	}
 }

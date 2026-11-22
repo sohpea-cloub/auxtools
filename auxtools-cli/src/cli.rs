@@ -303,7 +303,8 @@ enum Stepped {
 pub struct World {
 	pid: u32,
 	stream: Shared,
-	received: Receiver<io::Result<Response>>,
+	received: Receiver<io::Result<ServerMessage>>,
+	requests: Pending,
 	events: Vec<Response>,
 	reloaded: bool,
 	notes: Vec<String>,
@@ -321,9 +322,9 @@ impl World {
 		let (sender, received) = mpsc::channel();
 		let mut reader = stream.clone();
 		std::thread::spawn(move || loop {
-			let response = auxtools_protocol::read(&mut reader);
-			let failed = response.is_err();
-			if sender.send(response).is_err() || failed {
+			let message = auxtools_protocol::read(&mut reader);
+			let failed = message.is_err();
+			if sender.send(message).is_err() || failed {
 				break;
 			}
 		});
@@ -331,6 +332,7 @@ impl World {
 			pid,
 			stream,
 			received,
+			requests: Pending::new(),
 			events: vec![],
 			reloaded: false,
 			notes: vec![],
@@ -452,20 +454,45 @@ impl World {
 	}
 
 	fn leave(&mut self) {
-		let _ = auxtools_protocol::write(&mut self.stream, &Request::Disconnect);
+		let _ = self.tell(&Request::Disconnect);
+	}
+
+	fn send(&mut self, request: &Request) -> Result<RequestId> {
+		let id = self.requests.ask();
+		match auxtools_protocol::write(&mut self.stream, &ClientMessage { id, request }) {
+			Ok(()) => Ok(id),
+			Err(_) => {
+				self.requests.give_up(id);
+				Err(hung_up())
+			}
+		}
+	}
+
+	fn tell(&mut self, request: &Request) -> Result<()> {
+		let id = self.requests.tell();
+		auxtools_protocol::write(&mut self.stream, &ClientMessage { id, request }).map_err(|_| hung_up())
 	}
 
 	fn next(&mut self, until: Option<Instant>) -> Result<Option<Response>> {
+		Ok(self.hear(until)?.map(|(_, response)| response))
+	}
+
+	fn hear(&mut self, until: Option<Instant>) -> Result<Option<(Option<RequestId>, Response)>> {
 		loop {
-			let response = match until {
+			let message = match until {
 				Some(until) => match self.received.recv_timeout(until.saturating_duration_since(Instant::now())) {
-					Ok(response) => response,
+					Ok(message) => message,
 					Err(RecvTimeoutError::Timeout) => return Ok(None),
 					Err(RecvTimeoutError::Disconnected) => return Err(hung_up())
 				},
 				None => self.received.recv().map_err(|_| hung_up())?
 			};
-			match response.map_err(|_| hung_up())? {
+			let response = match self.requests.sort(message.map_err(|_| hung_up())?) {
+				Sorted::Answer(id, response) => return Ok(Some((Some(id), response))),
+				Sorted::Late(..) => continue,
+				Sorted::Event(response) => response
+			};
+			match response {
 				Response::Disconnect => return Err(hung_up()),
 				Response::Unavailable { reason } => {
 					let failure = Failure(
@@ -485,7 +512,7 @@ impl World {
 					self.failed_conditions.push(message);
 				}
 				Response::WatchEnded { reason, .. } => self.aside(&format!("watch ended: {}", reason)),
-				response => return Ok(Some(response))
+				response => return Ok(Some((None, response)))
 			}
 		}
 	}
@@ -496,14 +523,19 @@ impl World {
 	}
 
 	fn request_by(&mut self, request: Request, until: Instant) -> Result<Option<Response>> {
-		auxtools_protocol::write(&mut self.stream, &request).map_err(|_| hung_up())?;
+		let id = self.send(&request)?;
 		loop {
-			match self.next(Some(until))? {
-				None => return Ok(None),
-				Some(event @ (Response::BreakpointHit { .. } | Response::Resumed | Response::StepEnded | Response::Log { .. })) => {
+			match self.hear(Some(until))? {
+				None => {
+					self.requests.give_up(id);
+					return Ok(None);
+				}
+				Some((Some(to), response)) if to == id => return Ok(Some(response)),
+				Some((Some(_), _)) => {}
+				Some((None, event @ (Response::BreakpointHit { .. } | Response::Resumed | Response::StepEnded | Response::Log { .. }))) => {
 					self.events.push(event)
 				}
-				Some(response) => return Ok(Some(response))
+				Some((None, _)) => {}
 			}
 		}
 	}
@@ -1124,14 +1156,9 @@ impl World {
 	}
 
 	fn observe(&mut self, patience: Duration) -> Option<Option<BreakpointReason>> {
-		auxtools_protocol::write(&mut self.stream, &Request::Status).ok()?;
-		let until = Instant::now() + patience;
-		loop {
-			match self.next(Some(until)) {
-				Ok(Some(Response::Status { paused })) => return Some(paused.map(|stop| stop.reason)),
-				Ok(Some(_)) => {}
-				Ok(None) | Err(_) => return None
-			}
+		match self.request_by(Request::Status, Instant::now() + patience) {
+			Ok(Some(Response::Status { paused })) => Some(paused.map(|stop| stop.reason)),
+			_ => None
 		}
 	}
 
@@ -1194,7 +1221,7 @@ impl World {
 				uncaught: Some(wait.runtime_filter.clone()),
 				caught: wait.caught.then(|| wait.runtime_filter.clone())
 			};
-			auxtools_protocol::write(&mut self.stream, &catch).map_err(|_| hung_up())?;
+			self.tell(&catch)?;
 		}
 		let until = wait.timeout.map(|t| Instant::now() + t);
 		let triggered = !wait.breaks.is_empty() || !wait.changes.is_empty() || wait.runtimes;

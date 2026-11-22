@@ -160,7 +160,7 @@ impl Follower {
 					limit: None,
 					follow: true
 				};
-				if auxtools_protocol::write(&mut world.stream, &asked).is_err() {
+				if world.send(&asked).is_err() {
 					world.reconnect(until)?;
 					continue;
 				}
@@ -194,6 +194,7 @@ impl World {
 			if let Ok(world) = World::connect(self.pid) {
 				self.stream = world.stream;
 				self.received = world.received;
+				self.requests = world.requests;
 				self.events.clear();
 				return Ok(());
 			}

@@ -12,14 +12,14 @@ impl Server {
 			None => self.eval_expr(frame_id, expression).map(|value| Self::render(&value, depth))
 		};
 		self.send_callee_errors();
-		self.send_or_disconnect(Response::Render(rendered));
+		self.answer(Response::Render(rendered));
 	}
 
 	pub(super) fn handle_render_variables(&mut self, vars: VariablesRef, depth: u32) {
 		let rendered = self
 			.values_in(vars)
 			.map(|values| values.iter().map(|(name, value)| (name.clone(), Self::render(value, depth))).collect());
-		self.send_or_disconnect(Response::RenderVariables(rendered));
+		self.answer(Response::RenderVariables(rendered));
 	}
 
 	fn values_in(&self, vars: VariablesRef) -> Result<Vec<(String, Value)>, String> {

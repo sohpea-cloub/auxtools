@@ -10,7 +10,7 @@ use auxtools_cli::{
 	local::{self, Shared}
 };
 
-use auxtools_protocol::{BreakpointReason, ContinueKind, Request, Response};
+use auxtools_protocol::{BreakpointReason, ClientMessage, ContinueKind, Pending, Request, RequestId, Response, ServerMessage, Sorted};
 
 const TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -91,15 +91,15 @@ impl World {
 				std::thread::sleep(Duration::from_millis(100));
 				continue;
 			}
-			match client.messages.recv_timeout(TIMEOUT) {
-				Ok(Response::Ack) => {
+			match client.messages.recv_timeout(TIMEOUT).map(|message| client.requests.sort(message)) {
+				Ok(Sorted::Answer(_, Response::Ack)) => {
 					if watcher {
 						let response = client.request(Request::Watcher);
 						assert!(matches!(response, Response::Ack), "expected Ack for Watcher, got {:?}", response);
 					}
 					return client;
 				}
-				Ok(Response::Disconnect) | Err(mpsc::RecvTimeoutError::Disconnected) => std::thread::sleep(Duration::from_millis(100)),
+				Ok(Sorted::Event(Response::Disconnect)) | Err(mpsc::RecvTimeoutError::Disconnected) => std::thread::sleep(Duration::from_millis(100)),
 				other => panic!("expected Ack for Configured, got {:?}", other)
 			}
 		}
@@ -128,7 +128,9 @@ fn find_debug_server() -> PathBuf {
 
 pub struct Client {
 	writer: Box<dyn Write + Send>,
-	messages: mpsc::Receiver<Response>,
+	messages: mpsc::Receiver<ServerMessage>,
+	requests: Pending,
+	pub late: usize,
 	watcher: bool
 }
 
@@ -136,21 +138,29 @@ impl Client {
 	fn new(mut reader: Box<dyn Read + Send>, writer: Box<dyn Write + Send>, watcher: bool) -> Self {
 		let (sender, messages) = mpsc::channel();
 		std::thread::spawn(move || {
-			while let Ok(response) = auxtools_protocol::read(&mut reader) {
-				if sender.send(response).is_err() {
+			while let Ok(message) = auxtools_protocol::read(&mut reader) {
+				if sender.send(message).is_err() {
 					return;
 				}
 			}
 		});
-		Self { writer, messages, watcher }
+		Self {
+			writer,
+			messages,
+			requests: Pending::new(),
+			late: 0,
+			watcher
+		}
 	}
 
 	pub fn send(&mut self, request: Request) {
 		self.try_send(&request).unwrap();
 	}
 
-	fn try_send(&mut self, request: &Request) -> std::io::Result<()> {
-		auxtools_protocol::write(&mut self.writer, request)
+	fn try_send(&mut self, request: &Request) -> std::io::Result<RequestId> {
+		let id = self.requests.ask();
+		auxtools_protocol::write(&mut self.writer, &ClientMessage { id, request })?;
+		Ok(id)
 	}
 
 	pub fn send_bytes(&mut self, bytes: &[u8]) {
@@ -163,12 +173,24 @@ impl Client {
 	}
 
 	pub fn recv(&mut self) -> Response {
+		self.recv_within(TIMEOUT).expect("debug server stopped answering")
+	}
+
+	fn recv_within(&mut self, patience: Duration) -> Option<Response> {
+		let until = Instant::now() + patience;
 		loop {
-			match self.messages.recv_timeout(TIMEOUT).expect("debug server stopped answering") {
-				Response::Notification { message } => println!("  [debug server] {}", message),
-				Response::Resumed | Response::CodeChanged | Response::StepEnded => {}
-				Response::BreakpointHit { .. } if self.watcher => {}
-				response => return response
+			let message = match self.messages.recv_timeout(until.saturating_duration_since(Instant::now())) {
+				Ok(message) => message,
+				Err(mpsc::RecvTimeoutError::Timeout) => return None,
+				Err(mpsc::RecvTimeoutError::Disconnected) => panic!("the debug server hung up")
+			};
+			match self.requests.sort(message) {
+				Sorted::Answer(_, response) => return Some(response),
+				Sorted::Late(..) => self.late += 1,
+				Sorted::Event(Response::Notification { message }) => println!("  [debug server] {}", message),
+				Sorted::Event(Response::Resumed | Response::CodeChanged | Response::StepEnded) => {}
+				Sorted::Event(Response::BreakpointHit { .. }) if self.watcher => {}
+				Sorted::Event(response) => return Some(response)
 			}
 		}
 	}
@@ -176,6 +198,15 @@ impl Client {
 	pub fn request(&mut self, request: Request) -> Response {
 		self.send(request);
 		self.recv()
+	}
+
+	pub fn request_within(&mut self, request: Request, patience: Duration) -> Option<Response> {
+		let id = self.try_send(&request).unwrap();
+		let answer = self.recv_within(patience);
+		if answer.is_none() {
+			self.requests.give_up(id);
+		}
+		answer
 	}
 
 	pub fn expect_pause(&mut self) -> BreakpointReason {
@@ -194,7 +225,7 @@ impl Client {
 
 	pub fn wait_closed(self) {
 		loop {
-			match self.messages.recv_timeout(TIMEOUT) {
+			match self.messages.recv_timeout(TIMEOUT).map(|message| message.response) {
 				Ok(Response::Disconnect) | Err(mpsc::RecvTimeoutError::Disconnected) => return,
 				Ok(_) => {}
 				Err(mpsc::RecvTimeoutError::Timeout) => panic!("timed out waiting for debug server disconnect")

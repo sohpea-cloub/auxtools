@@ -16,7 +16,7 @@ fn ask(world: &mut World, expression: &str) -> Result<()> {
 		command: expression.to_owned(),
 		context: Some(ENDING_CONTEXT.to_owned())
 	};
-	auxtools_protocol::write(&mut world.stream, &request).map_err(|_| super::hung_up())
+	world.send(&request).map(|_| ())
 }
 
 fn gone_by(pid: u32, until: Instant) -> bool {

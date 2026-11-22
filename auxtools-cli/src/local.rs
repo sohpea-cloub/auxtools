@@ -11,7 +11,7 @@ use interprocess::{
 	ConnectWaitMode
 };
 
-use auxtools_protocol::{read, world_socket_name, world_socket_name_for, write, Request, Response, PROTOCOL_VERSION};
+use auxtools_protocol::{read, world_socket_name, world_socket_name_for, write, ClientMessage, Request, Response, ServerMessage, PROTOCOL_VERSION};
 
 pub fn world_name(pid: u32) -> String {
 	world_socket_name(pid)
@@ -139,17 +139,24 @@ fn probe(stream: Stream) -> std::sync::mpsc::Receiver<io::Result<Probed>> {
 	std::thread::spawn(move || {
 		let mut stream = stream;
 		let answer = (|| {
-			write(&mut stream, &Request::WorldInfo)?;
+			write(&mut stream, &ClientMessage {
+				id: 1,
+				request: &Request::WorldInfo
+			})?;
 			loop {
-				match read(&mut stream)? {
-					Response::WorldInfo { args, cwd, .. } => return Ok(Probed::Info(args, cwd)),
+				let message: ServerMessage = read(&mut stream)?;
+				match message.response {
+					Response::WorldInfo { args, cwd, .. } if message.reply_to == Some(1) => return Ok(Probed::Info(args, cwd)),
 					Response::Unavailable { reason } => return Ok(Probed::Unavailable(reason)),
 					Response::Disconnect => return Err(io::Error::other("it hung up")),
 					_ => {}
 				}
 			}
 		})();
-		let _ = write(&mut stream, &Request::Disconnect);
+		let _ = write(&mut stream, &ClientMessage {
+			id: 2,
+			request: &Request::Disconnect
+		});
 		let _ = sender.send(answer);
 	});
 	receiver
