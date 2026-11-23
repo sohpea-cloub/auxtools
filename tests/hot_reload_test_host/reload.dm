@@ -3,6 +3,9 @@ var/sleeper_release = FALSE
 var/runtime_armed = FALSE
 var/breakpoint_armed = FALSE
 
+#define PARAM_TWINS(first, first_param, second, second_param) /proc/first(first_param) { twin_waiting += 1; while (twin_hold) sleep(1); twin_runs += first_param; } /proc/second(second_param) { twin_waiting += 1; while (twin_hold) sleep(1); twin_runs += second_param; }
+PARAM_TWINS(twin_e, e_param, twin_f, f_param)
+
 /proc/answer()
 	return 1
 
@@ -88,7 +91,7 @@ var/caught_done = 0
 		var/twin = twin_armed
 		twin_armed = null
 		spawn()
-			call(twin)()
+			call(twin)(1)
 	if (runtime_armed)
 		runtime_armed = FALSE
 		runtime_target()

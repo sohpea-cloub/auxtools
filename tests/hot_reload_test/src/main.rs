@@ -1060,6 +1060,32 @@ fn debugger(built: Built) {
 	assert_eq!(names, expected, "the locals' names of old and new frames of twin_c and twin_d");
 	println!("ok: a reload that renames only a local keeps the old name in old frames");
 
+	let line = source.line_of("reload.dm", "PARAM_TWINS(twin_e, e_param,");
+	let twin_f = ProcRef {
+		path: "/twin_f".to_owned(),
+		override_id: 0
+	};
+	match client.request(Request::ProcInfo { proc: twin_f }) {
+		Response::ProcInfo(Ok(info)) => assert_eq!(info.reloaded, None, "twin_f was reloaded before its test"),
+		other => panic!("expected ProcInfo for /twin_f, got {:?}", other)
+	}
+	let waiting = twin_number(&mut client, "twin_waiting");
+	eval(&mut client, "twin_hold = TRUE");
+	eval(&mut client, "twin_armed = /proc/twin_f");
+	wait_for(&mut client, "twin_waiting", &(waiting + 1).to_string());
+	let offset = offset_of(&mut client, "/twin_e", line);
+	twin_breakpoint(&mut client, "twin_e", offset, true);
+	let changes = source.edit("reload.dm", "twin_f, f_param)", "twin_f, f_renamed)");
+	assert_eq!(changes.plan.reloads.len(), 1, "{:?}", changes.plan);
+	reload(&mut watcher, &changes);
+	let names = frame_names(&mut client, &["/twin_f"], true);
+	twin_breakpoint(&mut client, "twin_e", offset, false);
+	let runs = twin_number(&mut client, "twin_runs");
+	eval(&mut client, "twin_hold = FALSE");
+	wait_for(&mut client, "twin_runs", &(runs + 1).to_string());
+	assert_eq!(names, [["src,usr,f_param"]], "the arguments of a call of twin_f from before the reload");
+	println!("ok: a call that shared its code keeps its parameter names after a breakpoint and a rename");
+
 	let changes = source.edit(
 		"reload.dm",
 		"/proc/first_def()\n",
@@ -1336,6 +1362,10 @@ fn named_twin_locals(client: &mut Client) -> Vec<String> {
 }
 
 fn frame_locals(client: &mut Client, procs: &[&str]) -> Vec<Vec<String>> {
+	frame_names(client, procs, false)
+}
+
+fn frame_names(client: &mut Client, procs: &[&str], arguments: bool) -> Vec<Vec<String>> {
 	let response = client.request(Request::Pause);
 	assert!(matches!(response, Response::Ack), "expected Ack for Pause, got {:?}", response);
 	assert_eq!(client.expect_pause(), BreakpointReason::Pause);
@@ -1355,11 +1385,13 @@ fn frame_locals(client: &mut Client, procs: &[&str]) -> Vec<Vec<String>> {
 			let Some(at) = procs.iter().position(|proc| *proc == frame.instruction.proc.path) else {
 				continue;
 			};
-			let Response::Scopes { locals: Some(locals), .. } = client.request(Request::Scopes { frame_id: frame.id }) else {
-				panic!("expected the scopes of {}", procs[at]);
+			let scope = match client.request(Request::Scopes { frame_id: frame.id }) {
+				Response::Scopes { arguments: Some(scope), .. } if arguments => scope,
+				Response::Scopes { locals: Some(scope), .. } if !arguments => scope,
+				other => panic!("expected the scopes of {}, got {:?}", procs[at], other)
 			};
 			let Response::Variables { vars } = client.request(Request::Variables {
-				vars: locals,
+				vars: scope,
 				start: None,
 				count: None
 			}) else {

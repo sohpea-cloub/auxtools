@@ -173,6 +173,17 @@ unsafe fn new_entry(code: &[u32]) -> Result<u32, String> {
 	Err("BYOND gave out code entries that other code uses".to_owned())
 }
 
+fn keep_frame_names(code: *mut u32, proc: ProcId) {
+	let stacks = debug::CallStacks::new();
+	for frame in stacks.active.iter().chain(stacks.suspended.iter().flatten()) {
+		let running = unsafe { *(*frame.context).bytecode() };
+		if frame.proc.id != proc && running == code && !debug::has_local_names(&frame.proc, code) {
+			let names = debug::local_names_for(&frame.proc, code);
+			debug::set_local_names(&frame.proc, code, names);
+		}
+	}
+}
+
 unsafe fn give_own_entry(state: &mut State, proc: &Proc, keep_address: bool) -> Result<u32, String> {
 	let old = code_entry(proc)?;
 	let (code, len) = code_at(old)?;
@@ -181,6 +192,7 @@ unsafe fn give_own_entry(state: &mut State, proc: &Proc, keep_address: bool) -> 
 	let (copy, _) = code_at(new)?;
 
 	if keep_address {
+		keep_frame_names(code, proc.id);
 		point_at(new, (code, len))?;
 		point_at(old, (copy, len))?;
 		if let Some(original) = state.original.remove(&old) {
