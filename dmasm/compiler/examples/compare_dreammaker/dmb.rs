@@ -375,7 +375,7 @@ fn read_strings(r: &mut Reader, major: u32, expected_bytes: u32) -> Result<Vec<V
             })
             .collect();
         for &b in text.iter().chain([&0]) {
-            hash = (hash << 8) ^ CRC[(((hash >> 24) ^ i32::from(b)) & 0xFF) as usize];
+            hash = (hash << 8) ^ STRING_TABLE_CRC[(((hash >> 24) ^ i32::from(b)) & 0xFF) as usize];
         }
         total += text.len() + 1;
         strings.push(text);
@@ -427,7 +427,7 @@ fn read_resources(r: &mut Reader, lhs: u32) -> Result<Option<Vec<u32>>> {
 }
 
 #[rustfmt::skip]
-static CRC: [i32; 256] = [
+static STRING_TABLE_CRC: [i32; 256] = [
     0, 0xaf, 0x15e, 0x1f1, 0x2bc, 0x213, 0x3e2, 0x34d, 0x578, 0x5d7, 0x426, 0x489, 0x7c4, 0x76b,
     0x69a, 0x635, 0xaf0, 0xa5f, 0xbae, 0xb01, 0x84c, 0x8e3, 0x912, 0x9bd, 0xf88, 0xf27, 0xed6,
     0xe79, 0xd34, 0xd9b, 0xc6a, 0xcc5, 0x15e0, 0x154f, 0x14be, 0x1411, 0x175c, 0x17f3, 0x1602,
