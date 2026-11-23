@@ -133,6 +133,9 @@ var/datum/weak_test_datum
 /proc/auxtest_value_from()
 	CRASH()
 
+/proc/auxtest_turfs(first, last)
+	CRASH()
+
 var/auxtest_big = 0
 #define BIG1 auxtest_big += 1;
 #define BIG4 BIG1 BIG1 BIG1 BIG1
@@ -207,6 +210,10 @@ BIG_TWINS(auxtest_big_a, auxtest_big_b)
 	ASSERT(auxtest_strings() == TRUE)
 	ASSERT(auxtest_tables() == TRUE)
 	ASSERT(auxtest_value_from() == TRUE)
+	world.maxx = 3
+	world.maxy = 2
+	world.maxz = 2
+	ASSERT(auxtest_turfs(locate(1, 1, 1), locate(world.maxx, world.maxy, world.maxz)) == TRUE)
 	ASSERT(auxtest_code_before_shutdown() == TRUE)
 	ASSERT(auxtest_shared_code() == TRUE)
 	ASSERT(auxtest_entry_users() == TRUE)
