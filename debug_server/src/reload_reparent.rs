@@ -241,7 +241,10 @@ pub(super) fn apply_tree(prepared: &mut PreparedReparents) {
 	let Some(tree) = prepared.tree.take() else {
 		return;
 	};
-	unsafe { tree.write() };
+	if let Err(e) = unsafe { tree.write() } {
+		prepared.tree_failures.push(format!("could not apply parent changes: {}", e));
+		return;
+	}
 	for plan in prepared.map_plans.drain(..) {
 		if let Err(e) = unsafe { plan.write() } {
 			prepared.tree_failures.push(format!("could not write a proc name map: {}", e));

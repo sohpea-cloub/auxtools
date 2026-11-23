@@ -7,6 +7,7 @@ fn test_tables() {
 		#[cfg(target_os = "linux")]
 		dropped_name_map_plans_free_their_memory()?;
 		name_map_plans_survive_new_types()?;
+		parent_plans_check_their_world()?;
 		mob_edits_survive_new_types()?;
 	}
 	Ok(Value::from(true))
@@ -91,6 +92,30 @@ unsafe fn name_map_plans_survive_new_types() -> DMResult<()> {
 			planned
 		));
 	}
+	Ok(())
+}
+
+static EARLIER_PLAN: std::sync::Mutex<Option<runtime_tables::ParentPlan>> = std::sync::Mutex::new(None);
+
+unsafe fn parent_plans_check_their_world() -> DMResult<()> {
+	use runtime_tables::plan_parents;
+
+	let failed = |what: &str, e: String| runtime!("test_tables: couldn't {}: {}", what, e);
+	if let Some(earlier) = EARLIER_PLAN.lock().unwrap().take() {
+		if earlier.write().is_ok() {
+			return Err(runtime!("test_tables: a type hierarchy planned in an earlier world was written"));
+		}
+	}
+	plan_parents(&[])
+		.and_then(|plan| plan.write())
+		.map_err(|e| failed("write the type hierarchy as it is", e))?;
+
+	let plan = plan_parents(&[]).map_err(|e| failed("plan the type hierarchy", e))?;
+	add_types("/datum", 1)?;
+	if plan.write().is_ok() {
+		return Err(runtime!("test_tables: a type hierarchy planned before a type was added was written"));
+	}
+	*EARLIER_PLAN.lock().unwrap() = Some(plan_parents(&[]).map_err(|e| failed("plan the type hierarchy", e))?);
 	Ok(())
 }
 

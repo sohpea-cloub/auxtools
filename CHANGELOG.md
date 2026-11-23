@@ -66,6 +66,8 @@
 - `Proc::id` is now a method. A `Proc` from a world that has ended has no entry:
   `parameter_names` and `local_names` are empty, `locals_count` is 0, and `call` and `hook`
   fail.
+- `ParentPlan::write` returns a `Result`. It fails, and writes nothing, when the world has ended
+  or types were added or moved since the plan was made.
 
 ### For users of dmasm
 

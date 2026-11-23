@@ -1100,6 +1100,8 @@ impl Drop for NameMapPlan {
 }
 
 pub struct ParentPlan {
+	world: u32,
+	parents_before: Vec<u32>,
 	changes: Vec<(u32, u32)>,
 	order: Vec<u32>,
 	places: Vec<(u32, u32)>
@@ -1120,7 +1122,8 @@ pub unsafe fn plan_parents(changes: &[(u32, u32)]) -> Result<ParentPlan, String>
 	}
 	unsafe {
 		let word = |id: usize, offset: usize| (*functions.type_table).add(id * functions.type_stride + offset) as *mut u32;
-		let mut parents: Vec<u32> = (0..count).map(|id| *word(id, PARENT)).collect();
+		let parents_before: Vec<u32> = (0..count).map(|id| *word(id, PARENT)).collect();
+		let mut parents = parents_before.clone();
 		for &(type_id, parent) in changes {
 			parents[type_id as usize] = parent;
 		}
@@ -1164,6 +1167,8 @@ pub unsafe fn plan_parents(changes: &[(u32, u32)]) -> Result<ParentPlan, String>
 			));
 		}
 		Ok(ParentPlan {
+			world: crate::world_generation(),
+			parents_before,
 			changes: changes.to_vec(),
 			order,
 			places
@@ -1172,15 +1177,26 @@ pub unsafe fn plan_parents(changes: &[(u32, u32)]) -> Result<ParentPlan, String>
 }
 
 impl ParentPlan {
+	/// Fails, and writes nothing, when the world or its types have changed
+	/// since the plan was made.
+	///
 	/// # Safety
 	/// Call on BYOND's thread while a world is live.
-	pub unsafe fn write(&self) {
+	pub unsafe fn write(&self) -> Result<(), String> {
 		use type_fields::*;
-		let Ok(functions) = functions() else {
-			return;
-		};
+		if self.world != crate::world_generation() {
+			return Err("the type hierarchy was planned for a world that has ended".to_owned());
+		}
+		let functions = functions()?;
 		unsafe {
+			let count = *functions.type_count as usize;
 			let word = |id: usize, offset: usize| (*functions.type_table).add(id * functions.type_stride + offset) as *mut u32;
+			if count != self.parents_before.len() || (0..count).any(|id| *word(id, PARENT) != self.parents_before[id]) {
+				return Err(format!(
+					"the type hierarchy was planned for {} types, and types were added or moved since",
+					self.parents_before.len()
+				));
+			}
 			for &(type_id, parent) in &self.changes {
 				*word(type_id as usize, PARENT) = parent;
 			}
@@ -1191,6 +1207,7 @@ impl ParentPlan {
 				*word(id as usize, PREORDER_END) = self.places[id as usize].1;
 			}
 		}
+		Ok(())
 	}
 }
 
