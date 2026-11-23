@@ -687,13 +687,19 @@ pub unsafe fn set_world_named_procs(key: u32, procs: &[u32]) -> Result<(), Strin
 	set_named_procs_in(functions()?.world_name_map, key, procs)
 }
 
+fn check_name_map_count(what: &str, count: usize) -> Result<u16, String> {
+	u16::try_from(count).map_err(|_| format!("{} {} is more than a proc name map holds ({})", count, what, u16::MAX))
+}
+
 unsafe fn set_named_procs_in(map: *mut ProcNameMap, key: u32, procs: &[u32]) -> Result<(), String> {
 	let functions = functions()?;
+	let proc_count = check_name_map_count("procs for one name", procs.len())?;
 	unsafe {
 		let count = buckets(map).len();
 		let at = match buckets(map).binary_search_by_key(&key, |bucket| bucket.key) {
 			Ok(at) => at,
 			Err(at) => {
+				check_name_map_count("names", count + 1)?;
 				let size = std::mem::size_of::<ProcNameBucket>();
 				let buckets = (functions.crt_realloc)((*map).buckets as *mut c_void, (count + 1) * size) as *mut ProcNameBucket;
 				if buckets.is_null() {
@@ -723,7 +729,7 @@ unsafe fn set_named_procs_in(map: *mut ProcNameMap, key: u32, procs: &[u32]) -> 
 			(functions.free_shared)(bucket.ids as *mut c_void);
 		}
 		bucket.ids = ids;
-		bucket.count = procs.len() as u16;
+		bucket.count = proc_count;
 	}
 	Ok(())
 }
@@ -1025,6 +1031,10 @@ pub unsafe fn plan_name_map(type_id: u32, entries: &[(u32, Vec<u32>, u8)]) -> Re
 	name_map(type_id)?;
 	let mut entries: Vec<&(u32, Vec<u32>, u8)> = entries.iter().filter(|(_, ids, _)| !ids.is_empty()).collect();
 	entries.sort_by_key(|(key, ..)| *key);
+	check_name_map_count("names", entries.len())?;
+	for (_, ids, _) in &entries {
+		check_name_map_count("procs for one name", ids.len())?;
+	}
 	let size = entries.len().max(1) * std::mem::size_of::<ProcNameBucket>();
 	unsafe {
 		let buckets = (functions.crt_realloc)(std::ptr::null_mut(), size) as *mut ProcNameBucket;

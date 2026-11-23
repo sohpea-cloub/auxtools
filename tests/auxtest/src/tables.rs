@@ -7,6 +7,7 @@ fn test_tables() {
 		#[cfg(target_os = "linux")]
 		dropped_name_map_plans_free_their_memory()?;
 		name_map_plans_survive_new_types()?;
+		name_maps_refuse_uncountable_lists()?;
 		parent_plans_check_their_world()?;
 		mob_edits_survive_new_types()?;
 	}
@@ -91,6 +92,28 @@ unsafe fn name_map_plans_survive_new_types() -> DMResult<()> {
 			written,
 			planned
 		));
+	}
+	Ok(())
+}
+
+unsafe fn name_maps_refuse_uncountable_lists() -> DMResult<()> {
+	use runtime_tables::{plan_name_map, set_named_procs};
+
+	const TOO_MANY: u32 = u16::MAX as u32 + 1;
+	let key = StringRef::new("auxtest_too_many_procs")?.get_id().0;
+	let mut accepted = vec![];
+	if plan_name_map(0, &[(key, vec![0; TOO_MANY as usize], 0)]).is_ok() {
+		accepted.push("a plan with 65,536 procs for one name");
+	}
+	let names: Vec<(u32, Vec<u32>, u8)> = (0..TOO_MANY).map(|key| (key, vec![0], 0)).collect();
+	if plan_name_map(0, &names).is_ok() {
+		accepted.push("a plan with 65,536 names");
+	}
+	if set_named_procs(0, key, &vec![0; TOO_MANY as usize]).is_ok() {
+		accepted.push("65,536 procs for one name");
+	}
+	if !accepted.is_empty() {
+		return Err(runtime!("test_tables: proc name maps accepted {}", accepted.join(", ")));
 	}
 	Ok(())
 }

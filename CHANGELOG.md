@@ -68,6 +68,8 @@
   fail.
 - `ParentPlan::write` returns a `Result`. It fails, and writes nothing, when the world has ended
   or types were added or moved since the plan was made.
+- `plan_name_map` and `set_named_procs` fail for more than 65,535 names in a map, or more than
+  65,535 procs for one name.
 
 ### For users of dmasm
 
