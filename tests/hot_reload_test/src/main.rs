@@ -1350,19 +1350,25 @@ fn debugger(built: Built) {
 	};
 	let at = jump(&mut client);
 	twin_breakpoint(&mut client, "end_target", at, true);
-	let changes = source.edit("reload.dm", "\t\ttwin_runs++\n", "\t\ttwin_runs = twin_runs + 1\n");
-	let result = reload(&mut watcher, &changes);
-	assert!(result.warnings.is_empty(), "{:?}", result.warnings);
-	assert_eq!(jump(&mut client), at, "the reload moved the jump on line {}", line);
-	let runs = twin_number(&mut client, "twin_runs");
-	eval(&mut client, "twin_armed = /proc/end_target");
-	assert_eq!(client.expect_pause(), BreakpointReason::Breakpoint);
-	assert_eq!(paused_offset(&mut client), ("/end_target".to_owned(), at));
-	client.resume();
-	wait_for(&mut client, "twin_runs", &(runs + 1).to_string());
+	for (from, to) in [
+		("\t\ttwin_runs++\n", "\t\ttwin_runs = twin_runs + 1\n"),
+		("\t\ttwin_runs = twin_runs + 1\n", "\t\ttwin_runs = twin_runs + 1\n\t\ttwin_runs += 0\n"),
+		("\t\ttwin_runs += 0\n", "\t\ttwin_runs += 0\n\ttwin_waiting += 0\n")
+	] {
+		let changes = source.edit("reload.dm", from, to);
+		let result = reload(&mut watcher, &changes);
+		assert!(result.warnings.is_empty(), "{:?}", result.warnings);
+		assert_eq!(jump(&mut client), at, "the reload moved the jump on line {}", line);
+		let runs = twin_number(&mut client, "twin_runs");
+		eval(&mut client, "twin_armed = /proc/end_target");
+		assert_eq!(client.expect_pause(), BreakpointReason::Breakpoint);
+		assert_eq!(paused_offset(&mut client), ("/end_target".to_owned(), at), "after the edit to {:?}", to);
+		client.resume();
+		wait_for(&mut client, "twin_runs", &(runs + 1).to_string());
+	}
 	twin_breakpoint(&mut client, "end_target", at, false);
 	twin_run(&mut client, "end_target", line, 1, false);
-	println!("ok: an instruction breakpoint on a jump to a proc's end stays on its instruction when the line before the end changes");
+	println!("ok: an instruction breakpoint on a jump to a proc's end stays on its instruction when the body before the end changes");
 
 	let changes = source.edit(
 		"reload.dm",

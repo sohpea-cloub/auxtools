@@ -2951,11 +2951,23 @@ fn same_place(
 	let ((old, old_locals, old_start), (new, new_locals, new_start)) = (old, new);
 	let length = (old_offset.checked_sub(old_start)? as usize) + old_code.instruction_length(old_offset)?;
 	let (old_scan, new_scan) = (dmasm::scan(old).ok()?, dmasm::scan(new).ok()?);
+	let final_end = |scanned: &dmasm::ScannedBytecode| {
+		(scanned.instructions.last())
+			.filter(|ins| ins.opcode == Opcode::End)
+			.map(|ins| ins.offset)
+	};
+	let (old_end, new_end) = (final_end(&old_scan), final_end(&new_scan));
 	let mut old_words = named_words(old, old_locals, &old_scan.local_operands);
 	for label in &old_scan.label_operands {
-		if (old_start..old_start + length as u32).contains(&label.word_offset) {
-			old_words[label.word_offset as usize] = Word::Same(new_offset(label.target)?);
+		if !(old_start..old_start + length as u32).contains(&label.word_offset) {
+			continue;
 		}
+		let new_word = new.get((label.word_offset - old_start + new_start) as usize).copied();
+		let target = match new_end.filter(|&end| Some(label.target) == old_end && new_word == Some(end)) {
+			Some(end) => end,
+			None => new_offset(label.target)?
+		};
+		old_words[label.word_offset as usize] = Word::Same(target);
 	}
 	let new_words = named_words(new, new_locals, &new_scan.local_operands);
 	let (old_span, new_span) = (
