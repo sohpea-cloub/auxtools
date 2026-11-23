@@ -40,10 +40,9 @@ fn main() {
 		.arg("-trusted")
 		.arg("-close")
 		.output()
-		.unwrap()
-		.stderr;
+		.unwrap();
 
-	let res = std::str::from_utf8(&output).unwrap();
+	let res = std::str::from_utf8(&output.stderr).unwrap();
 
 	let errors = res.lines().filter(|x| x.starts_with("FAILED: ")).collect::<Vec<&str>>();
 
@@ -53,6 +52,12 @@ fn main() {
 
 	let successes = res.lines().filter(|x| x.starts_with("SUCCESS: ")).collect::<Vec<&str>>();
 	assert_eq!(successes.len(), 1, "Tests didn't output success message");
+	assert!(
+		output.status.success(),
+		"DreamDaemon exited with {} after the tests passed\n{}",
+		output.status,
+		res
+	);
 
 	println!("Tests Succeeded");
 }
