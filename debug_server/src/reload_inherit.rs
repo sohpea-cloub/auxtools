@@ -118,22 +118,19 @@ pub(super) fn copy_builtin(type_id: u32, from: u32, var: &str) -> Result<(), Str
 				}
 			}
 			Mob(var, _) => {
-				let mut parent = None;
-				if unsafe { runtime_tables::set_mob_type(from, |mob| parent = Some(*mob)) }.is_err() {
+				let Ok(parent) = (unsafe { runtime_tables::mob_type(from) }) else {
 					continue;
-				}
-				let parent = parent.unwrap();
+				};
 				if var == "key" {
 					keep_string(parent.key);
 				}
-				(unsafe {
-					runtime_tables::set_mob_type(type_id, |mob| match var {
-						"key" => mob.key = parent.key,
-						"sight" => mob.sight = parent.sight,
-						"see_in_dark" => mob.see_in_dark = parent.see_in_dark,
-						_ => mob.see_invisible = parent.see_invisible
-					})
-				})?
+				let setting = match var {
+					"key" => runtime_tables::MobSetting::Key(parent.key),
+					"sight" => runtime_tables::MobSetting::Sight(parent.sight),
+					"see_in_dark" => runtime_tables::MobSetting::SeeInDark(parent.see_in_dark),
+					_ => runtime_tables::MobSetting::SeeInvisible(parent.see_invisible)
+				};
+				unsafe { runtime_tables::set_mob_setting(type_id, setting) }?
 			}
 		}
 	}

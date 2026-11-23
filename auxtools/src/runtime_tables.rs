@@ -527,10 +527,26 @@ unsafe fn add_mob_type(mob: MobType) -> Result<u32, String> {
 	}
 }
 
-pub unsafe fn set_mob_type(type_id: u32, set: impl FnOnce(&mut MobType)) -> Result<(), String> {
-	let mut mob = *mob_slot(type_id)?;
-	set(&mut mob);
-	*mob_slot(type_id)? = mob;
+pub unsafe fn mob_type(type_id: u32) -> Result<MobType, String> {
+	Ok(*mob_slot(type_id)?)
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MobSetting {
+	Key(u32),
+	Sight(u32),
+	SeeInDark(u8),
+	SeeInvisible(u8)
+}
+
+pub unsafe fn set_mob_setting(type_id: u32, setting: MobSetting) -> Result<(), String> {
+	let mob = &mut *mob_slot(type_id)?;
+	match setting {
+		MobSetting::Key(key) => mob.key = key,
+		MobSetting::Sight(sight) => mob.sight = sight,
+		MobSetting::SeeInDark(see_in_dark) => mob.see_in_dark = see_in_dark,
+		MobSetting::SeeInvisible(see_invisible) => mob.see_invisible = see_invisible
+	}
 	Ok(())
 }
 

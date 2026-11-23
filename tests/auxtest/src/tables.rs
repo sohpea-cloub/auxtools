@@ -165,29 +165,21 @@ unsafe fn add_types(parent: &str, count: usize) -> DMResult<()> {
 }
 
 unsafe fn mob_edits_survive_new_types() -> DMResult<()> {
-	use runtime_tables::set_mob_type;
+	use runtime_tables::{mob_type, set_mob_setting, MobSetting};
 
 	let failed = |what: &str, e: String| runtime!("test_tables: couldn't {}: {}", what, e);
 	let mob = type_id("/mob")?;
-	let mut added = Ok(());
-	let mut old = 0;
-	set_mob_type(mob, |entry| {
-		old = entry.sight;
-		added = add_types("/mob", 64);
-		entry.sight = 0x1234;
-	})
-	.map_err(|e| failed("set a mob type's sight", e))?;
-	added?;
-	let mut sight = 0;
-	set_mob_type(mob, |entry| {
-		sight = entry.sight;
-		entry.sight = old;
-	})
-	.map_err(|e| failed("read a mob type's sight", e))?;
-	if sight != 0x1234 {
+	let old = mob_type(mob).map_err(|e| failed("read a mob type", e))?;
+	add_types("/mob", 64)?;
+	set_mob_setting(mob, MobSetting::Sight(0x1234)).map_err(|e| failed("set a mob type's sight", e))?;
+	let edited = mob_type(mob).map_err(|e| failed("read a mob type", e))?;
+	set_mob_setting(mob, MobSetting::Sight(old.sight)).map_err(|e| failed("restore a mob type's sight", e))?;
+	let expected = runtime_tables::MobType { sight: 0x1234, ..old };
+	if edited != expected {
 		return Err(runtime!(
-			"test_tables: a mob type's sight set while 64 mob types were added reads {:#x}, expected 0x1234",
-			sight
+			"test_tables: a mob type set after 64 mob types were added reads {:?}, expected {:?}",
+			edited,
+			expected
 		));
 	}
 	Ok(())

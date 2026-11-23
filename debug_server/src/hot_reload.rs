@@ -1736,14 +1736,15 @@ fn write_builtins(type_id: u32, writes: &[BuiltinWrite]) -> Result<(), String> {
 				let list = unsafe { runtime_tables::intern_misc(&words) }?;
 				unsafe { set_type_field(type_id, type_fields::BUILTIN_VALUES, list)? };
 			}
-			BuiltinWrite::Mob(var, value) => unsafe {
-				runtime_tables::set_mob_type(type_id, |mob| match *var {
-					"key" => mob.key = *value,
-					"sight" => mob.sight = *value,
-					"see_in_dark" => mob.see_in_dark = *value as u8,
-					_ => mob.see_invisible = *value as u8
-				})
-			}?
+			BuiltinWrite::Mob(var, value) => {
+				let setting = match *var {
+					"key" => runtime_tables::MobSetting::Key(*value),
+					"sight" => runtime_tables::MobSetting::Sight(*value),
+					"see_in_dark" => runtime_tables::MobSetting::SeeInDark(*value as u8),
+					_ => runtime_tables::MobSetting::SeeInvisible(*value as u8)
+				};
+				unsafe { runtime_tables::set_mob_setting(type_id, setting) }?
+			}
 		}
 	}
 	Ok(())
