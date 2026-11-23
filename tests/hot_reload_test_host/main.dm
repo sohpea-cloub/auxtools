@@ -76,6 +76,16 @@ var/mob/chain_verbs/verb_chain = new
 /world/chant()
 	return ..() + "z"
 
+/world/proc/hail()
+	set name = "Hail"
+	return "hailed"
+
+/proc/world_call(name)
+	try
+		return call(world, name)()
+	catch
+		return "missing"
+
 /proc/solo()
 	return "declared"
 

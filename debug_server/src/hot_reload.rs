@@ -1035,7 +1035,7 @@ fn set_setting(proc: u32, setting: SettingWord) {
 #[derive(Clone, Copy)]
 struct Rename {
 	proc: u32,
-	type_id: u32,
+	type_id: Option<u32>,
 	from: u32,
 	to: u32,
 	basename: u32
@@ -1049,9 +1049,15 @@ fn renamed(proc: &Proc, entry: &ProcEntryWords, words: &[SettingWord]) -> Option
 	}
 	let path = strip_path(&proc.path);
 	let (type_path, _) = path.rsplit_once('/')?;
-	let type_id = find_type(type_path).ok()?;
-	let on_map = runtime_tables::named_procs(type_id, from).is_ok_and(|procs| procs.contains(&proc.id.0));
-	on_map.then_some(Rename {
+	let type_id = match type_path {
+		"/world" => None,
+		_ => Some(find_type(type_path).ok()?)
+	};
+	let named = match type_id {
+		Some(type_id) => runtime_tables::named_procs(type_id, from),
+		None => runtime_tables::world_named_procs(from)
+	};
+	named.is_ok_and(|procs| procs.contains(&proc.id.0)).then_some(Rename {
 		proc: proc.id.0,
 		type_id,
 		from,
@@ -1061,6 +1067,9 @@ fn renamed(proc: &Proc, entry: &ProcEntryWords, words: &[SettingWord]) -> Option
 }
 
 fn rename(r: Rename) -> Result<(), String> {
+	let Some(type_id) = r.type_id else {
+		return rename_world_proc(r);
+	};
 	let depth = |id: u32| {
 		Proc::from_id(raw_types::procs::ProcId(id))
 			.and_then(|p| {
@@ -1072,7 +1081,7 @@ fn rename(r: Rename) -> Result<(), String> {
 	};
 	let own_depth = depth(r.proc);
 	for sub in 0..runtime_tables::type_count()? {
-		if !type_and_ancestors(sub).contains(&r.type_id) {
+		if !type_and_ancestors(sub).contains(&type_id) {
 			continue;
 		}
 		if r.from != r.basename {
@@ -1088,6 +1097,26 @@ fn rename(r: Rename) -> Result<(), String> {
 			new.insert(at, r.proc);
 			runtime_tables::set_named_procs(sub, r.to, &new)?;
 		}
+	}
+	Ok(())
+}
+
+fn rename_world_proc(r: Rename) -> Result<(), String> {
+	if r.from != r.basename {
+		let mut old = runtime_tables::world_named_procs(r.from)?;
+		old.retain(|&p| p != r.proc);
+		runtime_tables::set_world_named_procs(r.from, &old)?;
+	}
+	let mut new = runtime_tables::world_named_procs(r.to)?;
+	if !new.contains(&r.proc) {
+		let pinned = PINNED_WORLD_PROCS.lock().unwrap().clone();
+		let definitions = Proc::from_id(raw_types::procs::ProcId(r.proc))
+			.map(|p| Proc::overrides(p.path))
+			.unwrap_or_default();
+		let later: Vec<u32> = definitions.iter().map(|p| p.id.0).skip_while(|&p| p != r.proc).skip(1).collect();
+		let at = new.iter().position(|p| !pinned.contains(p) && !later.contains(p)).unwrap_or(new.len());
+		new.insert(at, r.proc);
+		runtime_tables::set_world_named_procs(r.to, &new)?;
 	}
 	Ok(())
 }

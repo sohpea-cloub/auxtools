@@ -2747,6 +2747,21 @@ fn declarations(built: Built) {
 	assert_eq!(eval(&mut client, "call(kept_limits, \"label\")()"), "\"labelled\"");
 	println!("ok: proc rename");
 
+	let world_calls = |client: &mut Client| {
+		eval(
+			client,
+			"\"[world_call(\"Hail\")] [world_call(\"Salute\")] [world_call(\"Bow\")] [world_call(\"hail\")]\""
+		)
+	};
+	assert_eq!(world_calls(&mut client), "\"hailed missing missing hailed\"");
+	let changes = source.edit("main.dm", "\tset name = \"Hail\"\n", "\tset name = \"Salute\"\n");
+	reload(&mut watcher, &changes);
+	assert_eq!(world_calls(&mut client), "\"missing hailed missing hailed\"");
+	let changes = source.edit("main.dm", "\tset name = \"Salute\"\n", "\tset name = \"Bow\"\n");
+	reload(&mut watcher, &changes);
+	assert_eq!(world_calls(&mut client), "\"missing missing hailed hailed\"");
+	println!("ok: world proc rename");
+
 	let changes = source.edit(
 		"main.dm",
 		"/datum/chain/say()\n\treturn ..() + \"3\"",
