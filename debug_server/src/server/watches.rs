@@ -83,11 +83,7 @@ impl Watches {
 			(Some(_), Some(_)) => return Err(format!("the proc has more than one local called {}", name)),
 			_ => {}
 		}
-		let argument = frame
-			.args
-			.iter()
-			.position(|(argument, _)| argument.as_ref().is_some_and(|argument| String::from(argument) == name));
-		Ok(argument.map(Slot::Argument))
+		Ok(values::argument_index(frame, name).map(Slot::Argument))
 	}
 
 	fn slot_place(frame: &debug::StackFrame, slot: Slot) -> Result<(Place, Value), String> {

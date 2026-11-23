@@ -169,6 +169,18 @@ fn setting(world: &mut World, version: u64) {
 	set(world, &arguments, "usr", "null");
 	ok("argument and usr assignment");
 
+	let watched = world.request(
+		"dataBreakpointInfo",
+		json!({ "variablesReference": arguments, "name": "undefined argument #1" })
+	);
+	assert_eq!(
+		(&watched["description"], watched["dataId"].is_string()),
+		(&json!("undefined argument #1"), true),
+		"{}",
+		watched
+	);
+	ok("an extra argument as a watch target");
+
 	let named = inside(world, "named");
 	assert_eq!(set(world, &named, "n", "7")["value"], "7");
 	assert_eq!(set(world, &named, "name", "\"renamed\"")["value"], "\"renamed\"");

@@ -230,6 +230,18 @@ pub(super) fn frame_arguments(frame: &debug::StackFrame) -> Vec<(String, String,
 	values
 }
 
+pub(super) fn argument_index(frame: &debug::StackFrame, name: &str) -> Option<usize> {
+	let unnamed: Option<usize> = name.strip_prefix("undefined argument #").and_then(|n| n.parse().ok());
+	let mut without_names = 0;
+	frame.args.iter().position(|(arg, _)| match arg {
+		Some(arg) => String::from(arg) == name,
+		None => {
+			without_names += 1;
+			unnamed == Some(without_names)
+		}
+	})
+}
+
 pub(super) fn frame_locals(frame: &debug::StackFrame) -> Vec<(String, &Value)> {
 	let mut values = vec![(".".to_owned(), &frame.dot)];
 	let visible = visible_locals(frame).into_iter().zip(&frame.locals);
@@ -654,16 +666,7 @@ impl Pausing {
 					"src" => unsafe { put(&raw mut (*frame.instance).src, value) },
 					"usr" => unsafe { put(&raw mut (*frame.instance).usr, value) },
 					_ => {
-						let unnamed: Option<usize> = name.strip_prefix("undefined argument #").and_then(|n| n.parse().ok());
-						let mut without_names = 0;
-						let index = frame.args.iter().position(|(arg, _)| match arg {
-							Some(arg) => String::from(arg) == name,
-							None => {
-								without_names += 1;
-								unnamed == Some(without_names)
-							}
-						});
-						let index = index.ok_or_else(|| format!("the frame has no argument called {}", name))?;
+						let index = argument_index(frame, name).ok_or_else(|| format!("the frame has no argument called {}", name))?;
 						unsafe { put((*frame.instance).args().add(index), value) };
 					}
 				}
