@@ -3,7 +3,7 @@ use std::path::Path;
 
 use dmasm_bytecode::{Instruction, Label, Node, Value, Variable};
 use dmasm_compiler::compiler::{compile_proc, ProcSource};
-use dmasm_compiler::diagnostic::Id;
+use dmasm_compiler::diagnostic::{Diagnostic, Id};
 use dreammaker::objtree::{ProcValue, TypeRef};
 use dreammaker::FileId;
 
@@ -115,13 +115,14 @@ pub fn compare(
                     compile_proc(&source)
                 })) {
                     Ok(Ok(compiled)) => {
-                        let rounded_angles = allowed == Some(Allowed::RoundedAngles)
-                            && compiled.warnings.iter().any(|w| w.id == Id::FoldedAngle);
+                        let angles = if allowed == Some(Allowed::RoundedAngles) {
+                            folded_angles(&compiled.warnings)
+                        } else {
+                            vec![]
+                        };
                         asm.set_proc_globals(theirs);
                         match dmasm_bytecode::assembler::assemble(&compiled.nodes, &mut asm) {
-                            Ok(ours) => {
-                                judge(dmb, &ours, theirs, &call_names, rounded_angles, show)
-                            }
+                            Ok(ours) => judge(dmb, &ours, theirs, &call_names, &angles, show),
                             Err(e) => Err(format!("assemble error: {e:?}")),
                         }
                     }
@@ -162,7 +163,7 @@ fn judge(
     ours: &[u32],
     theirs: &[u32],
     names: &HashMap<String, Vec<u8>>,
-    rounded_angles: bool,
+    angles: &[(f32, f32)],
     show: bool,
 ) -> Result<Verdict, String> {
     if ours == theirs {
@@ -172,11 +173,7 @@ fn judge(
     let mut their_nodes = disassemble(dmb, theirs);
     let ours_reused = normalize(&mut our_nodes, names);
     let theirs_reused = normalize(&mut their_nodes, names);
-    let taken = if rounded_angles {
-        take_rounded_numbers(&mut our_nodes, &their_nodes)
-    } else {
-        0
-    };
+    let taken = take_rounded_angles(&mut our_nodes, &their_nodes, angles);
     let both = |what: &str| {
         let mut s = what.to_owned();
         if show {
@@ -215,7 +212,21 @@ fn judge(
     Err(both(&first_difference(&our_nodes, &their_nodes)))
 }
 
-fn take_rounded_numbers(ours: &mut Nodes, theirs: &Nodes) -> usize {
+fn folded_angles(warnings: &[Diagnostic]) -> Vec<(f32, f32)> {
+    warnings
+        .iter()
+        .filter(|w| w.id == Id::FoldedAngle)
+        .filter_map(|w| {
+            let (_, ours) = w.message.split_once(" is folded to ")?;
+            let (_, theirs) = w.message.rsplit_once(" folds it to ")?;
+            let ours = ours.split_once(',')?.0.parse().ok()?;
+            let theirs = theirs.strip_suffix('.')?.parse().ok()?;
+            Some((ours, theirs))
+        })
+        .collect()
+}
+
+fn take_rounded_angles(ours: &mut Nodes, theirs: &Nodes, angles: &[(f32, f32)]) -> usize {
     fn pushed(node: &Node) -> Option<f32> {
         match node {
             Node::Instruction(Instruction::PushVal(Value::Number(n)), _) => Some(*n),
@@ -229,26 +240,23 @@ fn take_rounded_numbers(ours: &mut Nodes, theirs: &Nodes) -> usize {
         .iter()
         .filter(|n| matches!(n, Node::Instruction(..)))
         .collect();
-    if our_code.len() != their_code.len() {
+    if angles.is_empty() || our_code.len() != their_code.len() {
         return 0;
     }
     let mut taken = 0;
     for (o, t) in our_code.iter_mut().zip(their_code) {
         if let (Some(a), Some(b)) = (pushed(o), pushed(t)) {
-            if one_step_apart(a, b) {
+            let bits = (a.to_bits(), b.to_bits());
+            if angles
+                .iter()
+                .any(|(x, y)| (x.to_bits(), y.to_bits()) == bits)
+            {
                 **o = t.clone();
                 taken += 1;
             }
         }
     }
     taken
-}
-
-fn one_step_apart(a: f32, b: f32) -> bool {
-    a.is_finite()
-        && b.is_finite()
-        && a.is_sign_negative() == b.is_sign_negative()
-        && a.to_bits().abs_diff(b.to_bits()) == 1
 }
 
 fn dmb_path(ty: TypeRef, name: &str, index: usize) -> String {
