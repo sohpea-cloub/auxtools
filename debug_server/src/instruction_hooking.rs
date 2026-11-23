@@ -441,6 +441,7 @@ impl InstructionHook for Server {
 						did_breakpoint = true;
 					}
 				}
+				server.end_returned_watches();
 			}
 		}
 

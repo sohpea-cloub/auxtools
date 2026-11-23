@@ -885,6 +885,91 @@ fn loop_back_to_the_start() {
 	println!("ok: a watch on an argument lasts through a loop back to the first instruction");
 }
 
+fn break_exactly(client: &mut Client, at: &InstructionRef, log: Option<&str>) {
+	let response = client.request(Request::BreakpointSet {
+		instruction: at.clone(),
+		condition: None,
+		hit: None,
+		log: log.map(LogPart::parse),
+		exact: true
+	});
+	assert!(
+		matches!(response, Response::BreakpointSet {
+			result: BreakpointSetResult::Success { .. }
+		}),
+		"a breakpoint on {:?} got {:?}",
+		at,
+		response
+	);
+}
+
+fn watch_steps(client: &mut Client, expression: &str) -> u32 {
+	eval(client, None, "spawn()\n\twatched_steps()");
+	client.resume();
+	expect_breakpoint_in(client, "/watched_steps");
+	let response = client.request(Request::WatchSet {
+		place: WatchPlace::Expression {
+			frame_id: Some(0),
+			expression: expression.to_owned()
+		},
+		condition: None,
+		hit: None
+	});
+	let Response::WatchSet(Ok(watch)) = response else {
+		panic!("expected a watch on {}, got {:?}", expression, response);
+	};
+	client.resume();
+	watch.id
+}
+
+fn changed(id: u32, name: &str, old: &str, new: &str) -> BreakpointReason {
+	BreakpointReason::Data {
+		changes: vec![DataChange {
+			id,
+			name: name.to_owned(),
+			old: old.to_owned(),
+			new: new.to_owned()
+		}]
+	}
+}
+
+fn expect_returned(client: &mut Client, watch: u32) {
+	let ended = client.recv();
+	assert!(
+		matches!(&ended, Response::WatchEnded { id, reason } if *id == watch && reason == "watched proc returned"),
+		"expected the watch to end when the proc returned, got {:?}",
+		ended
+	);
+}
+
+fn watches_at_the_end() {
+	let world = World::start(&host_file("debug_test_plain.dmb"), &[]);
+	let mut client = world.connect();
+	pause(&mut client);
+	set_breakpoint(&mut client, "/watched_steps", None);
+	let code = match client.request(Request::ProcInfo {
+		proc: start_of("/watched_steps").proc
+	}) {
+		Response::ProcInfo(Ok(info)) => info.code,
+		other => panic!("expected ProcInfo, got {:?}", other)
+	};
+	let Response::Disassemble(Ok(disassembly)) = client.request(Request::Disassemble { code }) else {
+		panic!("expected the disassembly of /watched_steps");
+	};
+	let last = disassembly.instructions.last().expect("no instructions in /watched_steps");
+	let end = InstructionRef {
+		offset: last.offset as u32,
+		..start_of("/watched_steps")
+	};
+
+	let dot = watch_steps(&mut client, ".");
+	assert_eq!(client.expect_pause(), changed(dot, ".", "null", "2"));
+	assert_eq!(paused_at(&mut client), ("/watched_steps".to_owned(), end.offset));
+	client.resume();
+	expect_returned(&mut client, dot);
+	println!("ok: a frame watch stops for a change right before its proc returns");
+}
+
 fn false_condition_on_a_caught_throw() {
 	let world = World::start(&host_file("debug_test_host.dmb"), &[]);
 	let mut client = world.connect();
@@ -1165,6 +1250,7 @@ fn main() {
 	drop(world);
 
 	loop_back_to_the_start();
+	watches_at_the_end();
 	false_condition_on_a_caught_throw();
 	waiting_world_ends();
 	panics();

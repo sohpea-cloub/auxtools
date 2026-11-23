@@ -38,6 +38,11 @@ PROFILED_TWINS(profiled_twin_a, profiled_twin_b)
 		n--
 	return n
 
+/proc/watched_steps()
+	var/steps = 1
+	steps = 2
+	. = steps
+
 /proc/throw_caught()
 	try
 		throw "thrown and caught"
