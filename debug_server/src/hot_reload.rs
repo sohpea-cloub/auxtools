@@ -2589,11 +2589,13 @@ fn append_entries(prepared: &Prepared, added: &mut Added) -> Result<Vec<u32>, St
 		let id = failing(FailAt::Append)
 			.and_then(|()| runtime_tables::append_proc(&new.entry))
 			.map_err(|e| format!("couldn't add a proc: {}", e))?;
-		PROC_STRINGS.lock().unwrap().insert((id.0, ProcEntryWords::PATH), new.path.get_id().0);
-		std::mem::forget(new.basename.clone());
-		for setting in &new.settings {
-			hold_setting(id.0, setting.clone());
+		let mut held = PROC_STRINGS.lock().unwrap();
+		held.insert((id.0, ProcEntryWords::PATH), new.path.get_id().0);
+		for setting in new.settings.iter().filter(|setting| setting.made.is_some()) {
+			held.insert((id.0, setting.word), setting.value);
 		}
+		drop(held);
+		std::mem::forget(new.basename.clone());
 		if id.0 != new.id {
 			return Err(format!("new proc ID mismatch: got {}, expected {}", id.0, new.id));
 		}

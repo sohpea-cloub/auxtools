@@ -2222,6 +2222,27 @@ fn types(built: Built) {
 
 	let changes = source.edit(
 		"reload.dm",
+		"/proc/crate_report(type)\n",
+		"/obj/crate/verb/shout()\n\tset name = \"Shout\"\n\tset desc = \"Loudly\"\n\tset category = \"Noises\"\n\treturn \
+		 \"shout\"\n\n/proc/crate_report(type)\n"
+	);
+	reload(&mut watcher, &changes);
+	let refs = |client: &mut Client| ["Shout", "Yell", "Holler", "Loudly", "Noises"].map(|text| eval(client, &format!("#string-refs {}", text)));
+	assert_eq!(refs(&mut client), ["1", "0", "0", "1", "1"], "references to the new verb's settings");
+	for (from, to, expected) in [
+		("Shout", "Yell", ["0", "1", "0", "1", "1"]),
+		("Yell", "Holler", ["0", "0", "1", "1", "1"])
+	] {
+		let name = |name: &str| format!("\tset name = \"{}\"\n", name);
+		let changes = source.edit("reload.dm", &name(from), &name(to));
+		reload(&mut watcher, &changes);
+		assert_eq!(refs(&mut client), expected, "references after the new verb was renamed to {}", to);
+	}
+	assert_eq!(eval(&mut client, "call(new /obj/crate, \"Holler\")()"), "\"shout\"");
+	println!("ok: a new verb's settings hold one reference to their strings and a rename releases the old name");
+
+	let changes = source.edit(
+		"reload.dm",
 		"/proc/first_def()\n",
 		"/mob/helper/tiny\n\tname = \"tiny\"\n\tsee_in_dark = 6\n\n/proc/mob_report(type)\n\tvar/mob/m = new type\n\treturn \"[m.type] [m.name] \
 		 [m.sight] [m.see_in_dark] [istype(m, /mob/helper)] [ismob(m)] [verb_report(m)]\"\n\n/proc/first_def()\n"
