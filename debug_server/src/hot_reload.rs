@@ -2363,7 +2363,13 @@ fn apply_code<K: Ord + std::hash::Hash + Copy, T>(
 		unsafe { runtime_tables::set_proc_entry_word(p.proc.id, word, value) };
 	}
 
-	let (new_ptr, _) = unsafe { p.proc.bytecode_mut_ptr() };
+	let (mut new_ptr, _) = unsafe { p.proc.bytecode_mut_ptr() };
+	if auxtools::debug::has_local_names(&p.proc, new_ptr)
+		&& auxtools::debug::local_names_for(&p.proc, new_ptr) != local_names
+		&& unsafe { auxtools::copy_code(&p.proc) }.is_ok()
+	{
+		new_ptr = unsafe { p.proc.bytecode_mut_ptr() }.0;
+	}
 	auxtools::debug::set_local_names(&p.proc, new_ptr, local_names);
 	crate::code_index::proc_changed(p.proc.id);
 

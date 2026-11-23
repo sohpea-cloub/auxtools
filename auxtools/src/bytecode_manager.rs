@@ -219,6 +219,17 @@ pub unsafe fn own_code(proc: &Proc) -> Result<(), String> {
 	Ok(())
 }
 
+/// Gives `proc` a new code entry of its own, with a copy of its code at a new
+/// address.
+///
+/// # Safety
+/// Call on BYOND's thread while a world is live.
+pub unsafe fn copy_code(proc: &Proc) -> Result<(), String> {
+	give_own_entry(state(), proc, false)
+		.map(|_| ())
+		.map_err(|e| format!("{} couldn't get a copy of its code: {}", proc.path, e))
+}
+
 pub fn set_bytecode(proc: &Proc, bytecode: Vec<u32>) -> Result<(), String> {
 	let len = u16::try_from(bytecode.len()).map_err(|_| format!("{} words are too many for {}", bytecode.len(), proc.path))?;
 	unsafe {

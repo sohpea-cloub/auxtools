@@ -1027,6 +1027,19 @@ fn debugger(built: Built) {
 	let expected = ["c_local", "d_local", "c_local", "d_local"];
 	assert_eq!(names, expected, "the locals' names of old and new frames of twin_c and twin_d");
 	println!("ok: procs that a reload gave the same code keep their own local names");
+
+	let sleeping = sleep_named_twins(&mut client);
+	let changes = source.edit("reload.dm", "NAMED_TWINS(twin_c, c_local,", "NAMED_TWINS(twin_c, c_renamed,");
+	assert_eq!(changes.plan.reloads.len(), 1, "{:?}", changes.plan);
+	reload(&mut watcher, &changes);
+	let mut names = named_twin_locals(&mut client);
+	wake_named_twins(&mut client, sleeping, 4);
+	let sleeping = sleep_named_twins(&mut client);
+	names.extend(named_twin_locals(&mut client));
+	wake_named_twins(&mut client, sleeping, 4);
+	let expected = ["c_local", "d_local", "c_renamed", "d_local"];
+	assert_eq!(names, expected, "the locals' names of old and new frames of twin_c and twin_d");
+	println!("ok: a reload that renames only a local keeps the old name in old frames");
 }
 
 fn sleep_named_twins(client: &mut Client) -> u32 {
