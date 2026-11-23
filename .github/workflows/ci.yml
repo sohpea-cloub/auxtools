@@ -347,13 +347,17 @@ jobs:
         run: ci/run-tests.sh programs .byond/byond
 
   dmasm-dreammaker:
-    name: dmasm against DreamMaker
+    name: dmasm against DreamMaker, BYOND ${{ matrix.byond }}
     needs: build-linux
     if: github.event_name != 'push' || github.event.head_commit.author.name != 'github-actions[bot]' || !startsWith(github.event.head_commit.message, 'Start development on ')
     runs-on: ubuntu-22.04
     timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        byond: ["515.1637", "515.1647", "516.1659", "516.1685", "516.1689"]
     env:
-      BYOND: "516.1689"
+      BYOND: ${{ matrix.byond }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 

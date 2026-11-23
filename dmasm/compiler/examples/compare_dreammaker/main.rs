@@ -72,6 +72,14 @@ fn main() -> ExitCode {
         .into_iter()
         .filter(|c| filter.as_ref().is_none_or(|f| c.name.contains(f.as_str())))
         .partition(|c| on(c.builds));
+    if cases.is_empty() {
+        eprintln!(
+            "error: no case of {} to compare on {byond} ({} for other builds).",
+            corpus.display(),
+            skipped.len()
+        );
+        return ExitCode::from(2);
+    }
     if let Err(e) = std::fs::create_dir_all(&out) {
         eprintln!("error: can't create {}: {e}.", out.display());
         return ExitCode::from(2);

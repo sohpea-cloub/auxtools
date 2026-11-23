@@ -34,18 +34,23 @@ The tests need no BYOND installation. dmasm is licensed under GPL-3.0; see [LICE
 
 ## Comparing with DreamMaker
 
-`compiler/tests/dreammaker/` holds small worlds that dmasm must compile as DreamMaker does: the
-fuzzer's reduced findings, and the snippets the tests compile. The `compare_dreammaker`
-example builds each with a DreamMaker, compiles every proc with dmasm for that build and
-fails on a proc whose code is neither DreamMaker's, nor equivalent to it (a cache load written
-out, a static call made by name, labels placed elsewhere), nor a known difference:
+`compiler/tests/dreammaker/` holds small worlds that dmasm must compile as DreamMaker does.
+They come from the fuzzer's reduced findings and from the snippets the tests compile. The
+`compare_dreammaker` example builds each world with DreamMaker. Then it compiles every proc
+with dmasm for the same BYOND build and compares the code. A proc passes if its code is the
+same as DreamMaker's, is equivalent to it, or is a known difference. Equivalent code differs
+only in encoding: a cache load written out, a static call made by name, or labels placed
+elsewhere. Any other proc fails the run.
 
 ```sh
 cargo run --release -p dmasm-compiler --example compare_dreammaker -- BYOND/bin/DreamMaker
 ```
 
-CI runs it with 516.1689 on Linux; it passes on every build from 515.1637 to 516.1689 that CI
-tests. A case starts with a `// Guards:` line saying what it is for, and runs to the next one.
-`// Builds: A-B` gives the builds whose DreamMaker accepts it, `// Known [A-B]: PATH  WHY` a
-proc that differs by design (or a finding not fixed yet, which says so). Debug line records
-and the global init proc are not compared.
+CI runs it on Linux with each BYOND build it tests. A run fails if no case applies to its
+build.
+
+Each case starts with a `// Guards:` line that says what it is for. The case runs to the next
+`// Guards:` line. `// Builds: A-B` gives the builds whose DreamMaker accepts the case.
+`// Known [A-B]: PATH  WHY` marks a proc that differs on purpose. It can also mark a finding
+that is not fixed yet, and then WHY says so. The comparison skips debug line records and the
+global init proc.
