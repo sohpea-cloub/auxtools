@@ -177,6 +177,45 @@ impl Server {
 		}
 	}
 
+	pub(super) fn handle_breakpoint_trigger(&mut self, id: u32, condition: Option<String>, hit: Option<HitCondition>, log: Option<Vec<LogPart>>) {
+		let found = self.sessions.requester().and_then(|client| self.breakpoints.find(client, id));
+		let Some(((proc_id, offset), who)) = found else {
+			self.answer(Response::BreakpointSet {
+				result: BreakpointSetResult::Failed
+			});
+			return;
+		};
+		let Some(proc) = Proc::from_id(proc_id) else {
+			self.answer(Response::BreakpointSet {
+				result: BreakpointSetResult::Failed
+			});
+			return;
+		};
+		if let Some(reason) = Breakpoints::trigger_error(&proc, condition.as_deref(), log.as_deref()) {
+			self.answer(Response::BreakpointSet {
+				result: BreakpointSetResult::Refused { reason }
+			});
+			return;
+		}
+		if let Some(claim) = self
+			.breakpoints
+			.claims
+			.get_mut(&(proc_id, offset))
+			.and_then(|claims| claims.get_mut(&who))
+		{
+			if claim.condition != condition || claim.hit != hit {
+				claim.hits = 0;
+			}
+			claim.told &= claim.condition == condition;
+			claim.condition = condition;
+			claim.hit = hit;
+			claim.log = log;
+		}
+		self.answer(Response::BreakpointSet {
+			result: Self::placed(&proc, offset)
+		});
+	}
+
 	pub(super) fn handle_breakpoint_unset(&mut self, id: u32) {
 		let found = self.sessions.requester().and_then(|client| self.breakpoints.find(client, id));
 		let Some((key, who)) = found else {

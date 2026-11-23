@@ -1091,16 +1091,25 @@ impl Adapter {
 		let path = args.source.path.ok_or("breakpoint source is missing a path")?;
 		let saved_since = args.sourceModified.unwrap_or(false);
 		let reloading = self.code.is_some();
-		for (id, _) in self.breakpoints.get(&path).into_iter().flatten() {
+		let unsaved = !saved_since && reloading && self.unsaved.contains(&path);
+		let text = crate::lines::read(&path);
+		let same_lines = !unsaved && text.is_some() && self.breakpoint_texts.get(&path) == Some(&text);
+		let mut had: Vec<(i64, i64)> = (self.breakpoints.get(&path).into_iter().flatten())
+			.map(|(id, breakpoint)| (*id, breakpoint.line))
+			.collect();
+		for (id, _) in &had {
 			self.told.remove(id);
 		}
 		let mut wanted = vec![];
 		for breakpoint in args.breakpoints.unwrap_or_default() {
-			wanted.push((self.next_breakpoint_id, breakpoint));
-			self.next_breakpoint_id += 1;
+			let id = match had.iter().position(|(_, line)| same_lines && *line == breakpoint.line) {
+				Some(at) => had.remove(at).0,
+				None => self.new_breakpoint_id()
+			};
+			wanted.push((id, breakpoint));
 		}
 
-		if !saved_since && reloading && self.unsaved.contains(&path) {
+		if unsaved {
 			let breakpoints = wanted
 				.iter()
 				.map(|(number, breakpoint)| Breakpoint {
@@ -1130,7 +1139,6 @@ impl Adapter {
 			));
 		}
 		self.deferred.remove(&path);
-		let text = crate::lines::read(&path);
 		if self.world_is_behind(&path, &text) {
 			let breakpoints = Self::waiting_for_the_world(&wanted);
 			self.told(&breakpoints);
@@ -1228,9 +1236,14 @@ impl Adapter {
 		self.files.lock().unwrap().name(path)
 	}
 
+	const fn new_breakpoint_id(&mut self) -> i64 {
+		self.next_breakpoint_id += 1;
+		self.next_breakpoint_id - 1
+	}
+
 	fn apply_breakpoints(&mut self, path: &str) -> Vec<Breakpoint> {
 		self.relocated.remove(path);
-		self.unset(path);
+		let mut live = self.set.lock().unwrap().remove(path).unwrap_or_default();
 		let wanted: Vec<(i64, i64, Option<String>, Option<String>, Option<String>)> = self.breakpoints[path]
 			.iter()
 			.map(|(number, b)| (*number, b.line, b.condition.clone(), b.hitCondition.clone(), b.logMessage.clone()))
@@ -1239,7 +1252,7 @@ impl Adapter {
 		let mut breakpoints = vec![];
 		let mut set = vec![];
 		for (number, line, condition, hit, log) in wanted {
-			let log = log.filter(|message| !message.is_empty()).map(|message| aux::LogPart::parse(&message));
+			let log = log.filter(|message| !message.is_empty());
 			let unverified = |message: &str| Breakpoint {
 				id: Some(number),
 				verified: false,
@@ -1280,7 +1293,14 @@ impl Adapter {
 			let mut result = None;
 			let mut at_start = false;
 			for instruction in instructions {
-				match self.claim(number, &instruction, &trigger, log.clone(), false) {
+				let kept = (live.iter())
+					.position(|b| b.id == number && b.at.as_ref() == Some(&instruction))
+					.map(|at| live.remove(at));
+				let claimed = match kept.map(|kept| self.keep(kept, &trigger, log.clone())) {
+					Some(Ok(None)) | None => self.claim(number, &instruction, &trigger, log.clone(), false),
+					Some(kept) => kept
+				};
+				match claimed {
 					Ok(Some(claimed)) => {
 						result.get_or_insert(Ok(claimed.line));
 						at_start |= claimed.at.as_ref().is_some_and(|at| at.proc.path == GLOBAL_INIT);
@@ -1304,6 +1324,7 @@ impl Adapter {
 				None => unverified("could not set breakpoint")
 			});
 		}
+		self.release(live);
 		self.set.lock().unwrap().insert(path.to_owned(), set);
 		breakpoints
 	}
@@ -1313,22 +1334,45 @@ impl Adapter {
 		id: i64,
 		instruction: &InstructionRef,
 		trigger: &Trigger,
-		log: Option<Vec<aux::LogPart>>,
+		log: Option<String>,
 		exact: bool
 	) -> Result<Option<SetBreakpoint>, String> {
 		self.claims += 1;
 		let claim = self.claims;
-		Ok(match self.place_breakpoint(claim, instruction, trigger, log, exact)? {
-			Placed::Set { at, line, .. } => Some(SetBreakpoint {
-				id,
-				claim,
-				at: Some(at),
-				line,
-				watch: None
-			}),
-			Placed::Nowhere => None,
+		let (at, line) = match self.place_breakpoint(claim, instruction, trigger, log.as_deref().map(aux::LogPart::parse), exact)? {
+			Placed::Set { at, line, .. } => (at, line),
+			Placed::Nowhere => return Ok(None),
 			Placed::Refused(reason) => return Err(reason)
-		})
+		};
+		Ok(Some(SetBreakpoint {
+			id,
+			claim,
+			at: Some(at),
+			line,
+			trigger: trigger.clone(),
+			log,
+			watch: None
+		}))
+	}
+
+	fn keep(&mut self, mut kept: SetBreakpoint, trigger: &Trigger, log: Option<String>) -> Result<Option<SetBreakpoint>, String> {
+		if kept.trigger == *trigger && kept.log == log {
+			return Ok(Some(kept));
+		}
+		match self.edit_breakpoint(kept.claim, trigger, log.as_deref().map(aux::LogPart::parse))? {
+			Placed::Set { at, line, .. } => {
+				kept.at = Some(at);
+				kept.line = line;
+				kept.trigger = trigger.clone();
+				kept.log = log;
+				Ok(Some(kept))
+			}
+			Placed::Nowhere => Ok(None),
+			Placed::Refused(reason) => {
+				let _ = self.remove_breakpoint(kept.claim);
+				Err(reason)
+			}
+		}
 	}
 
 	fn release(&mut self, breakpoints: Vec<SetBreakpoint>) {
@@ -1343,11 +1387,19 @@ impl Adapter {
 	}
 
 	fn set_function_breakpoints(&mut self, args: SetFunctionBreakpointsArguments) -> Handled {
-		for id in &self.function_breakpoint_ids {
+		let mut had: Vec<(i64, String)> = (self.function_breakpoint_ids.iter())
+			.zip(&self.function_breakpoints)
+			.map(|(id, b)| (*id, b.name.clone()))
+			.collect();
+		for (id, _) in &had {
 			self.told.remove(id);
 		}
-		self.function_breakpoint_ids = (0..args.breakpoints.len() as i64).map(|i| self.next_breakpoint_id + i).collect();
-		self.next_breakpoint_id += args.breakpoints.len() as i64;
+		self.function_breakpoint_ids = (args.breakpoints.iter())
+			.map(|wanted| match had.iter().position(|(_, name)| *name == wanted.name) {
+				Some(at) => had.remove(at).0,
+				None => self.new_breakpoint_id()
+			})
+			.collect();
 		self.function_breakpoints = args.breakpoints;
 		let breakpoints = self.apply_function_breakpoints();
 		self.told(&breakpoints);
@@ -1355,7 +1407,7 @@ impl Adapter {
 	}
 
 	fn apply_function_breakpoints(&mut self) -> Vec<Breakpoint> {
-		self.unset(FUNCTION_BREAKPOINTS);
+		let mut live = self.set.lock().unwrap().remove(FUNCTION_BREAKPOINTS).unwrap_or_default();
 		let wanted: Vec<(i64, String, Option<String>, Option<String>)> = self
 			.function_breakpoints
 			.iter()
@@ -1375,20 +1427,35 @@ impl Adapter {
 				});
 				continue;
 			}
-			let (breakpoint, in_world) = self.function_breakpoint(id, &name, condition, hit.as_deref());
+			let (breakpoint, in_world) = self.function_breakpoint(id, &name, condition, hit.as_deref(), &mut live);
 			breakpoints.push(breakpoint);
 			set.extend(in_world);
 		}
+		self.release(live);
 		self.set.lock().unwrap().insert(FUNCTION_BREAKPOINTS.to_owned(), set);
 		breakpoints
 	}
 
-	fn function_breakpoint(&mut self, id: i64, name: &str, condition: Option<String>, hit: Option<&str>) -> (Breakpoint, Option<SetBreakpoint>) {
+	fn function_breakpoint(
+		&mut self,
+		id: i64,
+		name: &str,
+		condition: Option<String>,
+		hit: Option<&str>,
+		live: &mut Vec<SetBreakpoint>
+	) -> (Breakpoint, Option<SetBreakpoint>) {
 		let instruction = InstructionRef {
 			proc: named_proc(name),
 			offset: 0
 		};
-		let claimed = hit_condition(hit).and_then(|hit| self.claim(id, &instruction, &Trigger { condition, hit }, None, false));
+		let claimed = hit_condition(hit).and_then(|hit| {
+			let trigger = Trigger { condition, hit };
+			let kept = live.iter().position(|b| b.id == id).map(|at| live.remove(at));
+			match kept.map(|kept| self.keep(kept, &trigger, None)) {
+				Some(Ok(None)) | None => self.claim(id, &instruction, &trigger, None, false),
+				Some(kept) => kept
+			}
+		});
 		let unverified = |message: String| Breakpoint {
 			id: Some(id),
 			verified: false,
@@ -1426,7 +1493,7 @@ impl Adapter {
 		};
 		let mut told = vec![];
 		for (id, name, condition, hit) in unset {
-			let (breakpoint, Some(in_world)) = self.function_breakpoint(id, &name, condition, hit.as_deref()) else {
+			let (breakpoint, Some(in_world)) = self.function_breakpoint(id, &name, condition, hit.as_deref(), &mut vec![]) else {
 				continue;
 			};
 			let mut set = self.set.lock().unwrap();
@@ -1447,16 +1514,19 @@ impl Adapter {
 	}
 
 	fn set_instruction_breakpoints(&mut self, args: InstructionBreakpointsArguments) -> Handled {
-		let mut had = std::mem::take(&mut self.instruction_breakpoints);
+		let mut had: Vec<(i64, InstructionBreakpoint, Option<u64>)> = (self.instruction_breakpoints.iter())
+			.map(|(id, breakpoint)| (*id, breakpoint.clone(), self.live_address(*id, breakpoint)))
+			.collect();
 		let mut wanted = vec![];
 		for breakpoint in args.breakpoints {
-			let id = match had.iter().position(|(_, old)| *old == breakpoint) {
+			let address = Self::requested_address(&breakpoint);
+			let same = |(_, old, live): &(i64, InstructionBreakpoint, Option<u64>)| match address {
+				Some(address) => Self::requested_address(old) == Some(address) || *live == Some(address),
+				None => old.instruction_reference == breakpoint.instruction_reference && old.offset == breakpoint.offset
+			};
+			let id = match had.iter().position(same) {
 				Some(at) => had.remove(at).0,
-				None => {
-					let id = self.next_breakpoint_id;
-					self.next_breakpoint_id += 1;
-					id
-				}
+				None => self.new_breakpoint_id()
 			};
 			wanted.push((id, breakpoint));
 		}
@@ -1488,10 +1558,7 @@ impl Adapter {
 	fn apply_instruction_breakpoints(&mut self) -> Vec<InstructionShown> {
 		let wanted = self.instruction_breakpoints.clone();
 		self.removed_by_reload.retain(|id| wanted.iter().any(|(wanted, _)| wanted == id));
-		let live = self.set.lock().unwrap().remove(INSTRUCTION_BREAKPOINTS).unwrap_or_default();
-		let (kept, gone): (Vec<_>, Vec<_>) = live.into_iter().partition(|b| wanted.iter().any(|(id, _)| *id == b.id));
-		self.release(gone);
-		self.set.lock().unwrap().insert(INSTRUCTION_BREAKPOINTS.to_owned(), kept);
+		let mut live = self.set.lock().unwrap().remove(INSTRUCTION_BREAKPOINTS).unwrap_or_default();
 		let mut breakpoints = vec![];
 		let mut set = vec![];
 		let mut code: HashMap<aux::CodeRef, Option<aux::Disassembly>> = HashMap::new();
@@ -1502,15 +1569,49 @@ impl Adapter {
 				breakpoints.push(unverified("no active debugging connection".to_owned()));
 				continue;
 			}
-			let shown = self.instruction_shown(id, &breakpoint);
-			if shown.verified || self.removed_by_reload.contains(&id) {
-				breakpoints.push(shown);
+			if self.removed_by_reload.contains(&id) {
+				breakpoints.push(unverified(REMOVED_BY_RELOAD.to_owned()));
 				continue;
 			}
 			let Some(address) = Self::requested_address(&breakpoint) else {
 				breakpoints.push(unverified(format!("invalid instruction address: {:?}", reference)));
 				continue;
 			};
+			let hit = match hit_condition(breakpoint.hit_condition.as_deref()) {
+				Ok(hit) => hit,
+				Err(e) => {
+					breakpoints.push(unverified(e));
+					continue;
+				}
+			};
+			let trigger = Trigger {
+				condition: breakpoint.condition.clone(),
+				hit
+			};
+			let shown = |claimed: &SetBreakpoint| InstructionShown {
+				id,
+				verified: true,
+				message: None,
+				line: claimed.line,
+				instruction_reference: address_text(address & !0xFFFF | u64::from(claimed.at.as_ref().map_or(0, |at| at.offset)))
+			};
+
+			if let Some(kept) = live.iter().position(|b| b.id == id).map(|at| live.remove(at)) {
+				breakpoints.push(match self.keep(kept, &trigger, None) {
+					Ok(Some(claimed)) => {
+						let reply = shown(&claimed);
+						set.push(claimed);
+						reply
+					}
+					Ok(None) => {
+						self.removed_by_reload.insert(id);
+						unverified(REMOVED_BY_RELOAD.to_owned())
+					}
+					Err(e) => unverified(e)
+				});
+				continue;
+			}
+
 			let (place, offset) = aux::from_address(address);
 			if place.old != 0 {
 				breakpoints.push(unverified("cannot set a breakpoint in pre-reload bytecode".to_owned()));
@@ -1554,40 +1655,20 @@ impl Adapter {
 				}
 				_ => {}
 			}
-			let hit = match hit_condition(breakpoint.hit_condition.as_deref()) {
-				Ok(hit) => hit,
-				Err(e) => {
-					breakpoints.push(unverified(e));
-					continue;
-				}
-			};
 
 			let instruction = InstructionRef { proc, offset: offset.into() };
-			let trigger = Trigger {
-				condition: breakpoint.condition.clone(),
-				hit
-			};
 			breakpoints.push(match self.claim(id, &instruction, &trigger, None, true) {
 				Ok(Some(claimed)) => {
+					let reply = shown(&claimed);
 					set.push(claimed);
-					InstructionShown {
-						id,
-						verified: true,
-						message: None,
-						line: set.last().and_then(|claimed| claimed.line),
-						instruction_reference: address_text(address)
-					}
+					reply
 				}
 				Ok(None) => unverified("could not set breakpoint".to_owned()),
 				Err(e) => unverified(e)
 			});
 		}
-		self.set
-			.lock()
-			.unwrap()
-			.entry(INSTRUCTION_BREAKPOINTS.to_owned())
-			.or_default()
-			.extend(set);
+		self.release(live);
+		self.set.lock().unwrap().insert(INSTRUCTION_BREAKPOINTS.to_owned(), set);
 		breakpoints
 	}
 

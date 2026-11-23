@@ -173,6 +173,25 @@ fn hit_counts(world: &mut World) {
 	ok("hit counts persist between runs");
 
 	let (file, line) = world.marks.place("recurse_1");
+	world.set_breakpoints(&file, json!([]));
+	assert_eq!(stops_with(world, "== 6", None), Vec::<String>::new());
+	let plain = world.marks.line("plain_1");
+	let set = world.set_breakpoints(&file, json!([{ "line": line, "hitCondition": "== 6" }, { "line": plain }]));
+	assert_eq!((&set[0]["verified"], &set[1]["verified"]), (&json!(true), &json!(true)), "{:?}", set);
+	assert_eq!(stops_of(world), ["2"]);
+	world.set_breakpoints(&file, json!([]));
+	let on_recurse = json!({ "name": "/proc/recurse", "hitCondition": "== 6" });
+	world.request("setFunctionBreakpoints", json!({ "breakpoints": [on_recurse] }));
+	assert_eq!(stops_of(world), Vec::<String>::new());
+	world.request(
+		"setFunctionBreakpoints",
+		json!({ "breakpoints": [on_recurse, { "name": "/proc/sc_plain" }] })
+	);
+	assert_eq!(stops_of(world), ["2"]);
+	world.function_breakpoints(&[]);
+	ok("adding a breakpoint keeps the others' hit counts");
+
+	let (file, line) = world.marks.place("recurse_1");
 	for (hit, why) in [
 		("soon", "invalid hit count \"soon\"; expected"),
 		("% 0", "hit interval must be greater than zero"),

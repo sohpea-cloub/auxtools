@@ -187,6 +187,8 @@ impl Adapter {
 				claim: 0,
 				at: None,
 				line: None,
+				trigger: Trigger::default(),
+				log: None,
 				watch: breakpoint.watch
 			})
 			.collect();

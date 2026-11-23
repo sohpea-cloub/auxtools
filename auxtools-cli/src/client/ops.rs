@@ -10,7 +10,7 @@ pub trait Asks {
 	fn unexpected(response: &Response) -> Self::Error;
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone, Default, PartialEq)]
 pub struct Trigger {
 	pub condition: Option<String>,
 	pub hit: Option<HitCondition>
@@ -73,7 +73,21 @@ pub trait Operations: Asks {
 			exact,
 			id
 		};
-		match self.ask(&set)? {
+		self.placed(&set)
+	}
+
+	fn edit_breakpoint(&mut self, id: u32, trigger: &Trigger, log: Option<Vec<LogPart>>) -> Result<Placed, Self::Error> {
+		let set = Request::BreakpointTrigger {
+			id,
+			condition: trigger.condition.clone(),
+			hit: trigger.hit,
+			log
+		};
+		self.placed(&set)
+	}
+
+	fn placed(&mut self, request: &Request) -> Result<Placed, Self::Error> {
+		match self.ask(request)? {
 			Response::BreakpointSet { result } => Ok(match result {
 				BreakpointSetResult::Success { line, at, file } => Placed::Set { at, file, line },
 				BreakpointSetResult::Failed => Placed::Nowhere,
@@ -205,7 +219,13 @@ mod tests {
 			id: 6,
 			..
 		}));
-		assert!(matches!(world.place_breakpoint(5, &here, &trigger, None, false), Ok(Placed::Refused(why)) if why == "no such var"));
+		assert!(matches!(world.edit_breakpoint(5, &trigger, None), Ok(Placed::Refused(why)) if why == "no such var"));
+		assert!(matches!(&world.asked[2], Request::BreakpointTrigger {
+			id: 5,
+			condition: Some(_),
+			hit: Some(_),
+			log: None
+		}));
 		assert_eq!(world.place_breakpoint(7, &here, &trigger, None, false).err().unwrap(), "unexpected: Ack");
 		assert_eq!(world.remove_breakpoint(5).err().unwrap(), "no answer");
 	}

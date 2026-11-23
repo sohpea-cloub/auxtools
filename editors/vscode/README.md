@@ -118,8 +118,9 @@ write its path, such as `/mob/proc/Login`. For the proc's second definition, wri
 - **Hit counts** decide which hits pause. `5` pauses on the fifth hit and every hit after it.
   `== 5` pauses on the fifth hit only, and `% 5` on every fifth hit. You can also use `>`,
   `>=`, `<` and `<=`. Only hits that pass the condition count. The count starts again when you
-  change the breakpoint, when its file is reloaded and when the world restarts. A function
-  breakpoint keeps its count through a hot reload.
+  change the breakpoint's condition or hit count, and when the world restarts. It carries on
+  when you add or remove other breakpoints, and through a hot reload that keeps the breakpoint
+  on its statement.
 - **Logpoints** print a message instead of pausing. Put expressions in braces, as in
   `health is {health} for {src}`. If an expression fails, its error appears in the message.
   Write `{{` and `}}` for literal braces. Logpoints can also have conditions and hit counts.

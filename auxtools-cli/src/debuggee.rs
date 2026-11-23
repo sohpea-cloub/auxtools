@@ -10,7 +10,10 @@ use std::{
 };
 
 use auxtools_cli::{
-	client::{ops::Ending, Client, Heard, Listener, Lost},
+	client::{
+		ops::{Ending, Trigger},
+		Client, Heard, Listener, Lost
+	},
 	local::{self, Stream}
 };
 use auxtools_protocol::{BreakpointReason, DataChange, InstructionRef, Request, Response, Stop};
@@ -41,6 +44,8 @@ pub struct SetBreakpoint {
 	pub claim: u32,
 	pub at: Option<InstructionRef>,
 	pub line: Option<u32>,
+	pub trigger: Trigger,
+	pub log: Option<String>,
 	pub watch: Option<u32>
 }
 

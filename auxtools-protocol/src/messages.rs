@@ -141,6 +141,12 @@ pub enum Request {
 		condition: Option<String>,
 		hit: Option<HitCondition>
 	},
+	BreakpointTrigger {
+		id: u32,
+		condition: Option<String>,
+		hit: Option<HitCondition>,
+		log: Option<Vec<LogPart>>
+	},
 	Breakpoints
 }
 

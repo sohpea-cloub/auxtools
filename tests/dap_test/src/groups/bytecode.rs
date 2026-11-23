@@ -340,6 +340,26 @@ fn old_code() {
 	world.resume_through("middle");
 	ok("instruction breakpoint moved by a reload");
 
+	let set = world.request(
+		"setInstructionBreakpoints",
+		json!({ "breakpoints": [{ "instructionReference": hex(mul), "condition": "x > 3" }] })
+	);
+	let edited = &set["breakpoints"][0];
+	assert_eq!(
+		(&edited["verified"], edited["id"].as_u64(), address(&edited["instructionReference"])),
+		(&json!(true), Some(id), moved),
+		"{}",
+		edited
+	);
+	world.run("middle");
+	let stop = world.stop();
+	assert_eq!(
+		(stop.reason.as_str(), &stop.hit, frame_address(&mut world), world.eval("x")),
+		("instruction breakpoint", &vec![id], moved, "18".to_owned())
+	);
+	world.resume_through("middle");
+	ok("condition edit of a moved instruction breakpoint");
+
 	let after = listing(&mut world, moved);
 	let ret = address(&after[after.iter().position(|i| address(&i["address"]) == moved).unwrap() + 1]["address"]);
 	let set = break_at(&mut world, &[mul, ret]);
