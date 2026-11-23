@@ -2210,14 +2210,14 @@ pub fn apply<K: Ord + std::hash::Hash + Copy, T>(
 
 		if let Some(proc) = Proc::from_id(raw_types::procs::ProcId(id)) {
 			let (ptr, _) = unsafe { proc.bytecode_mut_ptr() };
-			auxtools::debug::set_local_names(ptr, new.local_names.clone());
+			auxtools::debug::set_local_names(&proc, ptr, new.local_names.clone());
 		}
 	}
 	for (init, id) in prepared.init_procs.iter().zip(init_procs) {
 		if let Some((_, local_names)) = &init.proc {
 			if let Some(proc) = Proc::from_id(raw_types::procs::ProcId(id)) {
 				let (ptr, _) = unsafe { proc.bytecode_mut_ptr() };
-				auxtools::debug::set_local_names(ptr, local_names.clone());
+				auxtools::debug::set_local_names(&proc, ptr, local_names.clone());
 			}
 		}
 		let _ = unsafe { runtime_tables::set_type_field(init.type_id, type_fields::INIT_PROC, id) };
@@ -2316,9 +2316,9 @@ fn apply_code<K: Ord + std::hash::Hash + Copy, T>(
 	let (old_ptr, _) = unsafe { p.proc.bytecode_mut_ptr() };
 	mark_reloaded(p.proc.id.0, if p.lines.is_some() { Reloaded::Lines } else { Reloaded::Code });
 
-	if !auxtools::debug::has_local_names(old_ptr) {
+	if !auxtools::debug::has_local_names(&p.proc, old_ptr) {
 		let names = auxtools::debug::local_names_for(&p.proc, old_ptr);
-		auxtools::debug::set_local_names(old_ptr, names);
+		auxtools::debug::set_local_names(&p.proc, old_ptr, names);
 	}
 
 	let hooked_at = hooked_offsets(&p.proc);
@@ -2359,7 +2359,7 @@ fn apply_code<K: Ord + std::hash::Hash + Copy, T>(
 	}
 
 	let (new_ptr, _) = unsafe { p.proc.bytecode_mut_ptr() };
-	auxtools::debug::set_local_names(new_ptr, local_names);
+	auxtools::debug::set_local_names(&p.proc, new_ptr, local_names);
 	crate::code_index::proc_changed(p.proc.id);
 
 	let old_code = old_code.filter(|_| !hooked.is_empty())?;

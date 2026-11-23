@@ -6,20 +6,20 @@ use crate::{
 };
 
 thread_local! {
-	static LOCAL_NAMES: RefCell<HashMap<usize, Vec<String>>> = RefCell::new(HashMap::new());
+	static LOCAL_NAMES: RefCell<HashMap<(procs::ProcId, usize), Vec<String>>> = RefCell::new(HashMap::new());
 }
 
-pub fn set_local_names(bytecode: *const u32, names: Vec<String>) {
-	LOCAL_NAMES.with(|map| map.borrow_mut().insert(bytecode as usize, names));
+pub fn set_local_names(proc: &Proc, bytecode: *const u32, names: Vec<String>) {
+	LOCAL_NAMES.with(|map| map.borrow_mut().insert((proc.id, bytecode as usize), names));
 }
 
-pub fn has_local_names(bytecode: *const u32) -> bool {
-	LOCAL_NAMES.with(|map| map.borrow().contains_key(&(bytecode as usize)))
+pub fn has_local_names(proc: &Proc, bytecode: *const u32) -> bool {
+	LOCAL_NAMES.with(|map| map.borrow().contains_key(&(proc.id, bytecode as usize)))
 }
 
 pub fn local_names_for(proc: &Proc, bytecode: *const u32) -> Vec<String> {
 	LOCAL_NAMES
-		.with(|map| map.borrow().get(&(bytecode as usize)).cloned())
+		.with(|map| map.borrow().get(&(proc.id, bytecode as usize)).cloned())
 		.unwrap_or_else(|| proc.local_names().into_iter().map(String::from).collect())
 }
 
@@ -56,7 +56,7 @@ impl StackFrame {
 		let bytecode = *(*context).bytecode();
 		let local_names = LOCAL_NAMES.with(|map| {
 			map.borrow()
-				.get(&(bytecode as usize))
+				.get(&(proc.id, bytecode as usize))
 				.map(|names| names.iter().map(|name| StringRef::new(name).ok()).collect::<Vec<_>>())
 		});
 		let local_names = local_names.unwrap_or_else(|| proc.local_names().into_iter().map(Some).collect());

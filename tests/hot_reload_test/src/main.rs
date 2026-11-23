@@ -1011,6 +1011,76 @@ fn debugger(built: Built) {
 	println!("ok: a breakpoint kept across a reload that gives procs the same code stops only its own proc");
 	twin_breakpoints(&mut client, &source, 2);
 	println!("ok: procs that a reload gave the same code have separate breakpoints");
+
+	let sleeping = sleep_named_twins(&mut client);
+	let changes = source.edit_many("reload.dm", &[
+		("twin_runs += first_local; }", "twin_runs += first_local * 2; }"),
+		("twin_runs += second_local; }", "twin_runs += second_local * 2; }")
+	]);
+	assert_eq!(changes.plan.reloads.len(), 2, "{:?}", changes.plan);
+	reload(&mut watcher, &changes);
+	let mut names = named_twin_locals(&mut client);
+	wake_named_twins(&mut client, sleeping, 2);
+	let sleeping = sleep_named_twins(&mut client);
+	names.extend(named_twin_locals(&mut client));
+	wake_named_twins(&mut client, sleeping, 4);
+	let expected = ["c_local", "d_local", "c_local", "d_local"];
+	assert_eq!(names, expected, "the locals' names of old and new frames of twin_c and twin_d");
+	println!("ok: procs that a reload gave the same code keep their own local names");
+}
+
+fn sleep_named_twins(client: &mut Client) -> u32 {
+	let waiting = twin_number(client, "twin_waiting");
+	eval(client, "twin_hold = TRUE");
+	eval(client, "twin_armed = /proc/twin_c");
+	wait_for(client, "twin_waiting", &(waiting + 1).to_string());
+	eval(client, "twin_armed = /proc/twin_d");
+	wait_for(client, "twin_waiting", &(waiting + 2).to_string());
+	twin_number(client, "twin_runs")
+}
+
+fn wake_named_twins(client: &mut Client, runs: u32, added: u32) {
+	eval(client, "twin_hold = FALSE");
+	wait_for(client, "twin_runs", &(runs + added).to_string());
+}
+
+fn named_twin_locals(client: &mut Client) -> Vec<String> {
+	let response = client.request(Request::Pause);
+	assert!(matches!(response, Response::Ack), "expected Ack for Pause, got {:?}", response);
+	assert_eq!(client.expect_pause(), BreakpointReason::Pause);
+	let Response::Stacks { stacks, .. } = client.request(Request::Stacks { sleeping: Some(1000) }) else {
+		panic!("expected Stacks");
+	};
+	let mut names = vec![];
+	for twin in ["/twin_c", "/twin_d"] {
+		let frame = stacks
+			.iter()
+			.find_map(|stack| {
+				let Response::StackFrames { frames, .. } = client.request(Request::StackFrames {
+					stack_id: stack.id,
+					start_frame: None,
+					count: None
+				}) else {
+					panic!("expected StackFrames");
+				};
+				frames.into_iter().find(|frame| frame.instruction.proc.path == twin)
+			})
+			.unwrap_or_else(|| panic!("no frame of {} in {:?}", twin, stacks));
+		let Response::Scopes { locals: Some(locals), .. } = client.request(Request::Scopes { frame_id: frame.id }) else {
+			panic!("expected the scopes of {}", twin);
+		};
+		let Response::Variables { vars } = client.request(Request::Variables {
+			vars: locals,
+			start: None,
+			count: None
+		}) else {
+			panic!("expected the locals of {}", twin);
+		};
+		let locals: Vec<String> = vars.into_iter().map(|var| var.name).filter(|name| name != ".").collect();
+		names.push(locals.join(","));
+	}
+	client.resume();
+	names
 }
 
 fn twin_breakpoints(client: &mut Client, source: &Source, step: u32) {

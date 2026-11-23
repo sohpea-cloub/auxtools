@@ -143,8 +143,8 @@ fn give_new_code_entry(proc: &Proc, code: &[u32]) -> Result<(), String> {
 		let id = (*proc.entry()).metadata.bytecode;
 		let (new, _) = raw_types::misc::get_bytecode(id);
 		raw_types::misc::set_bytecode(id, new, u16::try_from(code.len()).unwrap());
-		if debug::has_local_names(old) {
-			debug::set_local_names(new, debug::local_names_for(proc, old));
+		if debug::has_local_names(proc, old) {
+			debug::set_local_names(proc, new, debug::local_names_for(proc, old));
 		}
 	}
 	changed();

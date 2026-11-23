@@ -62,6 +62,8 @@ var/twin_waiting = 0
 var/twin_hold = FALSE
 var/twin_armed = null
 TWINS(twin_a, twin_b)
+#define NAMED_TWINS(first, first_local, second, second_local) /proc/first() { var/first_local = 1; twin_waiting += 1; while (twin_hold) sleep(1); twin_runs += first_local; } /proc/second() { var/second_local = 1; twin_waiting += 1; while (twin_hold) sleep(1); twin_runs += second_local; }
+NAMED_TWINS(twin_c, c_local, twin_d, d_local)
 
 var/caught_armed = FALSE
 var/caught_by_tick = null
