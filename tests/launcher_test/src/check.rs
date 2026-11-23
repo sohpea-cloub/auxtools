@@ -76,6 +76,7 @@ pub fn checks() {
 		(&places[0]["file"], &places[0]["line"], &places[0]["proc"], &places[0]["override"]),
 		(&json!("world.dme"), &json!(5), &json!("/caught"), &json!(0))
 	);
+	assert_eq!(places[0]["id"], "ByondListLoopsAcrossTry", "{}", out);
 	assert!(
 		places[0]["text"].as_str().unwrap().contains("nested list loops separated by `try`"),
 		"{}",

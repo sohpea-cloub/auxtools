@@ -530,8 +530,9 @@ Output:
   Print FILE:LINE: PROC: diagnostic, then a count of issues and checked procs.
   Paths are relative to the project directory.
   JSON contains byond, procs, found, not_checked, and parse_errors.
-  Each entry of found has file, line, proc, override, and text;
-  each entry of not_checked has file, proc, override, and error; parse_errors
+  Each entry of found has id, file, line, proc, override, and text.
+  The id names the bug and does not change when the text does.
+  Each entry of not_checked has file, proc, override, and error; parse_errors
   are FILE:LINE: message strings. procs counts the procs checked.
 
 Exit codes:

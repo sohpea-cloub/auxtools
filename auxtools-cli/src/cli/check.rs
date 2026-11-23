@@ -72,6 +72,7 @@ pub fn check(args: &args::Check) -> Result<()> {
 				"byond": format!("{}.{}", major, build),
 				"procs": procs,
 				"found": found.bugs.iter().map(|bug| json!({
+					"id": bug.id,
 					"file": bug.file,
 					"line": bug.line,
 					"proc": bug.proc.path,
