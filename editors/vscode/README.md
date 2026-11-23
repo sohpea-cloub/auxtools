@@ -1,47 +1,40 @@
 # auxtools Debugger
 
-Debug BYOND worlds in VS Code with [auxtools](https://github.com/auxtools/auxtools).
-Supports breakpoints, stepping, runtime errors, sleeping proc stacks, variable
-inspection, expression evaluation, disassembly, instruction profiling and
-experimental hot reload.
+Debug BYOND worlds in VS Code with [auxtools](https://github.com/auxtools/auxtools). You can
+set breakpoints, step through code, pause on runtime errors, see the stacks of sleeping procs,
+view variables and evaluate expressions. The extension also shows disassembly, profiles
+instructions and has experimental hot reload.
 
-The launcher loads the debugger without changes to your world's source. Worlds
-run in DreamDaemon (`dd.exe` on Windows). Install a DM language extension
-alongside it for syntax highlighting and language features.
+The launcher loads the debugger without changes to your world's source. Worlds run in
+DreamDaemon (`dd.exe` on Windows). For syntax highlighting and language features, also install
+a DM language extension.
 
 ## Start debugging
 
-Build your world, then press F5 or use **auxtools: Debug in DreamDaemon**.
-The extension runs the `.dmb` in DreamDaemon. If the workspace has more than one
-`.dmb`, it asks you to select one.
+Build your world. Then press F5, or run **auxtools: Debug in DreamDaemon**. The extension runs
+the `.dmb` in DreamDaemon. If the workspace has more than one `.dmb`, it asks you to select one.
 
-Line breakpoints need the world's line numbers. DreamMaker writes them only
-when the world defines `DEBUG`, so add `#define DEBUG` to the `.dme` before you
-build. Many codebases already define it. Without it, line breakpoints stay
-unverified, but breakpoints on procs still work.
+Line breakpoints need the world's line numbers. DreamMaker writes them only when the world
+defines `DEBUG`. Add `#define DEBUG` to the `.dme` before you build. Many codebases already
+define it. Without it, line breakpoints stay unverified, but breakpoints on procs still work.
 
-With the [DM language client](https://github.com/SpaceManiac/vscode-dm-langclient),
-F5 and **Debug in DreamDaemon** use its selected environment. Launch
-configurations use it too when `dmb` and `dme` are omitted.
+If you use the [DM language client](https://github.com/SpaceManiac/vscode-dm-langclient), F5
+and **Debug in DreamDaemon** run the environment that you selected in it. A launch
+configuration without `dmb` and `dme` also uses that environment.
 
-**Add Configuration...** uses the language client's full commands:
-`${command:dreammaker.getFilenameDmb}` and
-`${command:dreammaker.getFilenameDme}`, prefixed with `${workspaceFolder}/`.
-It also sets the language client's build task as `preLaunchTask`.
+On Windows, the extension opens DreamSeeker on the world when it launches it. To turn this off,
+set `auxtools.autoJoin` to `false`. Run **auxtools: Join with DreamSeeker** to open a client at
+any time. On Linux, this command offers to copy the world's address instead.
 
-On Windows, the extension opens DreamSeeker when it launches a world.
-Disable this with `auxtools.autoJoin`; **auxtools: Join with DreamSeeker**
-opens a client whenever needed. On Linux, the command offers the address
-to copy instead.
+DreamSeeker clients that the extension opens close when the world ends. Set
+`auxtools.closeDreamSeeker` to `false` to keep them. They stay open through a reboot and
+reconnect.
 
-Clients opened this way close with the world (`auxtools.closeDreamSeeker`).
-A reboot keeps them open to reconnect.
+**Run Without Debugging** (Ctrl+F5) turns off breakpoints and stepping. Hot reload stays on.
+You can also set `"noDebug": true` in a launch configuration.
 
-**Run Without Debugging** (Ctrl+F5) disables breakpoints and stepping while keeping
-hot reload enabled. You can also set `"noDebug": true` in a launch configuration.
-
-To save a configuration, add it to `.vscode/launch.json`. **Add Configuration...**
-provides templates:
+To save a configuration, add it to `.vscode/launch.json`. **Add Configuration...** offers
+templates:
 
 ```json
 {
@@ -53,146 +46,162 @@ provides templates:
 }
 ```
 
+With the DM language client, **Add Configuration...** fills in the world paths as
+`${workspaceFolder}/${command:dreammaker.getFilenameDmb}` and
+`${workspaceFolder}/${command:dreammaker.getFilenameDme}`. It also sets the language client's
+build task as `preLaunchTask`.
+
 | Option | Description |
 | --- | --- |
-| `dmb` | Compiled world to run. |
-| `dme` | Project environment; defaults to the `.dme` beside the `.dmb`. Its directory is the source root. |
-| `server` | Default: `dreamdaemon` (`dd.exe` on Windows). Windows also supports `dreamdaemon-gui` for windowed DreamDaemon and `dreamseeker` to host in DreamSeeker. `dd` remains an alias for `dreamdaemon`. |
-| `defines` | Match the build's defines: `NAME`, `NAME=VALUE` or strings of DreamMaker arguments such as `-DA -DB=2`. Flags selected in the [SS13 Build Flags extension](https://github.com/spacestation13/SS13-BuildFlags) are added for matching build tasks (below). |
-| `noDebug` | Disable debugging. Default: `false`. |
-| `hotReload` | Reload source changes on save. Default: `true`. |
-| `sleepingThreads` | Maximum sleeping procs shown in the call stack. Default: `100`. |
-| `byondPath` | Optional BYOND installation path. |
-| `port` | Listening port. If omitted, DreamDaemon chooses a free port when the process starts. |
-| `args` | Arguments after the `.dmb`, replacing the defaults: `-trusted`, plus `-close` for `dreamdaemon-gui` on Windows. |
+| `dmb` | The compiled world to run. |
+| `dme` | The project file. Default: the `.dme` beside the `.dmb`. Its directory is the source root. |
+| `server` | The program that runs the world. Default: `dreamdaemon` (`dd.exe` on Windows). On Windows, `dreamdaemon-gui` runs windowed DreamDaemon and `dreamseeker` hosts the world in DreamSeeker. `dd` is another name for `dreamdaemon`. |
+| `defines` | The defines that the world was built with: `NAME`, `NAME=VALUE`, or DreamMaker arguments such as `-DA -DB=2`. The extension adds flags selected in the [SS13 Build Flags extension](https://github.com/spacestation13/SS13-BuildFlags) for matching build tasks (see below). |
+| `noDebug` | Turn off debugging. Default: `false`. |
+| `hotReload` | Reload source changes when you save. Default: `true`. |
+| `sleepingThreads` | The most sleeping procs to show in the call stack. Default: `100`. |
+| `byondPath` | The BYOND installation to use. Optional. |
+| `port` | The port the world listens on. Without it, DreamDaemon chooses a free port when it starts. |
+| `args` | Arguments to put after the `.dmb`. They replace the default arguments. The default is `-trusted`, and on Windows `dreamdaemon-gui` also gets `-close`. |
 | `env` | Environment variables for the world. |
-| `debugLibrary` | Override `auxtools.debugLibrary` for this launch. If neither is set, use the library bundled with the extension. |
+| `debugLibrary` | The debug library for this launch, instead of `auxtools.debugLibrary`. If neither is set, the extension uses its own library. |
 
-With an API-enabled version of SS13 Build Flags, selected flags are added
-when `preLaunchTask` matches `ss13BuildFlags.baseTask`. The build and debugger
-use these flags on launch and restart. Code changes from new flags wait for
-a reboot; flags with no code changes apply immediately. Map and world-setting
-changes require a rebuild and restart. Reverting the selection releases held
-edits.
+### SS13 Build Flags
 
-With older versions, launches and attaches without `defines` use the selected
-flags. Set `"defines": []` to disable them, or combine them with other defines
-using `"defines": ["${command:ss13BuildFlags.current}", "MORE"]`.
+Newer versions of SS13 Build Flags provide an API. With such a version, the extension adds the
+selected flags when `preLaunchTask` matches `ss13BuildFlags.baseTask`. The build and the
+debugger use these flags on launch and on restart. When you select other flags:
 
-DreamDaemon sends output to the Debug Console. DreamSeeker and `dreamdaemon-gui`
-display output in their own windows.
-The debugger reconnects after `world.Reboot()` and restores breakpoints and reloads.
+- If the code doesn't change, the new flags apply at once.
+- If the code changes, the launcher waits for a reboot before it reloads that change or later
+  code edits.
+- If maps or world settings change, rebuild and restart.
 
-**Stop** requests shutdown through `world/Del()`, allowing cleanup such as saving.
-After five seconds, the launcher terminates the process. Press **Stop** again or
-use **Disconnect** to terminate a launched world immediately. Attached worlds
-follow the [attach behavior](#attach-to-a-running-world) below.
+Select the previous flags again to reload the waiting edits.
 
-**Restart** runs the configuration's `preLaunchTask`, then reboots the world
-with `world.Reboot()`. The process and port stay the same, players reconnect,
-and the world loads the `.dmb` and restores reloads. A build task can therefore
-rebuild the world before it reboots. To skip the build task, use **auxtools:
-Reboot world** or the hot reload notification's **Reboot**.
+Older versions have no API. With them, launches and attaches without `defines` use the
+selected flags. Set `"defines": []` to turn this off. To use the selected flags with other
+defines, write `"defines": ["${command:ss13BuildFlags.current}", "MORE"]`.
 
-If launch settings changed or the debugger disconnected, Restart stops the
-old process and launches a replacement. **auxtools: Reboot world** skips the
-build task and reboots in place, including in attached sessions.
+### Output, stop and restart
 
-Windowed DreamDaemon (`dreamdaemon-gui`) may prompt before running in trusted
-mode. Select "Don't ask me this again" to suppress that prompt.
+DreamDaemon's output goes to the Debug Console. DreamSeeker and `dreamdaemon-gui` show output in
+their own windows. After `world.Reboot()`, the debugger reconnects and restores your breakpoints
+and reloads.
+
+**Stop** asks the world to shut down through `world/Del()`, so it can clean up, for example to
+save. After five seconds, the launcher ends the process. To end a launched world at once, press
+**Stop** again or use **Disconnect**. For attached worlds, see
+[Attach to a running world](#attach-to-a-running-world).
+
+**Restart** runs the configuration's `preLaunchTask`, then reboots the world with
+`world.Reboot()`. The process and port stay the same, and players reconnect. The world loads
+the new `.dmb` and the launcher restores your reloads. So a build task can rebuild the world
+before it reboots. If the launch settings changed or the debugger disconnected, **Restart**
+stops the old process and launches a new one.
+
+To reboot without the build task, run **auxtools: Reboot world** or choose **Reboot** in a hot
+reload notification. This reboots the world in place, also in attached sessions.
+
+Windowed DreamDaemon (`dreamdaemon-gui`) may ask before it runs a world in trusted mode. Select
+"Don't ask me this again" to stop the question.
 
 ## Breakpoints
 
-Click the gutter for a line breakpoint. Use **Add Function Breakpoint** for a proc
-path: `/mob/proc/Login`, or `/mob/Login#1` for its second definition.
+Click the gutter to set a line breakpoint. Use **Add Function Breakpoint** to break on a proc:
+write its path, such as `/mob/proc/Login`. For the proc's second definition, write
+`/mob/Login#1`.
 
-- **Conditions** are DM expressions. A false result skips the hit. Runtime errors
-  also skip the hit and are reported once in the Debug Console. A condition that
-  fails to compile prevents the breakpoint from being set; hover over it for details.
-- **Hit counts** support `5` (fifth hit onward), `== 5` (fifth hit only), `% 5`
-  (every fifth hit), and `>`, `>=`, `<`, `<=`. Only hits passing the condition count.
-  Counts reset when the breakpoint changes, its file is reloaded, or the world
-  restarts. Function breakpoint counts survive hot reload.
-- **Logpoints** print instead of pausing. Use `{expression}` interpolation, such as
-  `health is {health} for {src}`. Failed expressions display their errors in place.
-  Write `{{` and `}}` for literal braces.
-  Logpoints can also have conditions and hit counts.
+- **Conditions** are DM expressions. When the result is false, the debugger skips the hit. A
+  runtime error in a condition also skips the hit, and the Debug Console reports the error
+  once. If a condition doesn't compile, the breakpoint isn't set. Hover over it to see why.
+- **Hit counts** decide which hits pause. `5` pauses on the fifth hit and every hit after it.
+  `== 5` pauses on the fifth hit only, and `% 5` on every fifth hit. You can also use `>`,
+  `>=`, `<` and `<=`. Only hits that pass the condition count. The count starts again when you
+  change the breakpoint, when its file is reloaded and when the world restarts. A function
+  breakpoint keeps its count through a hot reload.
+- **Logpoints** print a message instead of pausing. Put expressions in braces, as in
+  `health is {health} for {src}`. If an expression fails, its error appears in the message.
+  Write `{{` and `}}` for literal braces. Logpoints can also have conditions and hit counts.
 
-With hot reload enabled, breakpoints added to unsaved text remain unverified
-until the file is saved and reloaded. Existing breakpoints continue to refer to
-the running code. After reload, they follow their statements as lines move.
+With hot reload on, a breakpoint that you add to unsaved text stays unverified. It is verified
+when you save the file and the launcher reloads it. Existing breakpoints stay on the running
+code. After a reload, they move with their statements when lines move.
 
-Without hot reload, breakpoints refer to the source used to build the world.
-If the file has changed since the build, the displayed line may no longer match;
-the Debug Console warns about this.
+With hot reload off, breakpoints refer to the source that the world was built from. If the file
+changed after the build, a breakpoint can show on another line than the one it pauses on. The
+Debug Console warns about this.
 
-**Loaded Scripts**, available from the Run and Debug view's **...** menu, lists
-files named in the world's debug info and BYOND's `stddef.dm`. Files containing
-only types, variables or defines are absent because they have no procs.
+**Loaded Scripts** is in the **...** menu of the Run and Debug view. It lists the files named in
+the world's debug information, and BYOND's `stddef.dm`. A file that has only types, variables
+or defines is not listed, because it has no procs.
 
 ## Sleeping procs
 
-While paused, the Call Stack view lists the running proc followed by sleeping
-procs. Inspect their frames and variables or evaluate expressions as usual.
-Stepping a sleeping proc waits until it wakes. The view lists up to 100 sleeping
-procs by default; change `sleepingThreads` to adjust the limit.
+While the world is paused, the Call Stack view lists the running proc and then the sleeping
+procs. You can view their frames and variables, and evaluate expressions in them, as usual. When
+you step in a sleeping proc, the step finishes when the proc wakes. The view lists up to 100
+sleeping procs. Change `sleepingThreads` to change the limit.
 
 ## Data breakpoints
 
-While paused, right-click a variable and choose **Break on Value Change**.
-Execution pauses just after its value changes, usually on the next line.
-The Debug Console reports the old and new values.
+While the world is paused, right-click a variable and choose **Break on Value Change**. The
+world pauses just after the value changes, usually on the next line. The Debug Console shows the
+old and the new value.
 
-You can watch object variables, list entries, globals, locals and arguments.
-Frame variables are watched only for that call. Watching a variable containing a
-list detects reassignment of the list; watch an entry to detect changes within it.
-`src`, `usr` and expressions without a storage location, such as `a + b`, cannot
-be watched. Assigning the same value does not trigger a breakpoint.
+You can watch object variables, list entries, globals, locals and arguments. A watch on a local
+or an argument lasts only for that call. A watch on a variable that holds a list detects when
+the variable gets another list. To detect changes inside the list, watch an entry. You can't
+watch `src`, `usr`, or an expression that is not a variable or list entry, such as `a + b`.
+Assigning the same value again doesn't trigger the breakpoint.
 
-Data breakpoint conditions use `value` and `old` for the new and previous values:
-`value < old`, for example. Hit counts and condition errors behave like ordinary
-breakpoints. Watches expire when their object is deleted or their proc returns.
-After reboot, only global watches are restored; the Breakpoints view explains
-which watches expired.
+A data breakpoint's condition can use `value` for the new value and `old` for the previous one,
+as in `value < old`. Hit counts and condition errors work as for other breakpoints. A watch
+ends when its object is deleted or its proc returns. After a reboot, only watches on globals
+come back. The Breakpoints view shows which watches ended.
 
-Watches are checked between instructions, including engine changes such as atom
-movement. They slow execution while enabled. Remove them when no longer needed.
+The debugger checks watched values between instructions. So it also detects changes that the
+engine makes, such as atom movement. Watches slow execution while they are on: remove them when
+you no longer need them.
 
 ## Runtime errors
 
-In the Breakpoints view, **Runtime errors** pauses on uncaught runtime errors and
-uncaught throws. It is enabled by default. **Caught runtime errors** also pauses
-inside `try` blocks.
+In the Breakpoints view, **Runtime errors** pauses on runtime errors and thrown values that
+nothing catches. It is on by default. **Caught runtime errors** also pauses on errors inside
+`try` blocks.
 
-Use the filter's pencil icon to match message substrings. Separate alternatives
-with commas and prefix exclusions with `!`: `bounds, null` accepts either word;
-`!libdreamluau, !rust_g` excludes both.
+To pause only on some errors, click the filter's pencil icon and enter parts of the messages.
+Separate alternatives with commas. Put `!` before a part to exclude messages that contain it.
+For example, `bounds, null` matches messages that contain either word, and
+`!libdreamluau, !rust_g` excludes messages that contain either name.
 
-Errors are still printed when no breakpoint pauses for them. Source locations in
-the Debug Console link to the corresponding file and line.
+When no breakpoint pauses on an error, the Debug Console still prints it. The source locations
+in the Debug Console are links to the file and line.
 
 ## Variables and evaluation
 
-The Variables view shows the selected frame's locals and arguments, including
-`src` and `usr`, and loads globals when expanded. Objects expand to variables;
-lists expand to entries, paginated in groups of 100. Hover a variable to see its type.
+The Variables view shows the locals and arguments of the selected frame, with `src` and `usr`.
+Expand **Globals** to load the global variables. Objects expand to their variables. Lists
+expand to their entries, 100 at a time. Hover over a variable to see its type.
 
-**Set Value** accepts an expression evaluated in the selected frame. **Copy as
-Expression** and **Add to Watch** use an access expression such as
-`mob.contents[3].name`. Use **Format > Hex** for hexadecimal numbers.
+**Set Value** takes an expression and evaluates it in the selected frame. **Copy as
+Expression** and **Add to Watch** use a path to the value, such as `mob.contents[3].name`. Use
+**Format > Hex** to show numbers in hexadecimal.
 
-Watches, conditions and the Debug Console accept DM expressions such as
-`health / maxHealth` or `get_dist(src, usr) < 3`. Name resolution follows the
-selected proc: locals and arguments, then `src` variables, then globals. Bare calls
-resolve to `src` procs where available. While running, evaluation has only global
-scope. `/obj/item::force` reads a type's initial value. In launched worlds,
-`auxtools_kept()` stores values between evaluations until reboot. For example,
-`auxtools_kept()["m"] = m` saves a value for a later `auxtools_kept()["m"]`.
+Watches, conditions and the Debug Console take DM expressions such as `health / maxHealth` or
+`get_dist(src, usr) < 3`. While the world is paused, the debugger looks up a name in the selected
+frame. It tries locals and arguments first, then variables of `src`, then globals. A call such
+as `f()` calls `src.f()` if `src` has that proc. While the world runs, only globals are
+available.
 
-Expressions can assign variables and call procs. Watch expressions run at every
-stop, so their side effects can change the world.
+`/obj/item::force` reads the initial value of a type's variable. In launched worlds,
+`auxtools_kept()` keeps values between evaluations until the world reboots. For example,
+`auxtools_kept()["m"] = m` saves a value, and a later `auxtools_kept()["m"]` reads it.
 
-The Debug Console also accepts proc bodies with declarations, loops and `return`:
+Expressions can assign variables and call procs. Watch expressions run at every pause, so their
+side effects can change the world.
+
+The Debug Console also takes proc bodies, with declarations, loops and `return`:
 
 ```dm
 var/n = 0
@@ -201,187 +210,198 @@ for (var/mob/M in world)
 n
 ```
 
-The result is the returned value or final expression. A body ending with a
-statement, including an assignment or increment, returns `.`, as a proc does.
-Bodies can modify frame variables. Compiler warnings accompany the result.
-Evaluation is aborted if it sleeps or calls a sleeping proc.
+The result is the returned value or the last expression. A body that ends with a statement,
+such as an assignment or an increment, returns `.`, as a proc does. A body can change the
+frame's variables. The Debug Console shows compiler warnings with the result. If the code
+sleeps or calls a proc that sleeps, the debugger stops it.
 
-Source `#define`s are available in evaluations and logpoints when the launcher has
-parsed the project for hot reload. Definitions update on reload; undefined macros
-are removed. They are unavailable when the project has not been parsed, including
-with `"hotReload": false`.
+Your source's `#define`s work in evaluations and logpoints once the launcher has parsed the
+project for hot reload. A reload updates the defines and removes the ones you deleted. Without a
+parsed project, the defines are not available. This includes sessions with
+`"hotReload": false`.
 
-Evaluation uses the proc compiler's constant folding, including DreamMaker
-quirks such as `~-4` and `new /obj` in conditions. Some differences remain:
+Evaluation folds constants as the proc compiler does. This includes DreamMaker's quirks, such
+as `~-4` and `new /obj` in conditions. Some differences remain:
 
-- Const vars are read from the running world, so expressions such as `~-CONST`
-  or `-(0 * CONST)` can differ from DreamMaker's folded result.
-- `x::name` uses the type of `x`'s current value, rather than its declared type,
-  and returns null when `x` is null.
-- `..()`, `__FILE__`, `__LINE__`, `__PROC__` and `__TYPE__` are unavailable.
+- The debugger reads const variables from the running world. So an expression such as
+  `~-CONST` or `-(0 * CONST)` can give another result than DreamMaker's folded value.
+- `x::name` uses the type of the value that `x` holds, not its declared type. It returns null
+  when `x` is null.
+- `..()`, `__FILE__`, `__LINE__`, `__PROC__` and `__TYPE__` are not available.
 
-Hovering source code evaluates a single expression in the selected frame without
-calling procs or assigning values. The Debug Console completes visible variables
-and procs, including members after `.`.
+When you hover over source code, the debugger evaluates one expression in the selected frame. It
+doesn't call procs or assign values for a hover. The Debug Console completes the names of
+visible variables and procs, also after a `.`.
 
-`#dis` shows the selected proc's bytecode; `#dis /proc/name` selects another proc.
+`#dis` shows the bytecode of the selected proc. `#dis /proc/name` shows another proc.
 
 ## Disassembly
 
-While paused, right-click a stack frame and select **Open Disassembly View**.
-The view shows dmasm instructions, hexadecimal words, source lines and the current
-instruction. A frame still running pre-reload bytecode shows that bytecode without
-source lines, since its source text is no longer current.
+While the world is paused, right-click a stack frame and select **Open Disassembly View**. The
+view shows the dmasm instructions, their words in hexadecimal, the source lines and the current
+instruction. A frame can still run the bytecode from before a reload. The view then shows that
+bytecode without source lines, because the source has changed.
 
-Instruction addresses encode the proc ID, retained bytecode buffer ID and word offset as
-`0xPPPPPPPPCCCCOOOO`. For example, `0x0000002A00000013` is offset `0x13` in proc
-`0x2A`'s current bytecode.
+Click beside an instruction address to set a breakpoint. The address must be the start of an
+instruction in the proc's current bytecode. Instruction breakpoints can have conditions and hit
+counts. They stay set through world reboots.
 
-Click beside an instruction address to set a breakpoint. It must be an instruction
-boundary in the proc's current bytecode. Instruction breakpoints support conditions
-and hit counts and survive world reboots.
+An address has the form `0xPPPPPPPPCCCCOOOO`: the proc ID, the code ID and the word offset. The
+code ID is 0 for the proc's current bytecode. Bytecode from before a reload has another code ID,
+until the world reboots. For example, `0x0000002A00000013` is offset `0x13` in the current
+bytecode of proc `0x2A`.
 
-With this view focused, **Step Over** advances one instruction in the frame,
-running calls to completion. **Step Into** advances to the next executed
-instruction, entering a callee if needed. **Step Out** returns to the caller.
+When the Disassembly view has focus, the step commands move by instruction:
+
+- **Step Over** runs to the next instruction in the frame. It runs calls to the end.
+- **Step Into** runs to the next instruction that executes, also in a called proc.
+- **Step Out** runs until the frame returns to its caller.
 
 ## Instruction profiling
 
-Run **auxtools: Profile instructions**, or choose **Profile instructions**
-from the world actions, to start. Click **Profiling** in the status bar to stop and
-open the report. The world keeps running, with profiling overhead.
+To start, run **auxtools: Profile instructions**, or choose **Profile instructions** in the
+world actions. To stop, click **Profiling** in the status bar. The report then opens. The world
+keeps running while you profile, but more slowly.
 
-Select a proc to see its instructions grouped by source line. The report includes
-listings for the 40 procs with the most self time. Self time excludes called procs;
-**Include calls** adds their time to the bars and shows it in a separate column.
-Click a source line to open it.
+Select a proc in the report to see its instructions by source line. The report has listings for
+the 40 procs with the most self time. Self time leaves out the time in called procs. **Include
+calls** adds that time to the bars and shows it in its own column. Click a source line to open
+it.
 
-Sleep and engine work between runs of code are excluded. Calls from the Debug Console
-are included. See [timing limits](https://github.com/auxtools/auxtools#instruction-profiling).
+The profiler doesn't measure sleep, or engine work between runs of code. Calls from the Debug
+Console are included. The [auxtools README](https://github.com/auxtools/auxtools#instruction-profiling)
+explains the limits of the timings.
 
 ## Hot reload (experimental)
 
-Saving a source file reloads supported changes, including during **Run Without
-Debugging**. The status bar shows reload progress and results; click it for
-join, reconnect, restart, reboot and stop actions. The Debug Console reports
-each reload.
+When you save a source file, the launcher reloads the supported changes into the world. This
+also works with **Run Without Debugging**. The status bar shows the progress and the result of
+each reload. Click it for actions: join, reconnect, restart, reboot and stop. The Debug Console
+reports each reload.
 
-Changes requiring a reboot or rebuild hold the save and subsequent code
-edits. The Problems panel shows their source locations, and a notification
-offers the required action:
+Some changes need a reboot or a rebuild. Your file is still saved, but the launcher doesn't
+reload that change or later code edits. The Problems panel shows where the change is, and a
+notification offers the action you need:
 
-- **Reboot required**: changed initializers of existing globals and statics.
-  **Reboot** applies them without running `preLaunchTask`.
-- **Rebuild required**: unsupported changes, code hot reload can't compile,
-  and changed world or client settings stored in the `.dmb`.
-  **Rebuild and Restart** runs `preLaunchTask`, then restarts. Configure a
-  build task or rebuild manually; the launcher does not build the world.
+- **Reboot required**: you changed the initializer of an existing global or static. **Reboot**
+  applies the change without running `preLaunchTask`.
+- **Rebuild required**: the change is not supported, hot reload can't compile the code, or you
+  changed world or client settings that are stored in the `.dmb`. **Rebuild and Restart** runs
+  `preLaunchTask` and then restarts the world. Configure a build task or rebuild by hand: the
+  launcher doesn't build the world.
 
-Fixing or reverting a blocking change applies the remaining edits.
+Fix or revert the change to reload the other edits.
 
-A reload can also be partly applied. Then some of its steps changed the world
-and a later step failed, so the world runs a mix of old and new code. The Debug
-Console shows "Hot reload partly applied" and lists each failed step. The status
-bar shows "Hot reload failed". Use **Restart** to rebuild and restart the world.
-Startup warnings also identify files newer than the `.dmb`, whose edits may
-be missing from the world.
+Some reloads are partly applied: some of their steps changed the world, and then a later step
+failed. The world then runs a mix of old and new code. The Debug Console reports this and lists
+each failed step, and the status bar shows that the reload failed. Use **Restart** to rebuild
+and restart the world.
 
-After reboot, reloads are restored before world code runs. Reloads introducing
-resources absent from the build wait until `world/New`, so map atoms run the
-built code.
+At startup, the launcher warns about source files that are newer than the `.dmb`. The world may
+be missing their edits.
 
-Supported changes include proc bodies, new procs and verbs, removals, new types
-(including mobs), new variables and static locals, variable types and defaults,
-changes to `static`, `const` and `tmp` variable declarations,
-parameters (including `as` input types), `in` lists, prefabs, `set` statements
-and parent types (`parent_type`).
-Proc, verb, world proc and global proc definitions can be inserted or removed
-between existing overrides.
+After a reboot, the launcher restores your reloads before the world runs any code. A reload that
+adds a resource missing from the build waits until `world/New`. Until then, the atoms that the
+map creates run the code from the build.
 
-Changes requiring a rebuild include proc declaration changes (such as switching
-between proc and verb or adding `final`), unsupported built-in defaults such as
-`see_infrared`, and removing a built-in type's own override (such as
-`/mob/layer`). The last case needs BYOND's original default, which the running
-world no longer stores.
+Hot reload supports these changes:
 
-Reloaded and evaluated code preserves DreamMaker's field caching: after
-`a.b.f()`, a later `a.b.x` in the same flow can use the old object even if
-`f()` replaced `a.b`. This common pattern does not warn. Read the field into
-a local when a call may replace it. Other compatibility differences and
-copied quirks are reported as warnings.
+- proc bodies
+- new procs and verbs, and removed ones
+- new types, including mobs
+- new variables and static locals
+- variable types and defaults
+- `static`, `const` and `tmp` in variable declarations
+- parameters, including their `as` input types and `in` lists
+- prefabs
+- `set` statements
+- parent types (`parent_type`)
 
-Active calls finish on their original code. Existing instances retain their
-verbs and built-in values. Computed defaults apply to new instances; new
-computed vars are null on existing instances, including their `initial()`
-values, until restart. Changed initializers of globals and statics wait for a
-reboot, and changed world settings and client settings stored in the world
-record, such as `client.control_freak`, for a rebuild (see above).
+You can also add or remove a proc, verb, world proc or global proc definition between existing
+overrides.
 
-Breakpoints follow statements after edits from VS Code, other editors or checkouts.
-The VS Code extension reports unsaved files to the launcher. Other DAP clients
-that do not report this state use on-disk line numbers for new breakpoints.
+These changes need a rebuild:
+
+- changes to a proc's declaration, such as making a proc a verb or adding `final`
+- built-in defaults that hot reload doesn't support, such as `see_infrared`
+- removing an override of a built-in variable on a built-in type itself, such as `/mob/layer`.
+  The rebuild is needed because the running world no longer has BYOND's original default.
+
+Reloaded and evaluated code caches fields as DreamMaker does. After `a.b.f()`, a later `a.b.x`
+in the same flow can read the old object, even if `f()` put another object in `a.b`. The
+debugger gives no warning for this, because the pattern is common. If a call can replace a
+field, read the field into a local. Other differences from DreamMaker, and DreamMaker quirks
+that hot reload copies, are reported as warnings.
+
+Calls that are running when you save finish on the old code. Existing objects keep their verbs
+and built-in values. New objects get the new computed defaults. A new computed variable is null
+on existing objects until the world restarts, and so is its `initial()` value. A changed
+initializer of a global or static waits for a reboot. Changed world settings, and client
+settings stored in the world record such as `client.control_freak`, wait for a rebuild.
+
+Breakpoints move with their statements when you edit in VS Code, in another editor or with a
+checkout. The VS Code extension tells the launcher which files have unsaved changes. Other DAP
+clients don't, so the launcher places their new breakpoints by the line numbers on disk.
 
 ### Icons, sounds and other files
 
-Saving an icon, sound or other referenced resource reloads it. Files are found
-in the `.dme` directory, then in `FILE_DIR` order, as DreamMaker does. Existing
-appearances, overlays, images and mouse pointers redraw with the new file.
-Recompiled code and defaults use the new resource.
+When you save an icon, sound or other resource that the code uses, the launcher reloads it. It
+looks for files in the `.dme`'s directory first, then in the `FILE_DIR` directories in order, as
+DreamMaker does. Existing appearances, overlays, images and mouse pointers redraw with the new
+file. Recompiled code and defaults use the new resource.
 
-Stored values retain old resources: vars, lists, `/icon` and `/sound` datums,
-mutable appearances, and objects later made from those values. Files with
-identical content share a resource ID and cannot be replaced independently; a
-warning requests a rebuild.
+Some values keep the old resource: variables, lists, `/icon` and `/sound` datums, mutable
+appearances, and objects made later from those values. Files with the same content share one
+resource ID, so the launcher can't replace one of them alone. A warning asks you to rebuild.
 
-After reboot, resource edits and dependent code wait until `world/New`, so map
-atoms use the built versions. Edits made before launch are reported but left
-alone until the next save.
+After a reboot, resource edits and the code that needs them wait until `world/New`. Until then,
+map atoms use the resources from the build. If you edit a resource before the launch, the
+launcher reports it, but it reloads the file only when you save it again.
 
-Reloaded `FILE_DIR` resources use paths relative to the world directory. For
-example, `"[icon]"` and `browse_rsc()` use `icons/lamp.dmi` where a rebuild uses
-the source spelling `lamp.dmi`.
+A reloaded resource from `FILE_DIR` has a path relative to the world directory. For example,
+`"[icon]"` and `browse_rsc()` give `icons/lamp.dmi`, where a rebuilt world gives `lamp.dmi` as
+written in the source.
 
-Resource reloads modify BYOND's appearance tree and require a validated build.
-Builds newer than 516.1689 are refused for this operation, even though the rest
-of the debugger is attempted.
+Resource reload changes BYOND's appearance tree, so it needs a BYOND build that auxtools has
+checked. On builds newer than 516.1689, auxtools turns resource reload off. The rest of the
+debugger still tries to start.
 
-Generated assets and caches need the codebase to regenerate them or a rebuild:
+For generated assets and caches, the codebase must make them again, or you must rebuild:
 
-- Runtime-generated icons (`icon()` and its procs), including tgstation's
-  greyscale items and tgui spritesheets, have their own resource content.
-- Startup caches, such as tgstation's HUD styles and sound groups, retain old
-  resources even after reboot: global initialization runs before resource edits
-  are restored.
-- Files sent through `browse_rsc()` or an asset cache reach clients when the
-  codebase sends them again.
+- Icons made at runtime with `icon()` and its procs have their own copy of the data. Examples
+  are tgstation's greyscale items and tgui spritesheets.
+- Caches built at startup keep the old resources even after a reboot, because global
+  initialization runs before the launcher restores resource edits. Examples are tgstation's HUD
+  styles and sound groups.
+- Files sent with `browse_rsc()` or through an asset cache reach clients when the codebase sends
+  them again.
 
-Files generated while the world runs, such as tgstation's map preview icons, are
-watched and reloaded too.
+The launcher also watches and reloads files that the world writes while it runs, such as
+tgstation's map preview icons.
 
 ### Skins
 
-Saving the last `.dmf` included by the `.dme` updates the login skin and
-preserves it after reboot. Connected players must reconnect to load it. Use the
-reload notification or **auxtools: Reconnect players**. DreamSeeker-hosted
-worlds reboot instead because the host cannot reconnect independently. New image
-references absent from the build require a rebuild.
+When you save the last `.dmf` that the `.dme` includes, the launcher updates the skin that
+clients get when they log in. The new skin stays after a reboot. Connected players must
+reconnect to get it: use the reload notification or **auxtools: Reconnect players**. If
+DreamSeeker hosts the world, the world reboots instead, because the host can't reconnect on its
+own. A skin that uses new images missing from the build needs a rebuild.
 
 ### Client scripts
 
-Changes to `client/script` text apply at login and survive reboot. Connected
-players must reconnect to load them; use the notification or **auxtools:
-Reconnect players**. Resource-file scripts and included `.dms` files require a
-rebuild.
+Changes to `client/script` text apply when clients log in, and they stay after a reboot.
+Connected players must reconnect to get them: use the notification or **auxtools: Reconnect
+players**. Scripts in resource files and included `.dms` files need a rebuild.
 
 ## Attach to a running world
 
-Use **auxtools: Attach to a running world** to select a world started by the
-launcher. Multiple VS Code windows can attach simultaneously, each with independent
+Run **auxtools: Attach to a running world** and select a world that the launcher started.
+Several VS Code windows can attach to one world at the same time, each with its own
 breakpoints. Any session can resume a paused world.
 
-Disconnecting leaves an attached world running. If it is paused, it stays paused
-while other debugging sessions remain. The Debug Console also reports reloads
-performed by other launchers.
+When you disconnect, an attached world keeps running. If it is paused and other debugging
+sessions remain, it stays paused. The Debug Console also reports reloads that other launchers
+make.
 
 ```json
 {
@@ -392,32 +412,32 @@ performed by other launchers.
 }
 ```
 
-Attach options are `processId`, `dme`, `defines`, `hotReload` and `sleepingThreads`.
-If `processId` is omitted, select a running world. Hot reload defaults to `false`
-for attach sessions to avoid competing with the launching session's reloads.
+The attach options are `processId`, `dme`, `defines`, `hotReload` and `sleepingThreads`.
+Without `processId`, you select a running world. `hotReload` is `false` by default when you
+attach, so that your reloads don't compete with those of the session that launched the world.
 
 ## Settings
 
-- `auxtools.byondPath`: BYOND installation directory. Discovery checks
-  `BYOND_SYSTEM`, the registry, `Program Files`, `~/byond` and `/usr/local/byond`.
-- `auxtools.launcherPath`: optional launcher override. Leave empty to use the
-  bundled launcher.
-- `auxtools.debugLibrary`: optional debug library override (`debug_server.dll`
-  or `libdebug_server.so`). Leave empty to use the library bundled with the
-  extension.
-- `auxtools.addToTerminalPath`: add the launcher directory to terminal `PATH`
-  so commands such as `auxtools log` work there. Relaunch existing terminals
-  to apply changes. Default: `true`.
-- `auxtools.autoJoin`: open DreamSeeker on a world when it starts (Windows).
-  Default: `true`.
-- `auxtools.closeDreamSeeker`: close clients opened by the extension when the
-  world process exits. Default: `true`.
-- `auxtools.notifications`: set any category to `false` to hide its notifications:
-  - `reconnect`: reconnect players after a skin or script reload.
-  - `join`: join offers when not joined automatically; copy the address if DreamSeeker is unavailable.
-  - `rebuild`: changes requiring a reboot or rebuild.
-  - `outdated`: edits that may be missing from the build.
+- `auxtools.byondPath`: the BYOND installation directory. Without it, the launcher looks in
+  `BYOND_SYSTEM`, the registry, `Program Files`, `~/byond`, `/usr/local/byond` and
+  `/usr/share/byond`.
+- `auxtools.launcherPath`: a launcher to use instead of the bundled one. Leave it empty to use
+  the bundled launcher.
+- `auxtools.debugLibrary`: a debug library to use instead of the bundled one, `debug_server.dll`
+  on Windows or `libdebug_server.so` on Linux. Leave it empty to use the bundled library.
+- `auxtools.addToTerminalPath`: add the launcher's directory to `PATH` in VS Code terminals, so
+  commands such as `auxtools log` work there. Open new terminals to apply a change. Default:
+  `true`.
+- `auxtools.autoJoin`: open DreamSeeker on a world when it starts, on Windows. Default: `true`.
+- `auxtools.closeDreamSeeker`: close the clients that the extension opened when the world
+  process ends. Default: `true`.
+- `auxtools.notifications`: set a category to `false` to hide its notifications:
+  - `reconnect`: offers to reconnect players after a skin or client script reload.
+  - `join`: offers to join a world that the extension didn't join automatically, or to copy its
+    address when DreamSeeker is not available.
+  - `rebuild`: warnings about changes that need a reboot or a rebuild.
+  - `outdated`: warnings about edits that may be missing from the build.
 
 ## License
 
-GPL-3.0. See [LICENSE](LICENSE). The extension bundles the launcher and debug server.
+GPL-3.0. See [LICENSE](LICENSE). The extension contains the launcher and the debug server.
