@@ -387,7 +387,7 @@ fn command_line_shape() {
 	let (code, of_wait) = launcher_command(&["help", "wait"]);
 	assert_eq!(code, 0);
 	assert!(
-		of_wait.starts_with("Wait for a debugger or world lifecycle event.\n\nUsage:\n  auxtools [--pid PID] wait pause [OPTIONS]\n"),
+		of_wait.starts_with("Wait for a pause, a hot reload, or a reboot.\n\nUsage:\n  auxtools [--pid PID] wait pause [OPTIONS]\n"),
 		"help wait said {}",
 		of_wait
 	);
@@ -400,9 +400,9 @@ fn command_line_shape() {
 	assert!(
 		of_pause
 			.starts_with("Wait for execution to pause and report the location and reason.\n\nUsage:\n  auxtools [--pid PID] wait pause [OPTIONS]\n")
-			&& of_pause.contains("\n  --timeout SECONDS           Set the wait deadline. [default: unlimited]\n")
+			&& of_pause.contains("\n  --timeout SECONDS           Set how long to wait. [default: unlimited]\n")
 			&& of_pause.contains("\n  --pid PID                   Select the world process.\n")
-			&& of_pause.contains("\n  --response-timeout SECONDS  Set the wait for each response from the world. [default: 30]\n")
+			&& of_pause.contains("\n  --response-timeout SECONDS  Set how long to wait for each response from the world. [default: 30]\n")
 			&& of_pause.contains("\n  -h, --help                  Show help for this command.\n")
 			&& of_pause.contains("\nExit codes:\n  0  World paused, or was already paused.\n")
 			&& !of_pause.contains("--log"),
@@ -435,7 +435,8 @@ fn command_line_shape() {
 		),
 		(
 			&["wait", "--break", "/proc/x"],
-			"error: unexpected argument '--break' before a wait command: specify pause, reload, or reboot. Run 'auxtools wait --help' for usage."
+			"error: unexpected argument '--break' before a wait command. Specify pause, reload, or reboot first. Run 'auxtools wait --help' for \
+			 usage."
 		),
 		(&["next"], "error: unknown command 'next'. Run 'auxtools --help' for available commands.")
 	] {
