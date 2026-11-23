@@ -527,34 +527,14 @@ unsafe fn add_mob_type(mob: MobType) -> Result<u32, String> {
 	}
 }
 
-pub unsafe fn mob_type(type_id: u32) -> Result<MobType, String> {
-	Ok(*mob_slot(type_id)?)
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum MobSetting {
-	Key(u32),
-	Sight(u32),
-	SeeInDark(u8),
-	SeeInvisible(u8)
-}
-
-pub unsafe fn set_mob_setting(type_id: u32, setting: MobSetting) -> Result<(), String> {
-	let mob = &mut *mob_slot(type_id)?;
-	match setting {
-		MobSetting::Key(key) => mob.key = key,
-		MobSetting::Sight(sight) => mob.sight = sight,
-		MobSetting::SeeInDark(see_in_dark) => mob.see_in_dark = see_in_dark,
-		MobSetting::SeeInvisible(see_invisible) => mob.see_invisible = see_invisible
+pub unsafe fn set_mob_type(type_id: u32, set: impl FnOnce(&mut MobType)) -> Result<(), String> {
+	let functions = functions()?;
+	unsafe {
+		let mobs = std::slice::from_raw_parts_mut(*functions.mobs, *functions.mob_count as usize);
+		let mob = mobs.iter_mut().find(|m| m.type_id == type_id).ok_or("it isn't a mob type")?;
+		set(mob);
 	}
 	Ok(())
-}
-
-unsafe fn mob_slot(type_id: u32) -> Result<*mut MobType, String> {
-	let functions = functions()?;
-	let mobs = std::slice::from_raw_parts_mut(*functions.mobs, *functions.mob_count as usize);
-	let mob = mobs.iter_mut().find(|m| m.type_id == type_id).ok_or("it isn't a mob type")?;
-	Ok(mob)
 }
 
 pub unsafe fn instances() -> Result<Vec<Instance>, String> {

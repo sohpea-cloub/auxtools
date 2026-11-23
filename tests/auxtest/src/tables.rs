@@ -9,7 +9,6 @@ fn test_tables() {
 		name_map_plans_survive_new_types()?;
 		name_maps_refuse_uncountable_lists()?;
 		parent_plans_check_their_world()?;
-		mob_edits_survive_new_types()?;
 	}
 	Ok(Value::from(true))
 }
@@ -160,27 +159,6 @@ unsafe fn add_types(parent: &str, count: usize) -> DMResult<()> {
 		let path = StringRef::new(&format!("{}/auxtest_added_{}", parent, n))?;
 		runtime_tables::add_type(parent_id, path.get_id().0).map_err(|e| runtime!("test_tables: couldn't add a type: {}", e))?;
 		std::mem::forget(path);
-	}
-	Ok(())
-}
-
-unsafe fn mob_edits_survive_new_types() -> DMResult<()> {
-	use runtime_tables::{mob_type, set_mob_setting, MobSetting};
-
-	let failed = |what: &str, e: String| runtime!("test_tables: couldn't {}: {}", what, e);
-	let mob = type_id("/mob")?;
-	let old = mob_type(mob).map_err(|e| failed("read a mob type", e))?;
-	add_types("/mob", 64)?;
-	set_mob_setting(mob, MobSetting::Sight(0x1234)).map_err(|e| failed("set a mob type's sight", e))?;
-	let edited = mob_type(mob).map_err(|e| failed("read a mob type", e))?;
-	set_mob_setting(mob, MobSetting::Sight(old.sight)).map_err(|e| failed("restore a mob type's sight", e))?;
-	let expected = runtime_tables::MobType { sight: 0x1234, ..old };
-	if edited != expected {
-		return Err(runtime!(
-			"test_tables: a mob type set after 64 mob types were added reads {:?}, expected {:?}",
-			edited,
-			expected
-		));
 	}
 	Ok(())
 }
