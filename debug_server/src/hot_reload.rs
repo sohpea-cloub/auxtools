@@ -2434,7 +2434,7 @@ struct UnhookedCode<K, T> {
 	code: PreparedCode,
 	old_code: std::sync::Arc<crate::code_index::Code>,
 	old_file: Option<u32>,
-	hooked: Vec<(u32, u32, Option<String>, Option<BTreeMap<K, T>>)>
+	hooked: Vec<(u32, Option<u32>, Option<String>, Option<BTreeMap<K, T>>)>
 }
 
 fn apply_code<K: Ord + std::hash::Hash + Copy, T>(
@@ -2452,19 +2452,20 @@ fn apply_code<K: Ord + std::hash::Hash + Copy, T>(
 
 	let hooked_at = hooked_offsets(&p.proc);
 	let old_code = (!hooked_at.is_empty()).then(|| crate::code_index::of(&p.proc));
-	let hooked: Vec<(u32, u32, Option<String>, Option<BTreeMap<K, T>>)> = hooked_at
-		.into_iter()
-		.filter_map(|offset| {
-			let code = old_code.as_ref()?;
-			let line = code.line_at(offset)?;
-			let other_file = (code.place(offset, false).and_then(|(file, _)| file))
-				.filter(|&file| code.file().is_some_and(|own| own != file))
-				.map(str::to_owned);
-			let known = breakpoints.remove(&(p.proc.id, offset as u16));
-			let _ = unhook_instruction(&p.proc, offset);
-			Some((offset, line, other_file, known))
-		})
-		.collect();
+	let hooked: Vec<(u32, Option<u32>, Option<String>, Option<BTreeMap<K, T>>)> = match &old_code {
+		Some(code) => hooked_at
+			.into_iter()
+			.map(|offset| {
+				let other_file = (code.place(offset, false).and_then(|(file, _)| file))
+					.filter(|&file| code.file().is_some_and(|own| own != file))
+					.map(str::to_owned);
+				let known = breakpoints.remove(&(p.proc.id, offset as u16));
+				let _ = unhook_instruction(&p.proc, offset);
+				(offset, code.line_at(offset), other_file, known)
+			})
+			.collect(),
+		None => vec![]
+	};
 
 	let local_names = p
 		.local_names
@@ -2527,11 +2528,6 @@ fn restore_breakpoints<K: Ord + std::hash::Hash + Copy, T>(
 	};
 
 	for (old_offset, line, other_file, known) in hooked {
-		let line = match &p.lines {
-			Some(lines) if other_file.is_none() => map_line(line, lines),
-			_ => line
-		};
-
 		let mut known_as: Vec<(raw_types::procs::ProcId, u32, K)> = moved_breakpoints
 			.iter()
 			.filter(|((proc, ..), at)| *proc == p.proc.id && **at == old_offset)
@@ -2546,34 +2542,74 @@ fn restore_breakpoints<K: Ord + std::hash::Hash + Copy, T>(
 			}
 		}
 
-		let moved = firsts
-			.filter(|(old_first, _)| line >= *old_first)
-			.map(|(old_first, new_first)| line - old_first + new_first);
-		let in_other_file = |file: &str| Some(file) == other_file.as_deref();
-		let wanted = other_file.is_some().then_some(&in_other_file as &dyn Fn(&str) -> bool);
-		let Some((line, offset)) = new_code
-			.offset_of(moved.unwrap_or(line), wanted)
-			.map(|offset| (moved.unwrap_or(line), offset))
-		else {
-			warnings.push(format!(
-				"{}: removed breakpoint on line {}: no executable code after reload",
-				p.name, line
-			));
-			continue;
+		let target = match line {
+			None if new_code.line_at(old_offset).is_none() && new_code.instruction_length(old_offset).is_some() => {
+				Ok((old_offset, format!("at instruction {}", old_offset)))
+			}
+			None => Err(format!(
+				"{}: removed the breakpoint at instruction {}: the new code has no instruction there before its first line",
+				p.name, old_offset
+			)),
+			Some(line) => {
+				let line = match &p.lines {
+					Some(lines) if other_file.is_none() => map_line(line, lines),
+					_ => line
+				};
+				let moved = firsts
+					.filter(|(old_first, _)| line >= *old_first)
+					.map(|(old_first, new_first)| line - old_first + new_first);
+				let in_other_file = |file: &str| Some(file) == other_file.as_deref();
+				let wanted = other_file.is_some().then_some(&in_other_file as &dyn Fn(&str) -> bool);
+				let line = moved.unwrap_or(line);
+				new_code
+					.offset_of(line, wanted)
+					.map(|offset| (offset, format!("on line {}", line)))
+					.ok_or_else(|| format!("{}: removed breakpoint on line {}: no executable code after reload", p.name, line))
+			}
+		};
+		let (offset, place) = match target {
+			Ok(target) => target,
+			Err(warning) => {
+				warnings.push(warning);
+				continue;
+			}
 		};
 
 		if hook_instruction(&p.proc, offset).is_err() {
-			warnings.push(format!("{}: could not restore breakpoint on line {}", p.name, line));
+			warnings.push(format!("{}: could not restore breakpoint {}", p.name, place));
 			continue;
 		}
 
-		if let Some(known) = known {
-			breakpoints.insert((p.proc.id, offset as u16), known);
-		}
+		keep_claims(known, breakpoints, (p.proc.id, offset as u16), &p.name, &place, warnings);
 		for key in known_as {
 			if key.1 != offset {
 				moved_breakpoints.insert(key, offset);
 			}
+		}
+	}
+}
+
+fn keep_claims<K: Ord, T>(
+	known: Option<BTreeMap<K, T>>,
+	breakpoints: &mut HashMap<(raw_types::procs::ProcId, u16), BTreeMap<K, T>>,
+	at: (raw_types::procs::ProcId, u16),
+	name: &str,
+	place: &str,
+	warnings: &mut Vec<String>
+) {
+	let Some(known) = known else {
+		return;
+	};
+	let claims = breakpoints.entry(at).or_default();
+	for (client, claim) in known {
+		match claims.entry(client) {
+			Entry::Vacant(entry) => {
+				entry.insert(claim);
+			}
+			Entry::Occupied(_) => warnings.push(format!(
+				"{}: two breakpoints {} moved to one instruction. Only the first keeps its condition and hit count",
+				name, place
+			))
 		}
 	}
 }

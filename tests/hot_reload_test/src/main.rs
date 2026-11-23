@@ -1045,6 +1045,87 @@ fn debugger(built: Built) {
 	let expected = ["c_local", "d_local", "c_local", "d_local", "c_renamed", "d_local"];
 	assert_eq!(names, expected, "the locals' names of old and new frames of twin_c and twin_d");
 	println!("ok: a reload that renames only a local keeps the old name in old frames");
+
+	let changes = source.edit(
+		"reload.dm",
+		"/proc/first_def()\n",
+		"var/claimed_step = 0\n\n/proc/claimed_target()\n\ttwin_runs += claimed_step\n\n/proc/first_def()\n"
+	);
+	reload(&mut watcher, &changes);
+	let line = source.line_of("reload.dm", "\ttwin_runs += claimed_step");
+	let claimed = |offset: u32| InstructionRef {
+		proc: ProcRef {
+			path: "/claimed_target".to_owned(),
+			override_id: 0
+		},
+		offset
+	};
+	let code = match client.request(Request::ProcInfo { proc: claimed(0).proc }) {
+		Response::ProcInfo(Ok(info)) => info.code,
+		other => panic!("expected ProcInfo for /claimed_target, got {:?}", other)
+	};
+	let Response::Disassemble(Ok(disassembly)) = client.request(Request::Disassemble { code }) else {
+		panic!("expected the disassembly of /claimed_target");
+	};
+	let on_line: Vec<u32> = disassembly
+		.instructions
+		.iter()
+		.filter(|at| at.line == Some(line) && !at.text.starts_with("Dbg"))
+		.map(|at| at.offset as u32)
+		.collect();
+	assert!(on_line.len() > 1, "line {} has one instruction: {:?}", line, disassembly.instructions);
+	let mut other = world.connect();
+	let set = |client: &mut Client, offset: u32, condition: &str| {
+		let response = client.request(Request::BreakpointSet {
+			instruction: claimed(offset),
+			condition: Some(condition.to_owned()),
+			hit: None,
+			log: None,
+			exact: true
+		});
+		assert!(
+			matches!(response, Response::BreakpointSet {
+				result: BreakpointSetResult::Success { .. }
+			}),
+			"couldn't set a breakpoint at {}: {:?}",
+			offset,
+			response
+		);
+	};
+	set(&mut client, 0, "claimed_step == 3");
+	set(&mut client, on_line[0], "claimed_step == 1");
+	set(&mut other, on_line[on_line.len() - 1], "claimed_step == 2");
+	let changes = source.edit("reload.dm", "\ttwin_runs += claimed_step\n", "\ttwin_runs = twin_runs + claimed_step\n");
+	let result = reload(&mut watcher, &changes);
+	assert!(result.warnings.is_empty(), "{:?}", result.warnings);
+	for step in 1..=4 {
+		let runs = twin_number(&mut client, "twin_runs");
+		eval(&mut client, &format!("claimed_step = {}", step));
+		eval(&mut client, "twin_armed = /proc/claimed_target");
+		if step < 4 {
+			assert_eq!(client.expect_pause(), BreakpointReason::Breakpoint, "step {}", step);
+			assert_eq!(other.expect_pause(), BreakpointReason::Breakpoint, "step {}", step);
+			client.resume();
+		}
+		wait_for(&mut client, "twin_runs", &(runs + step).to_string());
+	}
+	let unset = |client: &mut Client, offset: u32| {
+		let response = client.request(Request::BreakpointUnset {
+			instruction: claimed(offset),
+			exact: true
+		});
+		assert!(
+			matches!(response, Response::BreakpointUnset { success: true, .. }),
+			"couldn't take away the breakpoint at {}: {:?}",
+			offset,
+			response
+		);
+	};
+	unset(&mut client, 0);
+	unset(&mut client, on_line[0]);
+	unset(&mut other, on_line[on_line.len() - 1]);
+	other.leave();
+	println!("ok: instruction breakpoints keep their conditions across a reload, at the start or on one instruction");
 }
 
 fn sleep_named_twins(client: &mut Client) -> u32 {
