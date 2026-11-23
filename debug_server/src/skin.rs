@@ -57,7 +57,7 @@ pub(crate) fn run(code: &str, params: &[(&str, &Value)]) -> Result<Value, String
 	let body = dmasm::compiler::compile_body_in(code, &names, None, crate::world_byond()).map_err(|e| e.to_string())?;
 	let assembly = dmasm::assembler::assemble(&body.nodes, &mut crate::assemble_env::AssembleEnv).map_err(|e| format!("{:?}", e))?;
 	let proc = Proc::find("/proc/auxtools_expr_stub").ok_or("the world has no evaluation stub")?;
-	unsafe { proc.set_bytecode(assembly) };
+	unsafe { proc.set_bytecode(assembly) }?;
 	let result = crate::server::Evaluation::call_with_locals(&proc, &body.locals, &values)?.map_err(|e| e.message)?;
 	result.as_list().and_then(|list| list.get(1)).map_err(|e| e.message)
 }

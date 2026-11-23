@@ -27,7 +27,15 @@ fn changed() {
 struct State {
 	allocations: HashMap<(raw_types::procs::ProcId, Vec<u32>), Box<[u32]>>,
 	original: HashMap<raw_types::misc::BytecodeId, (*mut u32, u16)>,
+	own_entries: HashMap<raw_types::procs::ProcId, OwnEntry>,
 	retired_by_address: HashMap<usize, Vec<u32>>
+}
+
+#[derive(PartialEq, Eq)]
+struct OwnEntry {
+	entry: u32,
+	changes: u64,
+	procs: u32
 }
 
 pub fn init() {
@@ -37,6 +45,7 @@ pub fn init() {
 		*ptr = Some(State {
 			allocations: HashMap::new(),
 			original: HashMap::new(),
+			own_entries: HashMap::new(),
 			retired_by_address: HashMap::new()
 		});
 	}
@@ -127,6 +136,9 @@ fn procs_sharing_code(proc: &Proc) -> Vec<Proc> {
 const OWN_ENTRY_MARK: u32 = 0xFFFF_FFFF;
 
 fn give_new_code_entry(proc: &Proc, code: &[u32]) -> Result<(), String> {
+	if code.len() >= u16::MAX as usize {
+		return Err(format!("{} words are too many to copy", code.len()));
+	}
 	let mut words = code.to_vec();
 	words.push(OWN_ENTRY_MARK);
 	let entry = unsafe { runtime_tables::intern_misc(&words) }?;
@@ -155,16 +167,43 @@ pub fn unshare_code(proc: &Proc, code: &[u32]) -> Result<(), String> {
 	Ok(())
 }
 
-pub fn set_bytecode(proc: &Proc, bytecode: Vec<u32>) {
-	let state = state();
-	let id = unsafe { (*proc.entry()).metadata.bytecode };
-	if !state.original.contains_key(&id) && !procs_sharing_code(proc).is_empty() {
-		let code = unsafe { proc.bytecode() }.to_vec();
-		let _ = give_new_code_entry(proc, &code);
+fn code_entry(proc: &Proc) -> Option<u32> {
+	unsafe { runtime_tables::proc_entry(proc.id) }.map(|entry| entry.0[ProcEntryWords::BYTECODE])
+}
+
+fn proc_count_is(count: u32) -> bool {
+	count > 0
+		&& unsafe { runtime_tables::proc_entry(raw_types::procs::ProcId(count - 1)) }.is_some()
+		&& unsafe { runtime_tables::proc_entry(raw_types::procs::ProcId(count)) }.is_none()
+}
+
+fn give_own_code_entry(state: &mut State, proc: &Proc) -> Result<(), String> {
+	if let Some(own) = state.own_entries.get(&proc.id) {
+		if code_entry(proc) == Some(own.entry) && own.changes == bytecode_changes() && proc_count_is(own.procs) {
+			return Ok(());
+		}
 	}
+	if !procs_sharing_code(proc).is_empty() {
+		let code = unsafe { proc.bytecode() }.to_vec();
+		give_new_code_entry(proc, &code).map_err(|e| format!("{} shares its code and couldn't get code of its own: {}", proc.path, e))?;
+	}
+	if let Some(entry) = code_entry(proc) {
+		let own = OwnEntry {
+			entry,
+			changes: bytecode_changes(),
+			procs: unsafe { runtime_tables::proc_count() }
+		};
+		state.own_entries.insert(proc.id, own);
+	}
+	Ok(())
+}
+
+pub fn set_bytecode(proc: &Proc, bytecode: Vec<u32>) -> Result<(), String> {
+	let len = u16::try_from(bytecode.len()).map_err(|_| format!("{} words are too many for {}", bytecode.len(), proc.path))?;
+	let state = state();
+	give_own_code_entry(state, proc)?;
 	remember_original(state, proc);
 
-	let len = u16::try_from(bytecode.len()).unwrap();
 	let ptr = state
 		.allocations
 		.entry((proc.id, bytecode))
@@ -174,4 +213,5 @@ pub fn set_bytecode(proc: &Proc, bytecode: Vec<u32>) {
 	unsafe {
 		raw_types::misc::set_bytecode((*proc.entry()).metadata.bytecode, ptr, len);
 	}
+	Ok(())
 }

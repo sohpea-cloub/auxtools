@@ -15,7 +15,7 @@ impl AssembleEnv {
 		let assembly = dmasm::assembler::assemble(&expr, &mut Self).unwrap();
 
 		let proc = Proc::find("/proc/auxtools_expr_stub")?;
-		unsafe { proc.set_bytecode(assembly) };
+		unsafe { proc.set_bytecode(assembly) }.ok()?;
 
 		let res = proc.call(&values).ok()?.as_list().ok()?.get(1).ok()?;
 

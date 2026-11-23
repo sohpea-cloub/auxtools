@@ -138,8 +138,29 @@ var/datum/weak_test_datum
 /proc/auxtest_value_from()
 	CRASH()
 
+var/auxtest_big = 0
+#define BIG1 auxtest_big += 1;
+#define BIG4 BIG1 BIG1 BIG1 BIG1
+#define BIG16 BIG4 BIG4 BIG4 BIG4
+#define BIG64 BIG16 BIG16 BIG16 BIG16
+#define BIG256 BIG64 BIG64 BIG64 BIG64
+#define BIG1K BIG256 BIG256 BIG256 BIG256
+#define BIG4K BIG1K BIG1K BIG1K BIG1K
+#define BIG_MAX BIG4K BIG4K BIG4K BIG256 BIG256 BIG256 BIG16 BIG16 BIG16 BIG1 BIG1
+#define BIG_TWINS(first, second) /proc/first() { BIG_MAX } /proc/second() { BIG_MAX }
+BIG_TWINS(auxtest_big_a, auxtest_big_b)
+
+/proc/auxtest_code_p()
+	return "p"
+
+/proc/auxtest_code_q()
+	return "q"
+
 /proc/auxtest_code_r()
 	return "r"
+
+/proc/auxtest_code_s()
+	return "s"
 
 /proc/auxtest_code_t()
 	return "t"
@@ -148,6 +169,9 @@ var/datum/weak_test_datum
 	return "u"
 
 /proc/auxtest_code_before_shutdown()
+	CRASH()
+
+/proc/auxtest_shared_code()
 	CRASH()
 
 /proc/do_tests()
@@ -164,6 +188,7 @@ var/datum/weak_test_datum
 	ASSERT(auxtest_tables() == TRUE)
 	ASSERT(auxtest_value_from() == TRUE)
 	ASSERT(auxtest_code_before_shutdown() == TRUE)
+	ASSERT(auxtest_shared_code() == TRUE)
 
 	var/datum/weak_test = new
 	ASSERT(auxtest_weak_values(weak_test, weak_kept_datum) == TRUE)

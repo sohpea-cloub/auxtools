@@ -528,7 +528,7 @@ impl Server {
 		}
 		let proc = Proc::find("/proc/auxtools_expr_stub").ok_or("the world has no /proc/auxtools_expr_stub to evaluate expressions in")?;
 
-		unsafe { proc.set_bytecode(assembly) };
+		unsafe { proc.set_bytecode(assembly) }?;
 
 		let ends = crate::WORLD_ENDS.load(std::sync::atomic::Ordering::Relaxed);
 		let result = Evaluation::call_with_locals(&proc, &locals, &arg_values)?;

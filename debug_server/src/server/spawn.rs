@@ -111,7 +111,10 @@ impl Server {
 			self.spawn_failed(spawn.number, error);
 			return self.next_spawn();
 		}
-		unsafe { stub.set_bytecode(spawn.bytecode) };
+		if let Err(error) = unsafe { stub.set_bytecode(spawn.bytecode) } {
+			self.spawn_failed(spawn.number, error);
+			return self.next_spawn();
+		}
 		let args = List::new();
 		for arg in &spawn.args {
 			args.append(arg);
