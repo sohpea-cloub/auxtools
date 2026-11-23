@@ -125,27 +125,28 @@ unsafe fn references(entry: u32) -> Result<u32, String> {
 }
 
 /// Keeps `bytecode` as the code at `ptr` for readers of old frames.
-///
-/// # Safety
-/// Call on BYOND's thread while a world is live.
-pub unsafe fn remember_bytecode(ptr: *const u32, bytecode: &[u32]) {
+#[track_caller]
+pub fn remember_bytecode(ptr: *const u32, bytecode: &[u32]) {
+	crate::expect_live("remember_bytecode");
 	changed();
-	state().retired_by_address.entry(ptr as usize).or_insert_with(|| bytecode.to_vec());
+	unsafe { state() }
+		.retired_by_address
+		.entry(ptr as usize)
+		.or_insert_with(|| bytecode.to_vec());
 }
 
 /// The code at `ptr`, if it is code that this library replaced or kept.
-///
-/// # Safety
-/// Call on BYOND's thread while a world is live.
-pub unsafe fn bytecode_at(ptr: *const u32) -> Option<Vec<u32>> {
-	let state = state();
+#[track_caller]
+pub fn bytecode_at(ptr: *const u32) -> Option<Vec<u32>> {
+	crate::expect_live("bytecode_at");
+	let state = unsafe { state() };
 
 	if let Some(bytecode) = state.retired_by_address.get(&(ptr as usize)) {
 		return Some(bytecode.clone());
 	}
 
 	if let Some(&(original, len)) = state.original.values().find(|(original, _)| std::ptr::eq(*original, ptr)) {
-		return Some(std::slice::from_raw_parts(original, len as usize).to_vec());
+		return Some(unsafe { std::slice::from_raw_parts(original, len as usize) }.to_vec());
 	}
 
 	state

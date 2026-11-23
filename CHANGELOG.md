@@ -35,10 +35,9 @@
 
 - `Value::raw` is now a method that returns a copy. A `Value` releases its reference when it
   drops, so replacing its raw value wasn't safe.
-- The functions in `runtime_tables`, `appearance_tables` and `raw_types::misc`,
-  `Proc::set_bytecode`, `remember_bytecode` and `bytecode_at` are now `unsafe`. Call them on
-  BYOND's thread while a world is live. Their `# Safety` sections say what else they need.
-  `NameMapPlan::write` returns a `Result`.
+- The functions in `runtime_tables`, `appearance_tables` and `raw_types::misc`, and
+  `Proc::set_bytecode`, are now `unsafe`. Call them on BYOND's thread while a world is live.
+  Their `# Safety` sections say what else they need. `NameMapPlan::write` returns a `Result`.
 - `Proc::set_bytecode` returns a `Result`. It gives the proc a code entry of its own first, unless
   the proc already has one, so other procs and tables that share the entry keep their code. It
   fails and changes nothing when the proc can't get an entry of its own, as for a proc of 65,535
@@ -56,8 +55,8 @@
   `Value::globals()`. Null and numbers no longer call BYOND, so any thread can make them.
 - `init_on_world_load` is `unsafe`. `init_on_next_world_load` and `shut_down_with_world` panic
   on a thread other than BYOND's.
-- `debug::CallStacks::new`, `active`, `suspended`, `suspended_first` and `suspended_instances`
-  panic unless a world is live on BYOND's thread.
+- `debug::CallStacks::new`, `active`, `suspended`, `suspended_first` and `suspended_instances`,
+  `remember_bytecode` and `bytecode_at` panic unless a world is live on BYOND's thread.
 - `hooks::init`, `hooks::shutdown`, `hooks::clear_hooks` and `version::init` are no longer
   public. `hooks::hook` and `instruction_hook::set_handler` fail unless a world is live, and
   `instruction_hook::ticks_since_last` panics on a thread other than BYOND's.

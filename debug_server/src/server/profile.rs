@@ -90,7 +90,7 @@ fn start_of(bytecode: usize, proc: &Proc) -> (Option<String>, Option<u32>) {
 	let words = if current as usize == bytecode {
 		unsafe { std::slice::from_raw_parts(current, len as usize) }.to_vec()
 	} else {
-		unsafe { auxtools::bytecode_at(bytecode as *const u32) }.unwrap_or_default()
+		auxtools::bytecode_at(bytecode as *const u32).unwrap_or_default()
 	};
 	match words.as_slice() {
 		[file_op, file, rest @ ..] if *file_op == dbg_file => {
