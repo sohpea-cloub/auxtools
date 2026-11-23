@@ -22,6 +22,11 @@ fn skips_an_arg(_: Value, second: &Value, third: Value) {
 	Ok(Value::from(second.as_number()? + third.as_number()? * 10.0))
 }
 
+#[hook("/proc/auxtest_names_an_arg_args")]
+fn names_an_arg_args(args: Value, next: &Value) {
+	Ok(Value::from(args.as_number()? + next.as_number()? * 10.0))
+}
+
 #[hook("/proc/auxtest_panics")]
 fn panics() {
 	panic!("auxtest asked for this panic");
@@ -68,6 +73,14 @@ fn test_hooks() {
 		return Err(runtime!(
 			"test_hooks: a hook with a `_` argument returned {}, expected 32",
 			skipped.as_number()?
+		));
+	}
+
+	let named_args = Proc::find("/proc/auxtest_names_an_arg_args").unwrap().call(&[&args[0], &args[1]])?;
+	if named_args.as_number()? != 21.0 {
+		return Err(runtime!(
+			"test_hooks: a hook with an argument named `args` returned {}, expected 21",
+			named_args.as_number()?
 		));
 	}
 

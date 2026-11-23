@@ -100,6 +100,9 @@ var/datum/weak_test_datum
 /proc/auxtest_skips_an_arg(first, second, third)
 	CRASH()
 
+/proc/auxtest_names_an_arg_args(first, second)
+	CRASH()
+
 /proc/auxtest_panics()
 	CRASH()
 

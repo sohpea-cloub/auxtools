@@ -182,7 +182,7 @@ pub fn hook(attr: TokenStream, item: TokenStream) -> TokenStream {
 	};
 
 	let body = &input.block;
-	let mut bindings = vec![];
+	let (mut names, mut types, mut values) = (vec![], vec![], vec![]);
 	for (index, arg) in args.iter().map(extract_args).enumerate() {
 		let value = match &*arg.ty {
 			syn::Type::Path(path) if is_value(path) => quote! { args[#index].clone() },
@@ -200,7 +200,11 @@ pub fn hook(attr: TokenStream, item: TokenStream) -> TokenStream {
 		let (pat, ty) = (&arg.pat, &arg.ty);
 		match &**pat {
 			syn::Pat::Wild(_) => {}
-			syn::Pat::Ident(ident) if ident.subpat.is_none() => bindings.push(quote! { let #pat: #ty = #value; }),
+			syn::Pat::Ident(ident) if ident.subpat.is_none() => {
+				names.push(pat);
+				types.push(ty);
+				values.push(value);
+			}
 			other => {
 				return syn::Error::new(other.span(), "a hook argument must be a name or `_`")
 					.to_compile_error()
@@ -216,7 +220,7 @@ pub fn hook(attr: TokenStream, item: TokenStream) -> TokenStream {
 					args.push(auxtools::Value::NULL)
 				}
 			}
-			#(#bindings)*
+			let (#(#names,)*): (#(#types,)*) = (#(#values,)*);
 			#body
 		}
 	};
