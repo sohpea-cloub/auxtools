@@ -55,6 +55,15 @@ fn test_shared_code() {
 		failures.push("a proc that shares its entry since an earlier replacement didn't get its new code");
 	}
 
+	for code in [small_code, other_code] {
+		let before = bytecode_changes();
+		unsafe { p.set_bytecode(code) }.map_err(|e| runtime!("test_shared_code: {}", e))?;
+		if bytecode_changes() == before {
+			failures.push("replacing the code of a proc that owns its entry didn't advance bytecode_changes");
+			break;
+		}
+	}
+
 	if !failures.is_empty() {
 		return Err(runtime!("test_shared_code: {}", failures.join("; ")));
 	}

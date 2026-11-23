@@ -247,6 +247,8 @@ pub fn set_bytecode(proc: &Proc, bytecode: Vec<u32>) -> Result<(), String> {
 			.entry((proc.id, bytecode))
 			.or_insert_with_key(|(_, bytecode)| bytecode.clone().into_boxed_slice())
 			.as_mut_ptr();
-		point_at(entry, (ptr, len))
+		point_at(entry, (ptr, len))?;
+		changed();
+		Ok(())
 	}
 }
