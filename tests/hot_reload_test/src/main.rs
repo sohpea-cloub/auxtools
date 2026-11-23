@@ -1031,13 +1031,18 @@ fn debugger(built: Built) {
 	let sleeping = sleep_named_twins(&mut client);
 	let changes = source.edit("reload.dm", "NAMED_TWINS(twin_c, c_local,", "NAMED_TWINS(twin_c, c_renamed,");
 	assert_eq!(changes.plan.reloads.len(), 1, "{:?}", changes.plan);
-	reload(&mut watcher, &changes);
+	assert_eq!(eval(&mut client, "#fail-reload copy"), "the next reload fails at Copy");
+	let result = expect_reload_result(watcher.request(reload_request(&changes)));
+	assert!(!result.applied, "a reload whose code couldn't be copied was applied: {:?}", result);
+	assert_eq!(result.errors, ["/twin_c: asked for with #fail-reload"]);
 	let mut names = named_twin_locals(&mut client);
+	reload(&mut watcher, &changes);
+	names.extend(named_twin_locals(&mut client));
 	wake_named_twins(&mut client, sleeping, 4);
 	let sleeping = sleep_named_twins(&mut client);
 	names.extend(named_twin_locals(&mut client));
 	wake_named_twins(&mut client, sleeping, 4);
-	let expected = ["c_local", "d_local", "c_renamed", "d_local"];
+	let expected = ["c_local", "d_local", "c_local", "d_local", "c_renamed", "d_local"];
 	assert_eq!(names, expected, "the locals' names of old and new frames of twin_c and twin_d");
 	println!("ok: a reload that renames only a local keeps the old name in old frames");
 }

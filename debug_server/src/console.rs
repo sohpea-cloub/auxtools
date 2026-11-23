@@ -55,7 +55,7 @@ Usage: script
 const STRING_REFS_USAGE: &str = "string-refs <text>";
 
 #[cfg(feature = "test-commands")]
-const FAIL_RELOAD_USAGE: &str = "fail-reload <append|change>";
+const FAIL_RELOAD_USAGE: &str = "fail-reload <append|change|copy>";
 
 const HELP_HELP: &str = "\
 Print this message or the help of the given subcommand(s)
@@ -101,8 +101,9 @@ pub fn parse(command: &str) -> Result<Command<'_>, String> {
 			match args.first().copied() {
 				Some("append") => Ok(Command::FailReload(crate::hot_reload::FailAt::Append)),
 				Some("change") => Ok(Command::FailReload(crate::hot_reload::FailAt::Change)),
+				Some("copy") => Ok(Command::FailReload(crate::hot_reload::FailAt::Copy)),
 				_ => Err(format!(
-					"error: a step to fail is required: append or change\n\nUsage: {}\n",
+					"error: a step to fail is required: append, change or copy\n\nUsage: {}\n",
 					FAIL_RELOAD_USAGE
 				))
 			}
@@ -202,7 +203,7 @@ mod tests {
 		#[cfg(feature = "test-commands")]
 		assert_eq!(
 			parse("fail-reload").unwrap_err(),
-			"error: a step to fail is required: append or change\n\nUsage: fail-reload <append|change>\n"
+			"error: a step to fail is required: append, change or copy\n\nUsage: fail-reload <append|change|copy>\n"
 		);
 	}
 }

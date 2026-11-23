@@ -722,6 +722,18 @@ fn prepared_code(
 	};
 	let rename = renamed(&proc, &entry, &settings);
 
+	let (at, _) = unsafe { proc.bytecode_mut_ptr() };
+	if entry.0[ProcEntryWords::BYTECODE] == bytecode_id && debug::local_names_for(&proc, at) != reload.locals {
+		failing(FailAt::Copy).map_err(|e| format!("{}: {}", name, e))?;
+		if bytecode.len() >= u16::MAX as usize {
+			return Err(format!(
+				"{}: renaming only its locals needs a copy of its code, and {} words leave no room for one. Rebuild to rename them",
+				name,
+				bytecode.len()
+			));
+		}
+	}
+
 	Ok(PreparedCode {
 		proc,
 		name,
@@ -2069,7 +2081,8 @@ impl Appended {
 #[cfg_attr(not(feature = "test-commands"), allow(dead_code))]
 pub enum FailAt {
 	Append,
-	Change
+	Change,
+	Copy
 }
 
 #[cfg(feature = "test-commands")]
@@ -2272,7 +2285,7 @@ pub fn apply<K: Ord + std::hash::Hash + Copy, T>(
 	let mut unhooked = vec![];
 	for p in prepared.code {
 		renames.extend(p.rename);
-		unhooked.extend(apply_code(p, breakpoints));
+		unhooked.extend(apply_code(p, breakpoints, failures));
 	}
 	for code in unhooked {
 		restore_breakpoints(code, breakpoints, moved_breakpoints, warnings);
@@ -2356,7 +2369,8 @@ struct UnhookedCode<K, T> {
 
 fn apply_code<K: Ord + std::hash::Hash + Copy, T>(
 	p: PreparedCode,
-	breakpoints: &mut HashMap<(raw_types::procs::ProcId, u16), BTreeMap<K, T>>
+	breakpoints: &mut HashMap<(raw_types::procs::ProcId, u16), BTreeMap<K, T>>,
+	failures: &mut Vec<String>
 ) -> Option<UnhookedCode<K, T>> {
 	let (old_ptr, _) = unsafe { p.proc.bytecode_mut_ptr() };
 	mark_reloaded(p.proc.id().0, if p.lines.is_some() { Reloaded::Lines } else { Reloaded::Code });
@@ -2403,14 +2417,16 @@ fn apply_code<K: Ord + std::hash::Hash + Copy, T>(
 		unsafe { runtime_tables::set_proc_entry_word(p.proc.id(), word, value) };
 	}
 
-	let (mut new_ptr, _) = unsafe { p.proc.bytecode_mut_ptr() };
-	if auxtools::debug::has_local_names(&p.proc, new_ptr)
-		&& auxtools::debug::local_names_for(&p.proc, new_ptr) != local_names
-		&& unsafe { auxtools::copy_code(&p.proc) }.is_ok()
-	{
-		new_ptr = unsafe { p.proc.bytecode_mut_ptr() }.0;
+	let (new_ptr, _) = unsafe { p.proc.bytecode_mut_ptr() };
+	let names_at = if auxtools::debug::has_local_names(&p.proc, new_ptr) && auxtools::debug::local_names_for(&p.proc, new_ptr) != local_names {
+		unsafe { auxtools::copy_code(&p.proc) }.map(|()| unsafe { p.proc.bytecode_mut_ptr() }.0)
+	} else {
+		Ok(new_ptr)
+	};
+	match names_at {
+		Ok(at) => auxtools::debug::set_local_names(&p.proc, at, local_names),
+		Err(e) => failures.push(format!("{}: new calls show the old names of its locals: {}", p.name, e))
 	}
-	auxtools::debug::set_local_names(&p.proc, new_ptr, local_names);
 	crate::code_index::proc_changed(p.proc.id());
 
 	let old_code = old_code.filter(|_| !hooked.is_empty())?;
