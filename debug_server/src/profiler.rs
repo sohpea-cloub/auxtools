@@ -322,7 +322,7 @@ impl Profiler {
 		let len = if current == bytecode {
 			len as usize
 		} else {
-			auxtools::bytecode_at(bytecode)?.len()
+			unsafe { auxtools::bytecode_at(bytecode) }?.len()
 		};
 		Some(Box::new(Code {
 			proc: proc.id.0,

@@ -371,7 +371,7 @@ pub fn running(proc: &Proc, running: *const u32) -> Option<Arc<Code>> {
 		}
 	}
 
-	let old = auxtools::bytecode_at(running)?;
+	let old = unsafe { auxtools::bytecode_at(running) }?;
 	let alike = alike_but_lines(&old, &original_code(proc), &mut crate::DisassembleEnv);
 	let code = (!alike).then(|| Arc::new(Code::read(&old, &mut crate::DisassembleEnv)));
 	if !old.iter().any(|&word| is_breakpoint_word(word)) {

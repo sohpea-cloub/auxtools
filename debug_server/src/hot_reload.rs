@@ -2348,7 +2348,7 @@ fn apply_code<K: Ord + std::hash::Hash + Copy, T>(
 		.unwrap_or_else(|| auxtools::debug::local_names_for(&p.proc, old_ptr));
 	let old_file = {
 		let old = original_code(&p.proc);
-		auxtools::remember_bytecode(old_ptr, &old);
+		unsafe { auxtools::remember_bytecode(old_ptr, &old) };
 		debug_file(&old)
 	};
 

@@ -48,7 +48,7 @@ impl Codes {
 			original_code(&proc)
 		} else {
 			let running = self.old_codes.borrow().get(code.old as usize - 1).copied();
-			let old = running.and_then(|running| Some((running, auxtools::bytecode_at(running as *const u32)?)));
+			let old = running.and_then(|running| Some((running, unsafe { auxtools::bytecode_at(running as *const u32) }?)));
 			match old {
 				Some((running, old)) => Cow::Owned(crate::instruction_hooking::unpatched(running as *const u32, old)),
 				None => return Err(format!("{} has no old code {}", proc.path, code.old))
