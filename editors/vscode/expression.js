@@ -1,4 +1,5 @@
 const NAME = /[A-Za-z_][A-Za-z0-9_]*/y;
+const KEYWORD = /^(var|proc|verb|if|else|for|while|do|switch|return|new|del|in|to|as|set|try|catch|throw|goto|break|continue|spawn|step|null|global|static|const|tmp)$/;
 
 function nameAt(line, column) {
 	let start = column;
@@ -43,7 +44,7 @@ function expressionAt(line, column) {
 		return undefined;
 	}
 	const word = line.slice(start, end);
-	if (/^(var|proc|verb|if|else|for|while|do|switch|return|new|del|in|to|as|set|try|catch|throw|goto|break|continue|spawn|step|null|global|static|const|tmp)$/.test(word)) {
+	if (KEYWORD.test(word)) {
 		return undefined;
 	}
 	if (start > 1 && line[start - 1] === "." && /[0-9]/.test(line[start - 2])) {
