@@ -5,7 +5,7 @@ authors = ["Sophie Wallace <sophie@wiox.me>"]
 edition = "2018"
 license = "GPL-3.0"
 repository.workspace = true
-rust-version.workspace = true
+rust-version = "1.88"
 
 [dependencies]
 bitflags = "2"
