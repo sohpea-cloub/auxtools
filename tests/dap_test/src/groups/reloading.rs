@@ -1,7 +1,10 @@
 use std::{path::PathBuf, time::Duration};
 
 use serde_json::{json, Value};
-use test_support::{dap::value_of, temp::TempDir};
+use test_support::{
+	dap::{named, value_of},
+	temp::TempDir
+};
 
 use crate::{
 	ok, paths,
@@ -794,6 +797,27 @@ pub fn files() {
 	nothing_to_run();
 }
 
+fn swapped_parameters(world: &mut World) {
+	world.run_through("pair_sleeps");
+	edit(world, "stepping.dm", "/proc/pair(first, second)\n", "/proc/pair(second, first)\n");
+	world.run_to("pair", "/pair", "pair_return");
+	assert_eq!((world.argument("first"), world.argument("second")), ("2".to_owned(), "1".to_owned()));
+	let threads = world.threads();
+	let (old, _) = (threads.iter())
+		.find(|(_, name)| name.starts_with("/pair") && name.ends_with(", sleeping"))
+		.unwrap_or_else(|| panic!("no sleeping /pair in {:?}", threads));
+	let frame = world.frames(*old)[0]["id"].clone();
+	let arguments = world.scope(&frame, "Arguments");
+	let arguments = named(&world.variables(&arguments));
+	assert_eq!((value_of(&arguments, "first"), value_of(&arguments, "second")), ("1", "2"));
+	assert_eq!(world.evaluate_in(&frame, "first - second", "watch")["result"], "-1");
+	assert_eq!(world.evaluate_in(&frame, "second = 5", "repl")["result"], "5");
+	world.resume_through("pair");
+	world.wait_output("dap: the old pair returned -4");
+	assert!(world.output.contains("dap: the new pair returned 1\n"), "{}", world.output);
+	ok("parameter names of a sleeping call after a reload swaps them");
+}
+
 pub fn run() {
 	let dir = copy_of_the_world("reloading");
 	let mut world = World::launch_as(
@@ -1000,6 +1024,8 @@ pub fn run() {
 	assert_eq!(world.eval("renamed + extra"), "16");
 	world.resume_through("middle");
 	ok("renamed local inspection and evaluation");
+
+	swapped_parameters(&mut world);
 
 	world.catch_runtimes(true);
 	edit(

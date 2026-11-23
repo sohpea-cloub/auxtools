@@ -96,9 +96,15 @@ impl Proc {
 		Some(StringRef::from_id(file_id))
 	}
 
+	/// A type's init proc has no parameter table, and so no parameters.
 	pub fn parameter_names(&self) -> Vec<StringRef> {
+		use raw_types::misc::AsMiscId;
 		unsafe {
-			let (data, count) = raw_types::misc::get_parameters((*self.entry()).metadata.parameters);
+			let parameters = (*self.entry()).metadata.parameters;
+			if parameters.as_misc_id().raw() == runtime_tables::NONE {
+				return vec![];
+			}
+			let (data, count) = raw_types::misc::get_parameters(parameters);
 			(0..count).map(|i| StringRef::from_variable_id((*data.add(i)).name)).collect()
 		}
 	}

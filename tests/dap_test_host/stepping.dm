@@ -224,3 +224,19 @@ var/list/dozers
 /proc/sc_spawn_sleep()
 	spawns_sleeping() // @spawn_sleep_call
 	sleep(5)
+
+var/pair_held = FALSE
+
+/proc/pair(first, second)
+	while (pair_held)
+		sleep(1)
+	return first - second // @pair_return
+
+/proc/sc_pair_sleeps()
+	pair_held = TRUE
+	spawn(0)
+		world.log << "dap: the old pair returned [pair(1, 2)]"
+
+/proc/sc_pair()
+	pair_held = FALSE
+	world.log << "dap: the new pair returned [pair(1, 2)]"
