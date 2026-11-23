@@ -727,12 +727,13 @@ fn prepared_code(
 
 	let old_names = code_address(bytecode_id)
 		.filter(|&at| entry.0[ProcEntryWords::BYTECODE] == bytecode_id || debug::has_local_names(&proc, at))
-		.map(|at| debug::local_names_for(&proc, at));
-	if old_names.is_some_and(|names| names != reload.locals) {
+		.map(|at| (debug::local_names_for(&proc, at), debug::parameter_names_for(&proc, at)));
+	let params: Vec<String> = reload.params.iter().map(|param| param.name.clone()).collect();
+	if old_names.is_some_and(|(locals, old_params)| locals != reload.locals || old_params != params) {
 		failing(FailAt::Copy).map_err(|e| format!("{}: {}", name, e))?;
 		if bytecode.len() >= u16::MAX as usize {
 			return Err(format!(
-				"{}: renaming only its locals needs a copy of its code, and {} words leave no room for one. Rebuild to rename them",
+				"{}: renaming only its locals or parameters needs a copy of its code, and {} words leave no room for one. Rebuild to rename them",
 				name,
 				bytecode.len()
 			));
@@ -2538,7 +2539,10 @@ fn apply_code<K: Ord + std::hash::Hash + Copy, T>(
 	}
 
 	let (new_ptr, _) = unsafe { p.proc.bytecode_mut_ptr() };
-	let names_at = if auxtools::debug::has_local_names(&p.proc, new_ptr) && auxtools::debug::local_names_for(&p.proc, new_ptr) != local_names {
+	let params: Vec<String> = p.proc.parameter_names().into_iter().map(String::from).collect();
+	let names_at = if auxtools::debug::has_local_names(&p.proc, new_ptr)
+		&& (auxtools::debug::local_names_for(&p.proc, new_ptr) != local_names || auxtools::debug::parameter_names_for(&p.proc, new_ptr) != params)
+	{
 		auxtools::copy_code(&p.proc).map(|()| unsafe { p.proc.bytecode_mut_ptr() }.0)
 	} else {
 		Ok(new_ptr)

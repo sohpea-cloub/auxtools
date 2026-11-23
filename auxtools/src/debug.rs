@@ -35,6 +35,12 @@ pub fn local_names_for(proc: &Proc, bytecode: *const u32) -> Vec<String> {
 		.unwrap_or_else(|| proc.local_names().into_iter().map(String::from).collect())
 }
 
+pub fn parameter_names_for(proc: &Proc, bytecode: *const u32) -> Vec<String> {
+	LOCAL_NAMES
+		.with(|map| map.borrow().get(&(proc.id, bytecode as usize)).map(|names| names.parameters.clone()))
+		.unwrap_or_else(|| proc.parameter_names().into_iter().map(String::from).collect())
+}
+
 pub(crate) fn copy_local_names(from: *const u32, to: *const u32, procs: impl Fn(procs::ProcId) -> bool) {
 	LOCAL_NAMES.with(|map| {
 		let mut map = map.borrow_mut();

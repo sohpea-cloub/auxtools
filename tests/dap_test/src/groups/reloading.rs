@@ -818,6 +818,31 @@ fn swapped_parameters(world: &mut World) {
 	ok("parameter names of a sleeping call after a reload swaps them");
 }
 
+fn renamed_parameter(world: &mut World) {
+	world.run_through("lone_sleeps");
+	edit(
+		world,
+		"stepping.dm",
+		"(value)\n\twhile (lone_held)\n\t\tsleep(1)\n\treturn value //",
+		"(amount)\n\twhile (lone_held)\n\t\tsleep(1)\n\treturn amount //"
+	);
+	world.run_to("lone", "/lone", "lone_return");
+	assert_eq!(world.argument("amount"), "2");
+	let threads = world.threads();
+	let (old, _) = (threads.iter())
+		.find(|(_, name)| name.starts_with("/lone") && name.ends_with(", sleeping"))
+		.unwrap_or_else(|| panic!("no sleeping /lone in {:?}", threads));
+	let frame = world.frames(*old)[0]["id"].clone();
+	let arguments = world.scope(&frame, "Arguments");
+	let arguments = named(&world.variables(&arguments));
+	assert_eq!(value_of(&arguments, "value"), "1", "the sleeping call's arguments: {:?}", arguments);
+	assert_eq!(world.evaluate_in(&frame, "value", "watch")["result"], "1");
+	world.resume_through("lone");
+	world.wait_output("dap: the old lone returned 1");
+	assert!(world.output.contains("dap: the new lone returned 2\n"), "{}", world.output);
+	ok("parameter names of a sleeping call after a reload renames one and keeps the code");
+}
+
 pub fn run() {
 	let dir = copy_of_the_world("reloading");
 	let mut world = World::launch_as(
@@ -1026,6 +1051,7 @@ pub fn run() {
 	ok("renamed local inspection and evaluation");
 
 	swapped_parameters(&mut world);
+	renamed_parameter(&mut world);
 
 	world.catch_runtimes(true);
 	edit(

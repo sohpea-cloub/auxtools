@@ -45,6 +45,8 @@
   address.
 - `debug::set_local_names` and `debug::has_local_names` take a `&Proc` first. Pass the proc
   whose local names you record or check. Procs that share code can have different local names.
+  `set_local_names` also records the proc's parameter names, and `debug::parameter_names_for`
+  gives them back.
 - A hook binds its parameters by position, and `_` skips an argument. A parameter declared as
   `Value` gets a `Value`, and one declared as `&Value` gets a reference. Other parameter types
   and patterns are a compile error. A hook can name a parameter `args`.
