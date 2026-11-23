@@ -1554,7 +1554,7 @@ fn prepare_new_proc(
 		staged.own.entry((type_id, type_fields::PROCS)).or_default().push(id);
 
 		let mut paths = vec![];
-		for &proc in &relinked {
+		for &proc in relinked.iter().filter(|_| new.declared) {
 			let Some(path) = staged.entry(proc).map(|e| e.0[ProcEntryWords::PATH]) else {
 				continue;
 			};

@@ -2065,6 +2065,7 @@ fn definitions(built: Built) {
 	);
 	reload(&mut watcher, &changes);
 	assert_eq!(eval(&mut client, "(new /datum/late).speak()"), "\"late declaration, then late override\"");
+	assert_eq!(eval(&mut client, "\"[/datum/late/proc/speak]\""), "\"/datum/late/proc/speak\"");
 	println!("ok: an override added before its declaration");
 }
 
