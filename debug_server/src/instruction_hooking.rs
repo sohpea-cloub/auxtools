@@ -120,6 +120,13 @@ lazy_static! {
 	static ref ORIGINAL_BYTECODE: Mutex<HashMap<PtrKey, Vec<u32>>> = Mutex::new(HashMap::new());
 }
 
+fn runs_another_procs_code(ctx: *mut raw_types::procs::ExecutionContext) -> bool {
+	unsafe {
+		let instance = *(*ctx).proc_instance();
+		Proc::from_id((*instance).proc).is_some_and(|proc| !std::ptr::eq(proc.bytecode_mut_ptr().0, *(*ctx).bytecode()))
+	}
+}
+
 fn is_generated_proc(ctx: *mut raw_types::procs::ExecutionContext) -> bool {
 	unsafe {
 		let instance = *(*ctx).proc_instance();
@@ -560,7 +567,7 @@ impl InstructionHook for Server {
 
 		let opcode = unsafe { *opcode_ptr };
 		if opcode == OPCODE_DEBUG_BREAK {
-			if !did_breakpoint && !in_eval {
+			if !did_breakpoint && !in_eval && !runs_another_procs_code(ctx) {
 				unsafe {
 					let stepping = STEPPER.action;
 					STEPPER.action = DebuggerAction::None;
@@ -596,7 +603,8 @@ impl InstructionHook for Server {
 
 #[derive(Debug)]
 pub enum InstructionHookError {
-	InvalidOffset
+	InvalidOffset,
+	SharedCode
 }
 
 fn instruction_length(proc: &Proc, offset: u32) -> Option<usize> {
@@ -605,6 +613,7 @@ fn instruction_length(proc: &Proc, offset: u32) -> Option<usize> {
 
 pub fn hook_instruction(proc: &Proc, offset: u32) -> Result<(), InstructionHookError> {
 	let instruction_length = instruction_length(proc, offset).ok_or(InstructionHookError::InvalidOffset)?;
+	auxtools::unshare_code(proc, &original_code(proc)).map_err(|_| InstructionHookError::SharedCode)?;
 
 	let bytecode;
 	let opcode;

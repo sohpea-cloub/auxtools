@@ -56,6 +56,13 @@ var/breakpoint_armed = FALSE
 	x += 1
 	return x
 
+#define TWINS(first, second) /proc/first() { twin_waiting += 1; while (twin_hold) sleep(1); twin_runs += 1; } /proc/second() { twin_waiting += 1; while (twin_hold) sleep(1); twin_runs += 1; }
+var/twin_runs = 0
+var/twin_waiting = 0
+var/twin_hold = FALSE
+var/twin_armed = null
+TWINS(twin_a, twin_b)
+
 var/caught_armed = FALSE
 var/caught_by_tick = null
 var/caught_done = 0
@@ -75,6 +82,11 @@ var/caught_done = 0
 	if (breakpoint_armed)
 		breakpoint_armed = FALSE
 		breakpoint_target()
+	if (twin_armed)
+		var/twin = twin_armed
+		twin_armed = null
+		spawn()
+			call(twin)()
 	if (runtime_armed)
 		runtime_armed = FALSE
 		runtime_target()
