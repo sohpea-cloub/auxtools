@@ -312,9 +312,11 @@ mod tests {
 		assert!(matches!(client.ask(&Request::Status, soon()), Err(Lost::Incompatible(theirs)) if theirs == PROTOCOL_VERSION + 1));
 		assert!(!client.greeted);
 		client.leave().unwrap();
-		world.set_nonblocking(true).unwrap();
-		let mut byte = [0];
-		assert_eq!(io::Read::read(&mut world, &mut byte).unwrap_err().kind(), io::ErrorKind::WouldBlock);
+		client.hang_up();
+		drop(client);
+		let mut sent = vec![];
+		io::Read::read_to_end(&mut world, &mut sent).unwrap();
+		assert!(sent.is_empty(), "the client sent {:?}", sent);
 	}
 
 	#[test]
