@@ -40,7 +40,7 @@ impl Server {
 				if !profiler::exists() {
 					return Err(NO_PROFILE.to_owned());
 				}
-				profiler::instructions(bytecode)
+				profiler::instructions(proc.id.0, bytecode)
 					.map(ProfileReply::Code)
 					.ok_or_else(|| format!("{} wasn't profiled", proc.path))
 			}

@@ -82,8 +82,8 @@ struct Call {
 
 pub struct Profiler {
 	only: Option<Vec<u32>>,
-	codes: HashMap<usize, Option<Box<Code>>>,
-	cache: [(usize, *mut Code); CODE_CACHE_SLOTS],
+	codes: HashMap<(u32, usize), Option<Box<Code>>>,
+	cache: [(u32, usize, *mut Code); CODE_CACHE_SLOTS],
 	last: Frame,
 	last_parent: Frame,
 	last_counter: At,
@@ -186,7 +186,7 @@ impl Profiler {
 		Profiler {
 			only,
 			codes: HashMap::new(),
-			cache: [(0, std::ptr::null_mut()); CODE_CACHE_SLOTS],
+			cache: [(0, 0, std::ptr::null_mut()); CODE_CACHE_SLOTS],
 			last: Frame::NONE,
 			last_parent: Frame::NONE,
 			last_counter: At::NONE,
@@ -305,17 +305,18 @@ impl Profiler {
 
 	fn code(&mut self, bytecode: *mut u32, proc: raw_types::procs::ProcId) -> *mut Code {
 		let address = bytecode as usize;
-		let slot = (address >> 3 ^ address >> 11) % CODE_CACHE_SLOTS;
-		if self.cache[slot].0 == address {
-			return self.cache[slot].1;
+		let slot = (address >> 3 ^ address >> 11 ^ proc.0 as usize) % CODE_CACHE_SLOTS;
+		let (cached_proc, cached_address, cached) = self.cache[slot];
+		if cached_address == address && cached_proc == proc.0 {
+			return cached;
 		}
 		let only = &self.only;
 		let code = self
 			.codes
-			.entry(address)
+			.entry((proc.0, address))
 			.or_insert_with(|| Self::measured(only.as_deref(), bytecode, proc));
 		let code = code.as_deref_mut().map_or(std::ptr::null_mut(), std::ptr::from_mut);
-		self.cache[slot] = (address, code);
+		self.cache[slot] = (proc.0, address, code);
 		code
 	}
 
@@ -430,9 +431,9 @@ pub fn totals() -> Option<Totals> {
 	})
 }
 
-pub fn instructions(bytecode: usize) -> Option<Vec<ProfiledInstruction>> {
+pub fn instructions(proc: u32, bytecode: usize) -> Option<Vec<ProfiledInstruction>> {
 	let profiler = unsafe { PROFILER.as_ref() }?;
-	let code = profiler.codes.get(&bytecode)?.as_ref()?;
+	let code = profiler.codes.get(&(proc, bytecode))?.as_ref()?;
 	let (ns, _) = profiler.clock();
 	let floor = profiler.floor();
 	let mut instructions: Vec<ProfiledInstruction> = (code.counters.iter().zip(&code.offsets))
