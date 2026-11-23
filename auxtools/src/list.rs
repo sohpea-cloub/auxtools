@@ -20,10 +20,11 @@ impl List {
 		Self::default()
 	}
 
-	pub fn with_size(capacity: u32) -> Self {
+	/// A list of `len` nulls.
+	pub fn with_size(len: u32) -> Self {
 		let mut id: raw_types::lists::ListId = raw_types::lists::ListId(0);
 		unsafe {
-			assert_eq!(raw_types::funcs::create_list(&mut id, capacity), 1);
+			assert_eq!(raw_types::funcs::create_list(&mut id, len), 1);
 		}
 
 		let raw = raw_types::values::Value {
