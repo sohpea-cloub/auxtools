@@ -29,7 +29,11 @@ fn proc_statics<'a>(
         let Some(path) = &init.proc_path else {
             continue;
         };
-        let count = init.siblings.iter().filter(|s| **s == init.name).count();
+        let count = init
+            .proc_static_names
+            .iter()
+            .filter(|s| **s == init.name)
+            .count();
         procs
             .entry(path.clone())
             .or_default()
@@ -47,9 +51,9 @@ struct Initializer<'a> {
     expression: Option<&'a Expression>,
     constant: Option<ConstValue>,
     proc_path: Option<String>,
-    siblings: Vec<String>,
+    proc_static_names: Vec<String>,
     earlier: Vec<(String, u32)>,
-    sized: bool,
+    sized_list: bool,
     params: Vec<(String, String)>,
     scoped_late: bool,
     absolute: bool,
@@ -89,7 +93,7 @@ impl Snapshot {
                 .iter()
                 .map(|p| (p.name.to_string(), p.var_type.type_path.to_string()))
                 .collect();
-            let siblings: Vec<String> = found
+            let proc_static_names: Vec<String> = found
                 .iter()
                 .map(|(_, var)| var.name.as_str().to_owned())
                 .collect();
@@ -133,9 +137,9 @@ impl Snapshot {
                         expression: var.value.as_ref(),
                         constant,
                         proc_path: Some(proc_path.clone()),
-                        siblings: siblings.clone(),
+                        proc_static_names: proc_static_names.clone(),
                         earlier: before,
-                        sized: false,
+                        sized_list: false,
                         params: params.clone(),
                         scoped_late: false,
                         absolute: false,
@@ -179,7 +183,7 @@ impl Snapshot {
             chains: self.include_chains(procs),
             computed,
             declared,
-            defaults: procs,
+            track_defaults: procs,
             ..Walk::default()
         };
         walk.ty(self, self.tree.root(), &mut statics);
@@ -409,8 +413,8 @@ struct Walk<'a> {
     now: Vec<Initializer<'a>>,
     later: Vec<Waiting<'a>>,
     finishing: bool,
-    last: bool,
-    defaults: bool,
+    last_pass: bool,
+    track_defaults: bool,
     defaults_waiting: HashMap<usize, usize>,
     computed: HashSet<(StaticScope, String)>,
     set: HashSet<(StaticScope, String)>,
@@ -547,7 +551,7 @@ impl<'a> Walk<'a> {
                     };
                     items.push((at, Item::Var(name.as_str(), var)));
                 }
-            } else if self.defaults
+            } else if self.track_defaults
                 && var.value.location.file != FileId::BUILTINS
                 && var.value.expression.as_ref().is_some_and(|e| !literal(e))
             {
@@ -608,9 +612,9 @@ impl<'a> Walk<'a> {
                             expression: var.value.expression.as_ref(),
                             constant: var_constant(var),
                             proc_path: None,
-                            siblings: vec![],
+                            proc_static_names: vec![],
                             earlier: vec![],
-                            sized: false,
+                            sized_list: false,
                             params: vec![],
                             scoped_late: false,
                             absolute: t.is_root() && self.absolute(snapshot, declaration.location),
@@ -681,7 +685,7 @@ impl<'a> Walk<'a> {
     }
 
     fn add(&mut self, snapshot: &'a Snapshot, mut init: Initializer<'a>) {
-        init.sized = self
+        init.sized_list = self
             .line(snapshot, init.location)
             .is_some_and(|line| line.contains(&format!("{}[", init.name)));
         if init.constant.is_some() || self.is_ready(snapshot, &init) {
@@ -710,7 +714,7 @@ impl<'a> Walk<'a> {
     }
 
     fn is_ready(&self, snapshot: &Snapshot, init: &Initializer) -> bool {
-        if init.scoped_late && !self.last {
+        if init.scoped_late && !self.last_pass {
             return false;
         }
         self.declared_ready(snapshot, &init.declared)
@@ -729,7 +733,7 @@ impl<'a> Walk<'a> {
         let Some(expression) = var.value.expression.as_ref().filter(|e| !literal(e)) else {
             return;
         };
-        if !self.defaults {
+        if !self.track_defaults {
             return;
         }
         let mut scoped = false;
@@ -748,9 +752,9 @@ impl<'a> Walk<'a> {
             expression: Some(expression),
             constant: None,
             proc_path: None,
-            siblings: vec![],
+            proc_static_names: vec![],
             earlier: vec![],
-            sized: false,
+            sized_list: false,
             params: vec![],
             scoped_late: false,
             absolute: false,
@@ -828,8 +832,8 @@ impl<'a> Walk<'a> {
             if waiting.is_empty() {
                 break;
             }
-            if !progress && !self.last {
-                self.last = true;
+            if !progress && !self.last_pass {
+                self.last_pass = true;
             } else if !progress {
                 for entry in waiting {
                     if let Waiting::Initializer(init) = entry {
@@ -885,7 +889,7 @@ impl<'a> Walk<'a> {
                     let key = (scope, name.to_owned());
                     return !self.computed.contains(&key) || self.set.contains(&key);
                 }
-                if init.siblings.iter().any(|s| s == name) {
+                if init.proc_static_names.iter().any(|s| s == name) {
                     return finishing && !self.computed.iter().any(|(scope, n)| {
                         n == name
                             && matches!(scope, StaticScope::Proc { path, .. } if path == proc_path)
@@ -1006,7 +1010,7 @@ impl<'a> Walk<'a> {
                 }
                 return true;
             }
-            if !proc && ty == "/list" && init.sized {
+            if !proc && ty == "/list" && init.sized_list {
                 return true;
             }
             match snapshot.tree.find(ty.trim_end_matches('/')) {
