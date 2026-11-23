@@ -4,6 +4,8 @@ auxtools debugs DM worlds from [VS Code](editors/vscode) or the command line, wi
 
 The `auxtools` crate, which the debugger is built on, lets other Rust libraries hook DM procs and work with BYOND values.
 
+[CHANGELOG.md](CHANGELOG.md) lists what to change when you upgrade from auxtools 3.
+
 ## The debugger
 
 The debugger supports line, function, instruction and data breakpoints; conditional breakpoints and logpoints; runtime error breakpoints; line and instruction stepping; sleeping proc stacks; variable inspection and assignment; expression and proc-body evaluation; and disassembly. A journal records runtime errors, reloads, output and reboots.
@@ -220,10 +222,10 @@ BYOND test archives come from the [BYOND build mirror](https://byond-builds.dm-l
 ## Releasing
 
 Run **Actions > Release > Run workflow** on `master` and enter a version such
-as `3.0.0`. The workflow builds and tests that version before publishing the
-GitHub release and `sohpea.auxtools` extension to the Marketplace and Open VSX.
+as `4.0.0`. The workflow builds and tests that version. Then it publishes the
+GitHub release, and the `sohpea.auxtools` extension to the Marketplace and Open VSX.
 
-It creates a `vVERSION` tag and advances `master` to the next patch's `-dev`
+It creates a `vVERSION` tag and moves `master` to the next patch's `-dev`
 version. Publishing uses the `release` environment and trusted publishing on
 both registries. See [release.yml](.github/workflows/release.yml) for setup.
 

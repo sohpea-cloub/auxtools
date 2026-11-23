@@ -64,7 +64,7 @@ dependencies = [
 
 [[package]]
 name = "auxtools"
-version = "3.1.2-dev"
+version = "4.0.0-dev"
 dependencies = [
  "ahash",
  "auxtools-impl",
@@ -79,7 +79,7 @@ dependencies = [
 
 [[package]]
 name = "auxtools-cli"
-version = "3.1.2-dev"
+version = "4.0.0-dev"
 dependencies = [
  "auxtools-dm",
  "auxtools-protocol",
@@ -97,7 +97,7 @@ dependencies = [
 
 [[package]]
 name = "auxtools-dm"
-version = "3.1.2-dev"
+version = "4.0.0-dev"
 dependencies = [
  "dreammaker",
 ]
@@ -113,7 +113,7 @@ dependencies = [
 
 [[package]]
 name = "auxtools-protocol"
-version = "3.1.2-dev"
+version = "4.0.0-dev"
 dependencies = [
  "bincode",
  "dmasm",
@@ -298,7 +298,7 @@ dependencies = [
 
 [[package]]
 name = "debug_server"
-version = "3.1.2-dev"
+version = "4.0.0-dev"
 dependencies = [
  "auxtools",
  "auxtools-dm",
