@@ -289,6 +289,8 @@ struct PreparedInitProc {
 
 struct PreparedNewProc {
 	entry: ProcEntryWords,
+	path: StringRef,
+	basename: StringRef,
 	settings: Vec<SettingWord>,
 	id: u32,
 	place: ProcKey,
@@ -1434,12 +1436,7 @@ fn prepare_new_proc(
 
 	let bytecode = assemble(&shown, &new.code, None, pending, world_globals, added)?;
 
-	let string = |text: &str| -> Result<u32, String> {
-		let string = StringRef::new(text).map_err(|_| fail(format!("couldn't make the string {}", text)))?;
-		let id = string.get_id().0;
-		std::mem::forget(string);
-		Ok(id)
-	};
+	let string = |text: &str| StringRef::new(text).map_err(|_| fail(format!("couldn't make the string {}", text)));
 
 	let path = match (new.type_path.as_str(), new.declared, new.verb) {
 		("", true, _) => format!("/proc/{}", new.name),
@@ -1448,9 +1445,10 @@ fn prepare_new_proc(
 		(ty, false, _) => format!("{}/{}", ty, new.name)
 	};
 
+	let (path, basename) = (string(&path)?, string(&new.name)?);
 	let mut entry = template;
-	entry.0[ProcEntryWords::PATH] = string(&path)?;
-	entry.0[ProcEntryWords::PATH_BASENAME] = string(&new.name)?;
+	entry.0[ProcEntryWords::PATH] = path.get_id().0;
+	entry.0[ProcEntryWords::PATH_BASENAME] = basename.get_id().0;
 	let settings = new.code.settings.clone().unwrap_or_default();
 	let settings = settings_words(&entry, &settings, &new.name).map_err(fail)?;
 	for setting in &settings {
@@ -1570,6 +1568,8 @@ fn prepare_new_proc(
 
 	Ok(PreparedNewProc {
 		entry,
+		path,
+		basename,
 		settings,
 		id,
 		place: new.code.proc.clone(),
@@ -2527,6 +2527,8 @@ fn append_entries(prepared: &Prepared, added: &mut Added) -> Result<Vec<u32>, St
 		let id = failing(FailAt::Append)
 			.and_then(|()| runtime_tables::append_proc(&new.entry))
 			.map_err(|e| format!("couldn't add a proc: {}", e))?;
+		std::mem::forget(new.path.clone());
+		std::mem::forget(new.basename.clone());
 		for setting in &new.settings {
 			hold_setting(id.0, setting.clone());
 		}

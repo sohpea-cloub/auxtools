@@ -2412,11 +2412,14 @@ fn types(built: Built) {
 	});
 	let result = expect_reload_result(watcher.request(Request::HotReload(refused)));
 	assert!(!result.applied, "a reload with a var of a missing type was applied: {:?}", result);
-	assert_eq!(eval(&mut client, "#string-refs static_text"), "0", "after a refused reload");
+	for text in ["static_text", "/proc/static_label", "static_label"] {
+		let references = eval(&mut client, &format!("#string-refs {}", text));
+		assert_eq!(references, "0", "{} after a refused reload", text);
+	}
 	reload(&mut watcher, &changes);
 	assert_eq!(eval(&mut client, "#string-refs static_text"), "1", "after the static was added");
 	assert_eq!(eval(&mut client, "static_label()"), "\"static_text\"");
-	println!("ok: a refused new static local holds no reference to its string");
+	println!("ok: a refused new proc and static local hold no reference to their strings");
 
 	assert_eq!(eval(&mut client, "#fail-reload append"), "the next reload fails at Append");
 	let changes = source.edit(
