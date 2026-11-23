@@ -15,8 +15,10 @@
   step fails. The world then runs a mix of old and new code. The launcher lists the failed steps
   and `auxtools wait reload` exits with code 1. Rebuild the `.dmb`, then restart the world to
   load all of the new code.
-- The debugger compiles an expression as the proc body `return EXPR`. Its result now matches
-  what the same code computes in the world.
+- The debugger compiles an expression as the proc body `return EXPR`, on the same path as a
+  proc. The code still runs in the debugger's evaluation stub, so some constructs work
+  differently there. For example, the debugger refuses `__PROC__`.
+  [dmasm's COMPILER.md](dmasm/COMPILER.md#debugger-code) lists the differences.
 
 ### Removed
 
