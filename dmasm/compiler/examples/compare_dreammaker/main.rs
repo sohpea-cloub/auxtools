@@ -294,6 +294,15 @@ fn read_corpus(dir: &Path) -> Result<Vec<Case>, String> {
 
 fn rounds_radians(dreammaker: &Path, out: &Path) -> Result<bool, String> {
     let dir = out.join("radians-probe");
+    match std::fs::remove_dir_all(&dir) {
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
+            return Err(format!(
+                "can't remove the last probe {}: {e}",
+                dir.display()
+            ));
+        }
+        _ => {}
+    }
     std::fs::create_dir_all(&dir)
         .and_then(|_| std::fs::write(dir.join("world.dme"), "/proc/f()\n\treturn arctan(2)\n"))
         .map_err(|e| format!("can't write it to {}: {e}", dir.display()))?;
@@ -302,8 +311,11 @@ fn rounds_radians(dreammaker: &Path, out: &Path) -> Result<bool, String> {
         .current_dir(&dir)
         .output()
         .map_err(|e| e.to_string())?;
-    let data = std::fs::read(dir.join("world.dmb"))
-        .map_err(|e| format!("{}: {e}", String::from_utf8_lossy(&built.stdout).trim()))?;
+    let said = || String::from_utf8_lossy(&built.stdout).trim().to_owned();
+    if !built.status.success() {
+        return Err(format!("DreamMaker failed ({}): {}", built.status, said()));
+    }
+    let data = std::fs::read(dir.join("world.dmb")).map_err(|e| format!("{}: {e}", said()))?;
     let dmb = dmb::Dmb::load(&data).map_err(|e| format!("can't read its .dmb: {e}"))?;
     let code = dmb
         .procs
@@ -312,12 +324,12 @@ fn rounds_radians(dreammaker: &Path, out: &Path) -> Result<bool, String> {
         .map(|p| dmb.bytecode(p))
         .ok_or("its .dmb has no /proc/f")?;
     let push = dmasm_bytecode::Opcode::PushVal.word();
+    let (rounded, unrounded) = (63.43495f32.to_bits(), 63.434948f32.to_bits());
     match code {
-        [op, 0x2A, high, low, ..] if *op == push => {
-            Ok(((high << 16) | low) == 63.43495f32.to_bits())
-        }
+        [op, 0x2A, high, low, ..] if *op == push && (high << 16 | low) == rounded => Ok(true),
+        [op, 0x2A, high, low, ..] if *op == push && (high << 16 | low) == unrounded => Ok(false),
         _ => Err(format!(
-            "its code starts with {:x?}",
+            "its code starts with {:x?}, not 63.43495 or 63.434948",
             &code[..code.len().min(4)]
         )),
     }
