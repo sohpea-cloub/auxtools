@@ -1,5 +1,7 @@
 use super::*;
 
+const UNNUMBERED: u16 = u16::MAX;
+
 pub(super) struct Codes {
 	pub(super) old_codes: RefCell<Vec<usize>>
 }
@@ -32,14 +34,26 @@ impl Codes {
 
 	pub(super) fn old_code_number(&self, running: usize) -> u16 {
 		let mut old_codes = self.old_codes.borrow_mut();
-		let number = match old_codes.iter().position(|&old| old == running) {
-			Some(at) => at + 1,
-			None => {
-				old_codes.push(running);
-				old_codes.len()
-			}
-		};
-		u16::try_from(number).unwrap_or(u16::MAX)
+		if let Some(at) = old_codes.iter().position(|&old| old == running) {
+			return at as u16 + 1;
+		}
+		if old_codes.len() >= usize::from(UNNUMBERED - 1) {
+			return UNNUMBERED;
+		}
+		old_codes.push(running);
+		old_codes.len() as u16
+	}
+
+	pub(super) fn old_code(&self, path: &str, old: u16) -> Result<usize, String> {
+		if old == UNNUMBERED {
+			return Err(format!(
+				"{} runs old code without an id: the debugger has given ids to {} old codes, the most it can",
+				path,
+				UNNUMBERED - 1
+			));
+		}
+		let running = self.old_codes.borrow().get(usize::from(old).wrapping_sub(1)).copied();
+		running.ok_or_else(|| format!("{} has no old code {}", path, old))
 	}
 
 	pub(super) fn disassemble(&self, code: CodeRef) -> Result<Disassembly, String> {
@@ -47,10 +61,9 @@ impl Codes {
 		let bytecode = if code.old == 0 {
 			original_code(&proc)
 		} else {
-			let running = self.old_codes.borrow().get(code.old as usize - 1).copied();
-			let old = running.and_then(|running| Some((running, auxtools::bytecode_at(running as *const u32)?)));
-			match old {
-				Some((running, old)) => Cow::Owned(crate::instruction_hooking::unpatched(running as *const u32, old)),
+			let running = self.old_code(&proc.path, code.old)?;
+			match auxtools::bytecode_at(running as *const u32) {
+				Some(old) => Cow::Owned(crate::instruction_hooking::unpatched(running as *const u32, old)),
 				None => return Err(format!("{} has no old code {}", proc.path, code.old))
 			}
 		};
@@ -272,5 +285,27 @@ impl Codes {
 		let proc = unnamed::find(&proc.path, proc.override_id)?;
 		let wanted = |file: &str| files.is_some_and(|files| files.contains(&Self::normalized(file)));
 		code_index::of(&proc).offset_of(line, files.map(|_| &wanted as &dyn Fn(&str) -> bool))
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	#[test]
+	fn old_code_past_the_last_id_is_refused() {
+		let codes = Codes::new();
+		codes.old_codes.borrow_mut().extend(1..usize::from(UNNUMBERED - 1));
+		let (last, past, further) = (0x1000_0000, 0x2000_0000, 0x3000_0000);
+		assert_eq!(codes.old_code_number(last), UNNUMBERED - 1);
+		assert_eq!(codes.old_code_number(past), UNNUMBERED);
+		assert_eq!(codes.old_code_number(further), UNNUMBERED);
+		assert_eq!(codes.old_code_number(last), UNNUMBERED - 1);
+		assert_eq!(codes.old_code("/f", UNNUMBERED - 1), Ok(last));
+		assert_eq!(
+			codes.old_code("/f", UNNUMBERED),
+			Err("/f runs old code without an id: the debugger has given ids to 65534 old codes, the most it can".to_owned())
+		);
+		assert_eq!(codes.old_code("/f", 0), Err("/f has no old code 0".to_owned()));
 	}
 }

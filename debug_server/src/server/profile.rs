@@ -34,8 +34,7 @@ impl Server {
 				let proc = Proc::from_id(raw_types::procs::ProcId(code.proc)).ok_or_else(|| format!("the world has no proc {:#x}", code.proc))?;
 				let bytecode = match code.old {
 					0 => unsafe { proc.bytecode_mut_ptr() }.0 as usize,
-					old => (self.codes.old_codes.borrow().get(old as usize - 1).copied())
-						.ok_or_else(|| format!("{} has no old code {}", proc.path, old))?
+					old => self.codes.old_code(&proc.path, old)?
 				};
 				if !profiler::exists() {
 					return Err(NO_PROFILE.to_owned());
