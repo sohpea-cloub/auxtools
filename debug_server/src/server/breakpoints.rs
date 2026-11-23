@@ -204,6 +204,25 @@ impl Server {
 		self.answer(Response::BreakpointUnset { success, skipped });
 	}
 
+	pub(super) fn moved_instruction_breakpoints(&self) -> Vec<(InstructionRef, InstructionRef)> {
+		let Some(client) = self.sessions.requester() else {
+			return vec![];
+		};
+		(self.breakpoints.moved.iter())
+			.filter(|((.., who), _)| *who == (client, Placed::Instruction))
+			.filter_map(|(&(proc, asked, _), &at)| {
+				let proc = unnamed::proc_ref(&Proc::from_id(proc)?);
+				Some((
+					InstructionRef {
+						proc: proc.clone(),
+						offset: asked
+					},
+					InstructionRef { proc, offset: at }
+				))
+			})
+			.collect()
+	}
+
 	pub(super) fn log_message(&mut self, parts: &[LogPart]) -> String {
 		let mut message = String::new();
 		for part in parts {

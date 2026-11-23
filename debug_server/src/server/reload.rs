@@ -80,19 +80,19 @@ impl Server {
 	}
 
 	pub(super) fn handle_hot_reload(&mut self, request: &HotReloadRequest) {
-		if let Some(why) = self.sessions.reloads_refused() {
-			let refused = HotReloadResult {
+		let mut result = match self.sessions.reloads_refused() {
+			Some(why) => HotReloadResult {
 				applied: false,
 				errors: vec![why],
 				warnings: vec![],
 				failures: vec![],
 				skipped: vec![],
-				resources: vec![]
-			};
-			self.answer(Response::HotReload(refused));
-			return;
-		}
-		let result = self.hot_reload(request, self.sessions.requester());
+				resources: vec![],
+				moved: vec![]
+			},
+			None => self.hot_reload(request, self.sessions.requester())
+		};
+		result.moved = self.moved_instruction_breakpoints();
 		self.answer(Response::HotReload(result));
 	}
 
@@ -152,7 +152,8 @@ impl Server {
 					warnings: std::iter::once(why).chain(early).collect(),
 					failures,
 					skipped: vec![],
-					resources: vec![]
+					resources: vec![],
+					moved: vec![]
 				};
 			}
 		}
@@ -234,7 +235,8 @@ impl Server {
 					warnings,
 					failures,
 					skipped,
-					resources: applied.reloaded
+					resources: applied.reloaded,
+					moved: vec![]
 				}
 			}
 
@@ -244,7 +246,8 @@ impl Server {
 				warnings,
 				failures,
 				skipped,
-				resources: vec![]
+				resources: vec![],
+				moved: vec![]
 			}
 		};
 

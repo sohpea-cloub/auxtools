@@ -75,7 +75,8 @@ pub fn applied() -> Response {
 		warnings: vec![],
 		failures: vec![],
 		skipped: vec![],
-		resources: vec![]
+		resources: vec![],
+		moved: vec![]
 	})
 }
 

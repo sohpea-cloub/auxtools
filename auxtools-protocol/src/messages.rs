@@ -791,5 +791,7 @@ pub struct HotReloadResult {
 	pub failures: Vec<String>,
 	pub skipped: Vec<String>,
 	#[serde(default)]
-	pub resources: Vec<ReloadedResource>
+	pub resources: Vec<ReloadedResource>,
+	#[serde(default)]
+	pub moved: Vec<(InstructionRef, InstructionRef)>
 }

@@ -854,6 +854,7 @@ impl Adapter {
 				return false;
 			}
 		};
+		self.follow_moved_breakpoints(&result.moved);
 		self.reloaded_resources = result.resources.clone();
 		let summary = summary.text(&result.skipped);
 		let notes: Vec<String> = notes
@@ -916,6 +917,20 @@ impl Adapter {
 			self.out.console(format!("    warning: {}", w));
 		}
 		result.applied
+	}
+
+	fn follow_moved_breakpoints(&self, moved: &[(InstructionRef, InstructionRef)]) {
+		let mut set = self.set.lock().unwrap();
+		for breakpoint in set.get_mut(INSTRUCTION_BREAKPOINTS).into_iter().flatten() {
+			let Some(at) = &mut breakpoint.at else {
+				continue;
+			};
+			let asked = InstructionRef {
+				proc: at.proc.clone(),
+				offset: breakpoint.asked.offset
+			};
+			*at = moved.iter().find(|(from, _)| *from == asked).map(|(_, to)| to.clone()).unwrap_or(asked);
+		}
 	}
 
 	fn notes(&self, notes: &[String]) {

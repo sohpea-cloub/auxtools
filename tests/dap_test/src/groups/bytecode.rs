@@ -295,6 +295,23 @@ fn old_code() {
 	ok("current and pre-reload disassembly");
 
 	world.resume_through("middle");
+	let mul = find(&now, "Mul");
+	let set = break_at(&mut world, &[mul]);
+	assert_eq!(set[0]["verified"], true, "{}", set[0]);
+	let id = set[0]["id"].as_u64().unwrap();
+	edit(&mut world, "stepping.dm", "\ty += extra\n", "\ty += extra\n\textra = 0\n");
+	let moved = find(&listing(&mut world, mul), "Mul");
+	assert_ne!(moved, mul, "the reload didn't move the Mul");
+	world.run("middle");
+	let stop = world.stop();
+	assert_eq!(
+		(stop.reason.as_str(), stop.proc.as_str(), &stop.hit),
+		("instruction breakpoint", "/leaf", &vec![id])
+	);
+	assert_eq!(frame_address(&mut world), moved);
+	break_at(&mut world, &[]);
+	world.resume_through("middle");
+	ok("instruction breakpoint moved by a reload");
 	world.end();
 }
 
