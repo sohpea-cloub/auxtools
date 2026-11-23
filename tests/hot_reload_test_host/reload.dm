@@ -6,6 +6,16 @@ var/breakpoint_armed = FALSE
 #define PARAM_TWINS(first, first_param, second, second_param) /proc/first(first_param) { twin_waiting += 1; while (twin_hold) sleep(1); twin_runs += first_param; } /proc/second(second_param) { twin_waiting += 1; while (twin_hold) sleep(1); twin_runs += second_param; }
 PARAM_TWINS(twin_e, e_param, twin_f, f_param)
 
+var/big_count = 0
+#define BIG1 big_count += 1;
+#define BIG4 BIG1 BIG1 BIG1 BIG1
+#define BIG16 BIG4 BIG4 BIG4 BIG4
+#define BIG64 BIG16 BIG16 BIG16 BIG16
+#define BIG256 BIG64 BIG64 BIG64 BIG64
+#define BIG1K BIG256 BIG256 BIG256 BIG256
+#define BIG4K BIG1K BIG1K BIG1K BIG1K
+#define BIG_PROC(name, param) /proc/name(param) { BIG4K BIG4K BIG4K BIG256 BIG256 BIG256 BIG16 BIG16 BIG16 BIG1 BIG1 }
+
 /proc/answer()
 	return 1
 

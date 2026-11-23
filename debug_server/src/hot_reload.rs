@@ -513,6 +513,12 @@ pub fn prepare(request: &HotReloadRequest, warnings: &mut Vec<String>, skipped: 
 
 		if let Some(bytecode) = remap_lines(&original_code(&proc), &moved.lines) {
 			match runtime_tables::intern_misc(&bytecode) {
+				Ok(bytecode_id) if bytecode.len() >= u16::MAX as usize && moved_names_need_copy(&proc, bytecode_id) => errors.push(format!(
+					"{}: moving its lines gives back code that older calls run with other names, and {} words leave no room for a copy with the new \
+					 names. Rebuild to move them",
+					describe(&moved.proc),
+					bytecode.len()
+				)),
 				Ok(bytecode_id) => prepared.code.push(PreparedCode {
 					proc,
 					name: describe(&moved.proc),
@@ -725,11 +731,8 @@ fn prepared_code(
 	};
 	let rename = renamed(&proc, &entry, &settings);
 
-	let old_names = code_address(bytecode_id)
-		.filter(|&at| entry.0[ProcEntryWords::BYTECODE] == bytecode_id || debug::has_local_names(&proc, at))
-		.map(|at| (debug::local_names_for(&proc, at), debug::parameter_names_for(&proc, at)));
 	let params: Vec<String> = reload.params.iter().map(|param| param.name.clone()).collect();
-	if old_names.is_some_and(|(locals, old_params)| locals != reload.locals || old_params != params) {
+	if names_need_copy(&proc, entry.0[ProcEntryWords::BYTECODE], bytecode_id, &reload.locals, &params) {
 		failing(FailAt::Copy).map_err(|e| format!("{}: {}", name, e))?;
 		if bytecode.len() >= u16::MAX as usize {
 			return Err(format!(
@@ -752,6 +755,19 @@ fn prepared_code(
 		local_names: Some(reload.locals.clone()),
 		lines: None
 	})
+}
+
+fn names_need_copy(proc: &Proc, current: u32, bytecode_id: u32, locals: &[String], params: &[String]) -> bool {
+	code_address(bytecode_id)
+		.filter(|&at| current == bytecode_id || debug::has_local_names(proc, at))
+		.is_some_and(|at| debug::local_names_for(proc, at) != locals || debug::parameter_names_for(proc, at) != params)
+}
+
+fn moved_names_need_copy(proc: &Proc, bytecode_id: u32) -> bool {
+	let current = runtime_tables::proc_entry(proc.id).map_or(NONE, |entry| entry.0[ProcEntryWords::BYTECODE]);
+	let locals = debug::local_names_for(proc, unsafe { proc.bytecode_mut_ptr() }.0);
+	let params: Vec<String> = proc.parameter_names().into_iter().map(String::from).collect();
+	names_need_copy(proc, current, bytecode_id, &locals, &params)
 }
 
 fn code_address(bytecode_id: u32) -> Option<*const u32> {

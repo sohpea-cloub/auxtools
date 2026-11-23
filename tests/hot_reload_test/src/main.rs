@@ -1308,6 +1308,30 @@ fn debugger(built: Built) {
 		"the locals' names of twin_c and twin_d after the refused reload and after the retry"
 	);
 	println!("ok: a reload back to earlier code checks the copy for new local names first");
+
+	let mut move_big = |from: &str, to: &str, code: bool| {
+		let changes = source.edit("reload.dm", from, to);
+		assert_eq!(changes.plan.reloads.len(), code as usize, "{:?}", changes.plan);
+		changes
+	};
+	let changes = move_big("BIG1 BIG1 }\n", "BIG1 BIG1 }\nBIG_PROC(big_proc, big_param)\n", false);
+	assert_eq!(changes.plan.new_procs.len(), 1, "{:?}", changes.plan);
+	reload(&mut watcher, &changes);
+	let changes = move_big("}\nBIG_PROC(big_proc, big_param)", "}\n\nBIG_PROC(big_proc, big_param)", false);
+	reload(&mut watcher, &changes);
+	let changes = move_big("}\n\nBIG_PROC(big_proc, big_param)", "}\n\n\nBIG_PROC(big_proc, big_renamed)", true);
+	reload(&mut watcher, &changes);
+	let changes = move_big("}\n\n\nBIG_PROC(big_proc, big_renamed)", "}\n\nBIG_PROC(big_proc, big_renamed)", false);
+	let result = expect_reload_result(watcher.request(reload_request(&changes)));
+	assert!(
+		!result.applied,
+		"a line move that needed a copy of 65,535 words was applied: {:?}",
+		result
+	);
+	assert_eq!(result.errors, ["/big_proc: moving its lines gives back code that older calls run with \
+	                            other names, and 65535 words leave no room for a copy with the new \
+	                            names. Rebuild to move them"]);
+	println!("ok: a line move refuses a 65,535-word proc's old code that has other names");
 }
 
 fn locals_references(client: &mut Client, proc: &str) -> (String, u32) {
