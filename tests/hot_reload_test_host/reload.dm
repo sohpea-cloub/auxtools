@@ -240,3 +240,12 @@ var/mob/helper/small/old_helper = new
 
 /proc/calls_early_global()
 	return early_global()
+
+/datum/twice/proc/speak()
+	return "declaration"
+
+/datum/twice/speak()
+	return "first override"
+
+/datum/twice/speak()
+	return "second override"

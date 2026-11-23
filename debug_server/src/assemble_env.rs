@@ -50,8 +50,16 @@ fn declaration(path: &str) -> Option<Proc> {
 }
 
 fn declares(proc: &Proc) -> bool {
-	let path = String::from(unsafe { StringRef::from_id((*proc.entry()).path) });
+	let path = own_path(proc);
 	path.contains("/proc/") || path.contains("/verb/")
+}
+
+pub fn own_path(proc: &Proc) -> String {
+	String::from(unsafe { StringRef::from_id((*proc.entry()).path) })
+}
+
+pub fn first_override(path: &str) -> Option<Proc> {
+	Proc::overrides(path).into_iter().find(|proc| own_path(proc) == path)
 }
 
 fn added_type(path: &str) -> Option<(u8, u32)> {
@@ -175,7 +183,7 @@ impl dmasm::assembler::AssembleEnv for AssembleEnv {
 			return Some(found);
 		}
 
-		last_definition(path).map(|proc| (raw_types::values::ValueTag::ProcRef.0, proc.id.0))
+		first_override(path).map(|proc| (raw_types::values::ValueTag::ProcRef.0, proc.id.0))
 	}
 
 	fn get_resource_index(&mut self, path: &str) -> Option<u32> {
