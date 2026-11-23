@@ -1338,6 +1338,35 @@ fn debugger(built: Built) {
 	let changes = source.edit(
 		"reload.dm",
 		"/proc/first_def()\n",
+		"/proc/end_target()\n\tif (twin_runs >= 0)\n\t\ttwin_runs++\n\n/proc/first_def()\n"
+	);
+	reload(&mut watcher, &changes);
+	let line = source.line_of("reload.dm", "\tif (twin_runs >= 0)");
+	let jump = |client: &mut Client| {
+		let on_line = line_instructions(client, "/end_target", line);
+		(on_line.iter().find(|(_, text)| text.starts_with('J')))
+			.unwrap_or_else(|| panic!("line {} has no jump: {:?}", line, on_line))
+			.0
+	};
+	let at = jump(&mut client);
+	twin_breakpoint(&mut client, "end_target", at, true);
+	let changes = source.edit("reload.dm", "\t\ttwin_runs++\n", "\t\ttwin_runs = twin_runs + 1\n");
+	let result = reload(&mut watcher, &changes);
+	assert!(result.warnings.is_empty(), "{:?}", result.warnings);
+	assert_eq!(jump(&mut client), at, "the reload moved the jump on line {}", line);
+	let runs = twin_number(&mut client, "twin_runs");
+	eval(&mut client, "twin_armed = /proc/end_target");
+	assert_eq!(client.expect_pause(), BreakpointReason::Breakpoint);
+	assert_eq!(paused_offset(&mut client), ("/end_target".to_owned(), at));
+	client.resume();
+	wait_for(&mut client, "twin_runs", &(runs + 1).to_string());
+	twin_breakpoint(&mut client, "end_target", at, false);
+	twin_run(&mut client, "end_target", line, 1, false);
+	println!("ok: an instruction breakpoint on a jump to a proc's end stays on its instruction when the line before the end changes");
+
+	let changes = source.edit(
+		"reload.dm",
+		"/proc/first_def()\n",
 		"/proc/local_dropper()\n\tvar/dropped = 1\n\ttwin_waiting += 1\n\twhile (twin_hold) sleep(1)\n\ttwin_runs += \
 		 dropped\n\n/proc/lone_local()\n\tvar/gone = 2\n\treturn gone\n\n/proc/first_def()\n"
 	);

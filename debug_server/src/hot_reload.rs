@@ -2788,6 +2788,7 @@ fn restore_breakpoints<K: Claimant, T>(
 		moved_breakpoints.remove(key);
 	}
 	let mut new_moves = vec![];
+	let (old_marks, new_marks) = (line_marks(&old_bytecode), line_marks(&p.bytecode));
 
 	let new_entry = new_code.entry_offset();
 
@@ -2846,7 +2847,11 @@ fn restore_breakpoints<K: Claimant, T>(
 				let new_offset = |old_offset: u32| match old_code.line_at(old_offset) {
 					Some(line) => {
 						let (old_start, new_start) = (old_code.offset_of(line, wanted)?, new_code.offset_of(new_line(line), wanted)?);
-						Some(new_start.wrapping_add(old_offset.wrapping_sub(old_start)))
+						Some(jump_target(
+							(&old_bytecode, &old_marks, old_start),
+							old_offset,
+							(&p.bytecode, &new_marks, new_start)
+						))
 					}
 					None => Some(old_offset)
 				};
@@ -2878,6 +2883,32 @@ fn restore_breakpoints<K: Claimant, T>(
 		new_moves.extend(known_as.into_iter().filter(|key| key.1 != offset).map(|key| (key, offset)));
 	}
 	moved_breakpoints.extend(new_moves);
+}
+
+fn line_marks(code: &[u32]) -> Vec<u32> {
+	let instructions = dmasm::scan(code).map(|scanned| scanned.instructions).unwrap_or_default();
+	(instructions.iter())
+		.filter(|ins| matches!(ins.opcode, Opcode::DbgLine | Opcode::DbgFile))
+		.map(|ins| ins.offset)
+		.collect()
+}
+
+fn jump_target(old: (&[u32], &[u32], u32), old_offset: u32, new: (&[u32], &[u32], u32)) -> u32 {
+	let ((old, old_marks, old_start), (new, new_marks, new_start)) = (old, new);
+	let from_start = new_start.wrapping_add(old_offset.wrapping_sub(old_start));
+	fn words(code: &[u32], from: u32, to: u32) -> Option<&[u32]> {
+		code.get(from as usize..to as usize)
+	}
+	if old_offset < old_start || words(old, old_start, old_offset) == words(new, new_start, from_start) {
+		return from_start;
+	}
+	let end = |code: &[u32], marks: &[u32], start: u32| marks.iter().copied().find(|&mark| mark >= start).unwrap_or(code.len() as u32);
+	let (old_end, new_end) = (end(old, old_marks, old_start), end(new, new_marks, new_start));
+	let from_end = (old_end.checked_sub(old_offset))
+		.filter(|&after| after > 0)
+		.and_then(|after| new_end.checked_sub(after))
+		.filter(|&at| at >= new_start && words(old, old_offset, old_end) == words(new, at, new_end));
+	from_end.unwrap_or(from_start)
 }
 
 fn same_place(
