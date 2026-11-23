@@ -215,7 +215,10 @@ struct Connection {
 
 impl Connection {
 	fn send(&self, message: &ServerMessage) -> io::Result<()> {
-		let mut bytes = &auxtools_protocol::frame(message)?[..];
+		self.write(&auxtools_protocol::frame(message)?)
+	}
+
+	fn write(&self, mut bytes: &[u8]) -> io::Result<()> {
 		while !bytes.is_empty() {
 			if self.closed.load(Ordering::SeqCst) {
 				return Err(io::ErrorKind::BrokenPipe.into());
@@ -244,12 +247,12 @@ impl World {
 			pid,
 			..Hello::new("stand-in")
 		};
-		auxtools_protocol::write(&mut &stream, &hello)?;
 		stream.set_nonblocking(true)?;
 		let connection = Arc::new(Connection {
 			stream,
 			closed: AtomicBool::new(false)
 		});
+		connection.write(&auxtools_protocol::frame(&hello)?)?;
 		let log = Arc::new(Mutex::new(vec![]));
 		let (sender, waiting) = mpsc::channel();
 		let (reading, logged) = (connection.clone(), log.clone());
