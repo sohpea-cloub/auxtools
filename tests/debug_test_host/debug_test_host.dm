@@ -38,6 +38,12 @@ PROFILED_TWINS(profiled_twin_a, profiled_twin_b)
 		n--
 	return n
 
+/proc/throw_caught()
+	try
+		throw "thrown and caught"
+	catch
+		return 1
+
 /proc/start_runtimes()
 	runtimes_left = 20
 

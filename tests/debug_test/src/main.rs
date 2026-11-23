@@ -4,8 +4,8 @@ use std::{
 };
 
 use auxtools_protocol::{
-	BreakpointReason, BreakpointSetResult, ContinueKind, InstructionRef, ProcRef, ProfileReply, ProfileRequest, ProfileTotals, ProfiledCode, Request,
-	Response, VariablesRef
+	BreakpointReason, BreakpointSetResult, ContinueKind, InstructionRef, LogPart, ProcRef, ProfileReply, ProfileRequest, ProfileTotals, ProfiledCode,
+	Request, Response, RuntimeFilter, VariablesRef
 };
 use test_support::{
 	debug::{Client, World},
@@ -826,6 +826,69 @@ fn loop_back_to_the_start() {
 	println!("ok: a loop back to the first instruction through a conditional breakpoint isn't counted as calls");
 }
 
+fn false_condition_on_a_caught_throw() {
+	let world = World::start(&host_file("debug_test_host.dmb"), &[]);
+	let mut client = world.connect();
+	pause(&mut client);
+	let throw_caught = start_of("/throw_caught").proc;
+	let code = match client.request(Request::ProcInfo { proc: throw_caught.clone() }) {
+		Response::ProcInfo(Ok(info)) => info.code,
+		other => panic!("expected ProcInfo, got {:?}", other)
+	};
+	let Response::Disassemble(Ok(disassembly)) = client.request(Request::Disassemble { code }) else {
+		panic!("expected the disassembly of /throw_caught");
+	};
+	let throw = (disassembly.instructions.iter())
+		.find(|instruction| instruction.text.starts_with("Throw"))
+		.unwrap_or_else(|| panic!("no throw in {:?}", disassembly.instructions));
+	let break_throw = |client: &mut Client, condition: Option<&str>, log: Option<&str>| {
+		let response = client.request(Request::BreakpointSet {
+			instruction: InstructionRef {
+				proc: throw_caught.clone(),
+				offset: throw.offset as u32
+			},
+			condition: condition.map(str::to_owned),
+			hit: None,
+			log: log.map(LogPart::parse),
+			exact: true
+		});
+		assert!(
+			matches!(response, Response::BreakpointSet {
+				result: BreakpointSetResult::Success { .. }
+			}),
+			"a breakpoint on `{}` got {:?}",
+			throw.text,
+			response
+		);
+	};
+	let caught = BreakpointReason::Runtime {
+		message: "thrown and caught".to_owned(),
+		caught: true
+	};
+	break_throw(&mut client, Some("0"), None);
+	client.send(Request::CatchRuntimes {
+		uncaught: None,
+		caught: Some(RuntimeFilter::default())
+	});
+	eval(&mut client, None, "spawn()\n\tthrow_caught()");
+	client.resume();
+	assert_eq!(client.expect_pause(), caught);
+	assert_eq!(paused_at(&mut client), ("/throw_caught".to_owned(), throw.offset as u32));
+	println!("ok: a caught throw under a breakpoint with a false condition stops for caught errors");
+
+	break_throw(&mut client, None, Some("logged"));
+	eval(&mut client, None, "spawn()\n\tthrow_caught()");
+	client.resume();
+	let logged = client.recv();
+	assert!(
+		matches!(&logged, Response::Log { message, .. } if message == "logged"),
+		"expected the logpoint's message, got {:?}",
+		logged
+	);
+	assert_eq!(client.expect_pause(), caught);
+	println!("ok: a logpoint on a caught throw logs when the throw stops");
+}
+
 fn paused_at(client: &mut Client) -> (String, u32) {
 	let response = client.request(Request::StackFrames {
 		stack_id: 0,
@@ -980,6 +1043,7 @@ fn main() {
 	drop(world);
 
 	loop_back_to_the_start();
+	false_condition_on_a_caught_throw();
 	waiting_world_ends();
 	panics();
 

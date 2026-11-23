@@ -554,7 +554,7 @@ impl InstructionHook for Server {
 			}
 		}
 
-		if opcode == OPCODE_THROW && !did_breakpoint && !in_eval {
+		if original_opcode(opcode_ptr) == OPCODE_THROW && !did_breakpoint && !in_eval {
 			unsafe {
 				let reason = BreakpointReason::Runtime {
 					message: thrown(ctx),
