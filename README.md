@@ -10,13 +10,15 @@ The `auxtools` crate, which the debugger is built on, lets other Rust libraries 
 
 The debugger supports line, function, instruction and data breakpoints; conditional breakpoints and logpoints; runtime error breakpoints; line and instruction stepping; sleeping proc stacks; variable inspection and assignment; expression and proc-body evaluation; and disassembly. A journal records runtime errors, reloads, output and reboots.
 
-No changes to the world's source are required. `auxtools` launches a compiled `.dmb` in DreamDaemon (`dd.exe` on Windows), windowed DreamDaemon or DreamSeeker with the debug library loaded. Build the world with your project's usual tools. After `world.Reboot()`, the launcher reconnects and restores breakpoints and reloads.
+`auxtools` launches a compiled `.dmb` with the debug library loaded. It runs the world in DreamDaemon (`dd.exe` on Windows), in windowed DreamDaemon or in DreamSeeker. Build the world with your project's usual tools. After `world.Reboot()`, the launcher reconnects and restores breakpoints and reloads.
 
-Multiple debuggers can connect to the same world. Each session has independent breakpoints and runtime error settings. Pausing stops the world for every session; any session can resume it.
+Line breakpoints need the world's line numbers. DreamMaker writes them only when the world defines `DEBUG`, so add `#define DEBUG` to the `.dme` and rebuild. Many codebases already define it. Without it, line breakpoints stay unverified, but breakpoints on procs still work. The world's source needs no other change.
 
-Use `auxtools list` to find running worlds. Worlds using an incompatible debugger protocol are listed but cannot be attached to.
+Several debuggers can connect to the same world. Each session has its own breakpoints and runtime error settings. A pause stops the world for every session. Any session can resume it.
 
-For VS Code, install the extension and press F5 in a workspace containing a built world. See the [extension README](editors/vscode/README.md) for configuration and debugging features.
+Use `auxtools list` to find running worlds. The list includes worlds that use another debugger protocol, but you can't attach to them.
+
+For VS Code, install the extension and press F5 in a workspace that contains a built world. The [extension README](editors/vscode/README.md) describes its configuration and debugging features.
 
 For command-line use, run `auxtools help COMMAND` for options, behavior, output and exit codes. `--pid PID` selects a world when several are running. Requests time out after 30 seconds by default, with exit code 2. Use `--response-timeout SECONDS` to change the limit. Results go to stdout and diagnostics to stderr. `--json` returns a JSON value, or JSON Lines for `log` and `trace`.
 

@@ -12,8 +12,13 @@ alongside it for syntax highlighting and language features.
 ## Start debugging
 
 Build your world, then press F5 or use **auxtools: Debug in DreamDaemon**.
-The extension runs the `.dmb` in DreamDaemon and asks you to select a world
-when needed.
+The extension runs the `.dmb` in DreamDaemon. If the workspace has more than one
+`.dmb`, it asks you to select one.
+
+Line breakpoints need the world's line numbers. DreamMaker writes them only
+when the world defines `DEBUG`, so add `#define DEBUG` to the `.dme` before you
+build. Many codebases already define it. Without it, line breakpoints stay
+unverified, but breakpoints on procs still work.
 
 With the [DM language client](https://github.com/SpaceManiac/vscode-dm-langclient),
 F5 and **Debug in DreamDaemon** use its selected environment. Launch
