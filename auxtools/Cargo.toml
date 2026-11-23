@@ -1,6 +1,6 @@
 [package]
 name = "auxtools"
-description = "library for interfacing with low-level BYOND internals"
+description = "Hook DM procs and work with BYOND values from Rust"
 version.workspace = true
 authors.workspace = true
 edition.workspace = true
