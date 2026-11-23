@@ -267,12 +267,17 @@ struct PreparedCode {
 	name: String,
 	bytecode: Vec<u32>,
 	bytecode_id: u32,
-	locals_id: Option<u32>,
+	locals: Option<LocalsTable>,
 	params_id: Option<u32>,
 	settings: Vec<(usize, u32)>,
 	rename: Option<Rename>,
 	local_names: Option<Vec<String>>,
 	lines: Option<Vec<(u32, u32)>>
+}
+
+enum LocalsTable {
+	Made(u32),
+	Shared(u32)
 }
 
 struct PreparedInitProc {
@@ -513,7 +518,7 @@ pub fn prepare(request: &HotReloadRequest, warnings: &mut Vec<String>, skipped: 
 					name: describe(&moved.proc),
 					bytecode,
 					bytecode_id,
-					locals_id: None,
+					locals: None,
 					params_id: None,
 					settings: vec![],
 					rename: None,
@@ -701,12 +706,14 @@ fn prepared_code(
 	let entry = runtime_tables::proc_entry(proc.id).ok_or_else(|| format!("{}: couldn't read its table entry", name))?;
 	let bytecode_id = runtime_tables::intern_misc(&bytecode).map_err(|e| format!("{}: {}", name, e))?;
 
-	let locals_id = if reload.locals.len() == proc.locals_count() {
+	let locals = if reload.locals.len() == proc.locals_count() {
 		None
 	} else if reload.locals.is_empty() {
-		Some(empty_locals().map_err(|e| format!("{}: {}", name, e))?)
+		Some(LocalsTable::Shared(empty_locals().map_err(|e| format!("{}: {}", name, e))?))
 	} else {
-		Some(locals_table(&reload.locals, NONE).map_err(|e| format!("{}: {}", name, e))?)
+		Some(LocalsTable::Made(
+			locals_table(&reload.locals, NONE).map_err(|e| format!("{}: {}", name, e))?
+		))
 	};
 
 	let params_id =
@@ -737,7 +744,7 @@ fn prepared_code(
 		name,
 		bytecode,
 		bytecode_id,
-		locals_id,
+		locals,
 		params_id,
 		settings,
 		rename,
@@ -1916,6 +1923,21 @@ pub fn string_references(text: &str) -> Result<u32, String> {
 	}
 }
 
+#[cfg(feature = "test-commands")]
+pub fn locals_references(path: &str) -> Result<(u32, u16, u32), String> {
+	let proc = Proc::find(path).ok_or_else(|| format!("there's no proc {}", path))?;
+	let id = runtime_tables::proc_entry(proc.id)
+		.ok_or_else(|| format!("couldn't read the table entry of {}", path))?
+		.0[ProcEntryWords::LOCALS];
+	let mut entry = std::ptr::null_mut();
+	unsafe {
+		if raw_types::funcs::get_misc_by_id(&mut entry, raw_types::misc::MiscId::from_raw(id)) != 1 || entry.is_null() {
+			return Err(format!("{} has no locals table", path));
+		}
+		Ok((id, *(entry as *const u16), *((entry as *const u8).add(4) as *const u32)))
+	}
+}
+
 fn leaked_string(text: &str) -> Result<u32, String> {
 	let string = StringRef::new(text).map_err(|_| format!("couldn't make the string {}", text))?;
 	let id = string.get_id().0;
@@ -2500,8 +2522,13 @@ fn apply_code<K: Ord + std::hash::Hash + Copy, T>(
 	};
 
 	runtime_tables::set_proc_entry_word(p.proc.id, ProcEntryWords::BYTECODE, p.bytecode_id);
-	if let Some(locals) = p.locals_id {
-		runtime_tables::set_proc_entry_word(p.proc.id, ProcEntryWords::LOCALS, locals);
+	match p.locals {
+		Some(LocalsTable::Made(locals)) => runtime_tables::set_proc_entry_word(p.proc.id, ProcEntryWords::LOCALS, locals),
+		Some(LocalsTable::Shared(locals)) => {
+			raw_types::misc::add_ref(&raw_types::misc::MiscId::from_raw(locals));
+			runtime_tables::set_proc_entry_word(p.proc.id, ProcEntryWords::LOCALS, locals);
+		}
+		None => {}
 	}
 	if let Some(params) = p.params_id {
 		runtime_tables::set_proc_entry_word(p.proc.id, ProcEntryWords::PARAMETERS, params);

@@ -352,6 +352,11 @@ impl Server {
 				Err(e) => format!("Failed: {}", e)
 			},
 			#[cfg(feature = "test-commands")]
+			Ok(console::Command::LocalsReferences(proc)) => match hot_reload::locals_references(proc) {
+				Ok((id, count, references)) => format!("table {}: {} slots, {} references", id, count, references),
+				Err(e) => format!("Failed: {}", e)
+			},
+			#[cfg(feature = "test-commands")]
 			Ok(console::Command::NextSpawn(number)) => {
 				spawn::number_next(number);
 				format!("the next spawn is number {}", number)

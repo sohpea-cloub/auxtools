@@ -1130,7 +1130,8 @@ fn debugger(built: Built) {
 	let changes = source.edit(
 		"reload.dm",
 		"/proc/first_def()\n",
-		"/proc/local_dropper()\n\tvar/dropped = 1\n\ttwin_waiting += 1\n\twhile (twin_hold) sleep(1)\n\ttwin_runs += dropped\n\n/proc/first_def()\n"
+		"/proc/local_dropper()\n\tvar/dropped = 1\n\ttwin_waiting += 1\n\twhile (twin_hold) sleep(1)\n\ttwin_runs += \
+		 dropped\n\n/proc/lone_local()\n\tvar/gone = 2\n\treturn gone\n\n/proc/first_def()\n"
 	);
 	reload(&mut watcher, &changes);
 	let waiting = twin_number(&mut client, "twin_waiting");
@@ -1151,6 +1152,16 @@ fn debugger(built: Built) {
 	let runs = twin_number(&mut client, "twin_runs");
 	eval(&mut client, "twin_hold = FALSE");
 	wait_for(&mut client, "twin_runs", &(runs + 2).to_string());
+	let (table, references) = locals_references(&mut client, "/proc/local_dropper");
+	let changes = source.edit("reload.dm", "\tvar/gone = 2\n\treturn gone\n", "\treturn 2\n");
+	reload(&mut watcher, &changes);
+	assert_eq!(eval(&mut client, "lone_local()"), "2");
+	assert_eq!(
+		locals_references(&mut client, "/proc/lone_local"),
+		(table.clone(), references + 1),
+		"the empty locals table that a second proc got"
+	);
+	assert_eq!(locals_references(&mut client, "/proc/local_dropper"), (table, references + 1));
 	println!("ok: a reload that removes a proc's last local gives new calls no locals");
 
 	let sleeping = sleep_named_twins(&mut client);
@@ -1180,6 +1191,15 @@ fn debugger(built: Built) {
 		"the locals' names of twin_c and twin_d after the refused reload and after the retry"
 	);
 	println!("ok: a reload back to earlier code checks the copy for new local names first");
+}
+
+fn locals_references(client: &mut Client, proc: &str) -> (String, u32) {
+	let answer = eval(client, &format!("#locals-refs {}", proc));
+	let parsed = answer
+		.strip_suffix(" references")
+		.and_then(|rest| rest.split_once(": 0 slots, "))
+		.and_then(|(table, references)| Some((table.to_owned(), references.parse().ok()?)));
+	parsed.unwrap_or_else(|| panic!("expected an empty locals table for {}, got {}", proc, answer))
 }
 
 fn sleep_named_twins(client: &mut Client) -> u32 {
