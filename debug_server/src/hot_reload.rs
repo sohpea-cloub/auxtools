@@ -2640,15 +2640,19 @@ fn restore_breakpoints<K: Ord + std::hash::Hash + Copy, T>(
 		_ => None
 	};
 
+	let old_moves: Vec<((raw_types::procs::ProcId, u32, K), u32)> = moved_breakpoints
+		.iter()
+		.filter(|((proc, ..), at)| *proc == p.proc.id && hooked.iter().any(|(offset, ..)| offset == *at))
+		.map(|(key, at)| (*key, *at))
+		.collect();
+	for (key, _) in &old_moves {
+		moved_breakpoints.remove(key);
+	}
+	let mut new_moves = vec![];
+
 	for (old_offset, line, other_file, known) in hooked {
-		let mut known_as: Vec<(raw_types::procs::ProcId, u32, K)> = moved_breakpoints
-			.iter()
-			.filter(|((proc, ..), at)| *proc == p.proc.id && **at == old_offset)
-			.map(|(key, _)| *key)
-			.collect();
-		for key in &known_as {
-			moved_breakpoints.remove(key);
-		}
+		let mut known_as: Vec<(raw_types::procs::ProcId, u32, K)> =
+			old_moves.iter().filter(|(_, at)| *at == old_offset).map(|(key, _)| *key).collect();
 		for client in known.iter().flat_map(BTreeMap::keys) {
 			if !known_as.iter().any(|(.., other)| other == client) {
 				known_as.push((p.proc.id, old_offset, *client));
@@ -2694,12 +2698,9 @@ fn restore_breakpoints<K: Ord + std::hash::Hash + Copy, T>(
 		}
 
 		keep_claims(known, breakpoints, (p.proc.id, offset as u16), &p.name, &place, warnings);
-		for key in known_as {
-			if key.1 != offset {
-				moved_breakpoints.insert(key, offset);
-			}
-		}
+		new_moves.extend(known_as.into_iter().filter(|key| key.1 != offset).map(|key| (key, offset)));
 	}
+	moved_breakpoints.extend(new_moves);
 }
 
 fn keep_claims<K: Ord, T>(

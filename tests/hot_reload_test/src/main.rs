@@ -1060,20 +1060,11 @@ fn debugger(built: Built) {
 		},
 		offset
 	};
-	let code = match client.request(Request::ProcInfo { proc: claimed(0).proc }) {
-		Response::ProcInfo(Ok(info)) => info.code,
-		other => panic!("expected ProcInfo for /claimed_target, got {:?}", other)
-	};
-	let Response::Disassemble(Ok(disassembly)) = client.request(Request::Disassemble { code }) else {
-		panic!("expected the disassembly of /claimed_target");
-	};
-	let on_line: Vec<u32> = disassembly
-		.instructions
-		.iter()
-		.filter(|at| at.line == Some(line) && !at.text.starts_with("Dbg"))
-		.map(|at| at.offset as u32)
+	let on_line: Vec<u32> = line_instructions(&mut client, "/claimed_target", line)
+		.into_iter()
+		.map(|(offset, _)| offset)
 		.collect();
-	assert!(on_line.len() > 1, "line {} has one instruction: {:?}", line, disassembly.instructions);
+	assert!(on_line.len() > 1, "line {} has one instruction: {:?}", line, on_line);
 	let mut other = world.connect();
 	let set = |client: &mut Client, offset: u32, condition: &str| {
 		let response = client.request(Request::BreakpointSet {
@@ -1126,6 +1117,39 @@ fn debugger(built: Built) {
 	unset(&mut other, on_line[on_line.len() - 1]);
 	other.leave();
 	println!("ok: instruction breakpoints keep their conditions across a reload, at the start or on one instruction");
+
+	let changes = source.edit(
+		"reload.dm",
+		"/proc/first_def()\n",
+		"var/chained_step = 0\n\n/proc/chained_target()\n\tchained_step += 1\n\ttwin_runs++\n\ttwin_runs++\n\n/proc/first_def()\n"
+	);
+	reload(&mut watcher, &changes);
+	let first = source.line_of("reload.dm", "\tchained_step += 1\n") + 1;
+	let lines = [first, first + 1];
+	for unset_first in [true, false] {
+		let before = lines.map(|line| offset_of(&mut client, "/chained_target", line));
+		for offset in before {
+			twin_breakpoint(&mut client, "chained_target", offset, true);
+		}
+		let changes = source.edit(
+			"reload.dm",
+			"chained_step += 1\n\ttwin_runs",
+			"chained_step += 1; chained_step += 1\n\ttwin_runs"
+		);
+		reload(&mut watcher, &changes);
+		let after = lines.map(|line| offset_of(&mut client, "/chained_target", line));
+		assert_eq!(
+			after[0], before[1],
+			"the first line's code should start where the second's did: {:?} {:?}",
+			before, after
+		);
+		let [gone, kept] = if unset_first { [0, 1] } else { [1, 0] };
+		twin_breakpoint(&mut client, "chained_target", before[gone], false);
+		twin_run(&mut client, "chained_target", lines[kept], 2, true);
+		twin_breakpoint(&mut client, "chained_target", before[kept], false);
+		twin_run(&mut client, "chained_target", lines[kept], 2, false);
+	}
+	println!("ok: breakpoints that a reload moves onto each other's old places can each be taken away");
 
 	let changes = source.edit(
 		"reload.dm",
@@ -1200,6 +1224,24 @@ fn locals_references(client: &mut Client, proc: &str) -> (String, u32) {
 		.and_then(|rest| rest.split_once(": 0 slots, "))
 		.and_then(|(table, references)| Some((table.to_owned(), references.parse().ok()?)));
 	parsed.unwrap_or_else(|| panic!("expected an empty locals table for {}, got {}", proc, answer))
+}
+
+fn line_instructions(client: &mut Client, proc: &str, line: u32) -> Vec<(u32, String)> {
+	let proc = ProcRef {
+		path: proc.to_owned(),
+		override_id: 0
+	};
+	let code = match client.request(Request::ProcInfo { proc: proc.clone() }) {
+		Response::ProcInfo(Ok(info)) => info.code,
+		other => panic!("expected ProcInfo for {}, got {:?}", proc.path, other)
+	};
+	let Response::Disassemble(Ok(disassembly)) = client.request(Request::Disassemble { code }) else {
+		panic!("expected the disassembly of {}", proc.path);
+	};
+	(disassembly.instructions.into_iter())
+		.filter(|at| at.line == Some(line) && !at.text.starts_with("Dbg"))
+		.map(|at| (at.offset as u32, at.text))
+		.collect()
 }
 
 fn sleep_named_twins(client: &mut Client) -> u32 {
