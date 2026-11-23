@@ -15,7 +15,7 @@ pub const MAX_LINE_LEN: usize = 4096;
 
 struct Journal {
 	entries: VecDeque<JournalEntry>,
-	next: u64,
+	next_number: u64,
 	last_reload: Option<JournalEntry>,
 	loaded: Option<(u64, Instant)>,
 	loads: u32
@@ -23,7 +23,7 @@ struct Journal {
 
 static JOURNAL: Mutex<Journal> = Mutex::new(Journal {
 	entries: VecDeque::new(),
-	next: 1,
+	next_number: 1,
 	last_reload: None,
 	loaded: None,
 	loads: 0
@@ -42,12 +42,12 @@ pub fn add(event: JournalEvent) -> JournalEntry {
 	let world_time = world_time();
 	let mut journal = JOURNAL.lock().unwrap();
 	let entry = JournalEntry {
-		number: journal.next,
+		number: journal.next_number,
 		time: now_ms(),
 		world_time,
 		event
 	};
-	journal.next += 1;
+	journal.next_number += 1;
 	if entry.event.kind() == JournalKind::Reload {
 		journal.last_reload = Some(entry.clone());
 	}
@@ -104,7 +104,7 @@ pub fn read(after: u64, kinds: &[JournalKind], limit: Option<u32>) -> (Vec<Journ
 		entries.drain(..extra);
 	}
 	let first = journal.entries.front().map_or(0, |entry| entry.number);
-	(entries, first, journal.next - 1)
+	(entries, first, journal.next_number - 1)
 }
 
 pub fn uptime() -> (u64, f64, u32, Option<JournalEntry>) {

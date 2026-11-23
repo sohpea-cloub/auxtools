@@ -942,8 +942,15 @@ mod tests {
 	fn locals_are_used_from_their_first_instruction_to_their_last() {
 		let get_var = Opcode::GetVar.word();
 		let set_var = Opcode::SetVar.word();
-		let local = 0xFFDA;
-		let (_, code) = read(&[&line(1), &[get_var, local, 1], &[set_var, local, 0], &[get_var, local, 1], &POP, &ret()]);
+		let local_marker = 0xFFDA;
+		let (_, code) = read(&[
+			&line(1),
+			&[get_var, local_marker, 1],
+			&[set_var, local_marker, 0],
+			&[get_var, local_marker, 1],
+			&POP,
+			&ret()
+		]);
 		assert_eq!(*code.offsets, [0, 2, 5, 8, 11, 12]);
 		assert_eq!(code.local_use(0), Some((5, 5)));
 		assert_eq!(code.local_use(1), Some((2, 8)));

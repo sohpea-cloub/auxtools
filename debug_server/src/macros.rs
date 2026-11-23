@@ -112,8 +112,9 @@ pub fn expand_with(macros: &HashMap<String, Macro>, text: &str) -> Result<Option
 	}
 	let ctx = Context::default();
 	let tokens: Vec<_> = dreammaker::lexer::Lexer::new(&ctx, FileId::BUILTINS, text.as_bytes()).collect();
-	let lines: Vec<usize> = std::iter::once(0).chain(text.match_indices('\n').map(|(at, _)| at + 1)).collect();
-	let offset = |at: Location| -> Option<usize> { Some(lines.get((at.line as usize).checked_sub(1)?)? + (at.column as usize).checked_sub(1)?) };
+	let line_starts: Vec<usize> = std::iter::once(0).chain(text.match_indices('\n').map(|(at, _)| at + 1)).collect();
+	let offset =
+		|at: Location| -> Option<usize> { Some(line_starts.get((at.line as usize).checked_sub(1)?)? + (at.column as usize).checked_sub(1)?) };
 
 	let mut out = String::new();
 	let mut copied = 0;

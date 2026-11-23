@@ -20,7 +20,7 @@ impl Server {
 	pub(super) fn journal_stack(&self) -> Vec<JournalFrame> {
 		type Known = HashMap<(raw_types::procs::ProcId, u16, usize), JournalFrame>;
 		static KNOWN: Mutex<(u64, Option<Known>)> = Mutex::new((0, None));
-		const KEEP: usize = 16384;
+		const MAX_KNOWN_FRAMES: usize = 16384;
 
 		let mut uncached: (u64, Option<Known>) = (0, None);
 		let mut guard = match KNOWN.try_lock() {
@@ -33,7 +33,7 @@ impl Server {
 			None => &mut uncached
 		};
 		let now = auxtools::bytecode_changes();
-		if *changes != now || known.as_ref().is_some_and(|known| known.len() >= KEEP) {
+		if *changes != now || known.as_ref().is_some_and(|known| known.len() >= MAX_KNOWN_FRAMES) {
 			*changes = now;
 			*known = None;
 		}

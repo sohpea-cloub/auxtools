@@ -45,14 +45,14 @@ pub(crate) fn world_byond() -> dmasm::ByondVersion {
 	dmasm::ByondVersion::new(major, build)
 }
 
-static PANICS: AtomicU32 = AtomicU32::new(0);
+static PANICS_IN_A_ROW: AtomicU32 = AtomicU32::new(0);
 
 const LOST: u32 = 3;
 
 const LOST_REASON: &str = "the debugger stopped after panicking repeatedly";
 
 fn lost() -> bool {
-	PANICS.load(Ordering::Relaxed) >= LOST
+	PANICS_IN_A_ROW.load(Ordering::Relaxed) >= LOST
 }
 
 pub(crate) fn guard<R>(work: impl FnOnce() -> R) -> Result<R, String> {
@@ -79,8 +79,8 @@ pub(crate) fn on_server<R>(work: impl FnOnce(&mut server::Server) -> R) -> Optio
 fn settle<'a, R>(done: Result<R, Box<dyn Any + Send>>, server: impl FnOnce() -> Option<&'a mut server::Server>) -> Result<R, String> {
 	let payload = match done {
 		Ok(done) => {
-			if (1..LOST).contains(&PANICS.load(Ordering::Relaxed)) {
-				PANICS.store(0, Ordering::Relaxed);
+			if (1..LOST).contains(&PANICS_IN_A_ROW.load(Ordering::Relaxed)) {
+				PANICS_IN_A_ROW.store(0, Ordering::Relaxed);
 			}
 			return Ok(done);
 		}
@@ -94,7 +94,7 @@ fn settle<'a, R>(done: Result<R, Box<dyn Any + Send>>, server: impl FnOnce() -> 
 	if lost() {
 		return Err(message);
 	}
-	let panics = PANICS.fetch_add(1, Ordering::Relaxed) + 1;
+	let panics = PANICS_IN_A_ROW.fetch_add(1, Ordering::Relaxed) + 1;
 	let mut server = server();
 	let recovered = auxtools::guard(|| {
 		if let Some(server) = server.as_deref_mut() {
@@ -102,7 +102,7 @@ fn settle<'a, R>(done: Result<R, Box<dyn Any + Send>>, server: impl FnOnce() -> 
 		}
 	});
 	if recovered.is_err() || panics >= LOST {
-		PANICS.store(LOST, Ordering::Relaxed);
+		PANICS_IN_A_ROW.store(LOST, Ordering::Relaxed);
 		eprintln!("auxtools: {}. The world runs on without it.", LOST_REASON);
 		let _ = auxtools::guard(instruction_hooking::unhook_all);
 		if let Some(server) = server {

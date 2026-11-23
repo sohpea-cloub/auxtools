@@ -4,9 +4,7 @@ pub(super) type ClientId = u32;
 
 pub(super) enum Event {
 	Connected(ClientId, Connection),
-
 	Request(ClientId, RequestId, Request),
-
 	Disconnected(ClientId)
 }
 

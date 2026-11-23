@@ -5,8 +5,8 @@ use std::{
 	time::{Duration, Instant}
 };
 
-static ALIVE: AtomicU32 = AtomicU32::new(0);
-static WAITING: AtomicU32 = AtomicU32::new(0);
+static INSTRUCTIONS: AtomicU32 = AtomicU32::new(0);
+static WAITING_REQUESTS: AtomicU32 = AtomicU32::new(0);
 static CLIENTS: AtomicU32 = AtomicU32::new(0);
 static PORT: AtomicU16 = AtomicU16::new(0);
 static WOKE: AtomicBool = AtomicBool::new(false);
@@ -16,15 +16,15 @@ const PATIENCE: Duration = Duration::from_secs(1);
 const CHECK_EVERY: Duration = Duration::from_millis(250);
 
 pub fn alive() {
-	ALIVE.store(ALIVE.load(Ordering::Relaxed).wrapping_add(1), Ordering::Relaxed);
+	INSTRUCTIONS.store(INSTRUCTIONS.load(Ordering::Relaxed).wrapping_add(1), Ordering::Relaxed);
 }
 
 pub fn request_waiting() {
-	WAITING.fetch_add(1, Ordering::Relaxed);
+	WAITING_REQUESTS.fetch_add(1, Ordering::Relaxed);
 }
 
 pub fn request_taken() {
-	WAITING.fetch_sub(1, Ordering::Relaxed);
+	WAITING_REQUESTS.fetch_sub(1, Ordering::Relaxed);
 }
 
 pub fn client_connected() {
@@ -62,11 +62,11 @@ pub fn start() -> std::io::Result<()> {
 }
 
 fn wanted() -> bool {
-	WAITING.load(Ordering::Relaxed) > 0 || CLIENTS.load(Ordering::Relaxed) > 0
+	WAITING_REQUESTS.load(Ordering::Relaxed) > 0 || CLIENTS.load(Ordering::Relaxed) > 0
 }
 
 fn activity() -> u32 {
-	ALIVE.load(Ordering::Relaxed).wrapping_add(auxtools::proc_calls())
+	INSTRUCTIONS.load(Ordering::Relaxed).wrapping_add(auxtools::proc_calls())
 }
 
 fn watch() {

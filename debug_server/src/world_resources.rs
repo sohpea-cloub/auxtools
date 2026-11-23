@@ -13,16 +13,16 @@ use auxtools_protocol::HotReloadRequest;
 
 static LOADED: AtomicBool = AtomicBool::new(true);
 
-static BUILT: Mutex<Option<Option<Vec<u32>>>> = Mutex::new(None);
+static BUILT_CRCS: Mutex<Option<Option<Vec<u32>>>> = Mutex::new(None);
 
 pub fn loading() {
 	LOADED.store(false, Ordering::Relaxed);
-	*BUILT.lock().unwrap() = None;
+	*BUILT_CRCS.lock().unwrap() = None;
 }
 
 pub fn loaded() {
 	LOADED.store(true, Ordering::Relaxed);
-	*BUILT.lock().unwrap() = None;
+	*BUILT_CRCS.lock().unwrap() = None;
 }
 
 pub fn is_loaded() -> bool {
@@ -31,13 +31,13 @@ pub fn is_loaded() -> bool {
 
 pub fn built_id(path: &Path) -> Option<u32> {
 	let crc = crate::dmb_tables::byond_crc(&std::fs::read(path).ok()?);
-	let mut built = BUILT.lock().unwrap();
+	let mut built = BUILT_CRCS.lock().unwrap();
 	let crcs = built.get_or_insert_with(read_built).as_ref()?;
 	crcs.iter().position(|&built| built == crc).map(|id| id as u32)
 }
 
 pub fn built_count() -> Option<usize> {
-	let mut built = BUILT.lock().unwrap();
+	let mut built = BUILT_CRCS.lock().unwrap();
 	built.get_or_insert_with(read_built).as_ref().map(Vec::len)
 }
 

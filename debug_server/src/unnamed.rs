@@ -20,10 +20,13 @@ pub fn proc_ref(proc: &Proc) -> ProcRef {
 			override_id: 0
 		};
 	}
-	Kinds::read().ok().and_then(|kinds| kinds.name(proc)).unwrap_or_else(|| ProcRef {
-		path: OTHER.to_owned(),
-		override_id: proc.override_id()
-	})
+	UnnamedProcKinds::read()
+		.ok()
+		.and_then(|kinds| kinds.name(proc))
+		.unwrap_or_else(|| ProcRef {
+			path: OTHER.to_owned(),
+			override_id: proc.override_id()
+		})
 }
 
 pub fn proc_name(proc: &Proc) -> String {
@@ -41,7 +44,7 @@ pub fn find(path: &str, override_id: u32) -> Option<Proc> {
 	if path == OTHER {
 		return Proc::find_override("", override_id);
 	}
-	let kinds = Kinds::read().ok()?;
+	let kinds = UnnamedProcKinds::read().ok()?;
 	let id = match (path, override_id) {
 		(GLOBAL_INIT, 0) => kinds.global_init?,
 		(IN_LIST, n) => *kinds.in_lists.get(n as usize)?,
@@ -50,12 +53,12 @@ pub fn find(path: &str, override_id: u32) -> Option<Proc> {
 	Proc::from_id(ProcId(id))
 }
 
-struct Kinds {
+struct UnnamedProcKinds {
 	in_lists: Vec<u32>,
 	global_init: Option<u32>
 }
 
-impl Kinds {
+impl UnnamedProcKinds {
 	fn read() -> Result<Self, String> {
 		let in_lists = runtime_tables::in_list_procs()?;
 		let global_init = Proc::overrides("")

@@ -93,10 +93,10 @@ static REBOOTING: AtomicBool = AtomicBool::new(false);
 
 static KEEPALIVE_OURS: AtomicBool = AtomicBool::new(false);
 
-static SPAWNS: AtomicBool = AtomicBool::new(false);
+static SPAWNS_AVAILABLE: AtomicBool = AtomicBool::new(false);
 
 pub fn can_spawn() -> Result<(), String> {
-	if SPAWNS.load(Ordering::Relaxed) {
+	if SPAWNS_AVAILABLE.load(Ordering::Relaxed) {
 		return Ok(());
 	}
 	if !KEEPALIVE_OURS.load(Ordering::Relaxed) && Proc::find("/proc/auxtools_keepalive").is_some() {
@@ -231,7 +231,7 @@ fn helper_procs() -> Result<HotReloadRequest, String> {
 		}
 
 		let mut code = snapshot.compile_reload(&key).map_err(|e| format!("{}: {}", key.path, e))?;
-		code.proc.override_id = if declared { 0 } else { overrides(&key.path) };
+		code.proc.override_id = if declared { 0 } else { definition_count(&key.path) };
 		request.plan.new_procs.push(NewProc {
 			type_path,
 			name,
@@ -243,7 +243,7 @@ fn helper_procs() -> Result<HotReloadRequest, String> {
 	Ok(request)
 }
 
-fn overrides(path: &str) -> u32 {
+fn definition_count(path: &str) -> u32 {
 	(0..).take_while(|&id| Proc::find_override(path, id).is_some()).count() as u32
 }
 
@@ -276,9 +276,9 @@ fn start() {
 		&& ["/proc/auxtools_spawn_stub", "/proc/auxtools_spawned"]
 			.into_iter()
 			.all(|path| Proc::find(path).is_some());
-	SPAWNS.store(spawns, Ordering::Relaxed);
+	SPAWNS_AVAILABLE.store(spawns, Ordering::Relaxed);
 	for path in HELPER_OVERRIDES {
-		if let Some(proc) = overrides(path).checked_sub(1).and_then(|last| Proc::find_override(path, last)) {
+		if let Some(proc) = definition_count(path).checked_sub(1).and_then(|last| Proc::find_override(path, last)) {
 			proc.set_apart();
 			hot_reload::pin_world_proc(proc.id.0);
 		}

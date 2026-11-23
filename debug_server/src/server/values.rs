@@ -528,7 +528,7 @@ impl Pausing {
 		let vars = List::from_value(&value.get(byond_string!("vars"))?)?;
 
 		let mut variables = vec![];
-		let mut top_variables = vec![];
+		let mut listed_first = vec![];
 
 		for i in 1..=vars.len() {
 			let name = vars.get(i)?.as_string()?;
@@ -536,16 +536,16 @@ impl Pausing {
 			let expr = member(&name);
 			let variable = self.value_to_variable(name, &value, expr);
 			if variable.name == "type" {
-				top_variables.push(variable);
+				listed_first.push(variable);
 			} else {
 				variables.push(variable);
 			}
 		}
 
 		variables.sort_by_key(|a| a.name.to_lowercase());
-		top_variables.append(&mut variables);
+		listed_first.append(&mut variables);
 
-		Ok(top_variables)
+		Ok(listed_first)
 	}
 
 	pub(super) fn globals_to_variables(&mut self, builtin: bool) -> Result<Vec<Variable>, Runtime> {

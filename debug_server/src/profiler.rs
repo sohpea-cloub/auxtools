@@ -9,11 +9,11 @@ use auxtools_protocol::{ProfiledInstruction, ProfiledTotal};
 
 const MOST_CALLS: usize = 1024;
 
-const CACHED: usize = 256;
+const CODE_CACHE_SLOTS: usize = 256;
 
 const FLOOR_HITS: u64 = 256;
 
-const SAMPLED: usize = 4096;
+const SAMPLE_SLOTS: usize = 4096;
 
 const SAMPLE_PATIENCE: u8 = 16;
 
@@ -83,7 +83,7 @@ struct Call {
 pub struct Profiler {
 	only: Option<Vec<u32>>,
 	codes: HashMap<usize, Option<Box<Code>>>,
-	cache: [(usize, *mut Code); CACHED],
+	cache: [(usize, *mut Code); CODE_CACHE_SLOTS],
 	last: Frame,
 	last_parent: Frame,
 	last_counter: At,
@@ -107,7 +107,7 @@ pub fn start(only: Option<Vec<u32>>) {
 		PROFILER = Some(Box::new(Profiler {
 			only,
 			codes: HashMap::new(),
-			cache: [(0, std::ptr::null_mut()); CACHED],
+			cache: [(0, std::ptr::null_mut()); CODE_CACHE_SLOTS],
 			last: Frame::NONE,
 			last_parent: Frame::NONE,
 			last_counter: At::NONE,
@@ -122,7 +122,7 @@ pub fn start(only: Option<Vec<u32>>) {
 					ticks: 0,
 					passed: 0
 				};
-				SAMPLED
+				SAMPLE_SLOTS
 			]
 			.into_boxed_slice(),
 			calls: Vec::new(),
@@ -276,7 +276,7 @@ impl Profiler {
 	}
 
 	fn sample(&mut self, spent: u64) {
-		let sample = &mut self.samples[(self.last_instruction >> 2) % SAMPLED];
+		let sample = &mut self.samples[(self.last_instruction >> 2) % SAMPLE_SLOTS];
 		if sample.instruction == self.last_instruction {
 			sample.passed = 0;
 		} else if sample.passed < SAMPLE_PATIENCE && sample.instruction != 0 {
@@ -296,7 +296,7 @@ impl Profiler {
 
 	fn code(&mut self, bytecode: *mut u32, proc: raw_types::procs::ProcId) -> *mut Code {
 		let address = bytecode as usize;
-		let slot = (address >> 3 ^ address >> 11) % CACHED;
+		let slot = (address >> 3 ^ address >> 11) % CODE_CACHE_SLOTS;
 		if self.cache[slot].0 == address {
 			return self.cache[slot].1;
 		}
