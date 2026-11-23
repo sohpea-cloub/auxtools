@@ -292,27 +292,9 @@ pub(super) fn emit_typed<'a>(
                         compiler.emit_ins(Instruction::SetVar(Variable::Cache));
                         compiler.emit_ins(Instruction::PushCache);
 
-                        match args::emit(compiler, args::ArgsContext::Proc, args.into_vec())? {
-                            args::ArgsResult::Normal => {
-                                compiler.emit_ins(Instruction::PopCache);
-
-                                compiler.emit_ins(Instruction::Call(callee.clone(), arg_count));
-                            }
-
-                            args::ArgsResult::Assoc => {
-                                compiler.emit_ins(Instruction::NewAssocList(arg_count));
-
-                                compiler.emit_ins(Instruction::PopCache);
-
-                                compiler.emit_ins(Instruction::Call(callee.clone(), 65535));
-                            }
-
-                            args::ArgsResult::ArgList => {
-                                compiler.emit_ins(Instruction::PopCache);
-
-                                compiler.emit_ins(Instruction::Call(callee.clone(), 65535));
-                            }
-                        }
+                        let count = compiler.emit_call_args(args.into_vec())?;
+                        compiler.emit_ins(Instruction::PopCache);
+                        compiler.emit_ins(Instruction::Call(callee, count));
                     }
 
                     PropertyAccessKind::SafeDot | PropertyAccessKind::SafeColon => {
@@ -325,36 +307,12 @@ pub(super) fn emit_typed<'a>(
 
                         compiler.emit_ins(Instruction::PushCache);
 
-                        match args::emit(compiler, args::ArgsContext::Proc, args.into_vec())? {
-                            args::ArgsResult::Normal => {
-                                compiler.emit_ins(Instruction::PopCache);
-
-                                compiler.emit_ins(Instruction::Call(
-                                    Variable::DynamicProc(super::dynamic_name(&ident)),
-                                    arg_count,
-                                ));
-                            }
-
-                            args::ArgsResult::Assoc => {
-                                compiler.emit_ins(Instruction::NewAssocList(arg_count));
-
-                                compiler.emit_ins(Instruction::PopCache);
-
-                                compiler.emit_ins(Instruction::Call(
-                                    Variable::DynamicProc(super::dynamic_name(&ident)),
-                                    65535,
-                                ));
-                            }
-
-                            args::ArgsResult::ArgList => {
-                                compiler.emit_ins(Instruction::PopCache);
-
-                                compiler.emit_ins(Instruction::Call(
-                                    Variable::DynamicProc(super::dynamic_name(&ident)),
-                                    65535,
-                                ));
-                            }
-                        }
+                        let count = compiler.emit_call_args(args.into_vec())?;
+                        compiler.emit_ins(Instruction::PopCache);
+                        compiler.emit_ins(Instruction::Call(
+                            Variable::DynamicProc(super::dynamic_name(&ident)),
+                            count,
+                        ));
                     }
                 }
 
