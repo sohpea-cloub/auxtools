@@ -1701,12 +1701,12 @@ fn write_builtins(type_id: u32, writes: &[BuiltinWrite]) -> Result<(), String> {
 	use runtime_tables::{set_type_byte, set_type_field, set_type_half, type_field};
 	for write in writes {
 		match write {
-			BuiltinWrite::Word(offset, word) => set_type_field(type_id, *offset, *word)?,
-			BuiltinWrite::Half(offset, half) => set_type_half(type_id, *offset, *half)?,
-			BuiltinWrite::Byte(offset, byte) => set_type_byte(type_id, *offset, *byte)?,
+			BuiltinWrite::Word(offset, word) => unsafe { set_type_field(type_id, *offset, *word)? },
+			BuiltinWrite::Half(offset, half) => unsafe { set_type_half(type_id, *offset, *half)? },
+			BuiltinWrite::Byte(offset, byte) => unsafe { set_type_byte(type_id, *offset, *byte)? },
 			BuiltinWrite::Bits(offset, mask, bits) => {
 				let word = type_field(type_id, *offset)?;
-				set_type_field(type_id, *offset, (word & !mask) | bits)?;
+				unsafe { set_type_field(type_id, *offset, (word & !mask) | bits)? };
 			}
 			BuiltinWrite::Listed(name, value) => {
 				let list = runtime_tables::misc_words(type_field(type_id, type_fields::BUILTIN_VALUES)?).unwrap_or_default();
@@ -1722,7 +1722,8 @@ fn write_builtins(type_id: u32, writes: &[BuiltinWrite]) -> Result<(), String> {
 				}
 				words.push(*name);
 				words.extend_from_slice(value);
-				set_type_field(type_id, type_fields::BUILTIN_VALUES, runtime_tables::intern_misc(&words)?)?;
+				let list = runtime_tables::intern_misc(&words)?;
+				unsafe { set_type_field(type_id, type_fields::BUILTIN_VALUES, list)? };
 			}
 			BuiltinWrite::Mob(var, value) => runtime_tables::set_mob_type(type_id, |mob| match *var {
 				"key" => mob.key = *value,
@@ -2137,7 +2138,7 @@ pub fn apply<K: Ord + std::hash::Hash + Copy, T>(
 		let list = if list.is_empty() { Ok(NONE) } else { runtime_tables::intern_misc(&list) };
 		match list {
 			Ok(list) => {
-				let _ = runtime_tables::set_type_field(removal.type_id, removal.field, list);
+				let _ = unsafe { runtime_tables::set_type_field(removal.type_id, removal.field, list) };
 			}
 			Err(e) => failures.push(format!("could not unlink proc from type list: {}", e))
 		}
@@ -2163,7 +2164,7 @@ pub fn apply<K: Ord + std::hash::Hash + Copy, T>(
 			}
 			match runtime_tables::intern_misc(&list) {
 				Ok(list) => {
-					let _ = runtime_tables::set_type_field(on_type.type_id, on_type.field, list);
+					let _ = unsafe { runtime_tables::set_type_field(on_type.type_id, on_type.field, list) };
 				}
 				Err(e) => failures.push(format!("couldn't add a proc to its type's list: {}", e))
 			}
@@ -2200,7 +2201,7 @@ pub fn apply<K: Ord + std::hash::Hash + Copy, T>(
 				auxtools::debug::set_local_names(ptr, local_names.clone());
 			}
 		}
-		let _ = runtime_tables::set_type_field(init.type_id, type_fields::INIT_PROC, id);
+		let _ = unsafe { runtime_tables::set_type_field(init.type_id, type_fields::INIT_PROC, id) };
 	}
 
 	if runtime_tables::proc_count() > procs_before {
@@ -2222,7 +2223,7 @@ pub fn apply<K: Ord + std::hash::Hash + Copy, T>(
 		runtime_tables::set_proc_entry_word(raw_types::procs::ProcId(proc), word, value);
 	}
 	for (type_id, field, words) in prepared.type_fields {
-		let _ = runtime_tables::set_type_field(type_id, field, words);
+		let _ = unsafe { runtime_tables::set_type_field(type_id, field, words) };
 	}
 	reparent::apply_builtins(&prepared.reparent, warnings, failures);
 	for (type_id, writes) in &prepared.builtin_writes {

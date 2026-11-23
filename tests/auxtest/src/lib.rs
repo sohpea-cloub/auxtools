@@ -6,6 +6,7 @@ mod hooks;
 mod lists;
 mod procs;
 mod strings;
+mod tables;
 mod value_from;
 mod weak;
 

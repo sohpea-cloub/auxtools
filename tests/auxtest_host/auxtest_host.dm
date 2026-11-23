@@ -121,6 +121,9 @@ var/datum/weak_test_datum
 /proc/auxtest_strings()
 	CRASH()
 
+/proc/auxtest_tables()
+	CRASH()
+
 /proc/auxtest_weak_values()
 	CRASH()
 
@@ -138,6 +141,7 @@ var/datum/weak_test_datum
 	ASSERT(auxtest_lists() == TRUE)
 	ASSERT(auxtest_procs() == TRUE)
 	ASSERT(auxtest_strings() == TRUE)
+	ASSERT(auxtest_tables() == TRUE)
 	ASSERT(auxtest_value_from() == TRUE)
 
 	var/datum/weak_test = new

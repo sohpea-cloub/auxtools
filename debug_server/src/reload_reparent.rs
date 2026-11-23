@@ -300,8 +300,10 @@ fn inherit_builtins(b: &InheritedBuiltins) -> Result<Option<String>, String> {
 	if !b.own_names.contains("color") {
 		runtime_tables::copy_type_matrix(t, p, type_fields::COLOR_MATRIX)?;
 	}
-	set_type_field(t, type_fields::NAME, b.name)?;
-	set_type_field(t, type_fields::TEXT, b.text)?;
+	unsafe {
+		set_type_field(t, type_fields::NAME, b.name)?;
+		set_type_field(t, type_fields::TEXT, b.text)?;
+	}
 
 	let parent_list = inherit::listed_entries(&runtime_tables::misc_words(type_field(p, type_fields::BUILTIN_VALUES)?).unwrap_or_default());
 	let own_values = runtime_tables::misc_words(type_field(t, type_fields::BUILTIN_VALUES)?).unwrap_or_default();
@@ -313,7 +315,7 @@ fn inherit_builtins(b: &InheritedBuiltins) -> Result<Option<String>, String> {
 		words.extend_from_slice(entry);
 	}
 	let list = if words.is_empty() { NONE } else { runtime_tables::intern_misc(&words)? };
-	set_type_field(t, type_fields::BUILTIN_VALUES, list)?;
+	unsafe { set_type_field(t, type_fields::BUILTIN_VALUES, list)? };
 
 	let mut block = [0u32; 5];
 	for (i, word) in block.iter_mut().enumerate() {
@@ -321,7 +323,7 @@ fn inherit_builtins(b: &InheritedBuiltins) -> Result<Option<String>, String> {
 	}
 	let unread = bounds_block(&mut block, &own_values, &b.own);
 	for (i, word) in block.iter().enumerate() {
-		set_type_field(t, 0x40 + i * 4, *word)?;
+		unsafe { set_type_field(t, 0x40 + i * 4, *word)? };
 	}
 	Ok(unread)
 }

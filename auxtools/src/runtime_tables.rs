@@ -426,14 +426,20 @@ fn type_entry(type_id: u32) -> Result<*mut u8, String> {
 	}
 }
 
-pub fn type_field(type_id: u32, offset: usize) -> Result<u32, String> {
-	Ok(unsafe { *(type_entry(type_id)?.add(offset) as *const u32) })
+fn type_slot<T>(type_id: u32, offset: usize) -> Result<*mut T, String> {
+	let size = std::mem::size_of::<T>();
+	if !offset.is_multiple_of(std::mem::align_of::<T>()) || offset > functions()?.type_stride - size {
+		return Err(format!("+{:#x} isn't a {}-byte field of a type", offset, size));
+	}
+	Ok(unsafe { type_entry(type_id)?.add(offset) as *mut T })
 }
 
-pub fn set_type_field(type_id: u32, offset: usize, value: u32) -> Result<(), String> {
-	unsafe {
-		*(type_entry(type_id)?.add(offset) as *mut u32) = value;
-	}
+pub fn type_field(type_id: u32, offset: usize) -> Result<u32, String> {
+	Ok(unsafe { *type_slot::<u32>(type_id, offset)? })
+}
+
+pub unsafe fn set_type_field(type_id: u32, offset: usize, value: u32) -> Result<(), String> {
+	*type_slot(type_id, offset)? = value;
 	Ok(())
 }
 
@@ -898,17 +904,13 @@ pub fn add_type(parent: u32, path: u32) -> Result<u32, String> {
 	}
 }
 
-pub fn set_type_half(type_id: u32, offset: usize, value: u16) -> Result<(), String> {
-	unsafe {
-		*(type_entry(type_id)?.add(offset) as *mut u16) = value;
-	}
+pub unsafe fn set_type_half(type_id: u32, offset: usize, value: u16) -> Result<(), String> {
+	*type_slot(type_id, offset)? = value;
 	Ok(())
 }
 
-pub fn set_type_byte(type_id: u32, offset: usize, value: u8) -> Result<(), String> {
-	unsafe {
-		*type_entry(type_id)?.add(offset) = value;
-	}
+pub unsafe fn set_type_byte(type_id: u32, offset: usize, value: u8) -> Result<(), String> {
+	*type_slot(type_id, offset)? = value;
 	Ok(())
 }
 

@@ -40,7 +40,7 @@ fn listed(type_id: u32) -> Result<Vec<Vec<u32>>, String> {
 fn set_listed(type_id: u32, entries: &[Vec<u32>]) -> Result<(), String> {
 	let words: Vec<u32> = entries.iter().flatten().copied().collect();
 	let list = if words.is_empty() { NONE } else { runtime_tables::intern_misc(&words)? };
-	runtime_tables::set_type_field(type_id, type_fields::BUILTIN_VALUES, list)
+	unsafe { runtime_tables::set_type_field(type_id, type_fields::BUILTIN_VALUES, list) }
 }
 
 fn keep_string(id: u32) {
@@ -70,7 +70,7 @@ fn copy_table_entry(type_id: u32, from: u32, var: &str) -> Result<(), String> {
 	entries.sort_by_key(|e| e[0]);
 	let words: Vec<u32> = entries.into_iter().flatten().collect();
 	let id = if words.is_empty() { NONE } else { runtime_tables::intern_misc(&words)? };
-	runtime_tables::set_type_field(type_id, type_fields::VAR_TABLE, id)
+	unsafe { runtime_tables::set_type_field(type_id, type_fields::VAR_TABLE, id) }
 }
 
 pub(super) fn copy_builtin(type_id: u32, from: u32, var: &str) -> Result<(), String> {
@@ -86,19 +86,19 @@ pub(super) fn copy_builtin(type_id: u32, from: u32, var: &str) -> Result<(), Str
 				if offset != type_fields::ICON && offset != type_fields::LAYER {
 					keep_string(word);
 				}
-				set_type_field(type_id, offset, word)?
+				unsafe { set_type_field(type_id, offset, word)? }
 			}
 			Half(offset, _) => {
 				let half = (type_field(from, offset & !3)? >> ((offset & 2) * 8)) as u16;
-				runtime_tables::set_type_half(type_id, offset, half)?
+				unsafe { runtime_tables::set_type_half(type_id, offset, half)? }
 			}
 			Byte(offset, _) => {
 				let byte = (type_field(from, offset & !3)? >> ((offset & 3) * 8)) as u8;
-				runtime_tables::set_type_byte(type_id, offset, byte)?
+				unsafe { runtime_tables::set_type_byte(type_id, offset, byte)? }
 			}
 			Bits(offset, mask, _) => {
 				let word = type_field(type_id, offset)?;
-				set_type_field(type_id, offset, (word & !mask) | (type_field(from, offset)? & mask))?
+				unsafe { set_type_field(type_id, offset, (word & !mask) | (type_field(from, offset)? & mask))? }
 			}
 			Listed(name, _) => {
 				let mut entries: Vec<Vec<u32>> = listed(type_id)?.into_iter().filter(|e| e[0] != name).collect();
@@ -106,7 +106,7 @@ pub(super) fn copy_builtin(type_id: u32, from: u32, var: &str) -> Result<(), Str
 				set_listed(type_id, &entries)?;
 				if let Some((offset, mask)) = bounds_place(var) {
 					let word = type_field(type_id, offset)?;
-					set_type_field(type_id, offset, (word & !mask) | (type_field(from, offset)? & mask))?;
+					unsafe { set_type_field(type_id, offset, (word & !mask) | (type_field(from, offset)? & mask))? };
 				}
 			}
 			Mob(var, _) => {
