@@ -278,6 +278,11 @@ offers the required action:
   build task or rebuild manually; the launcher does not build the world.
 
 Fixing or reverting a blocking change applies the remaining edits.
+
+A reload can also be partly applied. Then some of its steps changed the world
+and a later step failed, so the world runs a mix of old and new code. The Debug
+Console shows "Hot reload partly applied" and lists each failed step. The status
+bar shows "Hot reload failed". Use **Restart** to rebuild and restart the world.
 Startup warnings also identify files newer than the `.dmb`, whose edits may
 be missing from the world.
 

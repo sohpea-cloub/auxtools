@@ -74,7 +74,9 @@ the world reboots. Hot reload keeps measurements of old and new code separate.
 
 ## Hot reload (experimental)
 
-The launcher watches source files and reloads changes when they are saved. Hot reload is enabled by default for launched worlds, including **Run Without Debugging**. Supply the same `defines` used to build the `.dmb`.
+The launcher watches the source files and reloads a change when you save it. Hot reload is on by default for launched worlds, also with **Run Without Debugging**. Give the launcher the same `defines` that the `.dmb` was built with.
+
+A reload can be partly applied. Then some of its steps changed the world and a later step failed, so the world runs a mix of old and new code. The launcher reports "hot reload partly applied" and lists each failed step. `auxtools wait reload` exits with code 1. Rebuild the world and restart it to be sure it runs the new code.
 
 Hot reload supports proc bodies, proc and verb additions, proc removals, new types and variables, variable types and defaults, `static`, `const` and `tmp` declarations, parameters, `set` statements and parent types. Changes to proc declarations, such as converting a proc to a verb, require a rebuild.
 
