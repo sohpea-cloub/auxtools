@@ -445,7 +445,11 @@ impl InstructionHook for Server {
 		}
 
 		unsafe {
-			let action = if in_eval { DebuggerAction::None } else { STEPPER.action };
+			let action = if in_eval || did_breakpoint {
+				DebuggerAction::None
+			} else {
+				STEPPER.action
+			};
 
 			match action {
 				DebuggerAction::StepOver { target: frame, .. }

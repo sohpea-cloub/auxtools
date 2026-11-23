@@ -860,6 +860,20 @@ fn loop_back_to_the_start() {
 			}]
 		};
 		assert_eq!(client.expect_pause(), changed);
+		if old == "2" {
+			assert_eq!(paused_at(&mut client), (counted.proc.path.clone(), back.offset as u32));
+			let response = client.request(Request::Continue {
+				kind: ContinueKind::StepOverInstruction { stack_id: 0 }
+			});
+			assert!(
+				matches!(response, Response::Ack),
+				"expected Ack for StepOverInstruction, got {:?}",
+				response
+			);
+			assert_eq!(client.expect_pause(), BreakpointReason::Step);
+			assert_eq!(paused_at(&mut client), (counted.proc.path.clone(), 0));
+			println!("ok: an instruction step from a watch's stop runs the instruction");
+		}
 		client.resume();
 	}
 	let ended = client.recv();
