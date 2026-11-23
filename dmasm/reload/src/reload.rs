@@ -2555,6 +2555,51 @@ fn real<'a>(ty: TypeRef<'a>, name: &str) -> Vec<&'a ProcValue> {
         .collect()
 }
 
+fn declaration_index(ty: TypeRef, name: &str, values: &[&ProcValue]) -> Option<usize> {
+    let declaration = ty.get().procs.get(name)?.declaration.as_ref()?;
+    values
+        .iter()
+        .position(|v| v.location == declaration.location)
+}
+
+fn pair(
+    old: &Snapshot,
+    new: &Snapshot,
+    (o, old_values): (TypeRef, &[&ProcValue]),
+    (n, new_values): (TypeRef, &[&ProcValue]),
+    name: &str,
+) -> Vec<Option<usize>> {
+    let (Some(old_declaration), Some(new_declaration)) = (
+        declaration_index(o, name, old_values),
+        declaration_index(n, name, new_values),
+    ) else {
+        return match old_values.len() == new_values.len() {
+            true => (0..new_values.len()).map(Some).collect(),
+            false => align(old, new, old_values, new_values),
+        };
+    };
+    let old_overrides: Vec<usize> = (0..old_values.len())
+        .filter(|&i| i != old_declaration)
+        .collect();
+    let new_overrides: Vec<usize> = (0..new_values.len())
+        .filter(|&j| j != new_declaration)
+        .collect();
+    let overrides = match old_overrides.len() == new_overrides.len() {
+        true => (0..new_overrides.len()).map(Some).collect(),
+        false => {
+            let old_rest: Vec<&ProcValue> = old_overrides.iter().map(|&i| old_values[i]).collect();
+            let new_rest: Vec<&ProcValue> = new_overrides.iter().map(|&j| new_values[j]).collect();
+            align(old, new, &old_rest, &new_rest)
+        }
+    };
+    let mut map = vec![None; new_values.len()];
+    map[new_declaration] = Some(old_declaration);
+    for (j, i) in new_overrides.into_iter().zip(overrides) {
+        map[j] = i.map(|i| old_overrides[i]);
+    }
+    map
+}
+
 fn align(
     old: &Snapshot,
     new: &Snapshot,
@@ -2945,7 +2990,10 @@ fn compare_types(
                 .get_proc_declaration(name.as_str())
                 .is_some_and(|d| d.kind == dreammaker::ast::ProcDeclKind::Verb);
             if new_count != old_count {
-                let map = align(old, new, &old_values, &new_values);
+                let map = match o {
+                    Some(o) => pair(old, new, (o, &old_values), (n, &new_values), name.as_str()),
+                    None => vec![None; new_count],
+                };
                 for override_id in (0..old_count).filter(|i| !map.contains(&Some(*i))) {
                     if n.is_root() {
                         changes.warnings.push(definition_retained(&path));

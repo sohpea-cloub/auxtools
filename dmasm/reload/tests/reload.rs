@@ -1349,6 +1349,35 @@ fn an_override_and_its_later_declaration_are_added_in_order() {
 }
 
 #[test]
+fn an_override_added_before_an_edited_declaration_is_the_new_proc() {
+    let changes = changes(
+        "added-override-before-edited-declaration",
+        "/datum/p/proc/f()\n\treturn 2\n",
+        "/datum/p/f()\n\treturn 1\n/datum/p/proc/f()\n\treturn 3\n",
+    );
+    let added: Vec<(ProcKey, bool, Vec<String>)> = changes
+        .plan
+        .new_procs
+        .iter()
+        .map(|p| (p.code.proc.clone(), p.declared, pushed_ints(&p.code.nodes)))
+        .collect();
+    assert_eq!(
+        added,
+        [(key("/datum/p/f", 0), false, vec!["PushInt(1)".to_owned()])]
+    );
+    let reloads: Vec<(ProcKey, Vec<String>)> = changes
+        .plan
+        .reloads
+        .iter()
+        .map(|r| (r.proc.clone(), pushed_ints(&r.nodes)))
+        .collect();
+    assert_eq!(
+        reloads,
+        [(key("/datum/p/f", 0), vec!["PushInt(3)".to_owned()])]
+    );
+}
+
+#[test]
 fn in_lists_are_the_words_dreammaker_writes() {
     let cases = [
         ("mob/a in view()", Some(0x7D01)),
