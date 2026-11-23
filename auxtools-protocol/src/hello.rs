@@ -55,14 +55,14 @@ mod tests {
 	#[test]
 	fn a_hello_with_more_after_its_fields_is_still_read() {
 		#[derive(Serialize)]
-		struct Longer {
+		struct LaterHello {
 			protocol: u32,
 			auxtools: String,
 			pid: u32,
 			byond: (u32, u32)
 		}
 		let mut wire = vec![];
-		write(&mut wire, &Longer {
+		write(&mut wire, &LaterHello {
 			protocol: PROTOCOL_VERSION + 5,
 			auxtools: "5.1.0".to_owned(),
 			pid: 1234,

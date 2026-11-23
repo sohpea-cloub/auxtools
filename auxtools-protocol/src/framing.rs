@@ -6,7 +6,7 @@ pub const MAX_MESSAGE_LEN: u32 = 256 * 1024 * 1024;
 
 pub fn frame(message: &impl Serialize) -> io::Result<Vec<u8>> {
 	let data = bincode::serialize(message).map_err(io::Error::other)?;
-	let len = length(data.len())?;
+	let len = framed_length(data.len())?;
 	let mut bytes = Vec::with_capacity(data.len() + 4);
 	bytes.extend_from_slice(&len.to_le_bytes());
 	bytes.extend_from_slice(&data);
@@ -33,7 +33,7 @@ pub fn read<T: DeserializeOwned>(stream: &mut impl Read) -> io::Result<T> {
 	bincode::deserialize(&data).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
 }
 
-fn length(len: usize) -> io::Result<u32> {
+fn framed_length(len: usize) -> io::Result<u32> {
 	u32::try_from(len).ok().filter(|len| *len <= MAX_MESSAGE_LEN).ok_or_else(|| too_long(len))
 }
 
@@ -45,7 +45,7 @@ fn too_long(len: usize) -> io::Error {
 mod tests {
 	use std::io::{self, Cursor, Read};
 
-	use super::{frame, length, read, write, MAX_MESSAGE_LEN};
+	use super::{frame, framed_length, read, write, MAX_MESSAGE_LEN};
 	use crate::{Request, Response};
 
 	#[test]
@@ -76,11 +76,13 @@ mod tests {
 		assert_eq!(frame(&Response::Resumed).unwrap(), wire);
 	}
 
-	struct Empty(usize);
+	struct EmptyReader {
+		bytes_asked: usize
+	}
 
-	impl Read for Empty {
+	impl Read for EmptyReader {
 		fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-			self.0 += buf.len();
+			self.bytes_asked += buf.len();
 			Ok(0)
 		}
 	}
@@ -99,10 +101,10 @@ mod tests {
 
 	#[test]
 	fn a_length_nothing_follows_allocates_nothing() {
-		let mut wire = Cursor::new(MAX_MESSAGE_LEN.to_le_bytes()).chain(Empty(0));
+		let mut wire = Cursor::new(MAX_MESSAGE_LEN.to_le_bytes()).chain(EmptyReader { bytes_asked: 0 });
 		assert_eq!(read::<Request>(&mut wire).unwrap_err().kind(), io::ErrorKind::UnexpectedEof);
 		let (_, empty) = wire.into_inner();
-		assert!(empty.0 < 1024 * 1024, "asked for {} bytes at once", empty.0);
+		assert!(empty.bytes_asked < 1024 * 1024, "asked for {} bytes at once", empty.bytes_asked);
 	}
 
 	#[test]
@@ -119,7 +121,10 @@ mod tests {
 
 	#[test]
 	fn a_message_past_the_limit_is_not_framed() {
-		assert_eq!(length(MAX_MESSAGE_LEN as usize).unwrap(), MAX_MESSAGE_LEN);
-		assert_eq!(length(MAX_MESSAGE_LEN as usize + 1).unwrap_err().kind(), io::ErrorKind::InvalidData);
+		assert_eq!(framed_length(MAX_MESSAGE_LEN as usize).unwrap(), MAX_MESSAGE_LEN);
+		assert_eq!(
+			framed_length(MAX_MESSAGE_LEN as usize + 1).unwrap_err().kind(),
+			io::ErrorKind::InvalidData
+		);
 	}
 }

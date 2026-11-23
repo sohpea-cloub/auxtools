@@ -234,7 +234,7 @@ fn shape() -> u64 {
 #[test]
 fn a_plan_of_another_shape_is_another_protocol_version() {
 	let now = (PROTOCOL_VERSION, shape());
-	let next = PROTOCOL_VERSION + u32::from(PROTOCOL_VERSION == RECORDED.0 && now.1 != RECORDED.1);
+	let version_to_record = PROTOCOL_VERSION + u32::from(PROTOCOL_VERSION == RECORDED.0 && now.1 != RECORDED.1);
 	assert!(
 		now == RECORDED,
 		"protocol {} with a plan of shape {:#018X}, where `RECORDED` has protocol {} with {:#018X}. If the shape is another, dmasm's reload types, \
@@ -243,7 +243,7 @@ fn a_plan_of_another_shape_is_another_protocol_version() {
 		now.1,
 		RECORDED.0,
 		RECORDED.1,
-		next,
+		version_to_record,
 		now.1
 	);
 }
