@@ -3330,12 +3330,15 @@ fn named_words<'a>(bytecode: &[u32], locals: &'a [String], local_operands: &[u32
 }
 
 fn line_code<'a>(bytecode: &[u32], locals: &'a [String]) -> Vec<(Option<u32>, Vec<Word<'a>>)> {
-	let Ok(scanned) = dmasm::scan(bytecode) else {
+	let Ok(mut scanned) = dmasm::scan(bytecode) else {
 		return vec![];
 	};
 	let mut words = named_words(bytecode, locals, &scanned.local_operands);
 	for label in &scanned.label_operands {
 		words[label.word_offset as usize] = Word::Jump;
+	}
+	if scanned.instructions.last().is_some_and(|ins| ins.opcode == Opcode::End) {
+		scanned.instructions.pop();
 	}
 	let (mut lines, mut file, mut inside) = (vec![], None, true);
 	for ins in scanned.instructions {
