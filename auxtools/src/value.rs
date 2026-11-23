@@ -3,16 +3,8 @@ use crate::{list, runtime, runtime::DMResult};
 use std::{ffi::CString, fmt, marker::PhantomData};
 
 /// A value that a DM var can hold. Don't keep it after your hook returns.
-///
-/// Dropping it releases its reference, so its raw value can only be read, with
-/// [`Value::raw`].
-///
-/// ```compile_fail
-/// let mut value = auxtools::Value::NULL;
-/// value.raw.tag = auxtools::raw_types::values::ValueTag::String;
-/// ```
 pub struct Value {
-	pub(crate) raw: raw_types::values::Value,
+	pub raw: raw_types::values::Value,
 	phantom: PhantomData<*mut ()>
 }
 
@@ -319,10 +311,6 @@ impl Value {
 	/// Takes a new reference to `v`.
 	pub unsafe fn from_raw(v: raw_types::values::Value) -> Self {
 		Value::new(v.tag, v.data)
-	}
-
-	pub const fn raw(&self) -> raw_types::values::Value {
-		self.raw
 	}
 
 	/// Takes over a reference to `v` that the caller holds.

@@ -25,7 +25,7 @@ pub(super) fn parent_of(type_id: u32) -> Result<u32, String> {
 	if let Some(&parent) = STAGED_PARENTS.lock().unwrap().as_ref().and_then(|staged| staged.get(&type_id)) {
 		return Ok(parent);
 	}
-	unsafe { runtime_tables::type_field(type_id, type_fields::PARENT) }
+	runtime_tables::type_field(type_id, type_fields::PARENT)
 }
 
 fn string_id(text: &str) -> Result<u32, String> {
@@ -76,12 +76,12 @@ pub(super) fn prepare(
 	if !errors.is_empty() {
 		return;
 	}
-	match unsafe { runtime_tables::plan_parents(&prepared.reparent.parents) } {
+	match runtime_tables::plan_parents(&prepared.reparent.parents) {
 		Ok(plan) => prepared.reparent.tree = Some(plan),
 		Err(e) => errors.push(format!("could not apply parent changes: {}", e))
 	}
 	for (type_id, map) in &prepared.reparent.name_maps {
-		match unsafe { runtime_tables::plan_name_map(*type_id, map) } {
+		match runtime_tables::plan_name_map(*type_id, map) {
 			Ok(plan) => prepared.reparent.map_plans.push(plan),
 			Err(e) => errors.push(format!("{}: could not prepare proc-name map: {}", type_path(*type_id), e))
 		}
@@ -91,7 +91,7 @@ pub(super) fn prepare(
 fn map_of(maps: &HashMap<u32, Vec<(u32, Vec<u32>, u8)>>, type_id: u32) -> Result<Vec<(u32, Vec<u32>, u8)>, String> {
 	match maps.get(&type_id) {
 		Some(map) => Ok(map.clone()),
-		None => unsafe { runtime_tables::name_map_entries(type_id) }
+		None => runtime_tables::name_map_entries(type_id)
 	}
 }
 
@@ -121,9 +121,8 @@ fn prepare_one(
 	let mut order = subtree.clone();
 	order.sort_by_key(|&t| depth(t));
 
-	let own_procs = |t: u32| -> Vec<u32> {
-		unsafe { runtime_tables::misc_words(runtime_tables::type_field(t, type_fields::PROCS).unwrap_or(NONE)) }.unwrap_or_default()
-	};
+	let own_procs =
+		|t: u32| -> Vec<u32> { runtime_tables::misc_words(runtime_tables::type_field(t, type_fields::PROCS).unwrap_or(NONE)).unwrap_or_default() };
 	let chain_procs = |t: u32| -> HashSet<u32> {
 		let mut procs = HashSet::new();
 		for a in type_and_ancestors(t) {
@@ -240,12 +239,12 @@ pub(super) fn apply_tree(prepared: &mut PreparedReparents) {
 	let Some(tree) = prepared.tree.take() else {
 		return;
 	};
-	unsafe { tree.write() };
+	tree.write();
 	for plan in prepared.map_plans.drain(..) {
-		unsafe { plan.write() };
+		plan.write();
 	}
 	for &(proc, next) in &prepared.relinks {
-		unsafe { runtime_tables::set_proc_entry_word(raw_types::procs::ProcId(proc), ProcEntryWords::NEXT_OVERRIDE, next) };
+		runtime_tables::set_proc_entry_word(raw_types::procs::ProcId(proc), ProcEntryWords::NEXT_OVERRIDE, next);
 	}
 }
 
@@ -299,19 +298,16 @@ fn inherit_builtins(b: &InheritedBuiltins) -> Result<Option<String>, String> {
 		inherit::copy_builtin(t, p, var)?;
 	}
 	if !b.own_names.contains("transform") {
-		(unsafe { runtime_tables::copy_type_matrix(t, p, type_fields::TRANSFORM) })?;
+		runtime_tables::copy_type_matrix(t, p, type_fields::TRANSFORM)?;
 	}
 	if !b.own_names.contains("color") {
-		(unsafe { runtime_tables::copy_type_matrix(t, p, type_fields::COLOR_MATRIX) })?;
+		runtime_tables::copy_type_matrix(t, p, type_fields::COLOR_MATRIX)?;
 	}
-	unsafe {
-		set_type_field(t, type_fields::NAME, b.name)?;
-		set_type_field(t, type_fields::TEXT, b.text)?;
-	}
+	set_type_field(t, type_fields::NAME, b.name)?;
+	set_type_field(t, type_fields::TEXT, b.text)?;
 
-	let parent_list =
-		inherit::listed_entries(&unsafe { runtime_tables::misc_words(type_field(p, type_fields::BUILTIN_VALUES)?) }.unwrap_or_default());
-	let own_values = unsafe { runtime_tables::misc_words(type_field(t, type_fields::BUILTIN_VALUES)?) }.unwrap_or_default();
+	let parent_list = inherit::listed_entries(&runtime_tables::misc_words(type_field(p, type_fields::BUILTIN_VALUES)?).unwrap_or_default());
+	let own_values = runtime_tables::misc_words(type_field(t, type_fields::BUILTIN_VALUES)?).unwrap_or_default();
 	let mut words = vec![];
 	for entry in parent_list.iter().filter(|e| !b.own.contains(&e[0])) {
 		words.extend_from_slice(entry);
@@ -319,20 +315,16 @@ fn inherit_builtins(b: &InheritedBuiltins) -> Result<Option<String>, String> {
 	for entry in inherit::listed_entries(&own_values).iter().filter(|e| b.own.contains(&e[0])) {
 		words.extend_from_slice(entry);
 	}
-	let list = if words.is_empty() {
-		NONE
-	} else {
-		unsafe { runtime_tables::intern_misc(&words) }?
-	};
-	unsafe { set_type_field(t, type_fields::BUILTIN_VALUES, list)? };
+	let list = if words.is_empty() { NONE } else { runtime_tables::intern_misc(&words)? };
+	set_type_field(t, type_fields::BUILTIN_VALUES, list)?;
 
 	let mut block = [0u32; 5];
 	for (i, word) in block.iter_mut().enumerate() {
-		*word = unsafe { type_field(p, 0x40 + i * 4) }?;
+		*word = type_field(p, 0x40 + i * 4)?;
 	}
 	let unread = bounds_block(&mut block, &own_values, &b.own);
 	for (i, word) in block.iter().enumerate() {
-		unsafe { set_type_field(t, 0x40 + i * 4, *word)? };
+		set_type_field(t, 0x40 + i * 4, *word)?;
 	}
 	Ok(unread)
 }

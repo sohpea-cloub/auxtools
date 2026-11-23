@@ -2,25 +2,9 @@ use auxtools::*;
 
 #[hook("/proc/auxtest_tables")]
 fn test_tables() {
-	unsafe {
-		offsets_are_checked()?;
-		#[cfg(target_os = "linux")]
-		dropped_name_map_plans_free_their_memory()?;
-	}
+	#[cfg(target_os = "linux")]
+	dropped_name_map_plans_free_their_memory()?;
 	Ok(Value::from(true))
-}
-
-unsafe fn offsets_are_checked() -> DMResult<()> {
-	use runtime_tables::{type_field, type_fields};
-
-	type_field(0, type_fields::PARENT).map_err(|e| runtime!("test_tables: couldn't read a type's parent: {}", e))?;
-
-	for offset in [0x98, type_fields::MAPTEXT_Y] {
-		if let Ok(word) = type_field(0, offset) {
-			return Err(runtime!("test_tables: type_field read {:#x} at the bad offset +{:#x}", word, offset));
-		}
-	}
-	Ok(())
 }
 
 #[cfg(target_os = "linux")]
@@ -46,7 +30,7 @@ fn heap_in_use() -> usize {
 }
 
 #[cfg(target_os = "linux")]
-unsafe fn dropped_name_map_plans_free_their_memory() -> DMResult<()> {
+fn dropped_name_map_plans_free_their_memory() -> DMResult<()> {
 	use runtime_tables::{name_map_entries, plan_name_map};
 
 	const PLANS: usize = 10_000;

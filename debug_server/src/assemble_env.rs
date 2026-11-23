@@ -15,7 +15,7 @@ impl AssembleEnv {
 		let assembly = dmasm::assembler::assemble(&expr, &mut Self).unwrap();
 
 		let proc = Proc::find("/proc/auxtools_expr_stub")?;
-		unsafe { proc.set_bytecode(assembly) }.ok()?;
+		proc.set_bytecode(assembly).ok()?;
 
 		let res = proc.call(&values).ok()?.as_list().ok()?.get(1).ok()?;
 
@@ -50,7 +50,7 @@ fn added_type(path: &str) -> Option<(u8, u32)> {
 		.iter()
 		.skip(1)
 		.find_map(|parent| AssembleEnv::eval_with_name("text2path(name)", parent))?
-		.raw()
+		.raw
 		.tag
 		.0;
 	Some((tag, id))
@@ -151,7 +151,7 @@ impl dmasm::assembler::AssembleEnv for AssembleEnv {
 		}
 
 		if let Some(res) = Self::eval_with_name("text2path(name)", path) {
-			return Some((res.raw().tag.0, unsafe { res.raw().data.id }));
+			return Some((res.raw.tag.0, unsafe { res.raw.data.id }));
 		}
 		if let Some(id) = crate::hot_reload::image_type(path) {
 			return Some((raw_types::values::ValueTag::ImageTypepath.0, id));
@@ -171,11 +171,11 @@ impl dmasm::assembler::AssembleEnv for AssembleEnv {
 			Self::eval_with_name("fcopy_rsc(name)", &path).or_else(|| Self::eval_with_name("fcopy_rsc(name)", &case_insensitive_path(&path)?))
 		})?;
 
-		if res.raw().tag != raw_types::values::ValueTag::Resource {
+		if res.raw.tag != raw_types::values::ValueTag::Resource {
 			return None;
 		}
 
-		Some(unsafe { res.raw().data.id })
+		Some(unsafe { res.raw.data.id })
 	}
 }
 

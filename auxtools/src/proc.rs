@@ -112,11 +112,7 @@ impl Proc {
 
 	/// Fails when other procs share this proc's code and it can't get code of
 	/// its own. The code is then unchanged.
-	///
-	/// # Safety
-	/// Call on BYOND's thread while a world is live. `bytecode` must be code
-	/// that BYOND can run for this proc.
-	pub unsafe fn set_bytecode(&self, bytecode: Vec<u32>) -> Result<(), String> {
+	pub fn set_bytecode(&self, bytecode: Vec<u32>) -> Result<(), String> {
 		crate::bytecode_manager::set_bytecode(self, bytecode)
 	}
 

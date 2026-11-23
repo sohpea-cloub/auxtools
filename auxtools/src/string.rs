@@ -19,7 +19,7 @@ pub fn text_of(bytes: &[u8]) -> String {
 }
 
 pub struct StringRef {
-	value: Value
+	pub value: Value
 }
 
 impl StringRef {

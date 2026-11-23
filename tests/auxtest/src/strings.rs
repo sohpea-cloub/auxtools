@@ -43,12 +43,12 @@ fn test_strings() {
 
 		let concatenated = Proc::find("/proc/concat_strings").unwrap().call(&[&value_a, &value_b])?;
 
-		if concatenated.raw().tag != values::ValueTag::String {
+		if concatenated.raw.tag != values::ValueTag::String {
 			return Err(runtime!("test_string: concat_strings did not return a string"));
 		}
 
 		let mut concatenated_entry: *mut strings::StringEntry = std::ptr::null_mut();
-		assert_eq!(funcs::get_string_table_entry(&mut concatenated_entry, concatenated.raw().data.string), 1);
+		assert_eq!(funcs::get_string_table_entry(&mut concatenated_entry, concatenated.raw.data.string), 1);
 
 		if (*concatenated_entry).ref_count != 1 {
 			return Err(runtime!("test_string: concatenated's reference count != 1 after concat_strings()"));

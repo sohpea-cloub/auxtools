@@ -56,7 +56,7 @@ pub(crate) fn visible_locals(frame: &debug::StackFrame) -> Vec<Option<String>> {
 }
 
 pub(super) const fn primitive_fields(value: &Value) -> Option<&'static [&'static str]> {
-	match value.raw().tag {
+	match value.raw.tag {
 		ValueTag::Vector => Some(&["x", "y", "z", "len", "size"]),
 		ValueTag::PixLoc => Some(&["x", "y", "z", "step_x", "step_y", "loc"]),
 		ValueTag::Callee => Some(&["proc", "file", "line", "src", "usr", "args", "caller"]),
@@ -66,7 +66,7 @@ pub(super) const fn primitive_fields(value: &Value) -> Option<&'static [&'static
 }
 
 pub(super) fn is_object(value: &Value) -> bool {
-	if value.raw().tag == ValueTag::World && unsafe { value.raw().data.id == 1 } {
+	if value.raw.tag == ValueTag::World && unsafe { value.raw.data.id == 1 } {
 		return true;
 	}
 
@@ -81,16 +81,16 @@ pub(super) fn stringify(value: &Value) -> String {
 		}
 	} else {
 		match value.to_string() {
-			Ok(v) if v.is_empty() => match value.raw().tag {
+			Ok(v) if v.is_empty() => match value.raw.tag {
 				ValueTag::World => "world".to_owned(),
 				ValueTag::Pointer => "a pointer to a var that's gone".to_owned(),
 				ValueTag::Image => "/image".to_owned(),
 				ValueTag::Appearance => "appearance".to_owned(),
-				_ => value.raw().to_string()
+				_ => value.raw.to_string()
 			},
 			Ok(value) => value,
 			Err(Runtime { message }) => {
-				format!("{} -- stringify error: {:?}", value.raw(), message)
+				format!("{} -- stringify error: {:?}", value.raw, message)
 			}
 		}
 	}
@@ -108,7 +108,7 @@ pub(super) fn kind(value: &Value) -> Option<String> {
 			.to_owned()
 		);
 	}
-	let word = match value.raw().tag {
+	let word = match value.raw.tag {
 		Tag::Null => "null",
 		Tag::Number => "num",
 		Tag::String => "text",
@@ -137,7 +137,7 @@ pub(super) fn kind(value: &Value) -> Option<String> {
 
 pub(super) fn literal(value: &Value) -> Option<String> {
 	use ValueTag as Tag;
-	match value.raw().tag {
+	match value.raw.tag {
 		Tag::String => text_literal(StringRef::from_value(value.clone())?.data()),
 		Tag::Number | Tag::MobTypepath | Tag::ObjTypepath | Tag::TurfTypepath | Tag::AreaTypepath | Tag::DatumTypepath => Some(stringify(value)),
 		_ => None
@@ -164,10 +164,10 @@ pub(super) fn text_literal(bytes: &[u8]) -> Option<String> {
 }
 
 pub(super) fn associated(list: &List, key: &Value) -> Option<Value> {
-	if key.raw().tag == ValueTag::Number {
+	if key.raw.tag == ValueTag::Number {
 		return None;
 	}
-	list.get(key).ok().filter(|value| value.raw().tag != ValueTag::Null)
+	list.get(key).ok().filter(|value| value.raw.tag != ValueTag::Null)
 }
 
 pub(super) fn entry_expr(list: &str, key: &Value, position: Option<u32>) -> Option<String> {
@@ -176,7 +176,7 @@ pub(super) fn entry_expr(list: &str, key: &Value, position: Option<u32>) -> Opti
 		return Some(format!("{}[{}]", list, key));
 	}
 	let locatable = matches!(
-		key.raw().tag,
+		key.raw.tag,
 		Tag::Turf | Tag::Obj | Tag::Mob | Tag::Area | Tag::Client | Tag::Image | Tag::Datum | Tag::List | Tag::Alist
 	);
 	if locatable {
@@ -240,7 +240,7 @@ pub(super) fn frame_locals(frame: &debug::StackFrame) -> Vec<(String, &Value)> {
 pub(super) fn types_of(value: &Value) -> Vec<String> {
 	let mut types = vec![];
 	let mut path = value.get(byond_string!("type")).ok();
-	while let Some(this) = path.filter(|path| path.raw().tag != ValueTag::Null) {
+	while let Some(this) = path.filter(|path| path.raw.tag != ValueTag::Null) {
 		let name = stringify(&this);
 		if !name.starts_with('/') || types.contains(&name) || types.len() > 64 {
 			break;
@@ -274,7 +274,7 @@ pub(super) fn members_of(value: &Value, found: &mut BTreeMap<String, bool>) {
 }
 
 pub(super) fn each_proc(mut each: impl FnMut(&str, &str)) {
-	for id in 0..unsafe { auxtools::runtime_tables::proc_count() } {
+	for id in 0..auxtools::runtime_tables::proc_count() {
 		let Some(proc) = Proc::from_id(raw_types::procs::ProcId(id)) else {
 			continue;
 		};
@@ -449,7 +449,7 @@ impl Pausing {
 
 			Some(state) if is_object(value) => Some(state.get_ref(Variables::ObjectVars(value.clone(), expr))),
 
-			Some(state) if value.raw().tag == ValueTag::Pointer && auxtools::pointer::read_raw(value).is_some() => {
+			Some(state) if value.raw.tag == ValueTag::Pointer && auxtools::pointer::read_raw(value).is_some() => {
 				Some(state.get_ref(Variables::Pointee(value.clone(), expr)))
 			}
 
@@ -624,7 +624,7 @@ impl Pausing {
 			unsafe {
 				let _ = Value::from_raw_owned(*slot);
 				let value = value.clone();
-				*slot = value.raw();
+				*slot = value.raw;
 				std::mem::forget(value);
 			}
 		}

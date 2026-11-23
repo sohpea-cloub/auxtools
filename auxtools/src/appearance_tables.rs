@@ -89,7 +89,7 @@ fn tables() -> Result<&'static Tables, String> {
 		.map_err(|e| format!("resource reload unavailable on this BYOND build: {e}"))
 }
 
-pub unsafe fn check() -> Result<(), String> {
+pub fn check() -> Result<(), String> {
 	let tables = tables()?;
 	unsafe { Appearances::new(tables)?.check().map_err(unexpected) }
 }
@@ -360,7 +360,7 @@ pub struct Repointed {
 	pub warnings: Vec<String>
 }
 
-pub unsafe fn repoint(mappings: &[(u32, u32)]) -> Result<Repointed, String> {
+pub fn repoint(mappings: &[(u32, u32)]) -> Result<Repointed, String> {
 	let tables = tables()?;
 	let mut new_of: HashMap<u32, u32> = HashMap::new();
 	for &(old, new) in mappings {
@@ -510,7 +510,7 @@ impl Appearances<'_> {
 	}
 }
 
-pub unsafe fn resend(appearances: &[u32]) -> Result<usize, String> {
+pub fn resend(appearances: &[u32]) -> Result<usize, String> {
 	let tables = tables()?;
 	if appearances.is_empty() {
 		return Ok(0);

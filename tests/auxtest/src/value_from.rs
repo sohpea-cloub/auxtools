@@ -37,12 +37,12 @@ fn test_value_from() {
 }
 
 fn assert_meow_equals_one(value: Value) -> Result<(), Runtime> {
-	match value.raw().tag {
+	match value.raw.tag {
 		raw_types::values::ValueTag::List => (),
 		_ => {
 			return Err(runtime!(
 				"value_from: Hashmap became a ValueTag::{:?} instead of ValueTag::List",
-				value.raw().tag
+				value.raw.tag
 			))
 		}
 	}

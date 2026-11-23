@@ -150,7 +150,7 @@ pub fn bytecode_at(ptr: *const u32) -> Option<Vec<u32>> {
 }
 
 fn code_entry(proc: &Proc) -> Result<u32, String> {
-	unsafe { runtime_tables::proc_entry(proc.id) }
+	runtime_tables::proc_entry(proc.id)
 		.map(|entry| entry.0[ProcEntryWords::BYTECODE])
 		.ok_or_else(|| format!("{} has no proc entry", proc.path))
 }

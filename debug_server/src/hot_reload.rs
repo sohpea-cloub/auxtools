@@ -79,11 +79,11 @@ impl StagedInstances {
 	fn find_or_add(&mut self, path: &str, (tag, data): (u8, u32), init: &[u32]) -> Result<u32, String> {
 		let existing = match &mut self.existing {
 			Some(existing) => existing,
-			none => none.insert(unsafe { runtime_tables::instances() }?)
+			none => none.insert(runtime_tables::instances()?)
 		};
 		let runs_init = |proc: u32| {
-			(unsafe { runtime_tables::proc_entry(raw_types::procs::ProcId(proc)) })
-				.and_then(|entry| unsafe { runtime_tables::misc_words(entry.0[ProcEntryWords::BYTECODE]) })
+			runtime_tables::proc_entry(raw_types::procs::ProcId(proc))
+				.and_then(|entry| runtime_tables::misc_words(entry.0[ProcEntryWords::BYTECODE]))
 				.is_some_and(|code| code == init)
 		};
 		if let Some(id) = existing
@@ -109,7 +109,7 @@ impl StagedInstances {
 			entry.0[word] = NONE;
 		}
 		entry.0[ProcEntryWords::PATH] = leaked_string(&format!("{}/proc/(map_init)", path))?;
-		entry.0[ProcEntryWords::BYTECODE] = unsafe { runtime_tables::intern_misc(init) }?;
+		entry.0[ProcEntryWords::BYTECODE] = runtime_tables::intern_misc(init)?;
 		self.new.push((runtime_tables::Instance { tag, data, init: NONE }, entry, init.to_vec()));
 		Ok(count + self.new.len() as u32 - 1)
 	}
@@ -151,7 +151,7 @@ impl StagedProcs {
 	fn named_procs(&self, type_id: u32, key: u32) -> Result<Vec<u32>, String> {
 		match self.maps.get(&(type_id, key)) {
 			Some(procs) => Ok(procs.clone()),
-			None => unsafe { runtime_tables::named_procs(type_id, key) }
+			None => runtime_tables::named_procs(type_id, key)
 		}
 	}
 
@@ -159,7 +159,7 @@ impl StagedProcs {
 		if let Some(entry) = self.entries.get(&proc) {
 			return Some(*entry);
 		}
-		let mut entry = unsafe { runtime_tables::proc_entry(raw_types::procs::ProcId(proc)) }?;
+		let mut entry = runtime_tables::proc_entry(raw_types::procs::ProcId(proc))?;
 		if let Some(&next) = self.next_override.get(&proc) {
 			entry.0[ProcEntryWords::NEXT_OVERRIDE] = next;
 		}
@@ -173,7 +173,7 @@ impl StagedProcs {
 	}
 
 	fn own(&self, type_id: u32, field: usize) -> Result<Vec<u32>, String> {
-		let mut procs = unsafe { runtime_tables::misc_words(runtime_tables::type_field(type_id, field)?) }.unwrap_or_default();
+		let mut procs = runtime_tables::misc_words(runtime_tables::type_field(type_id, field)?).unwrap_or_default();
 		procs.retain(|proc| !self.removed.contains(proc));
 		for &proc in self.own.get(&(type_id, field)).into_iter().flatten() {
 			match self.listed_after.get(&proc).and_then(|after| procs.iter().position(|p| p == after)) {
@@ -204,8 +204,8 @@ impl TypeVars {
 		Ok(match tables.entry(type_id) {
 			Entry::Occupied(entry) => entry.into_mut(),
 			Entry::Vacant(entry) => {
-				let id = unsafe { runtime_tables::type_field(type_id, field) }?;
-				entry.insert(unsafe { runtime_tables::misc_words(id) }.ok_or_else(|| format!("couldn't read the vars of type {}", type_id))?)
+				let id = runtime_tables::type_field(type_id, field)?;
+				entry.insert(runtime_tables::misc_words(id).ok_or_else(|| format!("couldn't read the vars of type {}", type_id))?)
 			}
 		})
 	}
@@ -222,13 +222,13 @@ impl TypeVars {
 		self.new_names
 			.get(&var_id)
 			.copied()
-			.or_else(|| unsafe { runtime_tables::variable_name(var_id) })
+			.or_else(|| runtime_tables::variable_name(var_id))
 			.unwrap_or(u32::MAX)
 	}
 
 	fn subtree(&mut self, type_id: u32) -> Result<Vec<u32>, String> {
 		if self.parents.is_none() {
-			let count = unsafe { runtime_tables::type_count() }?;
+			let count = runtime_tables::type_count()?;
 			self.parents = Some((0..count).map(|t| reparent::parent_of(t).unwrap_or(NONE)).collect());
 		}
 		let parents = self.parents.as_ref().unwrap();
@@ -253,11 +253,7 @@ impl TypeVars {
 		let mut out = vec![];
 		for (field, tables) in [(type_fields::VAR_TABLE, self.tables), (type_fields::DECLARED_VARS, self.declared)] {
 			for (type_id, words) in tables {
-				let id = if words.is_empty() {
-					NONE
-				} else {
-					unsafe { runtime_tables::intern_misc(&words) }?
-				};
+				let id = if words.is_empty() { NONE } else { runtime_tables::intern_misc(&words)? };
 				out.push((type_id, field, id));
 			}
 		}
@@ -362,7 +358,7 @@ pub fn prepare(request: &HotReloadRequest, warnings: &mut Vec<String>, skipped: 
 		line_moves,
 		removed_vars
 	} = plan;
-	(unsafe { runtime_tables::available() }).map_err(|e| vec![format!("hot reloading isn't available on this build of BYOND: {}", e)])?;
+	runtime_tables::available().map_err(|e| vec![format!("hot reloading isn't available on this build of BYOND: {}", e)])?;
 
 	for var in removed_vars {
 		warnings.push(if world_lacks(var) {
@@ -383,7 +379,7 @@ pub fn prepare(request: &HotReloadRequest, warnings: &mut Vec<String>, skipped: 
 	let mut world_globals = WorldGlobals::default();
 
 	let mut pending = Pending::default();
-	let first_id = unsafe { runtime_tables::proc_count() };
+	let first_id = runtime_tables::proc_count();
 	let ids: Vec<u32> = (first_id..).take(new_procs.len()).collect();
 	pending.procs = new_procs
 		.iter()
@@ -395,11 +391,11 @@ pub fn prepare(request: &HotReloadRequest, warnings: &mut Vec<String>, skipped: 
 	reparent::prepare(reparented, &mut type_vars, &mut staged, &mut prepared, &mut errors);
 
 	let mut added = AddedVars {
-		first: unsafe { runtime_tables::variable_count() },
+		first: runtime_tables::variable_count(),
 		vars: vec![],
 		param_names: HashMap::new(),
 		run_once: vec![],
-		in_lists_before: unsafe { runtime_tables::in_list_count() }.unwrap_or(0),
+		in_lists_before: runtime_tables::in_list_count().unwrap_or(0),
 		in_lists: vec![],
 		instances: StagedInstances::default(),
 		statics: HashMap::new()
@@ -486,8 +482,7 @@ pub fn prepare(request: &HotReloadRequest, warnings: &mut Vec<String>, skipped: 
 	for change in settings {
 		let proc_ref = &change.proc;
 		let words = find(proc_ref).and_then(|proc| {
-			let entry =
-				unsafe { runtime_tables::proc_entry(proc.id) }.ok_or_else(|| format!("{}: couldn't read its table entry", describe(proc_ref)))?;
+			let entry = runtime_tables::proc_entry(proc.id).ok_or_else(|| format!("{}: couldn't read its table entry", describe(proc_ref)))?;
 			let words = settings_words(&entry, &change.settings, &proc_ref.path)?;
 			prepared.renames.extend(renamed(&proc, &entry, &words));
 			Ok(words.into_iter().map(move |(word, value)| (proc.id.0, word, value)))
@@ -508,7 +503,7 @@ pub fn prepare(request: &HotReloadRequest, warnings: &mut Vec<String>, skipped: 
 		};
 
 		if let Some(bytecode) = remap_lines(&original_code(&proc), &moved.lines) {
-			match unsafe { runtime_tables::intern_misc(&bytecode) } {
+			match runtime_tables::intern_misc(&bytecode) {
 				Ok(bytecode_id) => prepared.code.push(PreparedCode {
 					proc,
 					name: describe(&moved.proc),
@@ -601,7 +596,7 @@ pub fn prepare(request: &HotReloadRequest, warnings: &mut Vec<String>, skipped: 
 		.map(|(n, (instance, entry, _))| (first_instance + n as u32, instance, entry))
 		.collect();
 	if !prepared.new_globals.is_empty() {
-		if let Err(e) = unsafe { runtime_tables::global_vars_available() } {
+		if let Err(e) = runtime_tables::global_vars_available() {
 			errors.push(format!(
 				"new global vars can't be added to global.vars on this build of BYOND: {}. Rebuild to add them",
 				e
@@ -704,8 +699,8 @@ fn prepared_code(
 	world_globals: &mut WorldGlobals,
 	added: &mut AddedVars
 ) -> Result<PreparedCode, String> {
-	let entry = unsafe { runtime_tables::proc_entry(proc.id) }.ok_or_else(|| format!("{}: couldn't read its table entry", name))?;
-	let bytecode_id = unsafe { runtime_tables::intern_misc(&bytecode) }.map_err(|e| format!("{}: {}", name, e))?;
+	let entry = runtime_tables::proc_entry(proc.id).ok_or_else(|| format!("{}: couldn't read its table entry", name))?;
+	let bytecode_id = runtime_tables::intern_misc(&bytecode).map_err(|e| format!("{}: {}", name, e))?;
 
 	let locals_id = if reload.locals.len() == proc.locals_count() {
 		None
@@ -809,7 +804,7 @@ pub fn early_global_init(init: &dmasm::reload::GlobalInit, rest: &HotReloadReque
 		)
 		.collect();
 	let added = AddedVars {
-		first: unsafe { runtime_tables::variable_count() },
+		first: runtime_tables::variable_count(),
 		vars: vec![],
 		param_names: HashMap::new(),
 		run_once: vec![],
@@ -861,7 +856,7 @@ fn global_slots(
 			.copied()
 			.or_else(|| match scope {
 				StaticScope::Global => {
-					let globals = unsafe { runtime_tables::global_var_ids() }.ok()?;
+					let globals = runtime_tables::global_var_ids().ok()?;
 					match variable_ids(name).into_iter().filter(|id| globals.contains(id)).collect::<Vec<_>>()[..] {
 						[id] => Some(id),
 						_ => None
@@ -899,8 +894,8 @@ fn global_slots(
 
 fn global_init_proc() -> Option<Proc> {
 	let proc = crate::unnamed::find(auxtools_protocol::GLOBAL_INIT, 0)?;
-	let types = unsafe { runtime_tables::type_count() }.ok()?;
-	let a_types = (0..types).any(|type_id| unsafe { runtime_tables::type_field(type_id, type_fields::INIT_PROC) }.ok() == Some(proc.id.0));
+	let types = runtime_tables::type_count().ok()?;
+	let a_types = (0..types).any(|type_id| runtime_tables::type_field(type_id, type_fields::INIT_PROC).ok() == Some(proc.id.0));
 	(!a_types).then_some(proc)
 }
 
@@ -959,7 +954,7 @@ fn renamed(proc: &Proc, entry: &ProcEntryWords, words: &[(usize, u32)]) -> Optio
 	let path = strip_path(&proc.path);
 	let (type_path, _) = path.rsplit_once('/')?;
 	let type_id = find_type(type_path).ok()?;
-	let on_map = unsafe { runtime_tables::named_procs(type_id, from) }.is_ok_and(|procs| procs.contains(&proc.id.0));
+	let on_map = runtime_tables::named_procs(type_id, from).is_ok_and(|procs| procs.contains(&proc.id.0));
 	on_map.then_some(Rename {
 		proc: proc.id.0,
 		type_id,
@@ -980,22 +975,22 @@ fn rename(r: Rename) -> Result<(), String> {
 			.map_or(0, |t| type_and_ancestors(t).len())
 	};
 	let own_depth = depth(r.proc);
-	for sub in 0..unsafe { runtime_tables::type_count() }? {
+	for sub in 0..runtime_tables::type_count()? {
 		if !type_and_ancestors(sub).contains(&r.type_id) {
 			continue;
 		}
 		if r.from != r.basename {
-			let mut old = unsafe { runtime_tables::named_procs(sub, r.from) }?;
+			let mut old = runtime_tables::named_procs(sub, r.from)?;
 			if let Some(at) = old.iter().position(|&p| p == r.proc) {
 				old.remove(at);
-				(unsafe { runtime_tables::set_named_procs(sub, r.from, &old) })?;
+				runtime_tables::set_named_procs(sub, r.from, &old)?;
 			}
 		}
-		let mut new = unsafe { runtime_tables::named_procs(sub, r.to) }?;
+		let mut new = runtime_tables::named_procs(sub, r.to)?;
 		if !new.contains(&r.proc) {
 			let at = new.iter().position(|&p| depth(p) < own_depth).unwrap_or(new.len());
 			new.insert(at, r.proc);
-			(unsafe { runtime_tables::set_named_procs(sub, r.to, &new) })?;
+			runtime_tables::set_named_procs(sub, r.to, &new)?;
 		}
 	}
 	Ok(())
@@ -1005,7 +1000,7 @@ pub(crate) fn locals_table(names: &[String], empty: u32) -> Result<u32, String> 
 	if names.is_empty() {
 		return Ok(empty);
 	}
-	let null_slot = |id: &u32| unsafe { runtime_tables::global_value(*id) }.is_ok_and(|v| v.tag == raw_types::values::ValueTag::Null);
+	let null_slot = |id: &u32| runtime_tables::global_value(*id).is_ok_and(|v| v.tag == raw_types::values::ValueTag::Null);
 	let mut words = vec![];
 	for name in names {
 		let id = match variable_ids(name.as_bytes()).into_iter().find(null_slot) {
@@ -1017,7 +1012,7 @@ pub(crate) fn locals_table(names: &[String], empty: u32) -> Result<u32, String> 
 		};
 		words.push(id);
 	}
-	unsafe { runtime_tables::intern_misc(&words) }
+	runtime_tables::intern_misc(&words)
 }
 
 fn value_code(code: ProcReload) -> ProcReload {
@@ -1052,7 +1047,7 @@ fn in_list_proc(param: &str, code: &ProcReload, pending: &Pending, world_globals
 	] {
 		entry.0[word] = NONE;
 	}
-	entry.0[ProcEntryWords::BYTECODE] = unsafe { runtime_tables::intern_misc(&bytecode) }?;
+	entry.0[ProcEntryWords::BYTECODE] = runtime_tables::intern_misc(&bytecode)?;
 	entry.0[ProcEntryWords::LOCALS] = locals_table(&code.locals, template.0[ProcEntryWords::LOCALS])?;
 
 	let index = added.in_lists_before + added.in_lists.len() as u32;
@@ -1067,7 +1062,7 @@ fn params_table(
 	world_globals: &mut WorldGlobals,
 	added: &mut AddedVars
 ) -> Result<Option<u32>, String> {
-	let current_words = unsafe { runtime_tables::misc_words(current) }.unwrap_or_default();
+	let current_words = runtime_tables::misc_words(current).unwrap_or_default();
 	let name_of = |words: &[u32]| {
 		unsafe { StringRef::from_variable_id(raw_types::strings::VariableId(words[2])) }
 			.data()
@@ -1110,7 +1105,7 @@ fn params_table(
 		let id = added.param_name(&param.name).map_err(|e| format!("parameter {}: {}", param.name, e))?;
 		words.extend([param.input, in_list, id, param.input_extra]);
 	}
-	(unsafe { runtime_tables::intern_misc(&words) }).map(Some)
+	runtime_tables::intern_misc(&words).map(Some)
 }
 
 fn world_lacks(var: &RemovedVar) -> bool {
@@ -1130,8 +1125,8 @@ fn world_lacks(var: &RemovedVar) -> bool {
 
 fn find_type(path: &str) -> Result<u32, String> {
 	let id = StringRef::new(path).map_err(|_| format!("couldn't make the string {}", path))?.get_id().0;
-	(0..unsafe { runtime_tables::type_count() }?)
-		.find(|&t| unsafe { runtime_tables::type_field(t, type_fields::PATH) } == Ok(id))
+	(0..runtime_tables::type_count()?)
+		.find(|&t| runtime_tables::type_field(t, type_fields::PATH) == Ok(id))
 		.ok_or_else(|| format!("there's no type {} in the running world", path))
 }
 
@@ -1151,7 +1146,7 @@ pub(crate) fn ancestry(path: &str) -> Option<Vec<String>> {
 }
 
 fn type_path(type_id: u32) -> String {
-	(unsafe { runtime_tables::type_field(type_id, type_fields::PATH) })
+	runtime_tables::type_field(type_id, type_fields::PATH)
 		.ok()
 		.map(|id| String::from(unsafe { StringRef::from_id(raw_types::strings::StringId(id)) }))
 		.unwrap_or_else(|| format!("type {}", type_id))
@@ -1183,10 +1178,10 @@ fn prepare_init_proc(
 		return Ok(PreparedInitProc { type_id, proc: None });
 	};
 
-	let current = unsafe { runtime_tables::type_field(type_id, type_fields::INIT_PROC) }.map_err(fail)?;
+	let current = runtime_tables::type_field(type_id, type_fields::INIT_PROC).map_err(fail)?;
 	let current = (current != NONE).then(|| Proc::from_id(raw_types::procs::ProcId(current))).flatten();
 	let template = match &current {
-		Some(proc) => unsafe { runtime_tables::proc_entry(proc.id) },
+		Some(proc) => runtime_tables::proc_entry(proc.id),
 		None => proc_template().ok()
 	}
 	.ok_or_else(|| fail("couldn't find a proc entry to copy".to_owned()))?;
@@ -1200,7 +1195,7 @@ fn prepare_init_proc(
 		entry.0[ProcEntryWords::PATH_BASENAME] = NONE;
 		entry.0[ProcEntryWords::PARAMETERS] = NONE;
 	}
-	entry.0[ProcEntryWords::BYTECODE] = unsafe { runtime_tables::intern_misc(&bytecode) }.map_err(fail)?;
+	entry.0[ProcEntryWords::BYTECODE] = runtime_tables::intern_misc(&bytecode).map_err(fail)?;
 	entry.0[ProcEntryWords::LOCALS] = locals_table(&code.locals, template.0[ProcEntryWords::LOCALS]).map_err(fail)?;
 	entry.0[ProcEntryWords::NEXT_OVERRIDE] = NONE;
 
@@ -1248,7 +1243,7 @@ fn prepare_removal(removed: &RemovedProc, staged: &mut StagedProcs) -> Result<Pr
 
 	let mut map_entries = vec![];
 	let mut relinked = vec![];
-	for sub in 0..unsafe { runtime_tables::type_count() }.map_err(fail)? {
+	for sub in 0..runtime_tables::type_count().map_err(fail)? {
 		if !type_and_ancestors(sub).contains(&type_id) {
 			continue;
 		}
@@ -1327,7 +1322,7 @@ fn prepare_new_proc(
 	for (word, value) in settings_words(&entry, &settings, &new.name).map_err(fail)? {
 		entry.0[word] = value;
 	}
-	entry.0[ProcEntryWords::BYTECODE] = unsafe { runtime_tables::intern_misc(&bytecode) }.map_err(fail)?;
+	entry.0[ProcEntryWords::BYTECODE] = runtime_tables::intern_misc(&bytecode).map_err(fail)?;
 	entry.0[ProcEntryWords::LOCALS] = locals_table(&new.code.locals, template.0[ProcEntryWords::LOCALS]).map_err(fail)?;
 	entry.0[ProcEntryWords::PARAMETERS] = if new.code.params.is_empty() {
 		template.0[ProcEntryWords::PARAMETERS]
@@ -1376,7 +1371,7 @@ fn prepare_new_proc(
 
 		let mut map_entries = vec![];
 		let mut relinked = vec![];
-		for sub in 0..unsafe { runtime_tables::type_count() }.map_err(fail)? {
+		for sub in 0..runtime_tables::type_count().map_err(fail)? {
 			let line = type_and_ancestors(sub);
 			if !line.contains(&type_id) {
 				continue;
@@ -1485,7 +1480,7 @@ fn new_verb_on_type(type_path: &str, id: u32, at: usize, entry: &mut ProcEntryWo
 	match after {
 		Some(above) => relinked.push(above),
 		None => {
-			for sub in 0..unsafe { runtime_tables::type_count() }? {
+			for sub in 0..runtime_tables::type_count()? {
 				if sub == type_id || !type_and_ancestors(sub).contains(&type_id) {
 					continue;
 				}
@@ -1570,8 +1565,8 @@ pub fn add_types(new_types: &[NewType]) -> Result<usize, Vec<String>> {
 	if new_types.is_empty() {
 		return Ok(0);
 	}
-	(unsafe { runtime_tables::available() }).map_err(|e| vec![format!("hot reloading isn't available on this build of BYOND: {}", e)])?;
-	(unsafe { runtime_tables::types_available() }).map_err(|e| vec![format!("adding types isn't available on this build of BYOND: {}", e)])?;
+	runtime_tables::available().map_err(|e| vec![format!("hot reloading isn't available on this build of BYOND: {}", e)])?;
+	runtime_tables::types_available().map_err(|e| vec![format!("adding types isn't available on this build of BYOND: {}", e)])?;
 	code_changed();
 
 	let mut added = 0;
@@ -1591,7 +1586,7 @@ fn add_type(new: &NewType) -> Result<(), String> {
 	for (field, value) in &new.fields {
 		writes.extend(builtin_writes(field, value).map_err(|e| format!("{}: {}", field, e))?);
 	}
-	let id = unsafe { runtime_tables::add_type(parent, leaked_string(&new.path)?) }?;
+	let id = runtime_tables::add_type(parent, leaked_string(&new.path)?)?;
 	write_builtins(id, &writes)
 }
 
@@ -1740,15 +1735,15 @@ fn write_builtins(type_id: u32, writes: &[BuiltinWrite]) -> Result<(), String> {
 	use runtime_tables::{set_type_byte, set_type_field, set_type_half, type_field};
 	for write in writes {
 		match write {
-			BuiltinWrite::Word(offset, word) => unsafe { set_type_field(type_id, *offset, *word)? },
-			BuiltinWrite::Half(offset, half) => unsafe { set_type_half(type_id, *offset, *half)? },
-			BuiltinWrite::Byte(offset, byte) => unsafe { set_type_byte(type_id, *offset, *byte)? },
+			BuiltinWrite::Word(offset, word) => set_type_field(type_id, *offset, *word)?,
+			BuiltinWrite::Half(offset, half) => set_type_half(type_id, *offset, *half)?,
+			BuiltinWrite::Byte(offset, byte) => set_type_byte(type_id, *offset, *byte)?,
 			BuiltinWrite::Bits(offset, mask, bits) => {
-				let word = unsafe { type_field(type_id, *offset) }?;
-				unsafe { set_type_field(type_id, *offset, (word & !mask) | bits)? };
+				let word = type_field(type_id, *offset)?;
+				set_type_field(type_id, *offset, (word & !mask) | bits)?;
 			}
 			BuiltinWrite::Listed(name, value) => {
-				let list = unsafe { runtime_tables::misc_words(type_field(type_id, type_fields::BUILTIN_VALUES)?) }.unwrap_or_default();
+				let list = runtime_tables::misc_words(type_field(type_id, type_fields::BUILTIN_VALUES)?).unwrap_or_default();
 				let mut words = vec![];
 				let mut at = 0;
 				while at < list.len() {
@@ -1761,17 +1756,14 @@ fn write_builtins(type_id: u32, writes: &[BuiltinWrite]) -> Result<(), String> {
 				}
 				words.push(*name);
 				words.extend_from_slice(value);
-				let list = unsafe { runtime_tables::intern_misc(&words) }?;
-				unsafe { set_type_field(type_id, type_fields::BUILTIN_VALUES, list)? };
+				set_type_field(type_id, type_fields::BUILTIN_VALUES, runtime_tables::intern_misc(&words)?)?;
 			}
-			BuiltinWrite::Mob(var, value) => unsafe {
-				runtime_tables::set_mob_type(type_id, |mob| match *var {
-					"key" => mob.key = *value,
-					"sight" => mob.sight = *value,
-					"see_in_dark" => mob.see_in_dark = *value as u8,
-					_ => mob.see_invisible = *value as u8
-				})
-			}?
+			BuiltinWrite::Mob(var, value) => runtime_tables::set_mob_type(type_id, |mob| match *var {
+				"key" => mob.key = *value,
+				"sight" => mob.sight = *value,
+				"see_in_dark" => mob.see_in_dark = *value as u8,
+				_ => mob.see_invisible = *value as u8
+			})?
 		}
 	}
 	Ok(())
@@ -2103,9 +2095,9 @@ fn failing(at: FailAt) -> Result<(), String> {
 
 pub fn append(prepared: Prepared) -> Result<Appended, Vec<String>> {
 	let mut added = Added::default();
-	let procs_before = unsafe { runtime_tables::proc_count() };
+	let procs_before = runtime_tables::proc_count();
 	let appended = append_entries(&prepared, &mut added);
-	added.procs = (unsafe { runtime_tables::proc_count() } - procs_before) as usize;
+	added.procs = (runtime_tables::proc_count() - procs_before) as usize;
 	match appended {
 		Ok(init_procs) => Ok(Appended {
 			prepared,
@@ -2119,8 +2111,7 @@ pub fn append(prepared: Prepared) -> Result<Appended, Vec<String>> {
 
 fn append_entries(prepared: &Prepared, added: &mut Added) -> Result<Vec<u32>, String> {
 	for new in &prepared.new_vars {
-		let id =
-			unsafe { runtime_tables::add_variable(new.name, new.value.0 as u8, new.value.1) }.map_err(|e| format!("couldn't add a var: {}", e))?;
+		let id = runtime_tables::add_variable(new.name, new.value.0 as u8, new.value.1).map_err(|e| format!("couldn't add a var: {}", e))?;
 		added.vars += 1;
 		if id != new.id {
 			return Err(format!("new variable ID mismatch: got {}, expected {}", id, new.id));
@@ -2128,15 +2119,15 @@ fn append_entries(prepared: &Prepared, added: &mut Added) -> Result<Vec<u32>, St
 	}
 	for new in &prepared.new_procs {
 		let id = failing(FailAt::Append)
-			.and_then(|()| unsafe { runtime_tables::append_proc(&new.entry) })
+			.and_then(|()| runtime_tables::append_proc(&new.entry))
 			.map_err(|e| format!("couldn't add a proc: {}", e))?;
 		if id.0 != new.id {
 			return Err(format!("new proc ID mismatch: got {}, expected {}", id.0, new.id));
 		}
 	}
 	for (expected, instance, entry) in &prepared.instances {
-		let id = unsafe { runtime_tables::add_proc(entry) }
-			.and_then(|init| unsafe { runtime_tables::add_instance(runtime_tables::Instance { init: init.0, ..*instance }) })
+		let id = runtime_tables::add_proc(entry)
+			.and_then(|init| runtime_tables::add_instance(runtime_tables::Instance { init: init.0, ..*instance }))
 			.map_err(|e| format!("couldn't add a prefab: {}", e))?;
 		added.prefabs += 1;
 		if id != *expected {
@@ -2144,8 +2135,8 @@ fn append_entries(prepared: &Prepared, added: &mut Added) -> Result<Vec<u32>, St
 		}
 	}
 	for (expected, entry) in &prepared.in_lists {
-		let index = unsafe { runtime_tables::add_proc(entry) }
-			.and_then(|proc| unsafe { runtime_tables::add_in_list(proc) })
+		let index = runtime_tables::add_proc(entry)
+			.and_then(runtime_tables::add_in_list)
 			.map_err(|e| format!("couldn't add an `in` list: {}", e))?;
 		added.in_lists += 1;
 		if index != *expected {
@@ -2157,7 +2148,7 @@ fn append_entries(prepared: &Prepared, added: &mut Added) -> Result<Vec<u32>, St
 		init_procs.push(match &init.proc {
 			None => NONE,
 			Some((entry, _)) => {
-				(unsafe { runtime_tables::add_proc(entry) })
+				runtime_tables::add_proc(entry)
 					.map_err(|e| format!("couldn't add an init proc: {}", e))?
 					.0
 			}
@@ -2165,7 +2156,7 @@ fn append_entries(prepared: &Prepared, added: &mut Added) -> Result<Vec<u32>, St
 	}
 	if !prepared.new_globals.is_empty() {
 		let pairs: Vec<(u32, u32)> = prepared.new_globals.iter().map(|&(_, id, flags)| (id, flags)).collect();
-		(unsafe { runtime_tables::add_global_vars(&pairs) }).map_err(|e| format!("the new global vars are missing from global.vars: {}", e))?;
+		runtime_tables::add_global_vars(&pairs).map_err(|e| format!("the new global vars are missing from global.vars: {}", e))?;
 	}
 	Ok(init_procs)
 }
@@ -2199,27 +2190,23 @@ pub fn apply<K: Ord + std::hash::Hash + Copy, T>(
 		if removal.type_id == NONE {
 			continue;
 		}
-		let procs = unsafe { runtime_tables::type_field(removal.type_id, removal.field) }.unwrap_or(NONE);
-		let mut list = unsafe { runtime_tables::misc_words(procs) }.unwrap_or_default();
+		let procs = runtime_tables::type_field(removal.type_id, removal.field).unwrap_or(NONE);
+		let mut list = runtime_tables::misc_words(procs).unwrap_or_default();
 		list.retain(|&proc| proc != removal.id);
-		let list = if list.is_empty() {
-			Ok(NONE)
-		} else {
-			unsafe { runtime_tables::intern_misc(&list) }
-		};
+		let list = if list.is_empty() { Ok(NONE) } else { runtime_tables::intern_misc(&list) };
 		match list {
 			Ok(list) => {
-				let _ = unsafe { runtime_tables::set_type_field(removal.type_id, removal.field, list) };
+				let _ = runtime_tables::set_type_field(removal.type_id, removal.field, list);
 			}
 			Err(e) => failures.push(format!("could not unlink proc from type list: {}", e))
 		}
 		for (sub, key, procs) in &removal.map_entries {
-			if let Err(e) = unsafe { runtime_tables::set_named_procs(*sub, *key, procs) } {
+			if let Err(e) = runtime_tables::set_named_procs(*sub, *key, procs) {
 				failures.push(format!("could not unlink proc from type name map: {}", e));
 			}
 		}
 		for &proc in &removal.relinked {
-			unsafe { runtime_tables::set_proc_entry_word(raw_types::procs::ProcId(proc), ProcEntryWords::NEXT_OVERRIDE, removal.next) };
+			runtime_tables::set_proc_entry_word(raw_types::procs::ProcId(proc), ProcEntryWords::NEXT_OVERRIDE, removal.next);
 		}
 	}
 
@@ -2227,30 +2214,30 @@ pub fn apply<K: Ord + std::hash::Hash + Copy, T>(
 		let id = new.id;
 		mark_reloaded(id, Reloaded::Added);
 		if let Some(on_type) = &new.on_type {
-			let procs = unsafe { runtime_tables::type_field(on_type.type_id, on_type.field) }.unwrap_or(NONE);
-			let mut list = unsafe { runtime_tables::misc_words(procs) }.unwrap_or_default();
+			let procs = runtime_tables::type_field(on_type.type_id, on_type.field).unwrap_or(NONE);
+			let mut list = runtime_tables::misc_words(procs).unwrap_or_default();
 			match on_type.after.and_then(|after| list.iter().position(|&p| p == after)) {
 				Some(at) if !list.contains(&id) => list.insert(at + 1, id),
 				_ => add_to_list(&mut list, on_type.field, id)
 			}
-			match unsafe { runtime_tables::intern_misc(&list) } {
+			match runtime_tables::intern_misc(&list) {
 				Ok(list) => {
-					let _ = unsafe { runtime_tables::set_type_field(on_type.type_id, on_type.field, list) };
+					let _ = runtime_tables::set_type_field(on_type.type_id, on_type.field, list);
 				}
 				Err(e) => failures.push(format!("couldn't add a proc to its type's list: {}", e))
 			}
 
 			for (sub, key, procs) in &on_type.map_entries {
-				if let Err(e) = unsafe { runtime_tables::set_named_procs(*sub, *key, procs) } {
+				if let Err(e) = runtime_tables::set_named_procs(*sub, *key, procs) {
 					failures.push(format!("couldn't add a proc to a type's proc names: {}", e));
 				}
 			}
 
 			for &proc in &on_type.relinked {
-				unsafe { runtime_tables::set_proc_entry_word(raw_types::procs::ProcId(proc), ProcEntryWords::NEXT_OVERRIDE, id) };
+				runtime_tables::set_proc_entry_word(raw_types::procs::ProcId(proc), ProcEntryWords::NEXT_OVERRIDE, id);
 			}
 			for &(proc, path) in &on_type.paths {
-				unsafe { runtime_tables::set_proc_entry_word(raw_types::procs::ProcId(proc), ProcEntryWords::PATH, path) };
+				runtime_tables::set_proc_entry_word(raw_types::procs::ProcId(proc), ProcEntryWords::PATH, path);
 			}
 		}
 
@@ -2272,10 +2259,10 @@ pub fn apply<K: Ord + std::hash::Hash + Copy, T>(
 				auxtools::debug::set_local_names(&proc, ptr, local_names.clone());
 			}
 		}
-		let _ = unsafe { runtime_tables::set_type_field(init.type_id, type_fields::INIT_PROC, id) };
+		let _ = runtime_tables::set_type_field(init.type_id, type_fields::INIT_PROC, id);
 	}
 
-	if unsafe { runtime_tables::proc_count() } > procs_before {
+	if runtime_tables::proc_count() > procs_before {
 		Proc::add_to_table(raw_types::procs::ProcId(procs_before));
 	}
 	renumber(&prepared.removed_procs, &prepared.new_procs);
@@ -2295,10 +2282,10 @@ pub fn apply<K: Ord + std::hash::Hash + Copy, T>(
 		}
 	}
 	for (proc, word, value) in prepared.entry_words {
-		unsafe { runtime_tables::set_proc_entry_word(raw_types::procs::ProcId(proc), word, value) };
+		runtime_tables::set_proc_entry_word(raw_types::procs::ProcId(proc), word, value);
 	}
 	for (type_id, field, words) in prepared.type_fields {
-		let _ = unsafe { runtime_tables::set_type_field(type_id, field, words) };
+		let _ = runtime_tables::set_type_field(type_id, field, words);
 	}
 	reparent::apply_builtins(&prepared.reparent, warnings, failures);
 	for (type_id, writes) in &prepared.builtin_writes {
@@ -2308,11 +2295,11 @@ pub fn apply<K: Ord + std::hash::Hash + Copy, T>(
 	}
 	inherit::apply(&prepared.builtin_inherits, failures);
 	for &type_id in &prepared.appearances {
-		let _ = unsafe { runtime_tables::forget_type_appearance(type_id) };
+		let _ = runtime_tables::forget_type_appearance(type_id);
 	}
 
 	for (id, (tag, data)) in prepared.global_values {
-		if let Err(e) = unsafe { runtime_tables::set_global_words(id, tag as u8, data) } {
+		if let Err(e) = runtime_tables::set_global_words(id, tag as u8, data) {
 			failures.push(format!("couldn't set a static var's value: {}", e));
 		}
 	}
@@ -2322,7 +2309,7 @@ pub fn apply<K: Ord + std::hash::Hash + Copy, T>(
 	}
 	if let Some(bytecode) = prepared.global_init_now {
 		match Proc::find("/proc/auxtools_expr_stub") {
-			Some(stub) => match unsafe { stub.set_bytecode(bytecode) } {
+			Some(stub) => match stub.set_bytecode(bytecode) {
 				Ok(()) => {
 					if let Err(e) = stub.call(&[]) {
 						warnings.push(format!("(global init): {}", e.message));
@@ -2338,7 +2325,7 @@ pub fn apply<K: Ord + std::hash::Hash + Copy, T>(
 			failures.push(format!("{}: missing /proc/auxtools_expr_stub for initializer evaluation", name));
 			continue;
 		};
-		if let Err(e) = unsafe { stub.set_bytecode(bytecode) } {
+		if let Err(e) = stub.set_bytecode(bytecode) {
 			failures.push(format!("{}: {}", name, e));
 			continue;
 		}
@@ -2350,7 +2337,7 @@ pub fn apply<K: Ord + std::hash::Hash + Copy, T>(
 		}
 		match result {
 			Ok(value) => {
-				if let Err(e) = unsafe { runtime_tables::set_global_value(id, value) } {
+				if let Err(e) = runtime_tables::set_global_value(id, value) {
 					failures.push(format!("{}: {}", name, e));
 				}
 			}
@@ -2405,15 +2392,15 @@ fn apply_code<K: Ord + std::hash::Hash + Copy, T>(
 		debug_file(&old)
 	};
 
-	unsafe { runtime_tables::set_proc_entry_word(p.proc.id, ProcEntryWords::BYTECODE, p.bytecode_id) };
+	runtime_tables::set_proc_entry_word(p.proc.id, ProcEntryWords::BYTECODE, p.bytecode_id);
 	if let Some(locals) = p.locals_id {
-		unsafe { runtime_tables::set_proc_entry_word(p.proc.id, ProcEntryWords::LOCALS, locals) };
+		runtime_tables::set_proc_entry_word(p.proc.id, ProcEntryWords::LOCALS, locals);
 	}
 	if let Some(params) = p.params_id {
-		unsafe { runtime_tables::set_proc_entry_word(p.proc.id, ProcEntryWords::PARAMETERS, params) };
+		runtime_tables::set_proc_entry_word(p.proc.id, ProcEntryWords::PARAMETERS, params);
 	}
 	for &(word, value) in &p.settings {
-		unsafe { runtime_tables::set_proc_entry_word(p.proc.id, word, value) };
+		runtime_tables::set_proc_entry_word(p.proc.id, word, value);
 	}
 
 	let (new_ptr, _) = unsafe { p.proc.bytecode_mut_ptr() };
@@ -2573,7 +2560,7 @@ pub fn pin_world_proc(id: u32) {
 }
 
 fn edit_world_names(edit: WorldEdit) -> Result<(), String> {
-	if unsafe { runtime_tables::world_names_built() }? {
+	if runtime_tables::world_names_built()? {
 		return edit_built_world_names(&edit);
 	}
 	WAITING_WORLD_EDITS.lock().unwrap().push(edit);
@@ -2582,7 +2569,7 @@ fn edit_world_names(edit: WorldEdit) -> Result<(), String> {
 }
 
 fn make_waiting_world_edits() -> bool {
-	if !unsafe { runtime_tables::world_names_built() }.unwrap_or(false) {
+	if !runtime_tables::world_names_built().unwrap_or(false) {
 		return false;
 	}
 	for edit in std::mem::take(&mut *WAITING_WORLD_EDITS.lock().unwrap()) {
@@ -2594,16 +2581,14 @@ fn make_waiting_world_edits() -> bool {
 }
 
 fn edit_built_world_names(edit: &WorldEdit) -> Result<(), String> {
-	let set_next =
-		|proc: u32, next: u32| unsafe { runtime_tables::set_proc_entry_word(raw_types::procs::ProcId(proc), ProcEntryWords::NEXT_OVERRIDE, next) };
-	let next_of =
-		|proc: u32| unsafe { runtime_tables::proc_entry(raw_types::procs::ProcId(proc)) }.map_or(NONE, |e| e.0[ProcEntryWords::NEXT_OVERRIDE]);
+	let set_next = |proc: u32, next: u32| runtime_tables::set_proc_entry_word(raw_types::procs::ProcId(proc), ProcEntryWords::NEXT_OVERRIDE, next);
+	let next_of = |proc: u32| runtime_tables::proc_entry(raw_types::procs::ProcId(proc)).map_or(NONE, |e| e.0[ProcEntryWords::NEXT_OVERRIDE]);
 	match edit {
 		WorldEdit::Add { id, keys, below, above } => {
 			let pinned = PINNED_WORLD_PROCS.lock().unwrap().clone();
 			set_next(*id, *below);
 			for (k, &key) in keys.iter().enumerate() {
-				let mut procs = unsafe { runtime_tables::world_named_procs(key) }?;
+				let mut procs = runtime_tables::world_named_procs(key)?;
 				procs.retain(|proc| proc != id);
 				let at = match above.and_then(|above| procs.iter().position(|&p| p == above)) {
 					Some(at) => at + 1,
@@ -2615,20 +2600,20 @@ fn edit_built_world_names(edit: &WorldEdit) -> Result<(), String> {
 					}
 				}
 				procs.insert(at, *id);
-				(unsafe { runtime_tables::set_world_named_procs(key, &procs) })?;
+				runtime_tables::set_world_named_procs(key, &procs)?;
 			}
 		}
 		WorldEdit::Remove { id, keys } => {
 			let next = next_of(*id);
 			for &key in keys {
-				let mut procs = unsafe { runtime_tables::world_named_procs(key) }?;
+				let mut procs = runtime_tables::world_named_procs(key)?;
 				for &proc in &procs {
 					if proc != *id && next_of(proc) == *id {
 						set_next(proc, next);
 					}
 				}
 				procs.retain(|proc| proc != id);
-				(unsafe { runtime_tables::set_world_named_procs(key, &procs) })?;
+				runtime_tables::set_world_named_procs(key, &procs)?;
 			}
 		}
 	}
@@ -2686,7 +2671,7 @@ fn renumber(removed: &[PreparedRemoval], added: &[PreparedNewProc]) {
 fn proc_template() -> Result<ProcEntryWords, String> {
 	Proc::find("/proc/auxtools_expr_stub")
 		.or_else(|| Proc::find("/icon/proc/Width"))
-		.and_then(|proc| unsafe { runtime_tables::proc_entry(proc.id) })
+		.and_then(|proc| runtime_tables::proc_entry(proc.id))
 		.ok_or_else(|| "couldn't find a proc entry to copy (/proc/auxtools_expr_stub or /icon/proc/Width)".to_owned())
 }
 
@@ -2991,7 +2976,7 @@ impl dmasm::assembler::AssembleEnv for ReloadEnv<'_> {
 		}
 
 		if scope == Some(&StaticScope::Global) {
-			if let Ok(globals) = unsafe { runtime_tables::global_var_ids() } {
+			if let Ok(globals) = runtime_tables::global_var_ids() {
 				if let [id] = candidates.iter().filter(|id| globals.contains(id)).collect::<Vec<_>>()[..] {
 					return Some(*id);
 				}
@@ -3036,10 +3021,10 @@ impl dmasm::assembler::AssembleEnv for ReloadEnv<'_> {
 fn declared_global(path: &str, name: &str) -> Option<u32> {
 	let type_id = find_type(path).ok()?;
 	let name = StringRef::new(name).ok()?.get_id().0;
-	let declared = unsafe { runtime_tables::misc_words(runtime_tables::type_field(type_id, type_fields::DECLARED_VARS).ok()?) }?;
+	let declared = runtime_tables::misc_words(runtime_tables::type_field(type_id, type_fields::DECLARED_VARS).ok()?)?;
 	let found: Vec<u32> = declared
 		.chunks(2)
-		.filter(|c| c.len() == 2 && c[1] & 3 != 0 && unsafe { runtime_tables::variable_name(c[0]) } == Some(name))
+		.filter(|c| c.len() == 2 && c[1] & 3 != 0 && runtime_tables::variable_name(c[0]) == Some(name))
 		.map(|c| c[0])
 		.collect();
 	match found[..] {
