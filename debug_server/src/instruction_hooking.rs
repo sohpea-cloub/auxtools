@@ -441,7 +441,6 @@ impl InstructionHook for Server {
 						did_breakpoint = true;
 					}
 				}
-				server.end_returned_watches();
 			}
 		}
 
@@ -607,6 +606,10 @@ impl InstructionHook for Server {
 					std::ptr::copy_nonoverlapping(original.as_ptr(), opcode_ptr, original.len());
 				}
 			}
+		}
+
+		if !in_eval && server.has_watches() {
+			server.end_returning_watches(ctx);
 		}
 	}
 }

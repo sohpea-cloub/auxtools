@@ -980,9 +980,11 @@ fn watches_at_the_end() {
 	client.resume();
 	assert_eq!(client.expect_pause(), changed(steps, "steps", "1", "2"));
 	client.resume();
-	expect_returned(&mut client, steps);
 	assert_eq!(client.expect_pause(), BreakpointReason::Breakpoint);
 	assert_eq!(paused_at(&mut client), ("/watched_steps".to_owned(), end.offset));
+	client.resume();
+	expect_returned(&mut client, steps);
+	pause(&mut client);
 	println!("ok: a frame watch ends when its proc returns through a breakpoint");
 
 	let response = client.request(Request::BreakpointUnset {
@@ -1004,6 +1006,34 @@ fn watches_at_the_end() {
 	client.resume();
 	expect_returned(&mut client, steps);
 	println!("ok: a logpoint where a watch stops logs once, with one stop");
+
+	pause(&mut client);
+	let response = client.request(Request::BreakpointUnset {
+		instruction: first_change,
+		exact: true
+	});
+	assert!(matches!(response, Response::BreakpointUnset { success: true, .. }), "{:?}", response);
+	break_exactly(&mut client, &end, None);
+	eval(&mut client, None, "spawn()\n\twatched_steps()");
+	client.resume();
+	expect_breakpoint_in(&mut client, "/watched_steps");
+	client.resume();
+	assert_eq!(client.expect_pause(), BreakpointReason::Breakpoint);
+	assert_eq!(paused_at(&mut client), ("/watched_steps".to_owned(), end.offset));
+	let response = client.request(Request::WatchSet {
+		place: WatchPlace::Expression {
+			frame_id: Some(0),
+			expression: "steps".to_owned()
+		},
+		condition: None,
+		hit: None
+	});
+	let Response::WatchSet(Ok(watch)) = response else {
+		panic!("expected a watch on steps, got {:?}", response);
+	};
+	client.resume();
+	expect_returned(&mut client, watch.id);
+	println!("ok: a frame watch set at its proc's last instruction ends when the proc returns");
 }
 
 fn false_condition_on_a_caught_throw() {
