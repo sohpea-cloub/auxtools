@@ -250,6 +250,25 @@ pub fn run() {
 	world.resume_through("watch");
 	ok("pause-local watch target expiration");
 
+	world.run_to("watch", "/sc_watch", "watch_start");
+	let frame = world.frame_id();
+	let locals = world.scope(&frame, "Locals");
+	let local = info(&mut world, Some(&locals), "steps");
+	let steps = id(&watch(&mut world, &[(&local["dataId"], "", "")])[0]);
+	world.resume();
+	let stop_now = world.stop();
+	assert_eq!((stop_now.reason.as_str(), &stop_now.hit), ("data breakpoint", &vec![steps]));
+	let set = watch(&mut world, &[(&local["dataId"], "value > 50", "")]);
+	assert_eq!(id(&set[0]), steps);
+	assert_eq!(stops(&mut world, "watch"), [stop(
+		"/sc_watch",
+		"watch_del",
+		"steps changed: 11 → 111",
+		steps
+	)]);
+	assert_eq!(changed(&mut world), (steps, false, "watched proc returned".to_owned()));
+	ok("local watch condition edited at its stop");
+
 	world.run_to("watch_long", "/sc_watch_long", "watch_long_start");
 	let patient = info(&mut world, None, "patient");
 	let set = watch(&mut world, &[(&patient["dataId"], "", "")]);

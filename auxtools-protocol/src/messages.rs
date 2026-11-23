@@ -135,7 +135,12 @@ pub enum Request {
 	Skin(SkinRequest),
 	Reconnect,
 	Script(ScriptRequest),
-	Profile(ProfileRequest)
+	Profile(ProfileRequest),
+	WatchTrigger {
+		id: u32,
+		condition: Option<String>,
+		hit: Option<HitCondition>
+	}
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]

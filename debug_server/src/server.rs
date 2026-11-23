@@ -215,6 +215,11 @@ impl Server {
 				self.answer(Response::Ack);
 			}
 
+			Request::WatchTrigger { id, condition, hit } => {
+				let set = self.watch_trigger(id, condition, hit);
+				self.answer(Response::WatchSet(set));
+			}
+
 			Request::Files => {
 				let mut files: Vec<String> = code_index::by_file().keys().cloned().collect();
 				files.sort();

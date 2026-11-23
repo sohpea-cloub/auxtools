@@ -438,6 +438,22 @@ impl Server {
 		Ok(watch)
 	}
 
+	pub(super) fn watch_trigger(&mut self, id: u32, condition: Option<String>, hit: Option<HitCondition>) -> Result<Watch, String> {
+		let client = self.sessions.requester();
+		let watch = (self.watches.watched.iter_mut())
+			.find(|watch| watch.id == id && Some(watch.client) == client)
+			.ok_or("the watch has ended")?;
+		watch.told &= watch.condition == condition;
+		watch.condition = condition;
+		watch.hit = hit;
+		watch.hits = 0;
+		Ok(Watch {
+			id,
+			name: watch.name.clone(),
+			value: values::stringify(&watch.last)
+		})
+	}
+
 	pub(super) fn watch_unset(&mut self, id: u32) {
 		let client = self.sessions.requester();
 		self.watches.watched.retain(|watch| watch.id != id || Some(watch.client) != client);

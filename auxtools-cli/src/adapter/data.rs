@@ -100,6 +100,27 @@ impl Adapter {
 				set.push(had.remove(at));
 				continue;
 			}
+			let live = |b: &DataBreakpoint| b.watch.filter(|_| b.data_id == wanted.data_id);
+			if let Some((at, watch)) = had.iter().enumerate().find_map(|(at, b)| live(b).map(|watch| (at, watch))) {
+				let mut breakpoint = had.remove(at);
+				let condition = wanted.condition.clone().filter(|condition| !condition.trim().is_empty());
+				let changed = hit_condition(wanted.hit_condition.as_deref()).and_then(|hit| {
+					match self.request(&AuxRequest::WatchTrigger { id: watch, condition, hit })? {
+						AuxResponse::WatchSet(result) => result.map(drop),
+						other => Err(unexpected(other))
+					}
+				});
+				match changed {
+					Ok(()) => {
+						breakpoint.condition = wanted.condition;
+						breakpoint.hit = wanted.hit_condition;
+						breakpoint.message = None;
+					}
+					Err(why) => breakpoint.message = Some(why)
+				}
+				set.push(breakpoint);
+				continue;
+			}
 
 			let id = self.next_breakpoint_id;
 			self.next_breakpoint_id += 1;
