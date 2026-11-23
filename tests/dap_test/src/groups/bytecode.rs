@@ -326,9 +326,24 @@ fn old_code() {
 		("instruction breakpoint", "/leaf", &vec![id])
 	);
 	assert_eq!(frame_address(&mut world), moved);
-	break_at(&mut world, &[]);
+	world.resume();
+	world.stopped("instruction breakpoint");
 	world.resume_through("middle");
 	ok("instruction breakpoint moved by a reload");
+
+	let after = listing(&mut world, moved);
+	let ret = address(&after[after.iter().position(|i| address(&i["address"]) == moved).unwrap() + 1]["address"]);
+	let set = break_at(&mut world, &[mul, ret]);
+	assert_eq!(set[1]["verified"], true, "{}", set[1]);
+	world.run("middle");
+	let stop = world.stop();
+	assert_eq!(frame_address(&mut world), moved);
+	assert_eq!((stop.reason.as_str(), &stop.hit), ("instruction breakpoint", &vec![id]));
+	world.resume();
+	world.stopped("instruction breakpoint");
+	break_at(&mut world, &[]);
+	world.resume_through("middle");
+	ok("moved instruction breakpoint kept when another is added");
 	world.end();
 }
 

@@ -234,7 +234,7 @@ struct InstructionBreakpointsArguments {
 	breakpoints: Vec<InstructionBreakpoint>
 }
 
-#[derive(Deserialize, Clone)]
+#[derive(Deserialize, Clone, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 struct InstructionBreakpoint {
 	instruction_reference: String,
@@ -297,6 +297,7 @@ pub struct Adapter {
 	next_breakpoint_id: i64,
 	function_breakpoints: Vec<FunctionBreakpoint>,
 	instruction_breakpoints: Vec<(i64, InstructionBreakpoint)>,
+	instruction_replies: HashMap<i64, Value>,
 	function_breakpoint_ids: Vec<i64>,
 	told: HashMap<i64, (bool, Option<i64>, Option<String>)>,
 	uncaught: Option<aux::RuntimeFilter>,
@@ -377,6 +378,7 @@ pub fn serve(out: Output, inputs: mpsc::Sender<Input>, receiver: &mpsc::Receiver
 		next_breakpoint_id: 1,
 		function_breakpoints: vec![],
 		instruction_breakpoints: vec![],
+		instruction_replies: HashMap::new(),
 		function_breakpoint_ids: vec![],
 		told: HashMap::new(),
 		uncaught: Some(aux::RuntimeFilter::default()),
@@ -1377,10 +1379,18 @@ impl Adapter {
 	}
 
 	fn set_instruction_breakpoints(&mut self, args: InstructionBreakpointsArguments) -> Handled {
+		let mut had = std::mem::take(&mut self.instruction_breakpoints);
 		let mut wanted = vec![];
 		for breakpoint in args.breakpoints {
-			wanted.push((self.next_breakpoint_id, breakpoint));
-			self.next_breakpoint_id += 1;
+			let id = match had.iter().position(|(_, old)| *old == breakpoint) {
+				Some(at) => had.remove(at).0,
+				None => {
+					let id = self.next_breakpoint_id;
+					self.next_breakpoint_id += 1;
+					id
+				}
+			};
+			wanted.push((id, breakpoint));
 		}
 		self.instruction_breakpoints = wanted;
 		let breakpoints = self.apply_instruction_breakpoints();
@@ -1388,13 +1398,30 @@ impl Adapter {
 	}
 
 	fn apply_instruction_breakpoints(&mut self) -> Vec<Value> {
-		self.unset(INSTRUCTION_BREAKPOINTS);
 		let wanted = self.instruction_breakpoints.clone();
+		let had = self.set.lock().unwrap().remove(INSTRUCTION_BREAKPOINTS).unwrap_or_default();
+		let mut kept = HashMap::new();
+		for breakpoint in had {
+			let still_wanted = breakpoint.at.is_some() && wanted.iter().any(|(id, _)| *id == breakpoint.id);
+			match self.instruction_replies.get(&breakpoint.id).filter(|_| still_wanted) {
+				Some(reply) => {
+					kept.insert(breakpoint.id, (reply.clone(), breakpoint));
+				}
+				None => {
+					let _ = self.remove_breakpoint(&breakpoint.asked, true);
+				}
+			}
+		}
 
 		let mut breakpoints = vec![];
 		let mut set = vec![];
 		let mut code: HashMap<aux::CodeRef, Option<aux::Disassembly>> = HashMap::new();
 		for (id, breakpoint) in wanted {
+			if let Some((reply, in_world)) = kept.remove(&id) {
+				breakpoints.push(reply);
+				set.push(in_world);
+				continue;
+			}
 			let reference = breakpoint.instruction_reference.clone();
 			let unverified =
 				|message: String| serde_json::json!({ "id": id, "verified": false, "message": message, "instructionReference": reference });
@@ -1479,6 +1506,9 @@ impl Adapter {
 			});
 		}
 		self.set.lock().unwrap().insert(INSTRUCTION_BREAKPOINTS.to_owned(), set);
+		self.instruction_replies = (breakpoints.iter())
+			.filter_map(|reply| Some((reply["id"].as_i64()?, reply.clone())))
+			.collect();
 		breakpoints
 	}
 
