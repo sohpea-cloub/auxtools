@@ -159,7 +159,7 @@ impl Sessions {
 		let id = self.requester().ok_or("no client")?;
 		match &self.reloader {
 			Some((holder, theirs)) if *holder != id && self.clients.contains_key(holder) => Err(format!(
-				"{} already owns hot reload for this world; two watchers would apply each change twice",
+				"{} already owns hot reload for this world. A second watcher would apply each change twice",
 				theirs
 			)),
 			_ => {

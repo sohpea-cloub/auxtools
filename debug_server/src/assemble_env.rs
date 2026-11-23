@@ -103,7 +103,7 @@ pub fn proc_path(path: &str) -> Option<dmasm::compiler::FoundProc> {
 		.last()?;
 	let warning = (at != ty).then(|| {
 		format!(
-			"{}: DreamMaker refuses this path, since {} isn't declared on {}; this is {}/proc/{}",
+			"{}: DreamMaker does not accept this path, because {} is not declared on {}. The proc is {}/proc/{}",
 			path, name, ty, at, name
 		)
 	});

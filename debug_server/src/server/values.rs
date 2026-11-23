@@ -698,7 +698,7 @@ impl Pausing {
 
 			Variables::ListPair { key, of, .. } => match name {
 				"value" => List::from_value(of).map_err(runtime)?.set(key, value).map_err(runtime),
-				_ => Err("list keys cannot be edited; remove the entry and add a new one".to_owned())
+				_ => Err("list keys cannot be edited. Remove the entry and add a new one".to_owned())
 			},
 
 			Variables::Pointee(..) => Err("assign to the target variable to change the pointed-to value".to_owned())

@@ -307,8 +307,8 @@ impl Server {
 			None => String::new()
 		};
 		let message = format!(
-			"The condition ({}) of the breakpoint{} failed; skipping affected hits (reported once): {}",
-			condition, place, error
+			"Breakpoint{}: the condition `{}` failed: {}. Hits where it fails are skipped. This message is shown once.",
+			place, condition, error
 		);
 		self.tell(client.0, Response::ConditionFailed { message });
 	}

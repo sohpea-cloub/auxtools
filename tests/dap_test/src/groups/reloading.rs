@@ -315,7 +315,7 @@ fn saved_without_reloading() {
 	world.resume_through("middle");
 	ok("changed-source warning without hot reload");
 	let said = world.refused("evaluate", json!({ "expression": "TWICE(21)", "context": "repl" }));
-	assert!(said.contains("source macros unavailable"), "{}", said);
+	assert!(said.contains("If it is a #define, evaluation can use it only after"), "{}", said);
 	ok("missing-macro diagnostic without hot reload");
 	world.end();
 }
@@ -337,7 +337,7 @@ fn starting_at_world_new() {
 	edit(&mut world, "bare.dm", "\treturn null\n", "\treturn 'reload_new.dmi'\n");
 	assert_eq!(world.eval_global("jointext(icon_states(icon_new()), \",\")"), "\"new1\"");
 	assert!(
-		!world.output.contains("applies as world/New starts"),
+		!world.output.contains("applies when world/New starts"),
 		"the reload waited for world/New:\n{}",
 		world.output
 	);
@@ -531,7 +531,7 @@ fn initializers_after_reboot() {
 	);
 	reboot(&mut world, 4);
 	assert!(
-		world.output.contains("applies as world/New starts"),
+		world.output.contains("applies when world/New starts"),
 		"the restore didn't wait:\n{}",
 		world.output
 	);
@@ -1062,7 +1062,7 @@ pub fn run() {
 	assert_eq!(states(&mut world, "icon_reloaded"), "\"second1\"");
 	let after = world.output.rsplit("The world restarted").next().unwrap_or_default().to_owned();
 	assert!(
-		!after.contains("applies as world/New starts"),
+		!after.contains("applies when world/New starts"),
 		"the reload waited for world/New:\n{}",
 		after
 	);
@@ -1078,7 +1078,7 @@ pub fn run() {
 	reboot(&mut world, 4);
 	let after = world.output.rsplit("The world restarted").next().unwrap_or_default().to_owned();
 	assert!(
-		after.contains("resource files need the loaded cache (reload_new.dmi); reload applies as world/New starts"),
+		after.contains("these resource files need the loaded cache: reload_new.dmi. The reload applies when world/New starts"),
 		"the launcher said:\n{}",
 		after
 	);

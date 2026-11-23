@@ -135,11 +135,11 @@ fn on_load() {
 pub extern "C" fn auxtools_debug_attach() {
 	if launched() {
 		if std::env::var(crate::socket_hold_windows::HOLD_VAR).is_ok_and(|value| value == "0") {
-			eprintln!("auxtools: socket reuse workaround disabled ({}=0)", crate::socket_hold_windows::HOLD_VAR);
+			eprintln!("auxtools: socket reuse workaround disabled by {}=0", crate::socket_hold_windows::HOLD_VAR);
 		} else {
 			match crate::socket_hold_windows::install() {
 				Ok(_) => eprintln!(
-					"auxtools: socket reuse workaround enabled (90s hold; {}=0 to disable)",
+					"auxtools: socket reuse workaround enabled with a 90 second hold. Set {}=0 to disable it",
 					crate::socket_hold_windows::HOLD_VAR
 				),
 				Err(e) => eprintln!("auxtools: socket reuse workaround failed: {}", e)
@@ -205,7 +205,7 @@ fn add_helper_procs() -> Result<(), String> {
 		eprintln!("auxtools: {}", warning);
 	}
 	for failure in failures {
-		eprintln!("auxtools: the debugger's helper procs are partly added: {}", failure);
+		eprintln!("auxtools: some of the debugger's helper procs were not added: {}", failure);
 	}
 	Ok(())
 }

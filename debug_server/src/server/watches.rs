@@ -201,8 +201,8 @@ impl Server {
 						if !std::mem::replace(&mut watch.told, true) {
 							let client = watch.client;
 							let message = format!(
-								"The condition ({}) of the watch on {} failed; skipping affected changes (reported once): {}",
-								condition, name, error
+								"Watch on {}: the condition `{}` failed: {}. Changes where it fails are skipped. This message is shown once.",
+								name, condition, error
 							);
 							self.tell(client, Response::ConditionFailed { message });
 						}
@@ -295,7 +295,7 @@ impl Server {
 		let pointer = pointer?;
 		let names_something = pointer.raw.tag == ValueTag::Pointer && pointer.to_string().is_ok_and(|text| !text.is_empty());
 		if !names_something || auxtools::pointer::read_raw(&pointer).is_none() {
-			return Err("expression has no persistent watch target; select an object variable, list entry or global".to_owned());
+			return Err("the expression has no lasting target to watch. Select an object variable, a list entry or a global".to_owned());
 		}
 		Ok(pointer)
 	}

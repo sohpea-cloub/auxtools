@@ -48,17 +48,19 @@ pub fn run() {
 	world.eval_global("global_number = 5");
 	ok("condition side effects run once per hit");
 
-	let failed = "failed; skipping affected hits (reported once): ";
+	let failed = "` failed: ";
 	world.break_if(&[("leaf_1", "x.len > 3")]);
 	for _ in 0..3 {
 		world.run_through("middle");
 	}
 	let (_, line) = world.marks.place("leaf_1");
-	let said = "The condition (x.len > 3) of the breakpoint at ";
-	assert_eq!(world.count(said), 1, "expected exactly one diagnostic matching {:?}", said);
-	let place = format!("stepping.dm:{} {}runtime error: Cannot read 3.len", line, failed);
-	assert_eq!(world.count(&place), 1, "expected exactly one diagnostic matching {:?}", place);
-	assert_eq!(world.count("(reported once)"), 1, "diagnostic was reported more than once");
+	let said = format!(
+		"Breakpoint at stepping.dm:{}: the condition `x.len > 3` failed: runtime error: Cannot read 3.len. Hits where it fails are skipped. This \
+		 message is shown once.",
+		line
+	);
+	assert_eq!(world.count(&said), 1, "expected exactly one diagnostic matching {:?}", said);
+	assert_eq!(world.count("This message is shown once."), 1, "diagnostic was reported more than once");
 	ok("condition runtime errors reported once");
 
 	world.break_if(&[("leaf_1", "x == 8 || x.len")]);

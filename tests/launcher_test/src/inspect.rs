@@ -61,7 +61,7 @@ fn eval_failures(pid: &str, code: &Path) {
 	let said = ran.err;
 	let lines: Vec<&str> = said.lines().collect();
 	assert!(
-		lines.len() == 4 && lines[0].starts_with("runtime error in a called proc (the evaluation carried on): "),
+		lines.len() == 4 && lines[0].starts_with("the evaluation continued after a runtime error in a called proc: "),
 		"unexpected eval output: {}",
 		said
 	);
@@ -247,10 +247,10 @@ fn procs(pid: &str, code: &Path) {
 			&["proc", "/proc/nothing_called_this"][..],
 			"the world has no proc /proc/nothing_called_this"
 		),
-		(&["proc", "/value#3"][..], "/value has one definition, #0: there's no #3"),
+		(&["proc", "/value#3"][..], "/value has one definition, #0. There is no #3"),
 		(
 			&["proc", "/datum/twice/act#2"][..],
-			"/datum/twice/act has 2 definitions, #0 to #1: there's no #2"
+			"/datum/twice/act has 2 definitions, #0 to #1. There is no #2"
 		),
 		(&["proc", "value"][..], "invalid proc path 'value': expected /PATH[#N]."),
 		(
@@ -368,7 +368,7 @@ fn where_breakpoints_bound(pid: &str, code: &Path) {
 		),
 		(
 			"/value#2",
-			"cannot set a breakpoint at /value#2: /value has one definition, #0: there's no #2".to_owned()
+			"cannot set a breakpoint at /value#2: /value has one definition, #0. There is no #2".to_owned()
 		)
 	];
 	for (place, said) in &nowhere {
@@ -604,7 +604,7 @@ fn on_an_object(pid: &str) {
 	assert_eq!(fails(pid, &["eval", "--src", &gone, "count"]), format!("object not found: {}", gone));
 	assert_eq!(
 		fails(pid, &["eval", "--src", "held", "count"]),
-		"invalid object reference held; expected a ref() value such as [0x2000001]"
+		"invalid object reference held: expected a ref() value such as [0x2000001]"
 	);
 	assert_eq!(
 		fails(pid, &["eval", "--src", &bare, "--frame", "0", "count"]),
@@ -757,7 +757,7 @@ fn spawned(pid: &str, code: &Path) {
 	let ran = run(pid, &["eval", "--spawn", "--wait", "fail_in(3)"], 0);
 	assert_eq!(ran.out, "null\n", "unexpected eval output: {}", ran.out);
 	assert!(
-		ran.err.starts_with("runtime error in a called proc (the evaluation carried on): ")
+		ran.err.starts_with("the evaluation continued after a runtime error in a called proc: ")
 			&& ran.err.contains("\n  in /fail_deeper  ")
 			&& ran.err.ends_with("\n  called by the expression\n"),
 		"unexpected eval output: {}",
@@ -768,7 +768,7 @@ fn spawned(pid: &str, code: &Path) {
 	let said = ran.err;
 	let lines: Vec<&str> = said.lines().collect();
 	assert!(
-		lines.len() == 4 && lines[0].starts_with("runtime error in a called proc (the evaluation carried on): "),
+		lines.len() == 4 && lines[0].starts_with("the evaluation continued after a runtime error in a called proc: "),
 		"unexpected eval output: {}",
 		said
 	);

@@ -470,7 +470,7 @@ pub fn run() {
 
 	let stale = world.try_request("evaluate", json!({ "expression": "by", "frameId": 99, "context": "watch" }));
 	assert_eq!(stale["success"], false, "{}", stale);
-	assert!(stale["message"].as_str().unwrap().starts_with("there's no frame 99"), "{}", stale);
+	assert!(stale["message"].as_str().unwrap().starts_with("frame 99 does not exist"), "{}", stale);
 	assert!(
 		!world.output.contains("frame 99"),
 		"the debug server had something to say in the console:\n{}",

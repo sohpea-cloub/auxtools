@@ -125,10 +125,10 @@ impl Codes {
 		let proc = match unnamed::find(&wanted.path, wanted.override_id) {
 			Some(proc) => proc,
 			None if definitions == 0 => return Err(format!("the world has no proc {}", wanted.path)),
-			None if definitions == 1 => return Err(format!("{} has one definition, #0: there's no #{}", wanted.path, wanted.override_id)),
+			None if definitions == 1 => return Err(format!("{} has one definition, #0. There is no #{}", wanted.path, wanted.override_id)),
 			None => {
 				return Err(format!(
-					"{} has {} definitions, #0 to #{}: there's no #{}",
+					"{} has {} definitions, #0 to #{}. There is no #{}",
 					wanted.path,
 					definitions,
 					definitions - 1,

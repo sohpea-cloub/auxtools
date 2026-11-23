@@ -963,9 +963,14 @@ fn command_line_more(pid: u64, dir: &Path) {
 		&["wait", "pause", "--break", "/proc/value", "--if", "rounds.len > 0", "--timeout", "1"],
 		2
 	);
-	assert_eq!(printed.matches("reported once").count(), 1, "unexpected wait --if output: {}", printed);
+	assert_eq!(
+		printed.matches("This message is shown once.").count(),
+		1,
+		"unexpected wait --if output: {}",
+		printed
+	);
 	assert!(
-		printed.contains("failed; skipping affected hits (reported once): runtime error: Cannot read ") && printed.contains("timed out"),
+		printed.contains("` failed: runtime error: Cannot read ") && printed.contains("timed out"),
 		"unexpected wait --if output: {}",
 		printed
 	);
@@ -1114,9 +1119,14 @@ fn command_line_trace(pid: u64, code: &Path) {
 	println!("ok: trace grouping and limits");
 
 	let printed = cli.run(&["trace", "/proc/tick", "--if", "n.len > 0", "--for", "1"], 0);
-	assert_eq!(printed.matches("reported once").count(), 1, "unexpected trace --if output: {}", printed);
+	assert_eq!(
+		printed.matches("This message is shown once.").count(),
+		1,
+		"unexpected trace --if output: {}",
+		printed
+	);
 	assert!(
-		printed.contains("failed; skipping affected hits (reported once): runtime error: Cannot read ")
+		printed.contains("` failed: runtime error: Cannot read ")
 			&& printed
 				.lines()
 				.any(|line| line.starts_with("summary: 0 hits, ") && !line.contains(", 0 skipped") && line.ends_with(" skipped; ended: time"))
@@ -1680,8 +1690,8 @@ fn foreground(server: &str) {
 	assert!(
 		printed.contains("Hot reload: reloaded /value in ")
 			&& !printed.contains("unlinked /")
-			&& printed.contains("unbuilt_proc: not found in the running world; skipping removal")
-			&& !printed.contains("retained in the running world"),
+			&& printed.contains("unbuilt_proc: not found in the running world, so there is nothing to remove")
+			&& !printed.contains("the running world still has it"),
 		"launch said:\n{}",
 		printed
 	);
@@ -2004,7 +2014,7 @@ fn stops(server: &str) {
 	let cli = Cli::new(&pid_text);
 	let printed = cli.run(&["eval", "DOUBLE_IT(1)"], 1);
 	assert!(
-		printed.starts_with("error: proc not found: /proc/DOUBLE_IT (if that's a #define: source macros unavailable"),
+		printed.starts_with("error: proc not found: /proc/DOUBLE_IT. If it is a #define, evaluation can use it only after"),
 		"unexpected eval output: {}",
 		printed
 	);

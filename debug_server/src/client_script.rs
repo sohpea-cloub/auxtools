@@ -95,7 +95,8 @@ fn check_built(fields: &Fields, built: Option<&str>) -> Result<(), String> {
 		return Ok(());
 	}
 	Err(
-		"client script does not match the build; rebuild the world. If the source already matches, this BYOND script layout is unsupported"
+		"the client script does not match the build. Rebuild the world. If the source already matches, auxtools does not support this BYOND script \
+		 layout"
 			.to_owned()
 	)
 }

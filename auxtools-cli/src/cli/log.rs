@@ -300,7 +300,7 @@ pub fn describe(event: &JournalEvent) -> (String, Vec<String>) {
 }
 
 pub fn callee_runtime(message: &str, stack: &[JournalFrame]) -> String {
-	let mut said = format!("runtime error in a called proc (the evaluation carried on): {}", message);
+	let mut said = format!("the evaluation continued after a runtime error in a called proc: {}", message);
 	for (i, at) in stack[..stack.len() - 1].iter().enumerate() {
 		said += &format!("\n  {} {}", if i == 0 { "in" } else { "called by" }, frame(at));
 	}

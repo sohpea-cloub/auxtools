@@ -192,7 +192,7 @@ impl Evaluation {
 			return error;
 		}
 		format!(
-			"{} (if that's a #define: source macros unavailable until the project is parsed for hot reload)",
+			"{}. If it is a #define, evaluation can use it only after the launcher has read the project for hot reload",
 			error
 		)
 	}
@@ -307,7 +307,7 @@ impl Server {
 		notes.extend(
 			errors
 				.into_iter()
-				.map(|error| format!("runtime error in a called proc (the evaluation carried on): {}", error))
+				.map(|error| format!("the evaluation continued after a runtime error in a called proc: {}", error))
 		);
 		if more > 0 {
 			notes.push(format!("and {} more runtime errors in called procs", more));
@@ -329,7 +329,7 @@ impl Server {
 						let proc = unnamed::proc_ref(&frame.proc);
 						self.codes.handle_disassemble(&proc.path, proc.override_id)
 					}
-					None => "couldn't find stack frame (is execution not paused?)".to_owned()
+					None => "couldn't find the stack frame. The world may not be paused".to_owned()
 				},
 				None => "no execution frame selected".to_owned()
 			},
@@ -428,7 +428,10 @@ impl Server {
 
 			Some(frame_id) => {
 				let Some(frame) = self.pause.get_stack_frame(frame_id) else {
-					return Err(format!("there's no frame {} (the world isn't paused, or has carried on since)", frame_id));
+					return Err(format!(
+						"frame {} does not exist. The world is not paused, or it has resumed since",
+						frame_id
+					));
 				};
 
 				let frame_args = List::new();
@@ -583,17 +586,17 @@ impl Server {
 				} else if !self.eval.eval_ran.is_null() && background_known() && unsafe { *(*self.eval.eval_ran).background() } != 0 {
 					outcome.still_running = true;
 					Err(
-						"evaluation aborted: BYOND moved the code to the background, so its result is unavailable. This can happen after about a \
-						 million loop iterations (world.loop_checks), or with `set background = 1`. The code is still running. Use `eval --spawn \
+						"evaluation aborted: BYOND moved the code to the background, so its result is unavailable. world.loop_checks does this \
+						 after about a million loop iterations. `set background = 1` does it too. The code is still running. Use `eval --spawn \
 						 --wait` to wait for a result"
 							.to_owned()
 					)
 				} else if !background_known() {
 					outcome.still_running = true;
 					Err(
-						"evaluation aborted because the code slept or BYOND moved it to the background, so its result is unavailable. BYOND does \
-						 that after about a million loop iterations (world.loop_checks), or with `set background = 1`. Use `eval --spawn --wait` to \
-						 wait for a result"
+						"evaluation aborted because the code slept or BYOND moved it to the background, so its result is unavailable. \
+						 world.loop_checks moves code to the background after about a million loop iterations. `set background = 1` does it too. \
+						 Use `eval --spawn --wait` to wait for a result"
 							.to_owned()
 					)
 				} else {
@@ -684,7 +687,7 @@ impl Server {
 			.strip_prefix("0x")
 			.or_else(|| inner.strip_prefix("0X"))
 			.and_then(|hex| u32::from_str_radix(hex, 16).ok())
-			.ok_or_else(|| format!("invalid object reference {}; expected a ref() value such as [0x2000001]", reference))?;
+			.ok_or_else(|| format!("invalid object reference {}: expected a ref() value such as [0x2000001]", reference))?;
 		let reference = format!("[0x{:x}]", id);
 		let found = self.eval_expr(EvalRequest::new(None, &format!("locate(\"\\{}\")", reference))).value?;
 		if found == Value::NULL {

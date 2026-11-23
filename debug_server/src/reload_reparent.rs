@@ -63,7 +63,10 @@ pub(super) fn prepare(
 	let mut maps = HashMap::new();
 	for (r, top, parent) in tops {
 		if type_and_ancestors(parent).contains(&top) {
-			errors.push(format!("{}: parent type changed: {} is one of its own subtypes", r.type_path, r.parent));
+			errors.push(format!(
+				"{}: parent type changed: the new parent {} is a subtype of this type",
+				r.type_path, r.parent
+			));
 			continue;
 		}
 		if let Err(e) = prepare_one(r, top, parent, &mut maps, type_vars, staged, prepared) {
@@ -250,7 +253,7 @@ pub(super) fn apply_builtins(prepared: &PreparedReparents, warnings: &mut Vec<St
 		match inherit_builtins(inherited) {
 			Ok(None) => {}
 			Ok(Some(bounds)) => warnings.push(format!(
-				"{}: unsupported bounds \"{}\" (expected \"x1,y1 to x2,y2\" or \"WxH\"); new instances inherit parent bounds until a rebuild",
+				"{}: unsupported bounds \"{}\". Expected \"x1,y1 to x2,y2\" or \"WxH\". New instances use the parent's bounds until a rebuild",
 				type_path(inherited.type_id),
 				bounds
 			)),

@@ -945,10 +945,10 @@ fn debugger(built: Built) {
 	assert!(result.applied, "{:?}", result.errors);
 	assert_eq!(result.skipped, ["/datum/declared/never_built"]);
 	assert_eq!(result.warnings, [
-		"/datum/declared: var count was removed from source but retained in the running world",
+		"/datum/declared: var count was removed from source, but the running world still has it",
 		"/datum/declared: var never_built was removed from source and isn't in the running world",
 		"/datum/never_built: var count was removed from source and isn't in the running world",
-		"/datum/declared/never_built: not found in the running world; skipping removal"
+		"/datum/declared/never_built: not found in the running world, so there is nothing to remove"
 	]);
 	println!("ok: removals the world never had");
 
@@ -986,7 +986,7 @@ fn debugger(built: Built) {
 	let result = reload(&mut client, &changes);
 	assert_eq!(result.failures, ["couldn't set a built-in var: asked for with #fail-reload"]);
 	assert_eq!(result.warnings, [
-		"verb and built-in changes apply only to new instances; existing instances retain their values"
+		"verb and built-in changes apply only to new instances. Existing instances keep their values"
 	]);
 	assert_eq!(eval(&mut client, "answer()"), "7");
 	assert_eq!(eval(&mut client, "(new /obj/crate).density"), "0");
@@ -1222,7 +1222,7 @@ fn definitions(built: Built) {
 		result
 			.warnings
 			.iter()
-			.any(|w| w.contains("var spare reuses the declaration retained by the running world")),
+			.any(|w| w.contains("var spare uses the declaration that the running world still has")),
 		"{:?}",
 		result.warnings
 	);
@@ -1677,7 +1677,7 @@ fn declarations(built: Built) {
 		result
 			.warnings
 			.iter()
-			.any(|w| w.contains("retain runtime declarations, values and var IDs")),
+			.any(|w| w.contains("subtypes keep their declarations, values and var IDs")),
 		"{:?}",
 		result.warnings
 	);
@@ -1845,7 +1845,7 @@ fn declarations(built: Built) {
 	assert_eq!(eval(&mut client, "verb_names(new /mob/chain_verbs)"), "\"speak,speak,other,speak\"");
 	assert_eq!(eval(&mut client, "world.chant()"), "\"xyz\"");
 	assert_eq!(eval(&mut client, "solo()"), "\"declared\"");
-	assert!(result.warnings.iter().all(|w| w.contains("existing instances")), "{:?}", result.warnings);
+	assert!(result.warnings.iter().all(|w| w.contains("Existing instances")), "{:?}", result.warnings);
 	for (path, needle) in [
 		("/mob/chain_verbs/speak", "\treturn ..() + \"c\""),
 		("/world/chant", "\treturn ..() + \"z\""),
@@ -1945,7 +1945,7 @@ fn resources(built: Built) {
 	let result = reload_resource(&mut watcher, &source, "crate.dmi", "lamp_built.dmi", vec![crate_id]);
 	assert_eq!(result.resources[0].id, built_lamp, "{:?}", result);
 	assert!(
-		result.warnings.iter().any(|w| w.contains("crate.dmi shares existing resource")),
+		result.warnings.iter().any(|w| w.contains("crate.dmi has the same bytes as resource")),
 		"{:?}",
 		result.warnings
 	);

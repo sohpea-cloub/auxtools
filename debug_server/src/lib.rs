@@ -102,10 +102,10 @@ fn settle<'a, R>(done: Result<R, Box<dyn Any + Send>>, server: impl FnOnce() -> 
 	});
 	if recovered.is_err() || panics >= LOST {
 		PANICS_IN_A_ROW.store(LOST, Ordering::Relaxed);
-		eprintln!("auxtools: {}. The world runs on without it.", LOST_REASON);
+		eprintln!("auxtools: {}. The world keeps running without it.", LOST_REASON);
 		let _ = auxtools::guard(instruction_hooking::unhook_all);
 		if let Some(server) = server {
-			let _ = auxtools::guard(|| server.give_up(format!("{} (the last panic: {})", LOST_REASON, panic)));
+			let _ = auxtools::guard(|| server.give_up(format!("{}. The last panic was: {}", LOST_REASON, panic)));
 		}
 	}
 	Err(message)

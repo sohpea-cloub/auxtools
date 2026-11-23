@@ -223,10 +223,10 @@ pub fn run() {
 	world.eval_global("watched_number = 1");
 	watch(&mut world, &[(&anywhere["dataId"], "value.len > 0", "")]);
 	world.run_through("watch");
-	let said = "The condition (value.len > 0) of the watch on watched_number failed; skipping affected changes (reported once): runtime error: \
-	            Cannot read 3.len";
+	let said = "Watch on watched_number: the condition `value.len > 0` failed: runtime error: Cannot read 3.len. Changes where it fails are \
+	            skipped. This message is shown once.";
 	assert_eq!(world.count(said), 1, "expected exactly one diagnostic matching {:?}", said);
-	assert_eq!(world.count("(reported once)"), 1, "diagnostic was reported more than once");
+	assert_eq!(world.count("This message is shown once."), 1, "diagnostic was reported more than once");
 	ok("watch condition errors reported once");
 
 	world.eval_global("watched_number = 1");

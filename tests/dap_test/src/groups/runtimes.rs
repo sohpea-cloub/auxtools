@@ -92,7 +92,7 @@ pub fn run() {
 	assert_eq!(got["result"], "null", "evaluate gave {}", got);
 	let line = world.marks.line("fail_null");
 	world.wait_output(&format!(
-		"runtime error in a called proc (the evaluation carried on): cannot read from list\n  in /fail_null  errors.dm:{}\n  called by the \
+		"the evaluation continued after a runtime error in a called proc: cannot read from list\n  in /fail_null  errors.dm:{}\n  called by the \
 		 expression",
 		line
 	));
