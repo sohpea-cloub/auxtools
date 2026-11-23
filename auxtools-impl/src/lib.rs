@@ -100,21 +100,10 @@ pub fn full_shutdown(_: TokenStream, item: TokenStream) -> TokenStream {
 	code.into()
 }
 
-/// The `pin_dll!` macro is used to determine whether the dll handle auxtools
-/// takes on Windows is pinned. For reference, a dll with a pinned handle cannot
-/// be unloaded during execution of the host process - termination of the host
-/// is the only way to unload the dll and release the lock on the corresponding
-/// file.
-///
-/// This has very limited use cases - for instance, if a .dmb is hosted on a
-/// live server whose Dream Daemon process is kept running between runs, keeping
-/// a pinned handle to the dll will prevent the corresponding file from being
-/// updated by automatic updaters such as tgs. You shouldn't use this unless you
-/// very specifically need it for your particular use case.
-///
-/// Libraries that unpin the dll using this macro should ensure that no spawned
-/// threads are running when calling `auxtools_full_shutdown` from DM, or else
-/// Dream Daemon will crash.
+/// Sets whether auxtools pins its DLL on Windows, which keeps it loaded until
+/// the process ends and its file locked while Dream Daemon runs. A library that
+/// unpins it must have no spawned threads running when DM calls
+/// `auxtools_full_shutdown`, or Dream Daemon crashes.
 #[proc_macro]
 pub fn pin_dll(attr: TokenStream) -> TokenStream {
 	let flag = syn::parse_macro_input!(attr as syn::LitBool);
@@ -131,27 +120,11 @@ pub fn pin_dll(attr: TokenStream) -> TokenStream {
 	code.into()
 }
 
-/// The `hook` attribute is used to define functions that may be used as proc
-/// hooks, and to optionally hook those procs upon library initialization.
+/// Defines a proc hook. Given a proc path, the hook is installed at init.
 ///
-/// # Examples
-///
-/// Here we define a hook that multiplies a number passed to it by two.
-/// It can now be used to hook procs, for example
-/// `Proc::find("/proc/double_up").unwrap().hook(double_up);`
-/// ```ignore
-/// #[hook]
-/// fn double_up(num: Value) {
-///     Ok(Value::from(num.as_number()? * 2.0))
-/// }
-/// ```
-///
-/// This function is used to hook `/mob/proc/on_honked`.
-/// By specifying the proc path, we hook the proc immediately upon startup.
 /// ```ignore
 /// #[hook("/mob/proc/on_honked")]
 /// fn on_honked(honker: Value) {
-///     src.call("gib", &[])?;
 ///     honker.call("laugh", &[])?;
 ///     Ok(Value::NULL)
 /// }
