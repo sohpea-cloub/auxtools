@@ -323,6 +323,7 @@ pub struct Adapter {
 	function_breakpoints: Vec<FunctionBreakpoint>,
 	instruction_breakpoints: Vec<(i64, InstructionBreakpoint)>,
 	removed_by_reload: HashSet<i64>,
+	refused_at: HashMap<i64, InstructionRef>,
 	relocated: HashSet<String>,
 	claims: u32,
 	function_breakpoint_ids: Vec<i64>,
@@ -406,6 +407,7 @@ pub fn serve(out: Output, inputs: mpsc::Sender<Input>, receiver: &mpsc::Receiver
 		function_breakpoints: vec![],
 		instruction_breakpoints: vec![],
 		removed_by_reload: HashSet::new(),
+		refused_at: HashMap::new(),
 		relocated: HashSet::new(),
 		claims: 0,
 		function_breakpoint_ids: vec![],
@@ -954,6 +956,7 @@ impl Adapter {
 	}
 
 	fn follow_reloaded_breakpoints(&mut self) {
+		self.refused_at.clear();
 		if !self.debugging || self.debuggee.is_none() {
 			return;
 		}
@@ -1546,7 +1549,8 @@ impl Adapter {
 
 	fn live_address(&self, id: i64, breakpoint: &InstructionBreakpoint) -> Option<u64> {
 		let set = self.set.lock().unwrap();
-		let at = set.get(INSTRUCTION_BREAKPOINTS)?.iter().find(|b| b.id == id)?.at.clone()?;
+		let claimed = set.get(INSTRUCTION_BREAKPOINTS).and_then(|set| set.iter().find(|b| b.id == id));
+		let at = claimed.and_then(|b| b.at.as_ref()).or_else(|| self.refused_at.get(&id))?;
 		Some(Self::requested_address(breakpoint)? & !0xFFFF | u64::from(at.offset))
 	}
 
@@ -1614,6 +1618,7 @@ impl Adapter {
 	fn apply_instruction_breakpoints(&mut self) -> Vec<InstructionShown> {
 		let wanted = self.instruction_breakpoints.clone();
 		self.removed_by_reload.retain(|id| wanted.iter().any(|(wanted, _)| wanted == id));
+		self.refused_at.retain(|id, _| wanted.iter().any(|(wanted, _)| wanted == id));
 		let mut live = self.set.lock().unwrap().remove(INSTRUCTION_BREAKPOINTS).unwrap_or_default();
 		let mut breakpoints = vec![];
 		let mut set = vec![];
@@ -1633,9 +1638,14 @@ impl Adapter {
 				breakpoints.push(unverified(format!("invalid instruction address: {:?}", reference)));
 				continue;
 			};
+			let kept = live.iter().position(|b| b.id == id).map(|at| live.remove(at));
 			let hit = match hit_condition(breakpoint.hit_condition.as_deref()) {
 				Ok(hit) => hit,
 				Err(e) => {
+					if let Some(kept) = kept {
+						self.refused_at.extend(kept.at.map(|at| (id, at)));
+						let _ = self.remove_breakpoint(kept.claim);
+					}
 					breakpoints.push(unverified(e));
 					continue;
 				}
@@ -1652,7 +1662,8 @@ impl Adapter {
 				instruction_reference: address_text(address & !0xFFFF | u64::from(claimed.at.as_ref().map_or(0, |at| at.offset)))
 			};
 
-			if let Some(kept) = live.iter().position(|b| b.id == id).map(|at| live.remove(at)) {
+			if let Some(kept) = kept {
+				let at = kept.at.clone();
 				breakpoints.push(match self.keep(kept, &trigger, None) {
 					Ok(Some(claimed)) => {
 						let reply = shown(&claimed);
@@ -1663,6 +1674,22 @@ impl Adapter {
 						self.removed_by_reload.insert(id);
 						unverified(REMOVED_BY_RELOAD.to_owned())
 					}
+					Err(e) => {
+						self.refused_at.extend(at.map(|at| (id, at)));
+						unverified(e)
+					}
+				});
+				continue;
+			}
+			if let Some(at) = self.refused_at.get(&id).cloned() {
+				breakpoints.push(match self.claim(id, &at, &trigger, None, true) {
+					Ok(Some(claimed)) => {
+						self.refused_at.remove(&id);
+						let reply = shown(&claimed);
+						set.push(claimed);
+						reply
+					}
+					Ok(None) => unverified("could not set breakpoint".to_owned()),
 					Err(e) => unverified(e)
 				});
 				continue;

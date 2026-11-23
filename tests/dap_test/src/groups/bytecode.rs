@@ -428,6 +428,42 @@ fn old_code() {
 	}
 	world.finish("middle");
 	ok("moved instruction breakpoints sent again in another order");
+
+	for (wrong, right) in [
+		(json!({ "condition": "x ==" }), json!({ "condition": "x == 3" })),
+		(json!({ "hitCondition": "often" }), json!({ "hitCondition": "1" }))
+	] {
+		let mut send = |trigger: &Value| {
+			let mut wanted = trigger.clone();
+			wanted["instructionReference"] = hex(first).into();
+			let set = world.request("setInstructionBreakpoints", json!({ "breakpoints": [wanted] }));
+			set["breakpoints"][0].clone()
+		};
+		let refused = send(&wrong);
+		assert_eq!(
+			(refused["id"].as_u64(), &refused["verified"]),
+			(Some(ids[0]), &json!(false)),
+			"{}",
+			refused
+		);
+		let set = send(&right);
+		assert_eq!(
+			(set["id"].as_u64(), &set["verified"], address(&set["instructionReference"])),
+			(Some(ids[0]), &json!(true), second),
+			"{} corrected to {}: {}",
+			wrong,
+			right,
+			set
+		);
+	}
+	world.run("middle");
+	let stop = world.stop();
+	assert_eq!((&stop.hit, frame_address(&mut world)), (&vec![ids[0]], second));
+	world.resume();
+	world.stop();
+	world.resume_through("middle");
+	break_at(&mut world, &[]);
+	ok("moved instruction breakpoint kept through a refused trigger");
 	let moved = find(&listing(&mut world, moved), "Mul");
 
 	let id = break_at(&mut world, &[moved])[0]["id"].as_u64().unwrap();
