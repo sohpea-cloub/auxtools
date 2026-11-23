@@ -385,7 +385,7 @@ pub fn running(proc: &Proc, running: *const u32) -> Option<Arc<Code>> {
 	code
 }
 
-fn start_file(bytecode: &[u32]) -> Option<String> {
+pub fn start_file(bytecode: &[u32]) -> Option<String> {
 	match bytecode {
 		[op, id, ..] if *op == dmasm::Opcode::DbgFile.word() => {
 			let name = unsafe { StringRef::from_id(raw_types::strings::StringId(*id)) };

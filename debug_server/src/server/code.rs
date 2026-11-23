@@ -103,7 +103,7 @@ impl Codes {
 
 		Ok(Disassembly {
 			proc: unnamed::proc_ref(&proc),
-			file: code_index::file_of(&proc),
+			file: code_index::start_file(&bytecode),
 			instructions,
 			error: error.map(|error| format!("{:?}", error))
 		})

@@ -394,6 +394,49 @@ fn procs(built: Built) {
 	reload(&mut watcher, &changes);
 	assert_eq!(eval(&mut client, "counter()"), "12");
 	println!("ok: static local value preservation");
+
+	eval(&mut client, "sleeper_release = FALSE");
+	eval(&mut client, "start_sleeper()");
+	wait_for(&mut client, "sleeper_state", "\"sleeping\"");
+	let changes = source.edit("reload.dm", "\"new code finished\"", "\"moved code finished\"");
+	reload(&mut watcher, &changes);
+	const SLEEPER: &str =
+		"/proc/sleeper()\n\tsleeper_state = \"sleeping\"\n\twhile (!sleeper_release)\n\t\tsleep(1)\n\tsleeper_state = \"moved code finished\"\n";
+	let changes = source.move_code(SLEEPER, "reload.dm", "main.dm");
+	reload(&mut watcher, &changes);
+	let response = client.request(Request::Pause);
+	assert!(matches!(response, Response::Ack), "expected Ack for Pause, got {:?}", response);
+	assert_eq!(client.expect_pause(), BreakpointReason::Pause);
+	let Response::Stacks { stacks, .. } = client.request(Request::Stacks { sleeping: Some(1000) }) else {
+		panic!("expected Stacks");
+	};
+	let mut sleeping = vec![];
+	for stack in &stacks {
+		let Response::StackFrames { frames, .. } = client.request(Request::StackFrames {
+			stack_id: stack.id,
+			start_frame: None,
+			count: None
+		}) else {
+			panic!("expected StackFrames");
+		};
+		sleeping.extend(frames.into_iter().filter(|frame| frame.instruction.proc.path == "/sleeper"));
+	}
+	let [frame] = &sleeping[..] else {
+		panic!("expected one frame of /sleeper, got {:?}", sleeping);
+	};
+	assert!(
+		frame.old_code && frame.file.as_deref() == Some("reload.dm"),
+		"expected /sleeper's frame in old code in reload.dm, got {:?}",
+		frame
+	);
+	let Response::Disassemble(Ok(disassembly)) = client.request(Request::Disassemble { code: frame.code }) else {
+		panic!("expected the disassembly of /sleeper's old code");
+	};
+	assert_eq!(disassembly.file.as_deref(), Some("reload.dm"));
+	client.resume();
+	eval(&mut client, "release_sleeper()");
+	wait_for(&mut client, "sleeper_state", "\"new code finished\"");
+	println!("ok: old code of a proc moved to another file is disassembled with its own file");
 }
 
 fn debugger(built: Built) {
