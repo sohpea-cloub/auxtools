@@ -30,6 +30,18 @@
   `cdylib`.
 - dmasm's reader of assembly text.
 
+### For users of the auxtools library
+
+- `Value::raw` is now a method that returns a copy. A `Value` releases its reference when it
+  drops, so replacing its raw value wasn't safe.
+- The functions in `runtime_tables`, `appearance_tables` and `raw_types::misc`, and
+  `Proc::set_bytecode`, are now `unsafe`. Call them on BYOND's thread while a world is live.
+  Their `# Safety` sections say what else they need. `NameMapPlan::write` returns a `Result`.
+- `WeakValue::upgrade` returns `None` for a handle made before a shutdown.
+- Weak reference ids now include a namespace for each library. A datum that an older version
+  tagged gets a new id, and the older version's handles to it no longer upgrade.
+- A hook can name a parameter `args`.
+
 ### For users of dmasm
 
 - dmasm is now part of this repository, as the crates `dmasm-bytecode`, `dmasm-compiler` and
