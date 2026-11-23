@@ -59,7 +59,9 @@ fn copy_table_entry(type_id: u32, from: u32, var: &str) -> Result<(), String> {
 	entries.sort_by_key(|e| e[0]);
 	let words: Vec<u32> = entries.into_iter().flatten().collect();
 	let id = if words.is_empty() { NONE } else { runtime_tables::intern_misc(&words)? };
-	runtime_tables::set_type_field(type_id, type_fields::VAR_TABLE, id)
+	runtime_tables::set_type_field(type_id, type_fields::VAR_TABLE, id)?;
+	hold_table_strings(&[(type_id, words)], &[]);
+	Ok(())
 }
 
 pub(super) fn copy_builtin(type_id: u32, from: u32, var: &str) -> Result<(), String> {

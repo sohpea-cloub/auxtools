@@ -2196,6 +2196,55 @@ fn types(built: Built) {
 	assert_eq!(eval(&mut client, "(new /mob/helper/latest).render_target"), "null");
 	println!("ok: a list-backed default releases the strings a type no longer has");
 
+	let changes = source.edit(
+		"reload.dm",
+		"/proc/first_def()\n",
+		"/datum/labelled\n\tvar/label\n\n/datum/labelled/kid\n\n/proc/first_def()\n"
+	);
+	reload(&mut watcher, &changes);
+	let labels = |client: &mut Client| ["default_one", "default_two", "default_three"].map(|text| eval(client, &format!("#string-refs {}", text)));
+	let report = "\"[(new /datum/labelled).label] [(new /datum/labelled/kid).label]\"";
+	assert_eq!(eval(&mut client, "#fail-reload append"), "the next reload fails at Append");
+	let changes = source.edit(
+		"reload.dm",
+		"\tvar/label\n",
+		"\tvar/label = \"default_one\"\n\n/proc/label_unappended()\n\treturn 1\n"
+	);
+	let result = expect_reload_result(watcher.request(reload_request(&changes)));
+	assert!(!result.applied, "a reload whose proc wasn't added was applied: {:?}", result);
+	assert_eq!(labels(&mut client), ["0", "0", "0"], "after a failed reload");
+	reload(&mut watcher, &changes);
+	assert_eq!(labels(&mut client), ["2", "0", "0"], "after a default reached a type and its subtype");
+	let changes = source.edit_many("reload.dm", &[
+		("\"default_one\"", "\"default_two\""),
+		("/datum/labelled/kid\n", "/datum/labelled/kid\n\tlabel = \"default_one\"\n")
+	]);
+	reload(&mut watcher, &changes);
+	assert_eq!(
+		labels(&mut client),
+		["1", "1", "0"],
+		"after the default changed and the subtype kept the old one"
+	);
+	let changes = source.edit("reload.dm", "\"default_two\"", "\"default_three\"");
+	reload(&mut watcher, &changes);
+	assert_eq!(labels(&mut client), ["1", "0", "1"], "after the default changed again");
+	assert_eq!(eval(&mut client, report), "\"default_three default_one\"");
+	let changes = source.edit_many("reload.dm", &[
+		("\tlabel = \"default_one\"\n", ""),
+		("/datum/labelled/kid\n", "/datum/labelled/kid\n\n/datum/labelled/later\n")
+	]);
+	reload(&mut watcher, &changes);
+	assert_eq!(
+		labels(&mut client),
+		["0", "0", "3"],
+		"after the subtype took the default and a new one got it"
+	);
+	let changes = source.edit("reload.dm", "\tvar/label = \"default_three\"\n", "\tvar/label\n");
+	reload(&mut watcher, &changes);
+	assert_eq!(labels(&mut client), ["0", "0", "0"], "after the default was cleared");
+	assert_eq!(eval(&mut client, report), "\" \"");
+	println!("ok: a var's default holds one reference to its string for each type that has it");
+
 	assert_eq!(eval(&mut client, "#fail-reload append"), "the next reload fails at Append");
 	let changes = source.edit(
 		"reload.dm",

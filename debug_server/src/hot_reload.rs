@@ -50,7 +50,8 @@ pub struct Prepared {
 	instances: Vec<(u32, runtime_tables::Instance, ProcEntryWords)>,
 	builtin_inherits: Vec<(u32, String)>,
 	reparent: reparent::PreparedReparents,
-	new_types: Vec<String>
+	new_types: Vec<String>,
+	table_strings: Vec<StringRef>
 }
 
 struct PreparedNewVar {
@@ -537,7 +538,7 @@ pub fn prepare(request: &HotReloadRequest, warnings: &mut Vec<String>, skipped: 
 	}
 
 	for default in var_defaults {
-		if let Err(e) = prepare_var_default(default, &pending, &mut type_vars, &mut added) {
+		if let Err(e) = prepare_var_default(default, &pending, &mut type_vars, &mut added, &mut prepared.table_strings) {
 			errors.push(e);
 		}
 	}
@@ -1712,6 +1713,8 @@ fn add_type(new: &NewType) -> Result<Inherited, String> {
 	}
 	let inherited = inherited(parent)?;
 	let id = runtime_tables::add_type(parent, leaked_string(&new.path)?)?;
+	let table = runtime_tables::misc_words(runtime_tables::type_field(id, type_fields::VAR_TABLE)?).unwrap_or_default();
+	hold_table_strings(&[(id, table)], &[]);
 	for place in TEXT_PLACES {
 		if let Ok(TypeString::Made(text)) = type_string(parent, place) {
 			set_type_string(id, place, TypeString::Made(text))?;
@@ -1725,6 +1728,37 @@ fn add_type(new: &NewType) -> Result<Inherited, String> {
 }
 
 static TYPE_STRINGS: Mutex<BTreeMap<(u32, usize), u32>> = Mutex::new(BTreeMap::new());
+
+static TABLE_STRINGS: Mutex<BTreeMap<(u32, u32), u32>> = Mutex::new(BTreeMap::new());
+
+fn hold_table_strings(tables: &[(u32, Vec<u32>)], made: &[StringRef]) {
+	let string = raw_types::values::ValueTag::String.0 as u32;
+	let mut held = TABLE_STRINGS.lock().unwrap();
+	let known: HashSet<u32> = held.values().copied().chain(made.iter().map(|text| text.get_id().0)).collect();
+	let mut released = vec![];
+	for (type_id, table) in tables {
+		let now: BTreeMap<u32, u32> = (table.as_chunks::<4>().0.iter())
+			.filter(|&&[_, _, tag, id]| tag == string && known.contains(&id))
+			.map(|&[name, _, _, id]| (name, id))
+			.collect();
+		let before: Vec<(u32, u32)> = (held.range((*type_id, 0)..=(*type_id, u32::MAX)))
+			.map(|(&(_, name), &id)| (name, id))
+			.collect();
+		for (name, id) in before {
+			if now.get(&name) != Some(&id) {
+				held.remove(&(*type_id, name));
+				released.push(id);
+			}
+		}
+		for (name, id) in now {
+			if held.insert((*type_id, name), id).is_none() {
+				std::mem::forget(unsafe { StringRef::from_id(raw_types::strings::StringId(id)) });
+			}
+		}
+	}
+	drop(held);
+	released.into_iter().for_each(release_string);
+}
 
 static LISTED_STRINGS: Mutex<BTreeMap<(u32, u32), Option<u32>>> = Mutex::new(BTreeMap::new());
 
@@ -2246,10 +2280,24 @@ fn prepare_redeclared(
 	Ok(())
 }
 
-fn prepare_var_default(default: &VarDefault, pending: &Pending, type_vars: &mut TypeVars, added: &mut AddedVars) -> Result<(), String> {
+fn prepare_var_default(
+	default: &VarDefault,
+	pending: &Pending,
+	type_vars: &mut TypeVars,
+	added: &mut AddedVars,
+	strings: &mut Vec<StringRef>
+) -> Result<(), String> {
 	let fail = |e: String| format!("var {}: {}", default.var, e);
 
-	let value = const_value(&default.value, pending).map_err(fail)?;
+	let value = match &default.value {
+		ConstValue::String(text) => {
+			let string = StringRef::new(text).map_err(|_| fail(format!("couldn't make the string {}", text)))?;
+			let id = string.get_id().0;
+			strings.push(string);
+			(raw_types::values::ValueTag::String.0 as u32, id)
+		}
+		value => const_value(value, pending).map_err(fail)?
+	};
 	let key = StringRef::new(&default.var)
 		.map_err(|_| fail("couldn't make its name".to_owned()))?
 		.get_id()
@@ -2535,9 +2583,14 @@ pub fn apply<K: Ord + std::hash::Hash + Copy, T>(
 	for (proc, word, value) in prepared.entry_words {
 		runtime_tables::set_proc_entry_word(raw_types::procs::ProcId(proc), word, value);
 	}
+	let mut var_tables = vec![];
 	for (type_id, field, words) in prepared.type_fields {
 		let _ = runtime_tables::set_type_field(type_id, field, words);
+		if field == type_fields::VAR_TABLE {
+			var_tables.push((type_id, runtime_tables::misc_words(words).unwrap_or_default()));
+		}
 	}
+	hold_table_strings(&var_tables, &prepared.table_strings);
 	reparent::apply_builtins(&prepared.reparent, warnings, failures);
 	for (type_id, writes) in std::mem::take(&mut prepared.builtin_writes) {
 		if let Err(e) = failing(FailAt::Change).and_then(|()| write_builtins(type_id, writes)) {
@@ -3021,6 +3074,7 @@ fn world_has_debug_info() -> bool {
 fn forget_world() {
 	ADDED_GLOBALS.lock().unwrap().clear();
 	TYPE_STRINGS.lock().unwrap().clear();
+	TABLE_STRINGS.lock().unwrap().clear();
 	LISTED_STRINGS.lock().unwrap().clear();
 	UNSETTLED_TYPES.lock().unwrap().clear();
 	RELOADED.lock().unwrap().clear();
