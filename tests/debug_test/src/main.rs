@@ -745,42 +745,59 @@ fn loop_back_to_the_start() {
 	let back = (disassembly.instructions.iter().rev())
 		.find(|instruction| instruction.text.starts_with("Jmp"))
 		.unwrap_or_else(|| panic!("no jump back in {:?}", disassembly.instructions));
-	let response = client.request(Request::BreakpointSet {
-		instruction: InstructionRef {
-			proc: counted.proc.clone(),
-			offset: back.offset as u32
-		},
-		condition: None,
-		hit: None,
-		log: None,
-		exact: true
-	});
-	assert!(
-		matches!(response, Response::BreakpointSet {
-			result: BreakpointSetResult::Success { .. }
-		}),
-		"a breakpoint on `{}` got {:?}",
-		back.text,
-		response
-	);
+	let break_back = |client: &mut Client, condition: Option<&str>| {
+		let response = client.request(Request::BreakpointSet {
+			instruction: InstructionRef {
+				proc: counted.proc.clone(),
+				offset: back.offset as u32
+			},
+			condition: condition.map(str::to_owned),
+			hit: None,
+			log: None,
+			exact: true
+		});
+		assert!(
+			matches!(response, Response::BreakpointSet {
+				result: BreakpointSetResult::Success { .. }
+			}),
+			"a breakpoint on `{}` got {:?}",
+			back.text,
+			response
+		);
+	};
+	break_back(&mut client, None);
 	count_down(&mut client);
 	println!("ok: a loop back to the first instruction through a breakpoint isn't counted as calls");
 
-	eval(&mut client, None, "spawn()\n\tprofiled_countdown(3)");
-	client.resume();
-	assert_eq!(client.expect_pause(), BreakpointReason::Breakpoint);
-	assert_eq!(paused_at(&mut client), (counted.proc.path.clone(), back.offset as u32));
-	let response = client.request(Request::Continue {
-		kind: ContinueKind::StepOverInstruction { stack_id: 0 }
-	});
-	assert!(
-		matches!(response, Response::Ack),
-		"expected Ack for StepOverInstruction, got {:?}",
-		response
-	);
-	assert_eq!(client.expect_pause(), BreakpointReason::Step);
-	assert_eq!(paused_at(&mut client), (counted.proc.path.clone(), 0));
+	let step_back = |client: &mut Client| {
+		eval(client, None, "spawn()\n\tprofiled_countdown(3)");
+		client.resume();
+		assert_eq!(client.expect_pause(), BreakpointReason::Breakpoint);
+		assert_eq!(paused_at(client), (counted.proc.path.clone(), back.offset as u32));
+		let response = client.request(Request::Continue {
+			kind: ContinueKind::StepOverInstruction { stack_id: 0 }
+		});
+		assert!(
+			matches!(response, Response::Ack),
+			"expected Ack for StepOverInstruction, got {:?}",
+			response
+		);
+		assert_eq!(client.expect_pause(), BreakpointReason::Step);
+		assert_eq!(paused_at(client), (counted.proc.path.clone(), 0));
+	};
+	step_back(&mut client);
 	println!("ok: a step from a breakpoint on a loop back to the first instruction stops there");
+
+	let run_out = |client: &mut Client| {
+		break_back(client, Some("n < 0"));
+		client.resume();
+		std::thread::sleep(Duration::from_millis(200));
+		pause(client);
+	};
+	run_out(&mut client);
+	break_back(&mut client, Some("n < 10"));
+	step_back(&mut client);
+	println!("ok: a step from a conditional breakpoint on a loop back to the first instruction stops there");
 }
 
 fn paused_at(client: &mut Client) -> (String, u32) {

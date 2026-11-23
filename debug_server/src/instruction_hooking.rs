@@ -456,8 +456,10 @@ impl InstructionHook for Server {
 				}
 				_ => {}
 			}
-			STEPPER.last_frame = ctx;
-			STEPPER.last_opcode = original_opcode(opcode_ptr);
+			if !in_eval {
+				STEPPER.last_frame = ctx;
+				STEPPER.last_opcode = original_opcode(opcode_ptr);
+			}
 
 			match action {
 				DebuggerAction::None => {}
