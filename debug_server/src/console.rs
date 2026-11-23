@@ -12,6 +12,8 @@ pub enum Command<'a> {
 	FailReload(crate::hot_reload::FailAt),
 	#[cfg(feature = "test-commands")]
 	StringReferences(&'a str),
+	#[cfg(feature = "test-commands")]
+	NextSpawn(u64),
 	Help(&'static str)
 }
 
@@ -56,6 +58,9 @@ const STRING_REFS_USAGE: &str = "string-refs <text>";
 
 #[cfg(feature = "test-commands")]
 const FAIL_RELOAD_USAGE: &str = "fail-reload <append|change|copy>";
+
+#[cfg(feature = "test-commands")]
+const NEXT_SPAWN_USAGE: &str = "next-spawn <number>";
 
 const HELP_HELP: &str = "\
 Print this message or the help of the given subcommand(s)
@@ -116,6 +121,14 @@ pub fn parse(command: &str) -> Result<Command<'_>, String> {
 				None => Err(format!("error: a string is required\n\nUsage: {}\n", STRING_REFS_USAGE))
 			}
 		}
+		#[cfg(feature = "test-commands")]
+		"next-spawn" => {
+			at_most(&args, 1, NEXT_SPAWN_USAGE)?;
+			match args.first().map(|number| number.parse()) {
+				Some(Ok(number)) => Ok(Command::NextSpawn(number)),
+				_ => Err(format!("error: a spawn number is required\n\nUsage: {}\n", NEXT_SPAWN_USAGE))
+			}
+		}
 		"help" => {
 			at_most(&args, 1, "help [COMMAND]")?;
 			match args.first().copied() {
@@ -167,6 +180,8 @@ mod tests {
 		assert_eq!(parse("fail-reload append"), Ok(Command::FailReload(crate::hot_reload::FailAt::Append)));
 		#[cfg(feature = "test-commands")]
 		assert_eq!(parse("string-refs key"), Ok(Command::StringReferences("key")));
+		#[cfg(feature = "test-commands")]
+		assert_eq!(parse("next-spawn 16777217"), Ok(Command::NextSpawn(16777217)));
 		#[cfg(not(feature = "test-commands"))]
 		assert!(parse("skin").is_err() && parse("script").is_err() && parse("help skin").is_err() && parse("fail-reload append").is_err());
 	}

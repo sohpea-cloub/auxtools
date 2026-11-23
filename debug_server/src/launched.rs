@@ -349,9 +349,9 @@ fn spawn_next(_: &Value, _: &Value, _: Vec<Value>) -> auxtools::DMResult {
 }
 
 fn spawn_done(_: &Value, _: &Value, args: Vec<Value>) -> auxtools::DMResult {
-	let number = args.first().and_then(|number| number.as_number().ok());
+	let number = args.first().and_then(|number| number.as_string().ok()?.parse::<u64>().ok());
 	if let Some(number) = number {
-		crate::on_server(|server| server.spawn_done(number as u64, args.get(1).unwrap_or(&Value::NULL)));
+		crate::on_server(|server| server.spawn_done(number, args.get(1).unwrap_or(&Value::NULL)));
 	}
 	Ok(Value::NULL)
 }

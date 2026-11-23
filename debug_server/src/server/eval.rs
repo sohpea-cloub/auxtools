@@ -351,6 +351,11 @@ impl Server {
 				Ok(count) => count.to_string(),
 				Err(e) => format!("Failed: {}", e)
 			},
+			#[cfg(feature = "test-commands")]
+			Ok(console::Command::NextSpawn(number)) => {
+				spawn::number_next(number);
+				format!("the next spawn is number {}", number)
+			}
 			Ok(console::Command::Help(text)) => text.to_owned(),
 			Err(error) => error
 		}

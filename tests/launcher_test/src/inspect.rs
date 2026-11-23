@@ -795,6 +795,24 @@ fn spawned(pid: &str, code: &Path) {
 	);
 	println!("ok: spawned runtime error stacks");
 
+	let numbered = |number: &str| {
+		assert_eq!(
+			run(pid, &["eval", &format!("#next-spawn {}", number)], 0).out,
+			format!("the next spawn is number {}\n", number)
+		)
+	};
+	numbered("16777217");
+	let ran = run(pid, &["eval", "--spawn", "--wait", "--timeout", "20", "slow_double(7)"], 0);
+	assert_eq!(ran.out, "14\n", "unexpected eval output: {}", ran.err);
+	let printed = run(pid, &["log", "--spawned", "--last", "1"], 0).out;
+	assert!(printed.contains(" spawn 16777217: slow_double(7) returned 14\n"), "log said {}", printed);
+	numbered("16777219");
+	assert_eq!(
+		fails(pid, &["eval", "--spawn", "--wait", "--timeout", "20", "sleep(1)\nvar/n = 0\nreturn 1/n"]),
+		"runtime error: Division by zero"
+	);
+	println!("ok: spawn numbers that a DM number can't hold");
+
 	let printed = paused_at(pid.parse().unwrap(), "/proc/slow_double", || {
 		run(pid, &["eval", "--spawn", "slow_double(6)"], 0);
 	});

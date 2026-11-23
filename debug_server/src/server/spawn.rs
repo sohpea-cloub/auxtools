@@ -2,6 +2,11 @@ use super::*;
 
 static NEXT_SPAWN: AtomicU64 = AtomicU64::new(1);
 
+#[cfg(feature = "test-commands")]
+pub(super) fn number_next(number: u64) {
+	NEXT_SPAWN.store(number, Ordering::Relaxed);
+}
+
 pub(super) struct Spawn {
 	pub(super) number: u64,
 	pub(super) bytecode: Vec<u32>,
@@ -47,8 +52,9 @@ impl Spawns {
 				}
 				in_stub = true;
 			} else if in_stub && id == spawned.id {
-				let number = unsafe { Value::from_raw(*(**(*at).proc_instance()).args()) }.as_number().ok();
-				if let Some((_, error @ None)) = number.and_then(|number| self.spawned.get_mut(&(number as u64))) {
+				let number = unsafe { Value::from_raw(*(**(*at).proc_instance()).args()) }.as_string().ok();
+				let number = number.and_then(|number| number.parse::<u64>().ok());
+				if let Some((_, error @ None)) = number.and_then(|number| self.spawned.get_mut(&number)) {
 					*error = Some(format!("runtime error: {}", Evaluation::error_with_stack(message, ctx)));
 				}
 				return;
@@ -118,7 +124,7 @@ impl Server {
 			args.append(arg);
 		}
 		let next = List::new();
-		next.append(Value::from(spawn.number as f32));
+		next.append(Value::from_string(spawn.number.to_string())?);
 		next.append(Value::from(args));
 		Ok(Value::from(next))
 	}
