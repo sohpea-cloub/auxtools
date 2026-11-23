@@ -1367,6 +1367,37 @@ fn debugger(built: Built) {
 	let changes = source.edit(
 		"reload.dm",
 		"/proc/first_def()\n",
+		"/proc/slot_target()\n\tvar/slot_x = 1\n\ttwin_runs += slot_x\n\n/proc/first_def()\n"
+	);
+	reload(&mut watcher, &changes);
+	let adds = |client: &mut Client, line: u32| {
+		let on_line = line_instructions(client, "/slot_target", line);
+		let at = (on_line.iter().rev().find(|(_, text)| text.contains("twin_runs")))
+			.unwrap_or_else(|| panic!("no instruction on line {} uses twin_runs: {:?}", line, on_line))
+			.0;
+		assert!(at > on_line[0].0, "line {} starts with twin_runs: {:?}", line, on_line);
+		at
+	};
+	let before = adds(&mut client, source.line_of("reload.dm", "\ttwin_runs += slot_x"));
+	twin_breakpoint(&mut client, "slot_target", before, true);
+	let changes = source.edit("reload.dm", "\tvar/slot_x = 1\n", "\tvar/slot_w = 0\n\tvar/slot_x = 1 + slot_w\n");
+	let result = reload(&mut watcher, &changes);
+	assert!(result.warnings.is_empty(), "{:?}", result.warnings);
+	let line = source.line_of("reload.dm", "\ttwin_runs += slot_x");
+	let after = adds(&mut client, line);
+	let runs = twin_number(&mut client, "twin_runs");
+	eval(&mut client, "twin_armed = /proc/slot_target");
+	assert_eq!(client.expect_pause(), BreakpointReason::Breakpoint);
+	assert_eq!(paused_offset(&mut client), ("/slot_target".to_owned(), after));
+	client.resume();
+	wait_for(&mut client, "twin_runs", &(runs + 1).to_string());
+	twin_breakpoint(&mut client, "slot_target", before, false);
+	twin_run(&mut client, "slot_target", line, 1, false);
+	println!("ok: an instruction breakpoint after a local stays on its instruction when a new local renumbers it");
+
+	let changes = source.edit(
+		"reload.dm",
+		"/proc/first_def()\n",
 		"/proc/local_dropper()\n\tvar/dropped = 1\n\ttwin_waiting += 1\n\twhile (twin_hold) sleep(1)\n\ttwin_runs += \
 		 dropped\n\n/proc/lone_local()\n\tvar/gone = 2\n\treturn gone\n\n/proc/first_def()\n"
 	);

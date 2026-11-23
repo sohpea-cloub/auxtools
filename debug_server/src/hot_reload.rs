@@ -2685,6 +2685,8 @@ struct UnhookedCode<K, T> {
 	old_code: std::sync::Arc<crate::code_index::Code>,
 	old_bytecode: Vec<u32>,
 	old_file: Option<u32>,
+	old_locals: Vec<String>,
+	new_locals: Vec<String>,
 	lines: Option<Vec<(u32, u32)>>,
 	hooked: Vec<(u32, Option<u32>, Option<String>, Option<BTreeMap<K, T>>)>
 }
@@ -2726,14 +2728,10 @@ fn apply_code<K: Claimant, T>(
 	let old_bytecode = original_code(&p.proc).into_owned();
 	auxtools::remember_bytecode(old_ptr, &old_bytecode);
 	let old_file = debug_file(&old_bytecode);
+	let old_locals = auxtools::debug::local_names_for(&p.proc, old_ptr);
 	let lines = match &p.lines {
 		Some(lines) => Some(lines.clone()),
-		None if !hooked.is_empty() && old_file == debug_file(&p.bytecode) => Some(kept_lines(
-			&old_bytecode,
-			&auxtools::debug::local_names_for(&p.proc, old_ptr),
-			&p.bytecode,
-			&local_names
-		)),
+		None if !hooked.is_empty() && old_file == debug_file(&p.bytecode) => Some(kept_lines(&old_bytecode, &old_locals, &p.bytecode, &local_names)),
 		None => None
 	};
 
@@ -2762,6 +2760,7 @@ fn apply_code<K: Claimant, T>(
 	} else {
 		Ok(new_ptr)
 	};
+	let new_locals = local_names.clone();
 	match names_at {
 		Ok(at) => auxtools::debug::set_local_names(&p.proc, at, local_names),
 		Err(e) => failures.push(format!("{}: new calls show the old names of its locals: {}", p.name, e))
@@ -2774,6 +2773,8 @@ fn apply_code<K: Claimant, T>(
 		old_code,
 		old_bytecode,
 		old_file,
+		old_locals,
+		new_locals,
 		lines,
 		hooked
 	})
@@ -2790,6 +2791,8 @@ fn restore_breakpoints<K: Claimant, T>(
 		old_code,
 		old_bytecode,
 		old_file,
+		old_locals,
+		new_locals,
 		lines,
 		hooked
 	} = unhooked;
@@ -2879,8 +2882,15 @@ fn restore_breakpoints<K: Claimant, T>(
 				new_code
 					.offset_of(line, wanted)
 					.map(|start| {
-						let kept = (old_code.offset_of(old_line, wanted))
-							.and_then(|old_start| same_place(&old_code, &old_bytecode, old_start, old_offset, &p.bytecode, start, new_offset));
+						let kept = (old_code.offset_of(old_line, wanted)).and_then(|old_start| {
+							same_place(
+								&old_code,
+								(&old_bytecode, &old_locals, old_start),
+								old_offset,
+								(&p.bytecode, &new_locals, start),
+								new_offset
+							)
+						});
 						(kept.unwrap_or(start), format!("on line {}", line))
 					})
 					.ok_or_else(|| format!("{}: removed breakpoint on line {}: no executable code after reload", p.name, line))
@@ -2933,22 +2943,26 @@ fn jump_target(old: (&[u32], &[u32], u32), old_offset: u32, new: (&[u32], &[u32]
 
 fn same_place(
 	old_code: &crate::code_index::Code,
-	old: &[u32],
-	old_start: u32,
+	old: (&[u32], &[String], u32),
 	old_offset: u32,
-	new: &[u32],
-	new_start: u32,
+	new: (&[u32], &[String], u32),
 	new_offset: impl Fn(u32) -> Option<u32>
 ) -> Option<u32> {
+	let ((old, old_locals, old_start), (new, new_locals, new_start)) = (old, new);
 	let length = (old_offset.checked_sub(old_start)? as usize) + old_code.instruction_length(old_offset)?;
-	let span = |code: &[u32], start: u32| code.get(start as usize..start as usize + length).map(<[u32]>::to_vec);
-	let mut old_words = span(old, old_start)?;
-	for label in dmasm::scan(old).map(|scanned| scanned.label_operands).unwrap_or_default() {
-		if let Some(word) = (label.word_offset.checked_sub(old_start)).and_then(|at| old_words.get_mut(at as usize)) {
-			*word = new_offset(label.target)?;
+	let (old_scan, new_scan) = (dmasm::scan(old).ok()?, dmasm::scan(new).ok()?);
+	let mut old_words = named_words(old, old_locals, &old_scan.local_operands);
+	for label in &old_scan.label_operands {
+		if (old_start..old_start + length as u32).contains(&label.word_offset) {
+			old_words[label.word_offset as usize] = Word::Same(new_offset(label.target)?);
 		}
 	}
-	(old_words == span(new, new_start)?).then_some(new_start + (old_offset - old_start))
+	let new_words = named_words(new, new_locals, &new_scan.local_operands);
+	let (old_span, new_span) = (
+		old_start as usize..old_start as usize + length,
+		new_start as usize..new_start as usize + length
+	);
+	(old_words.get(old_span)? == new_words.get(new_span)?).then_some(new_start + (old_offset - old_start))
 }
 
 fn keep_claims<K: Ord, T>(
@@ -3209,16 +3223,21 @@ enum Word<'a> {
 	Jump
 }
 
+fn named_words<'a>(bytecode: &[u32], locals: &'a [String], local_operands: &[u32]) -> Vec<Word<'a>> {
+	let mut words: Vec<Word> = bytecode.iter().map(|&word| Word::Same(word)).collect();
+	for &at in local_operands {
+		words[at as usize] = Word::Local(locals.get(bytecode[at as usize] as usize).map(String::as_str));
+	}
+	words
+}
+
 fn line_code<'a>(bytecode: &[u32], locals: &'a [String]) -> Vec<(Option<u32>, Vec<Word<'a>>)> {
 	let Ok(scanned) = dmasm::scan(bytecode) else {
 		return vec![];
 	};
-	let mut words: Vec<Word> = bytecode.iter().map(|&word| Word::Same(word)).collect();
+	let mut words = named_words(bytecode, locals, &scanned.local_operands);
 	for label in &scanned.label_operands {
 		words[label.word_offset as usize] = Word::Jump;
-	}
-	for &at in &scanned.local_operands {
-		words[at as usize] = Word::Local(locals.get(bytecode[at as usize] as usize).map(String::as_str));
 	}
 	let (mut lines, mut file, mut inside) = (vec![], None, true);
 	for ins in scanned.instructions {
