@@ -40,7 +40,7 @@ impl ByondVersion {
         self.at_least(1644)
     }
 
-    pub(crate) const fn rounds_radians_to_single(self) -> bool {
+    pub(crate) const fn has_single_inverse_trig(self) -> bool {
         self.at_least(1644)
     }
 

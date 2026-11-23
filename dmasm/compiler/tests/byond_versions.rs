@@ -133,25 +133,18 @@ fn sin_and_cos_of_quarter_turns_are_exact_from_516() {
 }
 
 #[test]
-fn inverse_trig_rounds_radians_from_515_1647() {
+fn inverse_trig_folds_in_f64() {
     assert_eq!(ret(B515_1637, "arctan(16777215)"), "PushInt 90");
-    assert_eq!(
-        ret(ByondVersion::new(515, 1643), "arctan(16777215)"),
-        "PushInt 90"
-    );
-    assert_eq!(
-        ret(ByondVersion::new(515, 1644), "arctan(16777215)"),
-        "PushVal 89.99999"
-    );
+    assert_eq!(ret(B516_1688, "arctan(16777215)"), "PushInt 90");
     assert_eq!(ret(B515_1637, "arctan(2)"), "PushVal 63.434948");
-    assert_eq!(ret(B516_1688, "arctan(2)"), "PushVal 63.43495");
-    assert_eq!(ret(B516_1688, "arctan(1, 2)"), "PushVal 63.43495");
-    assert_eq!(ret(B516_1688, "arctan(3, -4)"), "PushVal -53.1301");
+    assert_eq!(ret(B516_1688, "arctan(2)"), "PushVal 63.434948");
+    assert_eq!(ret(B516_1688, "arctan(1, 2)"), "PushVal 63.434948");
+    assert_eq!(ret(B516_1688, "arctan(3, -4)"), "PushVal -53.130104");
     assert_eq!(ret(B516_1688, "arctan(-1, -(0))"), "PushInt 180");
     assert_eq!(ret(B516_1688, "arctan(-1, 0 * -1)"), "PushInt 180");
     assert_eq!(ret(B516_1688, "arctan(-1, -0.5)"), "PushVal -153.43495");
     assert_eq!(ret(B515_1637, "arccos(0.7071)"), "PushVal 45.000553");
-    assert_eq!(ret(B516_1688, "arccos(0.7071)"), "PushVal 45.00055");
+    assert_eq!(ret(B516_1688, "arccos(0.7071)"), "PushVal 45.000553");
     assert_eq!(ret(B516_1688, "arcsin(0.5)"), "PushInt 30");
     assert_eq!(ret(B516_1688, "arcsin(2)"), "PushInt 2\nArcSin");
 }

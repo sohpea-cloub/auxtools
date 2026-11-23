@@ -63,11 +63,13 @@ takes the reciprocal and sets the sign as needed. Each of these steps changes th
 they must stay in this order. `arctan(x, -0)` treats the second argument as zero. `%%` folds
 with the f64 `fmod`.
 
-From 515.1644, Linux DreamMaker rounds the radians of inverse trigonometric functions to f32
-before it converts them to degrees. Windows uses f64 throughout. So some constants differ by one
-f32 rounding step. For example, `arctan(2)` is 63.43495 on Linux and 63.434948 on Windows.
-DreamDaemon computes angles as Linux does, on both platforms. The compiler warns when Windows
-DreamMaker would fold to another value.
+Inverse trigonometric functions fold in f64 and round once to f32. DreamMaker on Windows, and
+on Linux before 515.1644, calls the f64 functions. From 515.1644, Linux DreamMaker calls the f32
+functions of glibc. Before glibc 2.41, they return the x87 result without rounding it, so the
+folded value is the same. From glibc 2.41, they round the radians to f32, and some constants
+differ by one f32 rounding step. For example, `arctan(2)` is 63.434948, and 63.43495 with glibc
+2.41. This was checked with glibc 2.35, 2.36, 2.39 and 2.41. The compiler warns when glibc 2.41
+would give another value.
 
 ### Colors
 
@@ -89,8 +91,9 @@ other than 1, 2 and 3 selects RGB. In a condition, the result is always true in 
 so the compiler doesn't build the list. HSV, HSL and HCY results are computed at runtime,
 because their folded precision differs between builds and platforms.
 
-At runtime, color conversion follows the platform that DreamDaemon runs on. Angle conversion
-follows Linux on both platforms. Sweeps of numeric, text, statement and builtin code found no
+At runtime, color conversion follows the platform that DreamDaemon runs on. On Linux, angle
+conversion follows the glibc that DreamDaemon runs with, as DreamMaker does. Windows DreamDaemon
+rounds the radians to f32 in every build, as checked under Wine. Sweeps of numeric, text, statement and builtin code found no
 other platform differences, except for bit operations on out-of-range operands.
 
 ## Equivalent encodings
@@ -199,8 +202,8 @@ same ID as its warning.
 
 The compiler warns about division in parameter defaults, safe-call objects, logical assignment
 before 516.1673, indexed pointer assignment from 516.1668, `*(&x)` before 516.1668,
-out-of-range bit operands, `pick()` ending in a zero weight before 516.1689, and angles and
-colors that fold to other values on Windows.
+out-of-range bit operands, `pick()` ending in a zero weight before 516.1689, angles that fold to
+other values with glibc 2.41, and colors that fold to other values on Windows.
 
 dmasm also warns about two DreamMaker quirks that it copies:
 

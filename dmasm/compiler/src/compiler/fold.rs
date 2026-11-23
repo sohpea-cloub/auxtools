@@ -221,21 +221,28 @@ fn static_const(
 }
 
 fn warn_angle(c: &Compiler, what: &str, folded: f32, radians: f64) {
-    let windows = super::versions::degrees_on_windows(radians) as f32;
-    if windows != folded && !folded.is_nan() {
+    if !c.byond.has_single_inverse_trig() {
+        return;
+    }
+    let rounded = super::versions::degrees_of_single_radians(radians) as f32;
+    if rounded != folded && !folded.is_nan() {
         c.warn(
             crate::diagnostic::Id::FoldedAngle,
             &format!(
-                "{what} is folded to {folded}, matching Linux DreamMaker and runtime evaluation: \
-             Windows DreamMaker folds it to {windows}."
+                "{what} is folded to {folded}, as DreamMaker does on Windows and on Linux with \
+             glibc before 2.41: Linux DreamMaker with glibc 2.41 or later folds it to {rounded}."
             ),
         );
     }
 }
 
+fn arctan2_radians(x: f32, y: f32) -> f64 {
+    (y as f64 + 0.0).atan2(x as f64)
+}
+
 fn math1(name: &str, x: f32, byond: crate::ByondVersion) -> Option<Option<f32>> {
     let d = x as f64;
-    let degrees = |radians: f64| super::versions::degrees(byond, radians);
+    let degrees = super::versions::degrees;
     let r = match name {
         "sqrt" => (!(d < 0.0)).then(|| d.sqrt()),
         "ceil" => Some(d.ceil()),
@@ -349,8 +356,8 @@ fn base_value(c: &Compiler, term: &Term) -> Option<Constant> {
             if x == 0.0 && y == 0.0 {
                 return Some(Constant::Number(0.0));
             }
-            let radians = (y as f64 + 0.0).atan2(x as f64);
-            let folded = super::versions::degrees(c.byond, radians) as f32;
+            let radians = arctan2_radians(x, y);
+            let folded = super::versions::degrees(radians) as f32;
             warn_angle(c, &format!("arctan({x}, {y})"), folded, radians);
             Constant::Number(folded)
         }
@@ -769,4 +776,40 @@ pub(super) fn hsl_text(h: f32, s: f32, l: f32, nudge: f64) -> String {
     let m = l - chroma / 2.0;
     let byte = |v: f64| channel(v + m, nudge);
     format!("#{}{}{}", byte(r), byte(g), byte(b))
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    #[allow(clippy::approx_constant)]
+    fn inverse_trig_folds_to_dreammakers_bits() {
+        let byond = crate::ByondVersion::LATEST;
+        for (name, x, bits) in [
+            ("arctan", 2.0, 0x427dbd63),
+            ("arctan", -2.0, 0xc27dbd63),
+            ("arctan", 16777215.0, 0x42b40000),
+            ("arctan", 0.5, 0x41d4853a),
+            ("arccos", 0.7071, 0x42340091),
+            ("arccos", -0.99, 0x432be3f1),
+            ("arccos", 0.8660254, 0x41f00001),
+            ("arccos", 0.725, 0x422e1fe6),
+            ("arcsin", 0.8660254, 0x42700000),
+            ("arcsin", 0.22378391, 0x414ee6ed),
+            ("arcsin", 0.06897236, 0x407d1e25),
+            ("arcsin", -0.4847809, 0xc1e7fc26),
+        ] {
+            let folded = super::math1(name, x, byond).flatten().map(f32::to_bits);
+            assert_eq!(folded, Some(bits), "{name}({x})");
+        }
+        for (x, y, bits) in [
+            (1.0, 2.0, 0x427dbd63),
+            (3.0, -4.0, 0xc254853a),
+            (2.0, 1.0, 0x41d4853a),
+            (-3.0, 4.0, 0x42fdbd63),
+            (-344.5, 1.2506207, 0x4333cac1),
+        ] {
+            let folded = super::super::versions::degrees(super::arctan2_radians(x, y)) as f32;
+            assert_eq!(folded.to_bits(), bits, "arctan({x}, {y})");
+        }
+    }
 }

@@ -178,7 +178,8 @@
 // Guards: folds_at_the_edges (byond_versions.rs)
 /proc/f(a)
 	return (1 << 33)
-// Guards: inverse_trig_rounds_radians_from_515_1647 (byond_versions.rs)
+// Guards: inverse_trig_folds_in_f64 (byond_versions.rs)
+// Known 515.1644- on glibc 2.41: /proc/f  with glibc 2.41 or later, Linux DreamMaker rounds the radians of inverse trigonometric functions to f32; dmasm folds in f64, as DreamMaker on Windows and with older glibc does
 /proc/f(a)
 	return arctan(16777215)
 // Guards: a_colour_of_constants_is_its_text_in_any_colour_space (byond_versions.rs)
@@ -205,7 +206,8 @@
 // Guards: folds_at_the_edges (byond_versions.rs)
 /proc/f(a)
 	return (255 >> 36)
-// Guards: inverse_trig_rounds_radians_from_515_1647 (byond_versions.rs)
+// Guards: inverse_trig_folds_in_f64 (byond_versions.rs)
+// Known 515.1644- on glibc 2.41: /proc/f  with glibc 2.41 or later, Linux DreamMaker rounds the radians of inverse trigonometric functions to f32; dmasm folds in f64, as DreamMaker on Windows and with older glibc does
 /proc/f(a)
 	return arctan(2)
 // Guards: a_colour_of_constants_is_its_text_in_any_colour_space (byond_versions.rs)
@@ -227,7 +229,8 @@
 // Guards: a_colour_of_constants_is_its_text_in_any_colour_space (byond_versions.rs)
 /proc/f(a)
 	return rgb(h = 120, s = 100, l = 60) + "x"
-// Guards: inverse_trig_rounds_radians_from_515_1647 (byond_versions.rs)
+// Guards: inverse_trig_folds_in_f64 (byond_versions.rs)
+// Known 515.1644- on glibc 2.41: /proc/f  with glibc 2.41 or later, Linux DreamMaker rounds the radians of inverse trigonometric functions to f32; dmasm folds in f64, as DreamMaker on Windows and with older glibc does
 /proc/f(a)
 	return arctan(1, 2)
 // Guards: log_folds_in_double_precision_before_515_1644 (byond_versions.rs)
@@ -248,7 +251,8 @@
 // Builds: 515.1644-
 /proc/f(a)
 	return __PROC__
-// Guards: inverse_trig_rounds_radians_from_515_1647 (byond_versions.rs)
+// Guards: inverse_trig_folds_in_f64 (byond_versions.rs)
+// Known 515.1644- on glibc 2.41: /proc/f  with glibc 2.41 or later, Linux DreamMaker rounds the radians of inverse trigonometric functions to f32; dmasm folds in f64, as DreamMaker on Windows and with older glibc does
 /proc/f(a)
 	return arctan(3, -4)
 // Guards: nan_tests_fold_from_516 (byond_versions.rs)
@@ -261,14 +265,14 @@
 // Guards: folds_at_the_edges (byond_versions.rs)
 /proc/f(a)
 	return (255 >> 131073)
-// Guards: inverse_trig_rounds_radians_from_515_1647 (byond_versions.rs)
+// Guards: inverse_trig_folds_in_f64 (byond_versions.rs)
 /proc/f(a)
 	return arctan(-1, -(0))
 // Guards: a_colour_of_constants_is_its_text_in_any_colour_space (byond_versions.rs)
 // Known -515.1646: /proc/f  dmasm leaves a colour near a rounding boundary to run before 515.1647, whose DreamMaker rounds it otherwise
 /proc/f(a)
 	return rgb(0, 60, 25, space = COLORSPACE_HSV)
-// Guards: inverse_trig_rounds_radians_from_515_1647 (byond_versions.rs)
+// Guards: inverse_trig_folds_in_f64 (byond_versions.rs)
 /proc/f(a)
 	return arctan(-1, 0 * -1)
 // Guards: rarer_forms_of_builtins (byond_versions.rs)
@@ -284,7 +288,7 @@
 // Known -515.1646: /proc/f  dmasm leaves a colour near a rounding boundary to run before 515.1647, whose DreamMaker rounds it otherwise
 /proc/f(a)
 	return rgb(200, 100, 75, space = COLORSPACE_HSV)
-// Guards: inverse_trig_rounds_radians_from_515_1647 (byond_versions.rs)
+// Guards: inverse_trig_folds_in_f64 (byond_versions.rs)
 /proc/f(a)
 	return arctan(-1, -0.5)
 // Guards: folds_at_the_edges (byond_versions.rs)
@@ -297,7 +301,8 @@
 // Known -515.1646: /proc/f  dmasm leaves a colour near a rounding boundary to run before 515.1647, whose DreamMaker rounds it otherwise
 /proc/f(a)
 	return rgb(0, 0, 70, space = COLORSPACE_HSV)
-// Guards: inverse_trig_rounds_radians_from_515_1647 (byond_versions.rs)
+// Guards: inverse_trig_folds_in_f64 (byond_versions.rs)
+// Known 515.1644- on glibc 2.41: /proc/f  with glibc 2.41 or later, Linux DreamMaker rounds the radians of inverse trigonometric functions to f32; dmasm folds in f64, as DreamMaker on Windows and with older glibc does
 /proc/f(a)
 	return arccos(0.7071)
 // Guards: folds_at_the_edges (byond_versions.rs)
@@ -329,7 +334,7 @@
 // Guards: rounding_folds_from_516 (byond_versions.rs)
 /proc/f(a)
 	return ceil(2.5)
-// Guards: inverse_trig_rounds_radians_from_515_1647 (byond_versions.rs)
+// Guards: inverse_trig_folds_in_f64 (byond_versions.rs)
 /proc/f(a)
 	return arcsin(0.5)
 // Guards: rarer_forms_of_builtins (byond_versions.rs)

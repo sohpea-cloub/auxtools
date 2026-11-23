@@ -1760,7 +1760,7 @@ fn a_constant_condition_from_another_file_names_the_line_again() {
 }
 
 #[test]
-fn a_fold_that_windows_has_differently_is_warned_about() {
+fn a_fold_that_differs_by_platform_is_warned_about() {
     let latest = dmasm_compiler::ByondVersion::LATEST;
     let warnings =
         |expr: &str, byond| warnings_for(&format!("/proc/f(a)\n\treturn {expr}\n"), byond);
@@ -1774,12 +1774,18 @@ fn a_fold_that_windows_has_differently_is_warned_about() {
     };
     warned(
         "arctan(2)",
-        "arctan(2) is folded to 63.43495, matching Linux DreamMaker and runtime evaluation",
+        "arctan(2) is folded to 63.434948, as DreamMaker does on Windows",
     );
-    warned("arctan(2)", "Windows DreamMaker folds it to 63.434948");
-    warned("arccos(0.7)", "Windows DreamMaker folds it to 45.572998");
-    warned("arctan(1, 2)", "arctan(1, 2) is folded to 63.43495");
-    warned("arctan(16777215)", "folds it to 90.");
+    warned(
+        "arctan(2)",
+        "with glibc 2.41 or later folds it to 63.43495.",
+    );
+    warned(
+        "arccos(0.7)",
+        "with glibc 2.41 or later folds it to 45.572994.",
+    );
+    warned("arctan(1, 2)", "arctan(1, 2) is folded to 63.434948");
+    warned("arctan(16777215)", "folds it to 89.99999.");
     quiet("arctan(1)", latest);
     quiet("arcsin(0.5)", latest);
     quiet("arctan(a)", latest);

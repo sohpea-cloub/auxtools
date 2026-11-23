@@ -1,5 +1,6 @@
 // Guards: the code of a reduced fuzz case: byond mode on 516.1688, seed 5359, "515.1637: new: globals differ"
 // Known 516.1670-516.1670: /proc/gh41  516.1670's DreamMaker leaves out reading the flag after an `isnan()` or `isinf()` it runs, which crashes the server (a BYOND bug); dmasm reads it
+// Known 515.1644- on glibc 2.41: /obj/fz/s5/t149  with glibc 2.41 or later, Linux DreamMaker rounds the radians of inverse trigonometric functions to f32; dmasm folds in f64, as DreamMaker on Windows and with older glibc does
 #define DEBUG
 
 #define FZD3 1

@@ -44,16 +44,12 @@ pub(super) fn log(byond: ByondVersion, x: f32, base: f32) -> f32 {
     }
 }
 
-pub(super) fn degrees(byond: ByondVersion, radians: f64) -> f64 {
-    if byond.rounds_radians_to_single() {
-        radians as f32 as f64 * 180.0 / std::f64::consts::PI
-    } else {
-        degrees_on_windows(radians)
-    }
+pub(super) fn degrees(radians: f64) -> f64 {
+    radians / (std::f64::consts::PI / 180.0)
 }
 
-pub(super) fn degrees_on_windows(radians: f64) -> f64 {
-    radians / (std::f64::consts::PI / 180.0)
+pub(super) fn degrees_of_single_radians(radians: f64) -> f64 {
+    degrees(radians as f32 as f64)
 }
 
 pub(super) const DEFAULT_NAN: f64 = f64::from_bits(0xFFF8_0000_0000_0000);
