@@ -74,10 +74,7 @@ fn read_hello(stream: Stream) -> io::Result<(Stream, Hello)> {
 		connection.hang_up();
 		return Err(io::Error::new(
 			io::ErrorKind::TimedOut,
-			format!(
-				"the debug library did not answer within {} seconds of connecting. The process is stopped or hung",
-				HELLO_PATIENCE.as_secs()
-			)
+			format!("the debug library did not send its handshake within {} seconds", HELLO_PATIENCE.as_secs())
 		));
 	};
 	let hello = hello?;
