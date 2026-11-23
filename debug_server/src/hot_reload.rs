@@ -1778,7 +1778,7 @@ enum BuiltinWrite {
 	Half(usize, u16),
 	Byte(usize, u8),
 	Bits(usize, u32, u32),
-	Listed(u32, Vec<u32>),
+	Listed(StringRef, Vec<u32>, Option<StringRef>),
 	Mob(&'static str, u32)
 }
 
@@ -1886,13 +1886,21 @@ fn builtin_writes(var: &str, value: &ConstValue) -> Result<Vec<BuiltinWrite>, St
 		| "default_verb_category"
 		| "edge_limit"
 		| "mouse_pointer_icon" => {
-			let (tag, data) = const_value(value, &Pending::default())?;
+			let text = match value {
+				ConstValue::String(text) => Some(StringRef::new(text).map_err(|_| format!("couldn't make the string {}", text))?),
+				_ => None
+			};
+			let (tag, data) = match &text {
+				Some(text) => (0x06, text.get_id().0),
+				None => const_value(value, &Pending::default())?
+			};
 			let words = if tag == 0x2A {
 				vec![tag, data >> 16, data & 0xFFFF]
 			} else {
 				vec![tag | ((data & 0xFF_0000) >> 8), data & 0xFFFF]
 			};
-			vec![Listed(leaked_string(var)?, words)]
+			let name = StringRef::new(var).map_err(|_| format!("couldn't make the string {}", var))?;
+			vec![Listed(name, words, text)]
 		}
 		"key" => vec![Text(MOB_KEY, string()?)],
 		"sight" => vec![Mob("sight", number()? as u32)],
@@ -1914,21 +1922,24 @@ fn write_builtins(type_id: u32, writes: Vec<BuiltinWrite>) -> Result<(), String>
 				let word = type_field(type_id, offset)?;
 				set_type_field(type_id, offset, (word & !mask) | bits)?;
 			}
-			BuiltinWrite::Listed(name, value) => {
+			BuiltinWrite::Listed(name, value, text) => {
+				let name_id = name.get_id().0;
 				let list = runtime_tables::misc_words(type_field(type_id, type_fields::BUILTIN_VALUES)?).unwrap_or_default();
 				let mut words = vec![];
 				let mut at = 0;
 				while at < list.len() {
 					let len = if list.get(at + 1).is_some_and(|tag| tag & 0xFF == 0x2A) { 4 } else { 3 };
 					let entry = &list[at..(at + len).min(list.len())];
-					if entry[0] != name {
+					if entry[0] != name_id {
 						words.extend_from_slice(entry);
 					}
 					at += len;
 				}
-				words.push(name);
+				words.push(name_id);
 				words.extend_from_slice(&value);
 				set_type_field(type_id, type_fields::BUILTIN_VALUES, runtime_tables::intern_misc(&words)?)?;
+				std::mem::forget(name);
+				std::mem::forget(text);
 			}
 			BuiltinWrite::Mob(var, value) => runtime_tables::set_mob_type(type_id, |mob| match var {
 				"sight" => mob.sight = value,

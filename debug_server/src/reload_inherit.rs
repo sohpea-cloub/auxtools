@@ -89,7 +89,8 @@ pub(super) fn copy_builtin(type_id: u32, from: u32, var: &str) -> Result<(), Str
 				let word = type_field(type_id, offset)?;
 				set_type_field(type_id, offset, (word & !mask) | (type_field(from, offset)? & mask))?
 			}
-			Listed(name, _) => {
+			Listed(name, ..) => {
+				let name = name.get_id().0;
 				let mut entries: Vec<Vec<u32>> = listed(type_id)?.into_iter().filter(|e| e[0] != name).collect();
 				entries.extend(listed(from)?.into_iter().filter(|e| e[0] == name));
 				set_listed(type_id, &entries)?;

@@ -1923,25 +1923,37 @@ fn types(built: Built) {
 	assert_eq!(eval(&mut client, "initial(/obj/crate/labelled/small::desc)"), "\"label_two\"");
 	println!("ok: a type releases the strings it no longer has");
 
+	let target_name: u32 = eval(&mut client, "#string-refs render_target").parse().unwrap();
 	assert_eq!(eval(&mut client, "#fail-reload append"), "the next reload fails at Append");
 	let changes = source.edit(
 		"reload.dm",
 		"\tkey = null\n",
-		"\tkey = null\n\tdesc = \"unwritten_desc\"\n\n/proc/unappended()\n\treturn 1\n"
+		"\tkey = null\n\tdesc = \"unwritten_desc\"\n\trender_target = \"unwritten_target\"\n\n/proc/unappended()\n\treturn 1\n"
 	);
 	let result = expect_reload_result(watcher.request(reload_request(&changes)));
 	assert!(!result.applied, "a reload whose proc wasn't added was applied: {:?}", result);
 	assert_eq!(
-		eval(&mut client, "#string-refs unwritten_desc"),
-		"0",
-		"the references to a desc that a failed reload didn't write"
+		refs(&mut client, ["unwritten_desc", "unwritten_target"]),
+		["0", "0"],
+		"the references to a desc and a render_target that a failed reload didn't write"
+	);
+	assert_eq!(
+		eval(&mut client, "#string-refs render_target"),
+		target_name.to_string(),
+		"the references to render_target's name after a failed reload"
 	);
 	reload(&mut watcher, &changes);
 	assert_eq!(
-		eval(&mut client, "#string-refs unwritten_desc"),
-		"4",
-		"the references to a desc that four mob types got"
+		refs(&mut client, ["unwritten_desc", "unwritten_target"]),
+		["4", "4"],
+		"the references to a desc and a render_target that four mob types got"
 	);
+	assert_eq!(
+		eval(&mut client, "#string-refs render_target"),
+		(target_name + 4).to_string(),
+		"the references to render_target's name after four mob types got it"
+	);
+	assert_eq!(eval(&mut client, "(new /mob/helper/small).render_target"), "\"unwritten_target\"");
 	println!("ok: a failed reload holds no reference to the strings it didn't write");
 
 	assert_eq!(eval(&mut client, "#fail-reload append"), "the next reload fails at Append");
