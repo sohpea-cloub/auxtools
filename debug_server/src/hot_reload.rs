@@ -3228,7 +3228,7 @@ fn remap_lines(bytecode: &[u32], lines: &[(u32, u32)]) -> Option<Vec<u32>> {
 	changed.then_some(out)
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 enum Word<'a> {
 	Same(u32),
 	Local(Option<&'a str>),
@@ -3306,6 +3306,14 @@ fn kept_lines(old: &[u32], old_locals: &[String], new: &[u32], new_locals: &[Str
 	}
 	pairs.extend((0..suffix).map(|i| (old.len() - suffix + i, new.len() - suffix + i)));
 
+	let (old_paired, new_paired): (HashSet<usize>, HashSet<usize>) = pairs.iter().copied().unzip();
+	let new_unique = unique_lines(&new, &new_paired);
+	let mut moved: Vec<(usize, usize)> = (unique_lines(&old, &old_paired).into_iter())
+		.filter_map(|(code, i)| Some((i, *new_unique.get(&code)?)))
+		.collect();
+	moved.sort_unstable();
+	pairs.extend(moved);
+
 	let mut lines = BTreeMap::new();
 	for (i, j) in pairs {
 		if let (Some(old_line), Some(new_line)) = (old[i].0, new[j].0) {
@@ -3313,6 +3321,17 @@ fn kept_lines(old: &[u32], old_locals: &[String], new: &[u32], new_locals: &[Str
 		}
 	}
 	lines.into_iter().collect()
+}
+
+fn unique_lines<'b, 'a>(lines: &'b [(Option<u32>, Vec<Word<'a>>)], paired: &HashSet<usize>) -> HashMap<(bool, &'b [Word<'a>]), usize> {
+	let mut found: HashMap<_, (usize, usize)> = HashMap::new();
+	for (i, (line, code)) in lines.iter().enumerate() {
+		found.entry((line.is_some(), code.as_slice())).or_insert((0, i)).0 += 1;
+	}
+	(found.into_iter())
+		.filter(|(_, (count, i))| *count == 1 && !paired.contains(i))
+		.map(|(code, (_, i))| (code, i))
+		.collect()
 }
 
 fn map_line(line: u32, lines: &[(u32, u32)]) -> u32 {
@@ -3658,6 +3677,10 @@ impl dmasm::disassembler::DisassembleEnv for LenientDisassembleEnv {
 mod tests {
 	use super::{kept_lines, map_line, remap_lines};
 
+	fn names(names: &[&str]) -> Vec<String> {
+		names.iter().map(|name| name.to_string()).collect()
+	}
+
 	#[test]
 	fn lines_move_with_the_closest_known_line_above() {
 		let lines = [(10, 12), (14, 20)];
@@ -3702,11 +3725,30 @@ mod tests {
 			line, 10, push, 1, set, LOCAL, 0, line, 11, push, 0, set, LOCAL, 1, line, 12, push, 2, set, LOCAL, 2, line, 13, get, LOCAL, 2, jmp, 14,
 			ret
 		];
-		let names = |names: &[&str]| names.iter().map(|name| name.to_string()).collect::<Vec<_>>();
 		assert_eq!(kept_lines(&old, &names(&["a", "b"]), &new, &names(&["a", "c", "b"])), [
 			(10, 10),
 			(11, 12),
 			(12, 13)
+		]);
+	}
+
+	#[test]
+	fn keeps_both_of_two_swapped_lines() {
+		use dmasm::Opcode::*;
+		const LOCAL: u32 = 0xFFDA;
+		let (line, push, set, ret) = (DbgLine.word(), PushInt.word(), SetVar.word(), Ret.word());
+		let statement = |number: u32, value: u32| [line, number, push, value, set, LOCAL, 0];
+		let code = |values: [u32; 4]| -> Vec<u32> {
+			(values.iter().zip(10..))
+				.flat_map(|(&value, number)| statement(number, value))
+				.chain([ret])
+				.collect()
+		};
+		assert_eq!(kept_lines(&code([1, 2, 3, 4]), &names(&["a"]), &code([1, 3, 2, 4]), &names(&["a"])), [
+			(10, 10),
+			(11, 12),
+			(12, 11),
+			(13, 13)
 		]);
 	}
 }

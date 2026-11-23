@@ -1404,6 +1404,34 @@ fn debugger(built: Built) {
 	let changes = source.edit(
 		"reload.dm",
 		"/proc/first_def()\n",
+		"/proc/swap_target()\n\tvar/swapped = 0\n\tswapped += 2\n\tswapped *= 3\n\ttwin_runs++\n\n/proc/first_def()\n"
+	);
+	reload(&mut watcher, &changes);
+	let line = source.line_of("reload.dm", "\tswapped += 2");
+	let before = [line, line + 1].map(|line| offset_of(&mut client, "/swap_target", line));
+	for offset in before {
+		twin_breakpoint(&mut client, "swap_target", offset, true);
+	}
+	let changes = source.edit("reload.dm", "\tswapped += 2\n\tswapped *= 3\n", "\tswapped *= 3\n\tswapped += 2\n");
+	let result = reload(&mut watcher, &changes);
+	assert!(result.warnings.is_empty(), "{:?}", result.warnings);
+	let runs = twin_number(&mut client, "twin_runs");
+	eval(&mut client, "twin_armed = /proc/swap_target");
+	for line in [line, line + 1] {
+		assert_eq!(client.expect_pause(), BreakpointReason::Breakpoint);
+		assert_eq!(paused_line(&mut client), ("/swap_target".to_owned(), Some(line)));
+		client.resume();
+	}
+	wait_for(&mut client, "twin_runs", &(runs + 1).to_string());
+	for offset in before {
+		twin_breakpoint(&mut client, "swap_target", offset, false);
+	}
+	twin_run(&mut client, "swap_target", line, 1, false);
+	println!("ok: breakpoints on two swapped statements move with them");
+
+	let changes = source.edit(
+		"reload.dm",
+		"/proc/first_def()\n",
 		"/proc/local_dropper()\n\tvar/dropped = 1\n\ttwin_waiting += 1\n\twhile (twin_hold) sleep(1)\n\ttwin_runs += \
 		 dropped\n\n/proc/lone_local()\n\tvar/gone = 2\n\treturn gone\n\n/proc/first_def()\n"
 	);
