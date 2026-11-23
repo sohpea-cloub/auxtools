@@ -183,18 +183,17 @@ fn code_before_shutdown() {
 	let fail = |e: String| runtime!("code_before_shutdown: {}", e);
 	let (t, u) = (find("/proc/auxtest_code_t")?, find("/proc/auxtest_code_u")?);
 	let r_code = code_of(&find("/proc/auxtest_code_r")?);
-	let replaced = Entry {
-		id: entry_of(&t),
-		words: code_of(&t)
-	};
+	let t_code = code_of(&t);
 	let reloaded = Entry {
 		id: entry_of(&u),
 		words: code_of(&u)
 	};
-	unsafe {
-		t.set_bytecode(r_code.clone()).map_err(fail)?;
-		runtime_tables::set_proc_entry_word(t.id(), ProcEntryWords::BYTECODE, reloaded.id);
-	}
+	unsafe { t.set_bytecode(r_code.clone()) }.map_err(fail)?;
+	let replaced = Entry {
+		id: entry_of(&t),
+		words: t_code
+	};
+	unsafe { runtime_tables::set_proc_entry_word(t.id(), ProcEntryWords::BYTECODE, reloaded.id) };
 
 	let f = find("/proc/auxtest_code_f")?;
 	let theirs: &'static mut [u32] = Box::leak(code_of(&find("/proc/auxtest_code_s")?).into_boxed_slice());
@@ -213,6 +212,9 @@ fn code_before_shutdown() {
 }
 
 byond_ffi_fn! { auxtest_code_after_shutdown() {
+	if !world_is_live() {
+		return Some("the code after shutdown was checked without a live world".to_owned());
+	}
 	let Some(saved) = BEFORE_SHUTDOWN.lock().unwrap().take() else {
 		return Some("nothing was saved before shutdown".to_owned());
 	};
