@@ -4,30 +4,25 @@ use super::values;
 #[derive(Copy, Clone, Debug)]
 pub struct ListId(pub u32);
 
-/// One key->value pair of an associative list, as a red-black tree node.
-///
-/// 32 bytes. Matches BYOND's own tree lookup (516.1669), which reads the key at
-/// `+0` and the children at `+16` and `+20`. This used to declare `color` at
-/// `+16`, which put both child pointers 4 bytes past where BYOND writes them.
-/// Nothing read the children, so it never showed.
+/// 32 bytes: BYOND reads the key at `+0` and the children at `+16` and `+20`.
 #[repr(C)]
 pub struct AssociativeListEntry {
-	/// Non-owning; the same ref also occupies a `vector_part` slot.
+	/// Holds no reference; the same value also sits in a `vector_part` slot.
 	pub key: values::Value,
-	/// Owning; released when the tree is torn down.
+	/// Holds a reference, released when the tree is freed.
 	pub value: values::Value,
 	pub left: *mut AssociativeListEntry,
 	pub right: *mut AssociativeListEntry,
 	pub parent: *mut AssociativeListEntry,
-	/// 0 = red, 1 = black.
+	/// 0 is red, 1 is black.
 	pub color: u8
 }
 
-/// The 8-byte record an `/alist` id points at in the alist table.
+/// The 8-byte record an `/alist` id points to in the alist table.
 #[repr(C)]
 pub struct Alist {
 	pub root: *mut AssociativeListEntry,
-	/// A new alist starts at 1, not 0.
+	/// Starts at 1.
 	pub refcount: u32
 }
 

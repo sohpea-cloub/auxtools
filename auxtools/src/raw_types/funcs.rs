@@ -7,7 +7,7 @@ pub static mut SUSPENDED_PROCS_BUFFER: *mut procs::SuspendedProcsBuffer = std::p
 pub static mut SUSPENDED_FRONT: *const usize = std::ptr::null();
 pub static mut SUSPENDED_BACK: *const usize = std::ptr::null();
 
-/// The sleeping procs: their range in `SUSPENDED_PROCS_BUFFER`
+/// The sleeping procs' indices in `SUSPENDED_PROCS_BUFFER`.
 pub unsafe fn suspended_range() -> std::ops::Range<usize> {
 	*SUSPENDED_FRONT..*SUSPENDED_BACK
 }

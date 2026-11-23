@@ -66,12 +66,7 @@ pub fn byond_return(value: Option<Vec<u8>>) -> *const c_char {
 }
 
 /// Creates a normal byond ffi function that can be called in DM with [call](http://www.byond.com/docs/ref/#/proc/call).
-///
-/// You should favour [hooks](attr.hook.html) over these when working with
-/// auxtools.
-///
-/// A body that panics returns an empty string: the panic would abort the game
-/// if it got out.
+/// A body that panics returns an empty string.
 ///
 /// # Examples
 /// ```ignore

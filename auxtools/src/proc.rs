@@ -10,10 +10,7 @@ use fxhash::FxHashMap;
 
 use crate::*;
 
-/// Used to hook and call procs.
-///
-/// A `Proc` stays on the thread BYOND runs on. Calling one from anywhere else
-/// would run DM code while the game is in the middle of something else.
+/// Not `Send`: calling it from another thread would run DM code mid-tick.
 ///
 /// ```compile_fail
 /// fn assert_send<T: Send>() {}
@@ -23,7 +20,7 @@ use crate::*;
 pub struct Proc {
 	pub id: raw_types::procs::ProcId,
 	pub path: String,
-	phantom: PhantomData<*mut ()>
+	not_send: PhantomData<*mut ()>
 }
 
 fn entry_by_id(id: raw_types::procs::ProcId) -> *mut raw_types::procs::ProcEntry {
@@ -43,9 +40,7 @@ impl Proc {
 		PROCS_BY_NAME.with(|h| h.borrow().get(&path).cloned().unwrap_or_default())
 	}
 
-	/// Renumber a path's definitions after reload, using the supplied order.
-	/// Omitted definitions are no longer available through
-	/// [`Proc::find_override`].
+	/// Definitions left out are no longer found by [`Proc::find_override`].
 	pub fn set_overrides<S: Into<String>>(path: S, procs: Vec<Self>) {
 		let path = strip_path(path.into());
 		PROC_OVERRIDE_IDS.with(|override_ids| {
@@ -57,22 +52,16 @@ impl Proc {
 		PROCS_BY_NAME.with(|h| h.borrow_mut().insert(path, procs));
 	}
 
-	/// BYOND's own record for this proc.
-	///
-	/// Don't hold on to the pointer. BYOND moves its whole proc table whenever
-	/// the table grows (`new` on a verb path does it), so it is only good until
-	/// the next time DM code runs.
+	/// Valid only until DM code next runs: BYOND moves the table when it grows.
 	pub fn entry(&self) -> *mut raw_types::procs::ProcEntry {
 		entry_by_id(self.id)
 	}
 
-	/// Finds the first proc with the given path
 	pub fn find<S: Into<String>>(path: S) -> Option<Self> {
 		get_proc(path)
 	}
 
-	/// Finds the n'th re-defined proc with the given path. [`Proc::APART`]
-	/// finds the one set apart.
+	/// [`Proc::APART`] finds the one set apart.
 	pub fn find_override<S: Into<String>>(path: S, override_id: u32) -> Option<Self> {
 		get_proc_override(path, override_id)
 	}
@@ -86,7 +75,7 @@ impl Proc {
 		Some(Proc {
 			id,
 			path,
-			phantom: PhantomData
+			not_send: PhantomData
 		})
 	}
 
@@ -143,18 +132,6 @@ impl Proc {
 		std::slice::from_raw_parts(ptr, count as usize)
 	}
 
-	/// Calls a global proc with the given arguments.
-	///
-	/// # Examples
-	///
-	/// This function is equivalent to `return do_explode(3)` in DM.
-	/// ```ignore
-	/// #[hook("/proc/my_proc")]
-	/// fn my_proc_hook() -> DMResult {
-	///     let proc = Proc::find("/proc/do_explode").unwrap();
-	///     proc.call(&[&Value::from(3.0)])
-	/// }
-	/// ```
 	pub fn call(&self, args: &[&Value]) -> runtime::DMResult {
 		let mut ret = raw_types::values::Value {
 			tag: raw_types::values::ValueTag::Null,
@@ -176,9 +153,7 @@ impl Proc {
 		Err(runtime!("External proc call failed"))
 	}
 
-	/// Exclude a debugger helper from source override numbering.
-	/// The helper uses [`Proc::APART`]; existing and future source definitions
-	/// keep their source-order IDs. Only one helper per path can be set apart.
+	/// The helper gets [`Proc::APART`]; source definitions keep their ids.
 	pub fn set_apart(&self) {
 		PROC_OVERRIDE_IDS.with(|override_ids| {
 			let mut override_ids = override_ids.borrow_mut();

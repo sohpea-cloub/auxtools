@@ -231,8 +231,7 @@ impl Proc {
 		hook_by_id(self.id, func, self.path.to_owned())
 	}
 
-	/// Whether this library installed a Rust hook for the proc. Hooks in other
-	/// auxtools libraries loaded into the same world are not visible here.
+	/// Hooks from other auxtools libraries in the same world aren't seen.
 	pub fn is_hooked(&self) -> bool {
 		PROC_HOOKS.0.borrow().contains_key(&self.id)
 	}
@@ -261,19 +260,13 @@ fn hook_failed(proc_id: raw_types::procs::ProcId, error: &crate::Runtime) {
 	}
 }
 
-/// Whether interpreter calls bypass the call_proc_by_id detour. GCC inlined
-/// them on Linux before 516.1664. Those builds dispatch proc hooks through
-/// the instruction hook (see `proc_starting`).
+/// GCC inlined interpreter calls on Linux before 516.1664.
 pub fn calls_bypass_detour() -> bool {
 	cfg!(unix) && crate::version::get().1 < 1664
 }
 
 static RETURN_DOT: [u32; 1] = [0x00];
 
-/// Dispatch deferred work and proc hooks at the first instruction on builds
-/// where [`calls_bypass_detour`] is true. A hook's result replaces execution
-/// of the original proc.
-///
 /// # Safety
 /// `ctx` must be the running frame on BYOND's thread.
 pub unsafe fn proc_starting(ctx: *mut raw_types::procs::ExecutionContext) {

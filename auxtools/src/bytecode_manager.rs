@@ -10,10 +10,7 @@ static mut BYTECODE_ALLOCATIONS: UnsafeCell<Option<State>> = UnsafeCell::new(Non
 
 static CHANGES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
-/// Cache generation, incremented when hot reload repoints a proc and on
-/// world startup or shutdown. Invalidate bytecode-derived data when it
-/// changes. `set_bytecode` leaves it: its buffers are kept by content until
-/// shutdown, so a buffer's address always names the same code.
+/// Changes when a proc is repointed and at world start and shutdown.
 pub fn bytecode_changes() -> u64 {
 	CHANGES.load(std::sync::atomic::Ordering::Relaxed)
 }
@@ -25,7 +22,7 @@ fn changed() {
 struct State {
 	allocations: HashSet<Vec<u32>>,
 	original: HashMap<raw_types::procs::ProcId, (*mut u32, u16)>,
-	remembered: HashMap<usize, Vec<u32>>
+	retired_by_address: HashMap<usize, Vec<u32>>
 }
 
 pub fn init() {
@@ -35,7 +32,7 @@ pub fn init() {
 		*ptr = Some(State {
 			allocations: HashSet::new(),
 			original: HashMap::new(),
-			remembered: HashMap::new()
+			retired_by_address: HashMap::new()
 		});
 	}
 }
@@ -89,20 +86,15 @@ fn remember_original(state: &mut State, proc: &Proc) {
 	state.original.entry(proc.id).or_insert_with(|| unsafe { proc.bytecode_mut_ptr() });
 }
 
-/// Keeps a copy of bytecode that a proc is about to stop using, for
-/// [`bytecode_at`]. Hot reload calls this before repointing a proc, so it
-/// counts as a bytecode change.
 pub fn remember_bytecode(ptr: *const u32, bytecode: &[u32]) {
 	changed();
-	state().remembered.entry(ptr as usize).or_insert_with(|| bytecode.to_vec());
+	state().retired_by_address.entry(ptr as usize).or_insert_with(|| bytecode.to_vec());
 }
 
-/// Copy current or retained bytecode at `ptr`. Includes original code and
-/// buffers replaced by reloads, which active frames may still execute.
 pub fn bytecode_at(ptr: *const u32) -> Option<Vec<u32>> {
 	let state = state();
 
-	if let Some(bytecode) = state.remembered.get(&(ptr as usize)) {
+	if let Some(bytecode) = state.retired_by_address.get(&(ptr as usize)) {
 		return Some(bytecode.clone());
 	}
 

@@ -28,12 +28,7 @@ static mut LEFT: u64 = 0;
 static mut CALLS_BYPASS_DETOUR: bool = false;
 static mut DETOURED: bool = false;
 
-/// Install a handler called before each instruction with its running frame.
-/// Replaces the previous handler.
-///
-/// The handler runs unguarded, to keep the cost of an instruction down: a
-/// panic that leaves it aborts the game. It catches its own with
-/// [`crate::guard`] where it can panic.
+/// The handler runs unguarded: a panic that leaves it aborts the game.
 pub fn set_handler(handler: Handler) -> Result<(), String> {
 	detour()?;
 	unsafe {
@@ -57,7 +52,7 @@ struct FrameStart {
 struct Table {
 	entries: *const AtomicUsize,
 	count: usize,
-	stub: usize,
+	handler_stub: usize,
 	first_stub: usize
 }
 
@@ -75,8 +70,7 @@ static mut UNKNOWN_NEXT: usize = 0;
 static mut PASS: u8 = 0;
 static mut PASS_UNKNOWN: bool = false;
 
-/// Restore callbacks for every instruction. May be called from any thread
-/// to notify the handler of pending work.
+/// Any thread may call it, to bring pending work to the handler.
 pub fn hear_all() {
 	let Some(table) = TABLE.get() else {
 		return;
@@ -89,18 +83,13 @@ pub fn hear_all() {
 		return;
 	}
 	for opcode in 0..table.count {
-		unsafe { (*table.entries.add(opcode)).store(table.stub, Ordering::SeqCst) };
+		unsafe { (*table.entries.add(opcode)).store(table.handler_stub, Ordering::SeqCst) };
 	}
 	ALL.store(true, Ordering::SeqCst);
 }
 
-/// Limit callbacks to `opcodes` and unknown opcodes until `hear_all`.
 /// Call on BYOND's thread, then recheck pending work in case another thread
-/// called `hear_all` during the update.
-///
-/// Builds with `hooks::calls_bypass_detour` retain a proc-entry stub for
-/// unselected opcodes. Other builds restore BYOND's original entries.
-/// Returns false if no table is available, leaving all callbacks enabled.
+/// called `hear_all` meanwhile.
 pub fn hear_only(opcodes: &[u32]) -> bool {
 	let Some(table) = TABLE.get() else {
 		return false;
@@ -109,7 +98,7 @@ pub fn hear_only(opcodes: &[u32]) -> bool {
 	ALL.store(false, Ordering::SeqCst);
 	for opcode in 0..table.count {
 		let entry = if opcodes.contains(&(opcode as u32)) {
-			table.stub
+			table.handler_stub
 		} else if table.first_stub != 0 {
 			table.first_stub
 		} else {
@@ -139,7 +128,7 @@ unsafe fn pass_next(table: &Table, ctx: *mut raw_types::procs::ExecutionContext)
 			PASS_UNKNOWN = true;
 		} else {
 			let entry = (*table.entries.add(opcode)).load(Ordering::SeqCst);
-			if entry == table.stub || (table.first_stub != 0 && entry == table.first_stub && about_to_run(ctx).1 == 0) {
+			if entry == table.handler_stub || (table.first_stub != 0 && entry == table.first_stub && about_to_run(ctx).1 == 0) {
 				PASS = 1;
 			}
 		}
@@ -392,13 +381,13 @@ unsafe fn take_table(execute_instruction: usize) -> Result<(), &'static str> {
 		let table = TABLE.get_or_init(|| Table {
 			entries,
 			count,
-			stub: table_stub,
+			handler_stub: table_stub,
 			first_stub: if CALLS_BYPASS_DETOUR { first_stub } else { 0 }
 		});
 		let _writing = LISTENING.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
 		ALL.store(true, Ordering::SeqCst);
 		for opcode in 0..count {
-			(*table.entries.add(opcode)).store(table.stub, Ordering::SeqCst);
+			(*table.entries.add(opcode)).store(table.handler_stub, Ordering::SeqCst);
 		}
 		Ok(())
 	}
@@ -414,9 +403,7 @@ pub fn timestamp() -> u64 {
 	unsafe { core::arch::x86::_rdtsc() }
 }
 
-/// Elapsed ticks between the previous hook exit and this entry, excluding
-/// the handler. Call from the handler while timing is enabled. Returns `None`
-/// if nested execution inside the hook invalidated the interval.
+/// `None` if nested execution spoiled the interval.
 pub fn ticks_since_last() -> Option<u64> {
 	unsafe { ENTERED.checked_sub(LEFT) }
 }

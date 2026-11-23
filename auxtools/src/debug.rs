@@ -9,7 +9,6 @@ thread_local! {
 	static LOCAL_NAMES: RefCell<HashMap<usize, Vec<String>>> = RefCell::new(HashMap::new());
 }
 
-/// Override local names for frames executing `bytecode`.
 pub fn set_local_names(bytecode: *const u32, names: Vec<String>) {
 	LOCAL_NAMES.with(|map| map.borrow_mut().insert(bytecode as usize, names));
 }
@@ -125,7 +124,7 @@ impl CallStacks {
 		}
 	}
 
-	/// The stack of the proc that's running, innermost frame first
+	/// The running proc's stack, innermost frame first.
 	pub fn active() -> Vec<StackFrame> {
 		unsafe { CallStacks::from_context(*funcs::CURRENT_EXECUTION_CONTEXT, CallStackKind::Active) }
 	}

@@ -1,9 +1,7 @@
 use crate::*;
 use std::{ffi::CStr, fmt};
 
-/// Decode BYOND text without macros, as `world.log` and `json_encode` do.
-/// Macros such as `\improper` and `\bold` are stored as 0xFF followed by a
-/// macro code. The 0xFF byte cannot occur in UTF-8 text.
+/// BYOND stores a macro such as `\improper` as 0xFF and a code.
 pub fn text_of(bytes: &[u8]) -> String {
 	if !bytes.contains(&0xFF) {
 		return String::from_utf8_lossy(bytes).into_owned();

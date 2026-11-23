@@ -1,18 +1,5 @@
-//! What auxtools finds in BYOND's binary, as data.
-//!
-//! BYOND exports almost none of the functions and globals auxtools uses, so
-//! each is found by a recipe (see `byond-scan`): a byte pattern or an export,
-//! the calls to follow from it and what to read there. A recipe holds for a
-//! range of builds, and a name has one recipe for each range whose code
-//! differs. `registry/linux.rs` and `registry/windows.rs` list them, and both
-//! lists are compiled on either platform. The builds where something changed
-//! are named in `registry/builds.rs`. `examples/check_recipes.rs` checks the
-//! lists against a BYOND binary on disk.
-//!
-//! Every lookup goes through [`resolve`]. A miss is an error that names the
-//! lookup. Nothing here hands back a null pointer, because the C++ shim calls
-//! these functions without checking and `debug.rs` reads the globals the same
-//! way.
+//! A miss is an error naming the lookup, never a null pointer: the C++ shim
+//! and `debug.rs` use the results unchecked.
 
 pub mod builds;
 mod linux;
@@ -41,9 +28,7 @@ pub fn accepts(version: u32, build: u32) -> bool {
 	builds::SUPPORTED.iter().any(|&(major, first)| major == version && build >= first)
 }
 
-/// The recipe a lookup of `name` uses on `build`: the one whose range has the
-/// build; failing that the newest one from before it, which is tried in case
-/// it still matches; failing that the first, which the build is too old for.
+/// Failing an exact range, the newest recipe before `build`, else the first.
 pub fn recipe_for(platform: Platform, name: &str, build: u32) -> Option<&'static Recipe> {
 	let named = || platform.recipes().iter().filter(move |recipe| recipe.name == name);
 	named()
@@ -66,9 +51,7 @@ pub fn names(platform: Platform) -> Vec<&'static str> {
 	names
 }
 
-/// Whether auxtools looks `name` up on `build`: a recipe of the name has begun
-/// by then and the name's last hasn't ended. The callers ask by the same
-/// boundaries the ranges are made of.
+/// From the name's first recipe until its last ends.
 pub fn needed(platform: Platform, name: &str, build: u32) -> bool {
 	let named = || platform.recipes().iter().filter(move |recipe| recipe.name == name);
 	named().any(|recipe| recipe.versions.min <= build) && named().any(|recipe| build <= recipe.versions.max)
@@ -99,8 +82,7 @@ fn module_and_build() -> Result<(Module, (u32, u32)), String> {
 	Ok((module, build))
 }
 
-/// Finds `name` in the running BYOND. [`find!`](crate::registry::find) does
-/// the same and checks the name when it is compiled.
+/// [`find!`](crate::registry::find) also checks the name at compile time.
 pub fn address(name: &str) -> Result<usize, String> {
 	let (module, build) = module_and_build()?;
 	resolve(&module, Platform::RUNNING, build, name)
@@ -110,9 +92,7 @@ pub const fn defines(name: &str) -> bool {
 	byond_scan::defines(Platform::RUNNING.recipes(), name)
 }
 
-/// The address of a function or global in the running BYOND, by its name in
-/// the registry: `registry::find!("get_variable")?`. A name this platform's
-/// list lacks does not compile.
+/// A name this platform's list lacks doesn't compile.
 #[doc(hidden)]
 #[macro_export]
 macro_rules! __registry_find {
@@ -124,8 +104,7 @@ macro_rules! __registry_find {
 #[doc(inline)]
 pub use __registry_find as find;
 
-/// Resolves a recipe of your own with the same rules auxtools applies to its
-/// own: builds older than the recipe's range are refused, newer ones are tried.
+/// Builds older than the recipe's range are refused, newer ones tried.
 pub fn find_recipe(recipe: &Recipe) -> Result<usize, String> {
 	let (module, build) = module_and_build()?;
 	resolve_checked(&module, build, recipe)
@@ -205,10 +184,18 @@ mod tests {
 		assert_eq!(range("get_variable", 1644), (1644, 1647));
 		assert_eq!(range("get_variable", 1648), (1648, u32::MAX));
 		assert_eq!(range("get_variable", 5000), (1648, u32::MAX));
-		assert_eq!(range("get_variable", 1500), (1648, u32::MAX));
+		assert_eq!(
+			range("get_variable", 1500),
+			(1648, u32::MAX),
+			"a build older than every range gets the first recipe, which refuses it"
+		);
 		assert_eq!(range("appearance_send", 1643), (1637, 1643));
 		assert_eq!(range("appearance_send", 1645), (1644, u32::MAX));
-		assert_eq!(range("misc_intern", 1700), (1637, 1643));
+		assert_eq!(
+			range("misc_intern", 1700),
+			(1637, 1643),
+			"a build past a name's last range gets that last recipe"
+		);
 		assert!(recipe_for(Platform::Linux, "no_such_name", 1648).is_none());
 	}
 

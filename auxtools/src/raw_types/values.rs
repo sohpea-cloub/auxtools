@@ -5,9 +5,7 @@ macro_rules! value_tags {
 	(
 		$($variant:ident = $val:expr),* $(,)?
 	) => {
-		/// What kind of thing a value is: the byte BYOND itself keeps. A build
-		/// newer than this list has tags it doesn't name, so any byte is a
-		/// tag, and code that goes by the tag has to allow for others.
+		/// Newer builds have tags this list doesn't name, so any byte is a tag.
 		#[repr(transparent)]
 		#[derive(PartialEq, Eq, Copy, Clone, Hash)]
 		pub struct ValueTag(pub u8);
@@ -183,8 +181,7 @@ pub union ValueData {
 	pub list: lists::ListId
 }
 
-/// Internal thing used when interfacing with BYOND. You shouldn't need to use
-/// this.
+/// BYOND's raw value. Use [`crate::Value`] instead.
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub struct Value {

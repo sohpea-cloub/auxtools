@@ -2,11 +2,7 @@ use super::{raw_types, string};
 use crate::{list, runtime, runtime::DMResult};
 use std::{ffi::CString, fmt, marker::PhantomData};
 
-/// `Value` represents any value a DM variable can hold, such as numbers,
-/// strings, datums, etc.
-///
-/// There's a lot of lifetime shenanigans going on, the gist of it is to just
-/// not keep Values around for longer than your hook's execution.
+/// Any value a DM var can hold. Don't keep one longer than your hook runs.
 pub struct Value {
 	pub raw: raw_types::values::Value,
 	phantom: PhantomData<*mut ()>
@@ -108,7 +104,7 @@ impl Value {
 		}
 	}
 
-	/// Gets a turf by coordinates.
+	/// Coordinates start at 1, as in DM.
 	pub fn turf(x: u32, y: u32, z: u32) -> DMResult {
 		let world = Self::WORLD;
 		let max_x = world.get_number(crate::byond_string!("maxx"))? as u32;
@@ -313,13 +309,12 @@ impl Value {
 		}
 	}
 
-	/// blah blah lifetime is not verified with this so use at your peril
+	/// Takes a new reference to `v`.
 	pub unsafe fn from_raw(v: raw_types::values::Value) -> Self {
 		Value::new(v.tag, v.data)
 	}
 
-	/// same as from_raw but does not increment the reference count (assumes we
-	/// already own this reference)
+	/// Takes over a reference to `v` that the caller holds.
 	pub const unsafe fn from_raw_owned(v: raw_types::values::Value) -> Value {
 		Value {
 			raw: v,

@@ -2,8 +2,7 @@ use std::iter::FromIterator;
 
 use crate::*;
 
-/// A wrapper around [Values](struct.Value.html) that make working with lists a
-/// little easier. It can also hold an `/alist`, where numbers are keys.
+/// In an `/alist`, numbers are keys rather than positions.
 pub struct List {
 	value: Value
 }
@@ -21,7 +20,6 @@ impl List {
 		Self::default()
 	}
 
-	/// Creates a new list filled with `capacity` nulls.
 	pub fn with_size(capacity: u32) -> Self {
 		let mut id: raw_types::lists::ListId = raw_types::lists::ListId(0);
 		unsafe {
@@ -99,11 +97,7 @@ impl List {
 		self.value.raw.tag == raw_types::values::ValueTag::Alist
 	}
 
-	/// Every key and value of an `/alist`, in the order `for (var/k in A)`
-	/// gives them.
-	///
-	/// This is a copy, so nothing here points into BYOND's tree once it
-	/// returns.
+	/// In the order `for (var/k in A)` gives them.
 	pub fn alist_pairs(&self) -> DMResult<Vec<(Value, Value)>> {
 		if !self.is_alist() {
 			return Err(runtime!("attempted to read alist pairs of a non-alist"));
@@ -138,10 +132,7 @@ impl List {
 		Ok(pairs)
 	}
 
-	/// Whether DM's `islist()` says yes to this value.
-	///
-	/// This asks BYOND instead of matching on the tag, because a tag can't
-	/// answer it: a `filters` list and a single filter share one.
+	/// Asks BYOND, because a `filters` list and a single filter share a tag.
 	pub fn is_list(value: &Value) -> bool {
 		let mut is_list: u8 = 0;
 		unsafe {

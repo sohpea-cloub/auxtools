@@ -69,7 +69,7 @@ pub struct Bytecode_V2 {
 #[derive(Copy, Clone)]
 pub struct Locals_V2 {
 	pub count: u16,
-	unk_0: u32,
+	refcount: u32,
 	pub names: *const strings::VariableId
 }
 
@@ -125,7 +125,7 @@ pub fn add_ref<T: AsMiscId>(id: &T) {
 
 	let misc = misc as *mut Misc_V2;
 	unsafe {
-		(*misc).locals.unk_0 += 1;
+		(*misc).locals.refcount += 1;
 	}
 }
 

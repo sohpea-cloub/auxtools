@@ -42,7 +42,7 @@ type TreeFn = extern "C" fn(*mut u8, *mut u8) -> *mut u8;
 type Bounds = extern "C" fn(*mut u8);
 
 struct Tables {
-	manager: usize,
+	manager_global: usize,
 	connection_count: usize,
 	connections: usize,
 	send: usize,
@@ -65,7 +65,7 @@ fn find() -> Result<Tables, String> {
 	}
 	let tables = unsafe {
 		Tables {
-			manager: registry::find!("appearance_manager")?,
+			manager_global: registry::find!("appearance_manager")?,
 			connection_count: registry::find!("connection_count")?,
 			connections: registry::find!("connections")?,
 			send: registry::find!("appearance_send")?,
@@ -127,7 +127,7 @@ struct Appearances<'a> {
 
 impl<'a> Appearances<'a> {
 	unsafe fn new(tables: &'a Tables) -> Result<Self, String> {
-		let manager = *(tables.manager as *const *mut u8);
+		let manager = *(tables.manager_global as *const *mut u8);
 		if manager.is_null() {
 			return Err("the appearance manager isn't set up yet".to_owned());
 		}

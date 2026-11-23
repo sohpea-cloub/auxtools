@@ -19,14 +19,12 @@ fn found() -> bool {
 	})
 }
 
-/// Whether pointers can be read in this world
+/// Whether this BYOND build exports `Byond_ReadPointer`.
 pub fn readable() -> bool {
 	found()
 }
 
-/// Read a pointer without retaining the returned value. Compare it or
-/// convert it to [`Value`] immediately. Returns `None` for invalid pointers
-/// or targets that no longer exist.
+/// Holds no reference: compare or convert the result at once.
 pub fn read_raw(pointer: &Value) -> Option<RawValue> {
 	if pointer.raw.tag != ValueTag::Pointer {
 		return None;

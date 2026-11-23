@@ -1,10 +1,4 @@
-//! Read and extend BYOND runtime tables for hot reload.
-//! Use BYOND's allocators and table functions so ownership remains compatible
-//! with its cleanup code.
-//!
-//! Layouts are based on 516.1688, with older-build differences documented
-//! locally. The tables were checked on 515.1637, 515.1647, 516.1659,
-//! 516.1685, 516.1686 and 516.1688. The patterns are the registry's.
+//! Extends BYOND's tables through its own allocators, so it can free them.
 
 use std::ffi::c_void;
 
@@ -13,9 +7,8 @@ use crate::{
 	registry::{builds, find}
 };
 
-/// A proc table entry as BYOND stores it, word by word: path, name, desc and
-/// category string ids, the path's last part, flags, three packed bytes,
-/// bytecode, locals and parameters misc ids, and the proc `..()` goes to.
+/// Path, name, desc, category, basename, flags, packed bytes, bytecode,
+/// locals, parameters, and the proc `..()` goes to.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ProcEntryWords(pub [u32; 11]);
@@ -31,8 +24,7 @@ impl ProcEntryWords {
 	pub const PARAMETERS: usize = 9;
 	pub const PATH: usize = 0;
 	pub const PATH_BASENAME: usize = 4;
-	/// A verb's `set src` (its range, then its kind) and invisibility, a byte
-	/// each
+	/// A verb's `set src` (range, kind) and invisibility, a byte each.
 	pub const SETTINGS: usize = 6;
 }
 
@@ -46,75 +38,66 @@ pub struct ProcNameMap {
 	pub built: u8
 }
 
-/// The procs a name finds on a type, most derived first. `ids` is a shared
-/// buffer (`AllocShared`), and the same buffer can be in several types' maps.
+/// Most derived first. `ids` is shared (`AllocShared`) between types' maps.
 #[repr(C)]
 pub struct ProcNameBucket {
 	pub key: u32,
 	pub ids: *mut u32,
 	pub count: u16,
-	/// Set for keys that are a proc's path basename rather than its name. Such
-	/// a bucket builds no `..()` chain.
+	/// Keyed by path basename rather than name; builds no `..()` chain.
 	pub no_link: u8
 }
 
 pub mod type_fields {
 	pub const PATH: usize = 0x00;
 	pub const PARENT: usize = 0x04;
-	/// String ids, or the resource id for the icon
+	/// String ids, or the resource id for the icon.
 	pub const NAME: usize = 0x08;
 	pub const DESC: usize = 0x0C;
 	pub const ICON: usize = 0x10;
 	pub const ICON_STATE: usize = 0x14;
 	pub const TEXT: usize = 0x18;
 	pub const MAPTEXT: usize = 0x1C;
-	/// 16 bits each
+	/// 16 bits each.
 	pub const MAPTEXT_X: usize = 0x20;
 	pub const MAPTEXT_Y: usize = 0x22;
 	pub const MAPTEXT_WIDTH: usize = 0x24;
 	pub const MAPTEXT_HEIGHT: usize = 0x26;
-	/// Bit 1 opacity, bit 2 density, then `gender` (bits 6-7),
-	/// `mouse_drop_zone` (bit 8), `mouse_opacity` (bits 12-13),
-	/// `animate_movement` (bits 10, 14-15) and the low 11 bits of
-	/// `appearance_flags` (from bit 21)
+	/// Bit 1 opacity, 2 density, 6-7 gender, 8 mouse_drop_zone, 12-13
+	/// mouse_opacity, 10 and 14-15 animate_movement, 21+ low appearance_flags.
 	pub const FLAGS: usize = 0x28;
-	/// The rest of `appearance_flags`, from bit 0
+	/// The rest of `appearance_flags`, from bit 0.
 	pub const FLAGS_HIGH: usize = 0x2C;
-	/// A byte
+	/// A byte.
 	pub const DIR: usize = 0x32;
-	/// Pointers to the type's own transform (6 floats) and color matrix (20)
+	/// Pointers to the type's own transform (6 floats) and color matrix (20).
 	pub const TRANSFORM: usize = 0x34;
 	pub const COLOR_MATRIX: usize = 0x38;
 	pub const SUFFIX: usize = 0x54;
-	/// A float
+	/// A float.
 	pub const LAYER: usize = 0x5C;
-	/// Misc id: the type's own verbs
+	/// Misc id: the type's own verbs.
 	pub const VERBS: usize = 0x60;
-	/// Misc id: the type's own procs
+	/// Misc id: the type's own procs.
 	pub const PROCS: usize = 0x64;
-	/// Proc ID for computed variable initialization on new instances,
-	/// merged from ancestor initializers at startup.
+	/// Computed var initializer, merged from the ancestors' at startup.
 	pub const INIT_PROC: usize = 0x68;
-	/// Misc id: (var id, flags) pairs for the vars the type declares
+	/// Misc id: (var id, flags) pairs for the vars the type declares.
 	pub const DECLARED_VARS: usize = 0x70;
-	/// Misc id: (var id, tag, data) for the vars the type sets, as the .dmb has
-	/// them; only read when the world starts
+	/// Misc id: (var id, tag, data) as the .dmb sets them, read at startup
+	/// only.
 	pub const OWN_OVERRIDES: usize = 0x6C;
-	/// Misc id: built-in vars set otherwise than in the record, its parent's
-	/// too: the name's string id, then the value as bytecode has it
+	/// Misc id: built-in vars set outside the record: name, then value.
 	pub const BUILTIN_VALUES: usize = 0x74;
-	/// Misc id: every var the type has, (name string id, var id, tag, data)
-	/// per var, sorted by name. Instances read their defaults from here.
+	/// Misc id: (name, var id, tag, data) per var by name, read for defaults.
 	pub const VAR_TABLE: usize = 0x78;
 	pub const EXTRA: usize = 0x7C;
-	/// Variable initializer bytecode ranges used when merging init procs.
+	/// Var initializer bytecode ranges, used when merging init procs.
 	pub const INIT_SEGMENTS: usize = 0x80;
-	/// The type's place in the preorder of all types, and the end of its
-	/// subtree's
+	/// The type's place in the preorder, and its subtree's end.
 	pub const PREORDER: usize = 0x84;
 	pub const PREORDER_END: usize = 0x88;
-	/// The type's typepath value (tag, data), from 515.1641 (see
-	/// `builds::TYPEPATHS`). Earlier entries end after PREORDER_END.
+	/// (tag, data) from 515.1641; earlier entries end after PREORDER_END.
 	pub const TYPEPATH: usize = 0x8C;
 }
 
@@ -130,11 +113,8 @@ unsafe fn path_cache(build: u32, register: Option<usize>) -> Option<*const *mut 
 	Some(address as usize as *const *mut u8)
 }
 
-/// Replace a cached text2path miss after adding a type or proc. BYOND does
-/// not refresh these entries itself. Preserve existing non-null values.
-///
-/// Tree nodes contain a text key (tag 6, string ID), value, left and right
-/// children, parent and colour.
+/// BYOND doesn't refresh cached misses itself. A node is a text key (tag 6),
+/// value, left, right, parent and colour.
 pub fn recache_path(path: u32, value: [u32; 2]) {
 	const TEXT: u8 = 0x06;
 	const VALUE: usize = 0x08;
@@ -306,8 +286,7 @@ fn functions() -> Result<&'static Functions, String> {
 	}
 }
 
-/// Check hot reload support excluding type registration
-/// (see [`types_available`]).
+/// Apart from adding types ([`types_available`]).
 pub fn available() -> Result<(), String> {
 	functions().map(|_| ())
 }
@@ -345,8 +324,7 @@ pub fn set_proc_entry(id: ProcId, words: &ProcEntryWords) {
 	}
 }
 
-/// Appends a proc to the proc table and returns its id. BYOND takes
-/// references to its strings; the misc entries need theirs taken already.
+/// BYOND takes references to its strings; the misc entries need theirs taken.
 pub fn add_proc(entry: &ProcEntryWords) -> Result<ProcId, String> {
 	let id = (functions()?.procdef_add)(entry);
 	if id == NONE {
@@ -356,9 +334,7 @@ pub fn add_proc(entry: &ProcEntryWords) -> Result<ProcId, String> {
 	Ok(ProcId(id))
 }
 
-/// Append a proc with a fresh ID, even if an identical entry exists.
-/// Unlike `add_proc`, this supports re-adding removed procs and adding
-/// identical definitions.
+/// Even when an identical entry exists, unlike `add_proc`.
 pub fn append_proc(entry: &ProcEntryWords) -> Result<ProcId, String> {
 	let path = entry.0[ProcEntryWords::PATH];
 	let hidden: Vec<ProcId> = (0..proc_count())
@@ -401,8 +377,7 @@ pub fn misc_words(id: u32) -> Option<Vec<u32>> {
 	}
 }
 
-/// A misc entry holding `words`, with a reference taken so it is never freed.
-/// BYOND shares entries with the same words.
+/// Holds a reference for good. BYOND shares entries with the same words.
 pub fn intern_misc(words: &[u32]) -> Result<u32, String> {
 	if words.len() > u16::MAX as usize {
 		return Err(format!("{} words is too many for a misc entry", words.len()));
@@ -462,8 +437,7 @@ pub fn set_type_field(type_id: u32, offset: usize, value: u32) -> Result<(), Str
 	Ok(())
 }
 
-/// A mob type's entry in the mob table, which a mob typepath value's data
-/// is an index of.
+/// A mob type's entry in the mob table, indexed by a mob typepath value's data.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct MobType {
@@ -475,14 +449,13 @@ pub struct MobType {
 	pub padding: u16
 }
 
-/// A prefab instance: a type, and the proc that sets the vars it overrides
-/// on each new instance (named `TYPE/proc/(map_init)`).
+/// The proc is named `TYPE/proc/(map_init)`.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Instance {
 	pub tag: u8,
 	pub data: u32,
-	/// NONE for a type placed on the map as it is
+	/// NONE for a type placed on the map as it is.
 	pub init: u32
 }
 
@@ -558,8 +531,7 @@ pub fn in_list_procs() -> Result<Vec<u32>, String> {
 	}
 }
 
-/// Adds a proc that returns a parameter's `in` list, and returns the index
-/// the parameter's word (`(index << 8) | 0x40`) gives it.
+/// Returns the index for the parameter's word, `(index << 8) | 0x40`.
 pub fn add_in_list(proc: ProcId) -> Result<u32, String> {
 	let functions = functions()?;
 	unsafe {
@@ -576,8 +548,7 @@ pub fn add_in_list(proc: ProcId) -> Result<u32, String> {
 	}
 }
 
-/// Rebuild a type's default appearance for future instances, including
-/// its verbs. Existing instances retain their old appearance.
+/// Existing instances keep the old one.
 pub fn forget_type_appearance(type_id: u32) -> Result<(), String> {
 	let functions = functions()?;
 	unsafe {
@@ -626,10 +597,7 @@ fn named_procs_in(map: *mut ProcNameMap, key: u32) -> Result<Vec<u32>, String> {
 	}
 }
 
-/// Replace a type's proc name entry, inserting it if absent.
-/// Release the old shared buffer and transfer ownership of the new one.
-/// A map BYOND hasn't built yet is left alone: it builds it from the type's
-/// procs, and links their `..()` chains, as the world loads.
+/// Takes over the new shared buffer. A map BYOND hasn't built is left alone.
 pub fn set_named_procs(type_id: u32, key: u32, procs: &[u32]) -> Result<(), String> {
 	let map = name_map(type_id)?;
 	if unsafe { (*map).built } == 0 {
@@ -638,8 +606,7 @@ pub fn set_named_procs(type_id: u32, key: u32, procs: &[u32]) -> Result<(), Stri
 	set_named_procs_in(map, key, procs)
 }
 
-/// Whether BYOND has built the world proc name map. Construction occurs
-/// after global initialization and before world/New; earlier edits are lost.
+/// Built after global init and before world/New; earlier edits are lost.
 pub fn world_names_built() -> Result<bool, String> {
 	unsafe { Ok((*functions()?.world_name_map).built != 0) }
 }
@@ -689,7 +656,7 @@ fn set_named_procs_in(map: *mut ProcNameMap, key: u32, procs: &[u32]) -> Result<
 	Ok(())
 }
 
-/// Replace a global slot, retaining the new value and releasing the old one.
+/// Holds a reference to the new value and releases the old one.
 pub fn set_global_value(var_id: u32, value: crate::Value) -> Result<(), String> {
 	let functions = functions()?;
 	unsafe {
@@ -704,8 +671,7 @@ pub fn set_global_value(var_id: u32, value: crate::Value) -> Result<(), String> 
 	Ok(())
 }
 
-/// Replace a global slot with tag/data words, transferring the caller's
-/// reference and releasing the old value.
+/// Takes over the caller's reference to the value and releases the old one.
 pub fn set_global_words(var_id: u32, tag: u8, data: u32) -> Result<(), String> {
 	let functions = functions()?;
 	unsafe {
@@ -769,8 +735,7 @@ pub fn variable_name(var_id: u32) -> Option<u32> {
 	unsafe { (var_id < variable_count()).then(|| (*(*crate::raw_types::funcs::VARIABLE_NAME_ENTRIES).add(var_id as usize)).0) }
 }
 
-/// Append a variable ID with name string ID `name` and initial tag/data.
-/// Transfer the value reference to the slot. Existing IDs remain stable.
+/// The slot takes over the reference to the initial value.
 pub fn add_variable(name: u32, tag: u8, data: u32) -> Result<u32, String> {
 	let functions = functions()?;
 	unsafe {
@@ -801,11 +766,7 @@ pub fn add_variable(name: u32, tag: u8, data: u32) -> Result<u32, String> {
 	}
 }
 
-/// Append a type inheriting from `parent`, named by string ID `path`.
-/// Insert after the parent's subtree and register it for text2path.
-///
-/// Share inherited variable lists, init proc and proc name buffers. Own proc,
-/// verb and override lists start empty; record fields inherit until changed.
+/// Shares the parent's var lists, init proc and proc name buffers.
 pub fn add_type(parent: u32, path: u32) -> Result<u32, String> {
 	use type_fields::*;
 	let functions = functions()?;
@@ -967,8 +928,7 @@ pub fn name_map_entries(type_id: u32) -> Result<Vec<(u32, Vec<u32>, u8)>, String
 	}
 }
 
-/// Preallocated proc-name map. [`NameMapPlan::write`] cannot fail;
-/// dropping an unwritten plan releases its buffers.
+/// A preallocated proc name map. Dropping it unwritten releases its buffers.
 pub struct NameMapPlan {
 	map: *mut ProcNameMap,
 	buckets: *mut ProcNameBucket,
@@ -1012,8 +972,7 @@ pub fn plan_name_map(type_id: u32, entries: &[(u32, Vec<u32>, u8)]) -> Result<Na
 }
 
 impl NameMapPlan {
-	/// Install the map and release the old shared buffers. Retain the old
-	/// bucket array, as with type matrices.
+	/// The old bucket array is kept, as with type matrices.
 	pub fn write(mut self) {
 		let Ok(functions) = functions() else {
 			return;
@@ -1053,9 +1012,7 @@ pub struct ParentPlan {
 	places: Vec<(u32, u32)>
 }
 
-/// Recompute parents and the preorder used by `istype` and `typesof`,
-/// visiting children by ascending ID as BYOND does. Leave other inherited
-/// state unchanged.
+/// Visits children by ascending id, as BYOND does.
 pub fn plan_parents(changes: &[(u32, u32)]) -> Result<ParentPlan, String> {
 	use type_fields::*;
 	let functions = functions()?;
@@ -1139,9 +1096,7 @@ impl ParentPlan {
 	}
 }
 
-/// Copy a type's transform (`TRANSFORM`, 6 floats) or colour matrix
-/// (`COLOR_MATRIX`, 20), or clear it. Each type owns its copy, as at load.
-/// Retain the old allocation because readers may still reference it.
+/// Each type owns its copy. The old one is kept, as readers may still use it.
 pub fn copy_type_matrix(type_id: u32, from: u32, offset: usize) -> Result<(), String> {
 	use type_fields::*;
 	let size = match offset {

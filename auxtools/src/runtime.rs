@@ -2,11 +2,7 @@ use std::result;
 
 use crate::value::Value;
 
-/// Represents a byond runtime, sort of. This will probably drastically in the
-/// future.
-///
-/// These are just simple error messages that our API and hooks can return as
-/// failure states.
+/// An error returned by the library's API and by hooks.
 #[derive(Debug)]
 pub struct Runtime {
 	pub message: String
@@ -18,8 +14,7 @@ impl Runtime {
 	}
 }
 
-/// This macro makes instantiating [Runtimes](struct.Runtime.html) a (little
-/// bit) easier.
+/// Creates a [`Runtime`], formatting the message when given arguments.
 #[macro_export]
 macro_rules! runtime {
 	($fmt:expr) => {
