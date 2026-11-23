@@ -562,13 +562,12 @@ impl InstructionHook for Server {
 			}
 		}
 
-		if original_opcode(opcode_ptr) == OPCODE_THROW && !did_breakpoint && !in_eval {
+		if original_opcode(opcode_ptr) == OPCODE_THROW && !in_eval {
 			unsafe {
-				let reason = BreakpointReason::Runtime {
-					message: thrown(ctx),
-					caught: in_try(ctx)
-				};
-				if let Some(action) = handle_breakpoint(ctx, reason) {
+				let (message, caught) = (thrown(ctx), in_try(ctx));
+				if did_breakpoint {
+					server.journal_runtime(&message, caught);
+				} else if let Some(action) = handle_breakpoint(ctx, BreakpointReason::Runtime { message, caught }) {
 					STEPPER.action = action;
 					did_breakpoint = true;
 				}

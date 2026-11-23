@@ -4,8 +4,8 @@ use std::{
 };
 
 use auxtools_protocol::{
-	BreakpointReason, BreakpointSetResult, ContinueKind, DataChange, InstructionRef, LogPart, ProcRef, ProfileReply, ProfileRequest, ProfileTotals,
-	ProfiledCode, Request, Response, RuntimeFilter, VariablesRef, WatchPlace
+	BreakpointReason, BreakpointSetResult, ContinueKind, DataChange, InstructionRef, JournalEvent, JournalKind, LogPart, ProcRef, ProfileReply,
+	ProfileRequest, ProfileTotals, ProfiledCode, Request, Response, RuntimeFilter, VariablesRef, WatchPlace
 };
 use test_support::{
 	debug::{Client, World},
@@ -946,6 +946,69 @@ fn false_condition_on_a_caught_throw() {
 	);
 	assert_eq!(client.expect_pause(), caught);
 	println!("ok: a logpoint on a caught throw logs when the throw stops");
+
+	let response = client.request(Request::BreakpointUnset {
+		instruction: InstructionRef {
+			proc: throw_caught.clone(),
+			offset: throw.offset as u32
+		},
+		exact: true
+	});
+	assert!(matches!(response, Response::BreakpointUnset { success: true, .. }), "{:?}", response);
+	let before = (disassembly.instructions.iter().rev())
+		.find(|instruction| instruction.offset < throw.offset)
+		.unwrap_or_else(|| panic!("nothing before the throw in {:?}", disassembly.instructions));
+	let response = client.request(Request::BreakpointSet {
+		instruction: InstructionRef {
+			proc: throw_caught.clone(),
+			offset: before.offset as u32
+		},
+		condition: None,
+		hit: None,
+		log: None,
+		exact: true
+	});
+	assert!(
+		matches!(response, Response::BreakpointSet {
+			result: BreakpointSetResult::Success { .. }
+		}),
+		"a breakpoint on `{}` got {:?}",
+		before.text,
+		response
+	);
+	eval(&mut client, None, "spawn()\n\tthrow_caught()");
+	client.resume();
+	assert_eq!(client.expect_pause(), BreakpointReason::Breakpoint);
+	assert_eq!(paused_at(&mut client), ("/throw_caught".to_owned(), before.offset as u32));
+	let runtimes = |client: &mut Client| match client.request(Request::Journal {
+		after: 0,
+		kinds: vec![JournalKind::Runtime],
+		limit: None,
+		follow: false
+	}) {
+		Response::Journal { entries, .. } => entries,
+		other => panic!("expected the journal, got {:?}", other)
+	};
+	let seen = runtimes(&mut client).len();
+	let response = client.request(Request::Continue {
+		kind: ContinueKind::StepOverInstruction { stack_id: 0 }
+	});
+	assert!(
+		matches!(response, Response::Ack),
+		"expected Ack for StepOverInstruction, got {:?}",
+		response
+	);
+	assert_eq!(client.expect_pause(), BreakpointReason::Step);
+	assert_eq!(paused_at(&mut client), ("/throw_caught".to_owned(), throw.offset as u32));
+	client.resume();
+	let journaled: Vec<_> = (runtimes(&mut client).into_iter().skip(seen))
+		.map(|entry| match entry.event {
+			JournalEvent::Runtime { message, caught, .. } => (message, caught),
+			other => panic!("expected a runtime error, got {:?}", other)
+		})
+		.collect();
+	assert_eq!(journaled, [("thrown and caught".to_owned(), true)]);
+	println!("ok: a caught throw an instruction step stops on is journaled once, with no second stop");
 }
 
 fn paused_at(client: &mut Client) -> (String, u32) {

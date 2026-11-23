@@ -259,17 +259,21 @@ impl Server {
 		self.answer(response);
 	}
 
+	pub fn journal_runtime(&mut self, message: &str, caught: bool) {
+		let stack = self.journal_stack();
+		self.journal(
+			JournalEvent::Runtime {
+				message: message.to_owned(),
+				caught,
+				stack
+			},
+			None
+		);
+	}
+
 	pub fn handle_breakpoint(&mut self, _ctx: *mut raw_types::procs::ExecutionContext, reason: BreakpointReason) -> Option<ContinueKind> {
 		if let BreakpointReason::Runtime { message, caught } = &reason {
-			let stack = self.journal_stack();
-			self.journal(
-				JournalEvent::Runtime {
-					message: message.clone(),
-					caught: *caught,
-					stack
-				},
-				None
-			);
+			self.journal_runtime(message, *caught);
 		}
 
 		let wanted = match &reason {
