@@ -17,6 +17,11 @@ fn hooked_method(x: Value) {
 	Ok(Value::from(x.as_number()? * 2.0))
 }
 
+#[hook("/proc/auxtest_skips_an_arg")]
+fn skips_an_arg(_: Value, second: &Value, third: Value) {
+	Ok(Value::from(second.as_number()? + third.as_number()? * 10.0))
+}
+
 #[hook("/proc/auxtest_panics")]
 fn panics() {
 	panic!("auxtest asked for this panic");
@@ -55,6 +60,15 @@ fn test_hooks() {
 	let by_name = datum.call("hooked_method", &[&Value::from(21.0)])?;
 	if by_name.as_number()? != 42.0 {
 		return Err(runtime!("test_hooks: calling a hooked datum proc from Rust did not reach the hook"));
+	}
+
+	let args = [1.0, 2.0, 3.0].map(Value::from);
+	let skipped = Proc::find("/proc/auxtest_skips_an_arg").unwrap().call(&[&args[0], &args[1], &args[2]])?;
+	if skipped.as_number()? != 32.0 {
+		return Err(runtime!(
+			"test_hooks: a hook with a `_` argument returned {}, expected 32",
+			skipped.as_number()?
+		));
 	}
 
 	unsafe {

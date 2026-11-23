@@ -120,7 +120,18 @@ pub fn pin_dll(attr: TokenStream) -> TokenStream {
 	code.into()
 }
 
+fn is_value(path: &syn::TypePath) -> bool {
+	path.qself.is_none()
+		&& path
+			.path
+			.segments
+			.last()
+			.is_some_and(|last| last.ident == "Value" && last.arguments.is_none())
+}
+
 /// Defines a proc hook. Given a proc path, the hook is installed at init.
+/// Each argument is a `Value` or a `&Value`, in the proc's order. Use `_` for
+/// an argument the hook doesn't use.
 ///
 /// ```ignore
 /// #[hook("/mob/proc/on_honked")]
@@ -171,22 +182,32 @@ pub fn hook(attr: TokenStream, item: TokenStream) -> TokenStream {
 	};
 
 	let body = &input.block;
-	let mut arg_names: syn::punctuated::Punctuated<syn::Ident, syn::Token![,]> = syn::punctuated::Punctuated::new();
-	let mut proc_arg_unpacker: syn::punctuated::Punctuated<proc_macro2::TokenStream, syn::Token![,]> = syn::punctuated::Punctuated::new();
-
-	for arg in args.iter().map(extract_args) {
-		if let syn::Pat::Ident(p) = &*arg.pat {
-			arg_names.push(p.ident.clone());
-			let index = arg_names.len() - 1;
-			proc_arg_unpacker.push(quote! {
-				&args[#index]
-			});
+	let mut bindings = vec![];
+	for (index, arg) in args.iter().map(extract_args).enumerate() {
+		let value = match &*arg.ty {
+			syn::Type::Path(path) if is_value(path) => quote! { args[#index].clone() },
+			syn::Type::Reference(reference)
+				if reference.mutability.is_none() && matches!(&*reference.elem, syn::Type::Path(path) if is_value(path)) =>
+			{
+				quote! { &args[#index] }
+			}
+			other => {
+				return syn::Error::new(other.span(), "a hook argument must be `Value` or `&Value`")
+					.to_compile_error()
+					.into()
+			}
+		};
+		let (pat, ty) = (&arg.pat, &arg.ty);
+		match &**pat {
+			syn::Pat::Wild(_) => {}
+			syn::Pat::Ident(ident) if ident.subpat.is_none() => bindings.push(quote! { let #pat: #ty = #value; }),
+			other => {
+				return syn::Error::new(other.span(), "a hook argument must be a name or `_`")
+					.to_compile_error()
+					.into()
+			}
 		}
 	}
-	let _default_null = quote! {
-		#[allow(unreachable_code)]
-		auxtools::Value::NULL
-	};
 	let result = quote! {
 		#cthook_prelude
 		#signature {
@@ -195,7 +216,7 @@ pub fn hook(attr: TokenStream, item: TokenStream) -> TokenStream {
 					args.push(auxtools::Value::NULL)
 				}
 			}
-			let (#arg_names) = (#proc_arg_unpacker);
+			#(#bindings)*
 			#body
 		}
 	};

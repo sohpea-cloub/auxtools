@@ -97,6 +97,9 @@ var/datum/weak_test_datum
 	for (var/i in 1 to 4096)
 		new /mob/verb/auxtest_verb(M, "auxtest clone [i]")
 
+/proc/auxtest_skips_an_arg(first, second, third)
+	CRASH()
+
 /proc/auxtest_panics()
 	CRASH()
 
