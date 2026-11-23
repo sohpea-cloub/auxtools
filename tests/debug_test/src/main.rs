@@ -765,6 +765,34 @@ fn loop_back_to_the_start() {
 	);
 	count_down(&mut client);
 	println!("ok: a loop back to the first instruction through a breakpoint isn't counted as calls");
+
+	eval(&mut client, None, "spawn()\n\tprofiled_countdown(3)");
+	client.resume();
+	assert_eq!(client.expect_pause(), BreakpointReason::Breakpoint);
+	assert_eq!(paused_at(&mut client), (counted.proc.path.clone(), back.offset as u32));
+	let response = client.request(Request::Continue {
+		kind: ContinueKind::StepOverInstruction { stack_id: 0 }
+	});
+	assert!(
+		matches!(response, Response::Ack),
+		"expected Ack for StepOverInstruction, got {:?}",
+		response
+	);
+	assert_eq!(client.expect_pause(), BreakpointReason::Step);
+	assert_eq!(paused_at(&mut client), (counted.proc.path.clone(), 0));
+	println!("ok: a step from a breakpoint on a loop back to the first instruction stops there");
+}
+
+fn paused_at(client: &mut Client) -> (String, u32) {
+	let response = client.request(Request::StackFrames {
+		stack_id: 0,
+		start_frame: Some(0),
+		count: Some(1)
+	});
+	let Response::StackFrames { frames, .. } = response else {
+		panic!("expected StackFrames, got {:?}", response);
+	};
+	(frames[0].instruction.proc.path.clone(), frames[0].instruction.offset)
 }
 
 fn waiting_world_ends() {
