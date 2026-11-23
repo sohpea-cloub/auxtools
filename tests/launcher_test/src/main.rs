@@ -1021,7 +1021,7 @@ fn command_line_more(pid: u64, dir: &Path) {
 	let (code, printed) = launcher_command(&["--pid", "4000000000", "status"]);
 	assert_eq!(code, 1);
 	assert!(
-		printed.starts_with("error: cannot connect to the world with pid 4000000000: "),
+		printed.starts_with("error: cannot connect to process 4000000000: no debug server is listening in it: "),
 		"status said {}",
 		printed
 	);

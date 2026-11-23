@@ -35,7 +35,17 @@ pub fn connect(pid: u32) -> io::Result<Stream> {
 }
 
 pub fn open(pid: u32) -> io::Result<Stream> {
-	connect_to(world_name(pid)).map_err(|e| auxtools3_protocol(pid).map_or(e, incompatible))
+	connect_to(world_name(pid)).map_err(|e| auxtools3_protocol(pid).map_or_else(|| not_listening(e), incompatible))
+}
+
+fn not_listening(e: io::Error) -> io::Error {
+	io::Error::new(
+		e.kind(),
+		format!(
+			"no debug server is listening in it: {}. Either it isn't a world with auxtools' debug library loaded, or its world is still loading",
+			e
+		)
+	)
 }
 
 pub fn incompatible(theirs: u32) -> io::Error {

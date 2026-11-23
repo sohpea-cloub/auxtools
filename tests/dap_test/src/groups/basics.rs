@@ -266,7 +266,10 @@ fn refusals() {
 	assert!(why.contains("process not found"), "unexpected missing-process diagnostic: {:?}", why);
 	let why = launcher.refused("attach", json!({ "processId": std::process::id() }));
 	assert!(
-		why.contains("isn't a world with this version of auxtools' debugger"),
+		why.starts_with(&format!(
+			"cannot connect to process {}: no debug server is listening in it: ",
+			std::process::id()
+		)),
 		"attaching to this test said {:?}",
 		why
 	);

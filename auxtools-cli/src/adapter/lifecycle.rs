@@ -208,14 +208,7 @@ impl Adapter {
 		if !local::alive(pid) {
 			return Err(format!("process not found: {}", pid));
 		}
-		let stream = local::connect(pid).map_err(|e| {
-			format!(
-				"process {} isn't a world with this version of auxtools' debugger in it (protocol {}): {}",
-				pid,
-				aux::PROTOCOL_VERSION,
-				e
-			)
-		})?;
+		let stream = local::connect(pid).map_err(|e| format!("cannot connect to process {}: {}", pid, e))?;
 
 		self.sleeping_threads = args.sleeping_threads.unwrap_or(aux::DEFAULT_SLEEPING_STACKS);
 		self.code_settings = Some(CodeSettings {

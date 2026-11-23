@@ -272,7 +272,7 @@ fn proc_name(proc: &ProcRef) -> String {
 }
 
 fn cannot_connect(pid: u32, why: &io::Error) -> String {
-	format!("cannot connect to the world with pid {}: {}.", pid, why)
+	format!("cannot connect to process {}: {}.", pid, why)
 }
 
 fn only_world() -> Result<u32> {
