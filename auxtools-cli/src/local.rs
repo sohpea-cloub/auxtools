@@ -1,7 +1,10 @@
 use std::{
 	io::{self, Read, Write},
 	path::{Path, PathBuf},
-	sync::{Arc, OnceLock},
+	sync::{
+		atomic::{AtomicBool, Ordering},
+		Arc, OnceLock
+	},
 	time::{Duration, Instant}
 };
 
@@ -59,24 +62,28 @@ pub fn incompatible(theirs: u32) -> io::Error {
 const HELLO_PATIENCE: Duration = Duration::from_secs(5);
 
 fn read_hello(stream: Stream) -> io::Result<(Stream, Hello)> {
-	let stream = Arc::new(stream);
+	let connection = Shared::new(stream);
 	let (sender, receiver) = std::sync::mpsc::channel();
-	let mut reader = Shared(stream.clone());
-	std::thread::spawn(move || {
+	let mut reader = connection.clone();
+	std::thread::Builder::new().name("world hello".to_owned()).spawn(move || {
 		let hello = read::<Hello>(&mut reader);
 		drop(reader);
 		let _ = sender.send(hello);
-	});
-	let hello = receiver.recv_timeout(HELLO_PATIENCE).map_err(|_| {
-		io::Error::new(
+	})?;
+	let Ok(hello) = receiver.recv_timeout(HELLO_PATIENCE) else {
+		connection.hang_up();
+		return Err(io::Error::new(
 			io::ErrorKind::TimedOut,
 			format!(
 				"its debug library said nothing for {} seconds after the connection opened: the process is stopped or hung",
 				HELLO_PATIENCE.as_secs()
 			)
-		)
-	})??;
-	let stream = Arc::try_unwrap(stream).map_err(|_| io::Error::other("the connection is still being read"))?;
+		));
+	};
+	let hello = hello?;
+	let stream = connection
+		.into_stream()
+		.ok_or_else(|| io::Error::other("the connection is still being read"))?;
 	Ok((stream, hello))
 }
 
@@ -87,27 +94,96 @@ fn auxtools3_protocol(pid: u32) -> Option<u32> {
 }
 
 #[derive(Clone)]
-pub struct Shared(Arc<Stream>);
+pub struct Shared(Arc<Connection>);
+
+struct Connection {
+	stream: Stream,
+	hung_up: AtomicBool,
+	#[cfg(windows)]
+	reading: std::sync::atomic::AtomicUsize
+}
 
 impl Shared {
 	pub fn new(stream: Stream) -> Self {
-		Self(Arc::new(stream))
+		Self(Arc::new(Connection {
+			stream,
+			hung_up: AtomicBool::new(false),
+			#[cfg(windows)]
+			reading: Default::default()
+		}))
+	}
+
+	fn into_stream(self) -> Option<Stream> {
+		Arc::into_inner(self.0).map(|connection| connection.stream)
+	}
+
+	pub fn hang_up(&self) {
+		self.0.hung_up.store(true, Ordering::SeqCst);
+		self.0.cancel_reads();
+	}
+}
+
+impl Connection {
+	fn check(&self) -> io::Result<()> {
+		if self.hung_up.load(Ordering::SeqCst) {
+			return Err(io::Error::new(io::ErrorKind::NotConnected, "the connection was hung up"));
+		}
+		Ok(())
+	}
+
+	#[cfg(unix)]
+	fn read(&self, buf: &mut [u8]) -> io::Result<usize> {
+		self.check()?;
+		(&self.stream).read(buf)
+	}
+
+	#[cfg(unix)]
+	fn cancel_reads(&self) {
+		use std::os::fd::{AsFd, AsRawFd};
+
+		let Stream::UdSocket(socket) = &self.stream;
+		unsafe {
+			libc::shutdown(socket.as_fd().as_raw_fd(), libc::SHUT_RDWR);
+		}
+	}
+
+	#[cfg(windows)]
+	fn read(&self, buf: &mut [u8]) -> io::Result<usize> {
+		self.reading.fetch_add(1, Ordering::SeqCst);
+		let read = self.check().and_then(|()| (&self.stream).read(buf));
+		self.reading.fetch_sub(1, Ordering::SeqCst);
+		self.check()?;
+		read
+	}
+
+	#[cfg(windows)]
+	fn cancel_reads(&self) {
+		use std::os::windows::io::{AsHandle, AsRawHandle};
+
+		let Stream::NamedPipe(pipe) = &self.stream;
+		while self.reading.load(Ordering::SeqCst) > 0 {
+			unsafe {
+				winapi::um::ioapiset::CancelIoEx(pipe.as_handle().as_raw_handle().cast(), std::ptr::null_mut());
+			}
+			std::thread::sleep(Duration::from_millis(1));
+		}
 	}
 }
 
 impl Read for Shared {
 	fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-		(&*self.0).read(buf)
+		self.0.read(buf)
 	}
 }
 
 impl Write for Shared {
 	fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-		(&*self.0).write(buf)
+		self.0.check()?;
+		(&self.0.stream).write(buf)
 	}
 
 	fn flush(&mut self) -> io::Result<()> {
-		(&*self.0).flush()
+		(&self.0.stream).flush()
 	}
 }
 
@@ -127,7 +203,8 @@ pub struct World {
 enum Probed {
 	Info { args: Vec<String>, cwd: String },
 	Unavailable(String),
-	Incompatible(u32)
+	Incompatible(u32),
+	Unanswered
 }
 
 pub const PROBE_PATIENCE: Duration = Duration::from_secs(5);
@@ -141,14 +218,18 @@ pub fn test_patience(usual: Duration) -> Duration {
 }
 
 pub fn worlds() -> Vec<World> {
-	let probes: Vec<_> = server_processes()
+	worlds_among(server_processes())
+}
+
+fn worlds_among(processes: Vec<(u32, String)>) -> Vec<World> {
+	let until = Instant::now() + test_patience(PROBE_PATIENCE);
+	let probes: Vec<_> = processes
 		.into_iter()
 		.map(|(pid, program)| {
-			let answer = connect_to(world_name(pid)).ok().map(probe);
+			let answer = connect_to(world_name(pid)).ok().map(|stream| probe(stream, until));
 			(pid, program, answer)
 		})
 		.collect();
-	let until = Instant::now() + test_patience(PROBE_PATIENCE);
 	probes
 		.into_iter()
 		.filter_map(|(pid, program, answer)| {
@@ -180,43 +261,51 @@ pub fn worlds() -> Vec<World> {
 					..unknown(PROTOCOL_VERSION, true, Some(true))
 				}),
 				Some(Ok(Ok(Probed::Incompatible(protocol)))) => Some(unknown(protocol, false, None)),
-				Some(Err(_)) => Some(unknown(PROTOCOL_VERSION, true, Some(false))),
+				Some(Ok(Ok(Probed::Unanswered)) | Err(_)) => Some(unknown(PROTOCOL_VERSION, true, Some(false))),
 				Some(Ok(Err(_))) | None => auxtools3_protocol(pid).map(|protocol| unknown(protocol, false, None))
 			}
 		})
 		.collect()
 }
 
-fn probe(stream: Stream) -> std::sync::mpsc::Receiver<io::Result<Probed>> {
+fn probe(stream: Stream, until: Instant) -> std::sync::mpsc::Receiver<io::Result<Probed>> {
 	let (sender, receiver) = std::sync::mpsc::channel();
-	std::thread::spawn(move || {
-		let answer = Client::on(stream).and_then(|mut client| {
-			let answer = probed(&mut client);
-			let _ = client.leave();
-			answer.map_err(|lost| match lost {
-				Lost::Unsent(e) => e,
-				Lost::Closed | Lost::Incompatible(_) => io::Error::other("it hung up")
-			})
-		});
-		let _ = sender.send(answer);
-	});
+	std::thread::Builder::new()
+		.name("world probe".to_owned())
+		.spawn(move || {
+			let answer = Client::on(stream).and_then(|mut client| {
+				let answer = probed(&mut client, until);
+				let _ = client.leave();
+				client.hang_up();
+				match answer {
+					Ok(Some(probed)) => Ok(probed),
+					Ok(None) => Ok(Probed::Unanswered),
+					Err(Lost::Unsent(e)) => Err(e),
+					Err(Lost::Closed | Lost::Incompatible(_)) => Err(io::Error::other("it hung up"))
+				}
+			});
+			let _ = sender.send(answer);
+		})
+		.expect("couldn't start a thread");
 	receiver
 }
 
-fn probed(client: &mut Client) -> Result<Probed, Lost> {
-	let asked = match client.ask(&Request::WorldInfo, None) {
-		Ok(asked) => asked,
-		Err(Lost::Incompatible(theirs)) => return Ok(Probed::Incompatible(theirs)),
+fn probed(client: &mut Client, until: Instant) -> Result<Option<Probed>, Lost> {
+	let asked = match client.ask(&Request::WorldInfo, Some(until)) {
+		Ok(Some(asked)) => asked,
+		Ok(None) => return Ok(None),
+		Err(Lost::Incompatible(theirs)) => return Ok(Some(Probed::Incompatible(theirs))),
 		Err(lost) => return Err(lost)
 	};
 	loop {
-		match client.hear(None)? {
+		match client.hear(Some(until))? {
+			None => return Ok(None),
 			Some(Heard::Answer {
 				to,
 				response: Response::WorldInfo { args, cwd, .. },
 				..
-			}) if Some(to) == asked => return Ok(Probed::Info { args, cwd }),
-			Some(Heard::Event(Response::Unavailable { reason })) => return Ok(Probed::Unavailable(reason)),
+			}) if to == asked => return Ok(Some(Probed::Info { args, cwd })),
+			Some(Heard::Event(Response::Unavailable { reason })) => return Ok(Some(Probed::Unavailable(reason))),
 			Some(Heard::Event(Response::Disconnect)) => return Err(Lost::Closed),
 			_ => {}
 		}
@@ -318,6 +407,99 @@ pub fn kill(pid: u32) {
 		if !process.is_null() {
 			TerminateProcess(process, 1);
 			CloseHandle(process);
+		}
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use std::{
+		io::{self, Read},
+		sync::{
+			atomic::{AtomicUsize, Ordering},
+			Arc
+		},
+		time::{Duration, Instant}
+	};
+
+	use interprocess::local_socket::{prelude::*, GenericNamespaced, ListenerOptions, Stream};
+
+	use super::{connect, world_name, worlds_among};
+
+	#[derive(Default)]
+	struct Connections {
+		accepted: AtomicUsize,
+		open: AtomicUsize
+	}
+
+	fn silent_world(pid: u32) -> Arc<Connections> {
+		let listener = ListenerOptions::new()
+			.name(world_name(pid).to_ns_name::<GenericNamespaced>().unwrap())
+			.create_sync()
+			.unwrap();
+		let connections = Arc::new(Connections::default());
+		let counted = connections.clone();
+		std::thread::spawn(move || {
+			for stream in listener.incoming().flatten() {
+				counted.accepted.fetch_add(1, Ordering::SeqCst);
+				counted.open.fetch_add(1, Ordering::SeqCst);
+				let counted = counted.clone();
+				std::thread::spawn(move || {
+					let mut stream: Stream = stream;
+					let mut buffer = [0; 256];
+					while matches!(stream.read(&mut buffer), Ok(n) if n > 0) {}
+					counted.open.fetch_sub(1, Ordering::SeqCst);
+				});
+			}
+		});
+		connections
+	}
+
+	fn unused_pid(offset: u32) -> u32 {
+		4_000_000_000 + std::process::id() % 100_000 * 10 + offset
+	}
+
+	fn threads_named(name: &str) -> usize {
+		let Ok(tasks) = std::fs::read_dir("/proc/self/task") else {
+			return 0;
+		};
+		tasks
+			.flatten()
+			.filter(|task| std::fs::read_to_string(task.path().join("comm")).is_ok_and(|comm| comm.trim_end() == name))
+			.count()
+	}
+
+	#[track_caller]
+	fn released(connections: &Connections, accepted: usize, thread: &str) {
+		let deadline = Instant::now() + Duration::from_secs(5);
+		let left = || (connections.open.load(Ordering::SeqCst), threads_named(thread));
+		while left() != (0, 0) && Instant::now() < deadline {
+			std::thread::sleep(Duration::from_millis(10));
+		}
+		assert_eq!(connections.accepted.load(Ordering::SeqCst), accepted, "connections opened");
+		assert_eq!(left(), (0, 0), "connections still open and {} threads left", thread);
+	}
+
+	#[test]
+	fn a_connection_without_a_hello_is_released() {
+		let pid = unused_pid(1);
+		let connections = silent_world(pid);
+		for attempt in 1..=2 {
+			let error = connect(pid).expect_err("a world that said nothing was connected to");
+			assert_eq!(error.kind(), io::ErrorKind::TimedOut, "{}", error);
+			released(&connections, attempt, "world hello");
+		}
+	}
+
+	#[test]
+	fn a_probe_without_an_answer_is_released() {
+		let pid = unused_pid(2);
+		let connections = silent_world(pid);
+		for attempt in 1..=2 {
+			let worlds = worlds_among(vec![(pid, "DreamDaemon".to_owned())]);
+			let responsive: Vec<_> = worlds.iter().map(|world| (world.pid, world.responsive)).collect();
+			assert_eq!(responsive, [(pid, Some(false))]);
+			released(&connections, attempt, "world probe");
 		}
 	}
 }

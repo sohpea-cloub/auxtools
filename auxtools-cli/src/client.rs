@@ -162,6 +162,10 @@ impl Client {
 		Ok(())
 	}
 
+	pub fn hang_up(&self) {
+		self.writer.hang_up();
+	}
+
 	pub fn closed_by(&mut self, until: Instant) -> bool {
 		loop {
 			match self.hear(Some(until)) {
