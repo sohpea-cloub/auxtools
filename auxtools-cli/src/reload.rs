@@ -6,7 +6,7 @@ use dmasm::{
 	reload::{Changes, Plan, Refusal, Snapshot}
 };
 
-pub const RESTART: &str = "Restart the world to run all of the new code.";
+pub const RESTART: &str = "Rebuild the .dmb, then restart the world to load all of the new code.";
 
 pub fn request(changes: &Changes, before: &Snapshot, restarted: bool) -> HotReloadRequest {
 	let mut plan = changes.plan.clone();

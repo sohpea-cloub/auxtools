@@ -290,7 +290,7 @@ impl Server {
 			}
 			if !result.failures.is_empty() {
 				self.notify(format!(
-					"Hot reload partly applied as world/New started: {}. Restart the world to run all of the new code.",
+					"Hot reload partly applied as world/New started: {}. Rebuild the .dmb, then restart the world to load all of the new code.",
 					result.failures.join("; ")
 				));
 			}

@@ -294,8 +294,9 @@ Fix or revert the change to reload the other edits.
 
 Some reloads are partly applied: some of their steps changed the world, and then a later step
 failed. The world then runs a mix of old and new code. The Debug Console reports this and lists
-each failed step, and the status bar shows that the reload failed. Use **Restart** to rebuild
-and restart the world.
+each failed step, and the status bar shows that the reload failed. Rebuild the `.dmb`, then
+restart the world to load all of the new code. If `preLaunchTask` builds the world, choose
+**Restart**. Otherwise, build the world first, then choose **Restart**.
 
 At startup, the launcher warns about source files that are newer than the `.dmb`. The world may
 be missing their edits.

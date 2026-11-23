@@ -129,8 +129,8 @@ A change to a proc declaration needs a rebuild. Changing a proc into a verb is a
 
 Some reloads are partly applied: some of their steps changed the world, and then a later step
 failed. The world then runs a mix of old and new code. The launcher reports this and lists each
-failed step, and `auxtools wait reload` exits with code 1. Rebuild and restart the world to run
-all of the new code.
+failed step, and `auxtools wait reload` exits with code 1. Rebuild the `.dmb`, then restart the
+world to load all of the new code.
 
 **Running code and objects.** Calls that are running when you save finish on the old code.
 Existing objects keep their verbs and built-in values. New objects get the new computed

@@ -473,8 +473,8 @@ mod tests {
 		};
 		assert!(
 			block(&entry).ends_with(
-				"hot reload partly applied: reloaded /answer. Restart the world to run all of the new code.\n  failed: couldn't set a built-in var: \
-				 no\n  warning: careful"
+				"hot reload partly applied: reloaded /answer. Rebuild the .dmb, then restart the world to load all of the new code.\n  failed: \
+				 couldn't set a built-in var: no\n  warning: careful"
 			),
 			"{}",
 			block(&entry)

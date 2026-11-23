@@ -13,7 +13,8 @@
   error.
 - A hot reload can now be partly applied: some of its steps change the world, and then a later
   step fails. The world then runs a mix of old and new code. The launcher lists the failed steps
-  and asks you to restart the world, and `auxtools wait reload` exits with code 1.
+  and `auxtools wait reload` exits with code 1. Rebuild the `.dmb`, then restart the world to
+  load all of the new code.
 - The debugger compiles an expression as the proc body `return EXPR`. Its result now matches
   what the same code computes in the world.
 
