@@ -78,7 +78,8 @@ fn pin_dll() -> Result<(), ()> {
 	Ok(())
 }
 
-/// A panic unwinding into BYOND's `extern "C"` caller would abort the game.
+/// Runs `work` and catches a panic. A panic that unwinds into BYOND's
+/// `extern "C"` caller would abort the game.
 pub fn guard<R>(work: impl FnOnce() -> R) -> Result<R, Box<dyn Any + Send>> {
 	std::panic::catch_unwind(std::panic::AssertUnwindSafe(work))
 }
@@ -175,7 +176,7 @@ fn init_full() -> Result<(), String> {
 	Ok(())
 }
 
-/// A panic in `prepare` fails the init; one in `ready` or `failed` doesn't.
+/// A panic in `prepare` fails the init. A panic in `ready` or `failed` doesn't.
 pub struct WorldLoad {
 	pub prepare: fn() -> Result<(), String>,
 	pub ready: fn(),
@@ -187,7 +188,8 @@ pub(crate) static WORLD_LOAD_PENDING: AtomicBool = AtomicBool::new(false);
 static FULL_INIT_FUNCS_PENDING: AtomicBool = AtomicBool::new(false);
 static ENDING_WORLD: Mutex<Option<(raw_types::procs::ProcId, runtime_tables::ProcEntryWords)>> = Mutex::new(None);
 
-/// Finishes on BYOND's thread at the first proc call, before global init.
+/// The init finishes on BYOND's thread at the first proc call, before global
+/// init.
 pub fn init_on_world_load(on_load: &'static WorldLoad) -> Result<(), String> {
 	if WORLD_LOAD.set(on_load).is_err() {
 		return Err("already waiting for the world to load".to_owned());
@@ -203,7 +205,8 @@ pub fn init_on_world_load(on_load: &'static WorldLoad) -> Result<(), String> {
 	Ok(())
 }
 
-/// Given `added`, a proc added after load, init waits until its entry is gone.
+/// `added` is a proc added after the world loaded. The init waits until its
+/// entry is gone.
 pub fn init_on_next_world_load(added: Option<&Proc>) {
 	if WORLD_LOAD.get().is_none() || get_init_level() != InitLevel::None {
 		return;
@@ -230,7 +233,8 @@ pub fn proc_calls() -> u32 {
 static PROC_CALL_WORK: Mutex<Vec<fn() -> bool>> = Mutex::new(Vec::new());
 pub(crate) static PROC_CALL_WORK_PENDING: AtomicBool = AtomicBool::new(false);
 
-/// Until it returns true. Cleared on shutdown.
+/// Runs `work` at each proc call until it returns true. Shutdown clears the
+/// queue.
 pub fn at_proc_calls(work: fn() -> bool) {
 	PROC_CALL_WORK.lock().unwrap().push(work);
 	PROC_CALL_WORK_PENDING.store(true, Ordering::Relaxed);
@@ -238,7 +242,8 @@ pub fn at_proc_calls(work: fn() -> bool) {
 
 static STARTING: Mutex<Option<raw_types::procs::ProcId>> = Mutex::new(None);
 
-/// It may be an internal proc missing from the proc table.
+/// The proc being called. It may be an internal proc that the proc table
+/// lacks.
 pub fn starting_call() -> Option<raw_types::procs::ProcId> {
 	*STARTING.lock().unwrap()
 }

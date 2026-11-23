@@ -116,7 +116,7 @@ pub fn set_bytecode(id: BytecodeId, new_bytecode: *mut u32, new_bytecode_count: 
 	}
 }
 
-/// Takes a reference to a misc entry for good, so BYOND never frees it.
+/// Takes a permanent reference to a misc entry, so BYOND never frees it.
 pub fn add_ref<T: AsMiscId>(id: &T) {
 	let mut misc: *mut c_void = std::ptr::null_mut();
 	unsafe {

@@ -24,7 +24,7 @@ pub fn readable() -> bool {
 	found()
 }
 
-/// Holds no reference: compare or convert the result at once.
+/// The result holds no reference. Compare or convert it at once.
 pub fn read_raw(pointer: &Value) -> Option<RawValue> {
 	if pointer.raw.tag != ValueTag::Pointer {
 		return None;

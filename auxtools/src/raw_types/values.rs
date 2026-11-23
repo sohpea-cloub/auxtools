@@ -5,7 +5,8 @@ macro_rules! value_tags {
 	(
 		$($variant:ident = $val:expr),* $(,)?
 	) => {
-		/// Newer builds have tags this list doesn't name, so any byte is a tag.
+		/// Newer builds have tags that this list doesn't name. So any byte is a valid
+		/// tag.
 		#[repr(transparent)]
 		#[derive(PartialEq, Eq, Copy, Clone, Hash)]
 		pub struct ValueTag(pub u8);

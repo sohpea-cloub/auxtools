@@ -10,7 +10,7 @@ use fxhash::FxHashMap;
 
 use crate::*;
 
-/// Not `Send`: calling it from another thread would run DM code mid-tick.
+/// Not `Send`. A call from another thread would run DM code during a tick.
 ///
 /// ```compile_fail
 /// fn assert_send<T: Send>() {}
@@ -40,7 +40,7 @@ impl Proc {
 		PROCS_BY_NAME.with(|h| h.borrow().get(&path).cloned().unwrap_or_default())
 	}
 
-	/// Definitions left out are no longer found by [`Proc::find_override`].
+	/// [`Proc::find_override`] no longer finds the definitions left out.
 	pub fn set_overrides<S: Into<String>>(path: S, procs: Vec<Self>) {
 		let path = strip_path(path.into());
 		PROC_OVERRIDE_IDS.with(|override_ids| {
@@ -52,7 +52,8 @@ impl Proc {
 		PROCS_BY_NAME.with(|h| h.borrow_mut().insert(path, procs));
 	}
 
-	/// Valid only until DM code next runs: BYOND moves the table when it grows.
+	/// Valid only until DM code runs again. BYOND moves the table when it
+	/// grows.
 	pub fn entry(&self) -> *mut raw_types::procs::ProcEntry {
 		entry_by_id(self.id)
 	}
@@ -157,7 +158,7 @@ impl Proc {
 	}
 
 	/// Gives this proc the override id [`Proc::APART`]. The other definitions
-	/// keep their ids. A path has one proc set apart, so this replaces any
+	/// keep their ids. A path has only one proc set apart, so this replaces any
 	/// earlier one.
 	pub fn set_apart(&self) {
 		PROC_OVERRIDE_IDS.with(|override_ids| {

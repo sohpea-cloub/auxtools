@@ -1,5 +1,5 @@
-//! A miss is an error naming the lookup, never a null pointer: the C++ shim
-//! and `debug.rs` use the results unchecked.
+//! A failed lookup returns an error that names it, never a null pointer. The
+//! C++ shim and `debug.rs` use the results without checks.
 
 pub mod builds;
 mod linux;
@@ -28,7 +28,8 @@ pub fn accepts(version: u32, build: u32) -> bool {
 	builds::SUPPORTED.iter().any(|&(major, first)| major == version && build >= first)
 }
 
-/// Failing an exact range, the newest recipe before `build`, else the first.
+/// Returns the recipe whose range has `build`. Without one, returns the newest
+/// recipe before `build`, or else the first recipe.
 pub fn recipe_for(platform: Platform, name: &str, build: u32) -> Option<&'static Recipe> {
 	let named = || platform.recipes().iter().filter(move |recipe| recipe.name == name);
 	named()
@@ -51,7 +52,8 @@ pub fn names(platform: Platform) -> Vec<&'static str> {
 	names
 }
 
-/// From the name's first recipe until its last ends.
+/// Whether `build` is between the start of the name's first recipe and the
+/// end of its last.
 pub fn needed(platform: Platform, name: &str, build: u32) -> bool {
 	let named = || platform.recipes().iter().filter(move |recipe| recipe.name == name);
 	named().any(|recipe| recipe.versions.min <= build) && named().any(|recipe| build <= recipe.versions.max)
@@ -92,7 +94,7 @@ pub const fn defines(name: &str) -> bool {
 	byond_scan::defines(Platform::RUNNING.recipes(), name)
 }
 
-/// A name this platform's list lacks doesn't compile.
+/// A name missing from this platform's list doesn't compile.
 #[doc(hidden)]
 #[macro_export]
 macro_rules! __registry_find {
@@ -104,7 +106,7 @@ macro_rules! __registry_find {
 #[doc(inline)]
 pub use __registry_find as find;
 
-/// Builds older than the recipe's range are refused, newer ones tried.
+/// Refuses builds older than the recipe's range. Tries newer builds.
 pub fn find_recipe(recipe: &Recipe) -> Result<usize, String> {
 	let (module, build) = module_and_build()?;
 	resolve_checked(&module, build, recipe)

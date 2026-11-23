@@ -65,7 +65,7 @@ pub fn byond_return(value: Option<Vec<u8>>) -> *const c_char {
 	}
 }
 
-/// Creates a normal byond ffi function that can be called in DM with [call](http://www.byond.com/docs/ref/#/proc/call).
+/// Creates a function that DM can call with [call](http://www.byond.com/docs/ref/#/proc/call).
 /// A body that panics returns an empty string.
 ///
 /// # Examples

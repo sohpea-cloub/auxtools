@@ -19,7 +19,7 @@ fn id_of(val: &Value) -> Option<u64> {
 	parse_id(text.data())
 }
 
-/// A weak reference to a datum. It can be stored globally or sent to other
+/// A weak reference to a datum. You can store it globally or send it to other
 /// threads. Upgrade it only on BYOND's thread. Every datum needs a
 /// `__auxtools_weakref_id` var.
 #[derive(Copy, Clone)]
@@ -39,7 +39,7 @@ impl WeakValue {
 		Ok(Self { inner: val.raw, id })
 	}
 
-	/// Returns `None` if the datum has been deleted. Panics on any thread but
+	/// Returns `None` if the datum was deleted. Panics on any thread other than
 	/// BYOND's.
 	pub fn upgrade(&self) -> Option<Value> {
 		assert!(crate::on_byond_thread(), "WeakValue::upgrade must run on BYOND's thread");

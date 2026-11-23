@@ -4,10 +4,10 @@ use super::values;
 #[derive(Copy, Clone, Debug)]
 pub struct ListId(pub u32);
 
-/// 32 bytes: BYOND reads the key at `+0` and the children at `+16` and `+20`.
+/// 32 bytes. BYOND reads the key at `+0` and the children at `+16` and `+20`.
 #[repr(C)]
 pub struct AssociativeListEntry {
-	/// Holds no reference; the same value also sits in a `vector_part` slot.
+	/// Holds no reference. The same value is also in a `vector_part` slot.
 	pub key: values::Value,
 	/// Holds a reference, released when the tree is freed.
 	pub value: values::Value,

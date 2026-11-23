@@ -1,7 +1,7 @@
 use crate::*;
 use std::{ffi::CStr, fmt};
 
-/// BYOND stores a macro such as `\improper` as 0xFF and a code.
+/// BYOND stores a text macro such as `\improper` as 0xFF followed by a code.
 pub fn text_of(bytes: &[u8]) -> String {
 	if !bytes.contains(&0xFF) {
 		return String::from_utf8_lossy(bytes).into_owned();

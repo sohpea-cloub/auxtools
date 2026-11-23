@@ -2,7 +2,7 @@ use super::{raw_types, string};
 use crate::{list, runtime, runtime::DMResult};
 use std::{ffi::CString, fmt, marker::PhantomData};
 
-/// Any value a DM var can hold. Don't keep one longer than your hook runs.
+/// A value that a DM var can hold. Don't keep it after your hook returns.
 pub struct Value {
 	pub raw: raw_types::values::Value,
 	phantom: PhantomData<*mut ()>
@@ -34,7 +34,7 @@ impl Drop for Value {
 }
 
 impl Value {
-	/// Equivalent to DM's `global.vars`.
+	/// DM's `global.vars`.
 	pub const GLOBAL: Self = Self {
 		raw: raw_types::values::Value {
 			tag: raw_types::values::ValueTag::World,

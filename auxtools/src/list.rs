@@ -98,7 +98,7 @@ impl List {
 		self.value.raw.tag == raw_types::values::ValueTag::Alist
 	}
 
-	/// In the order `for (var/k in A)` gives them.
+	/// Returns the pairs in the order `for (var/k in A)` gives.
 	pub fn alist_pairs(&self) -> DMResult<Vec<(Value, Value)>> {
 		if !self.is_alist() {
 			return Err(runtime!("attempted to read alist pairs of a non-alist"));
@@ -133,7 +133,8 @@ impl List {
 		Ok(pairs)
 	}
 
-	/// Asks BYOND, because a `filters` list and a single filter share a tag.
+	/// Asks BYOND, because a `filters` list and a single filter have the same
+	/// tag.
 	pub fn is_list(value: &Value) -> bool {
 		let mut is_list: u8 = 0;
 		unsafe {

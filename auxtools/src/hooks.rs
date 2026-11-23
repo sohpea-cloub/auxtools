@@ -231,7 +231,7 @@ impl Proc {
 		hook_by_id(self.id, func, self.path.to_owned())
 	}
 
-	/// Hooks from other auxtools libraries in the same world aren't seen.
+	/// Doesn't see hooks from other auxtools libraries in the same world.
 	pub fn is_hooked(&self) -> bool {
 		PROC_HOOKS.0.borrow().contains_key(&self.id)
 	}
@@ -260,7 +260,8 @@ fn hook_failed(proc_id: raw_types::procs::ProcId, error: &crate::Runtime) {
 	}
 }
 
-/// GCC inlined interpreter calls on Linux before 516.1664.
+/// On Linux before 516.1664, GCC inlined the interpreter's proc calls. They
+/// don't reach the detour.
 pub fn calls_bypass_detour() -> bool {
 	cfg!(unix) && crate::version::get().1 < 1664
 }

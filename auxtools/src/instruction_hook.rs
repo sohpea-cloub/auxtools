@@ -28,7 +28,8 @@ static mut LEFT: u64 = 0;
 static mut CALLS_BYPASS_DETOUR: bool = false;
 static mut DETOURED: bool = false;
 
-/// The handler runs unguarded: a panic that leaves it aborts the game.
+/// The handler runs without a panic guard. A panic that leaves it aborts the
+/// game.
 pub fn set_handler(handler: Handler) -> Result<(), String> {
 	detour()?;
 	unsafe {
@@ -70,7 +71,8 @@ static mut UNKNOWN_NEXT: usize = 0;
 static mut PASS: u8 = 0;
 static mut PASS_UNKNOWN: bool = false;
 
-/// Any thread may call it, to bring pending work to the handler.
+/// Sends every opcode to the handler. Any thread may call it to bring pending
+/// work to the handler.
 pub fn hear_all() {
 	let Some(table) = TABLE.get() else {
 		return;
@@ -88,8 +90,8 @@ pub fn hear_all() {
 	ALL.store(true, Ordering::SeqCst);
 }
 
-/// Call on BYOND's thread, then recheck pending work in case another thread
-/// called `hear_all` meanwhile.
+/// Call it on BYOND's thread. Then check pending work again, because another
+/// thread may have called `hear_all` meanwhile.
 pub fn hear_only(opcodes: &[u32]) -> bool {
 	let Some(table) = TABLE.get() else {
 		return false;
@@ -403,7 +405,7 @@ pub fn timestamp() -> u64 {
 	unsafe { core::arch::x86::_rdtsc() }
 }
 
-/// `None` if nested execution spoiled the interval.
+/// Returns `None` when nested execution spoiled the interval.
 pub fn ticks_since_last() -> Option<u64> {
 	unsafe { ENTERED.checked_sub(LEFT) }
 }

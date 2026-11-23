@@ -14,7 +14,7 @@ impl Runtime {
 	}
 }
 
-/// Creates a [`Runtime`], formatting the message when given arguments.
+/// Creates a [`Runtime`]. Extra arguments format the message.
 #[macro_export]
 macro_rules! runtime {
 	($fmt:expr) => {

@@ -14,7 +14,8 @@ static mut BYTECODE_ALLOCATIONS: UnsafeCell<Option<State>> = UnsafeCell::new(Non
 
 static CHANGES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
-/// Changes when a proc is repointed and at world start and shutdown.
+/// A counter that changes when a proc is repointed, and at world start and
+/// shutdown.
 pub fn bytecode_changes() -> u64 {
 	CHANGES.load(std::sync::atomic::Ordering::Relaxed)
 }
