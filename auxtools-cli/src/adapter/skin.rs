@@ -59,9 +59,12 @@ impl Adapter {
 		let how = if self.out.to_client() { "" } else { " Run auxtools reconnect." };
 		match (clients, hosted) {
 			(0, _) => None,
-			(_, true) => Some(format!("Reboot the DreamSeeker-hosted world to load the new {}.{}", what, how)),
-			(1, false) => Some(format!("1 connected client needs to reconnect for the new {}.{}", what, how)),
-			(_, false) => Some(format!("{} connected clients need to reconnect for the new {}.{}", clients, what, how))
+			(_, true) => Some(format!("DreamSeeker hosts the world. Reboot it to load the new {}.{}", what, how)),
+			(1, false) => Some(format!("1 connected client needs to reconnect to load the new {}.{}", what, how)),
+			(_, false) => Some(format!(
+				"{} connected clients need to reconnect to load the new {}.{}",
+				clients, what, how
+			))
 		}
 	}
 

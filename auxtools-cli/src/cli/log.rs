@@ -75,7 +75,7 @@ pub fn wait_reload(world: &mut World, since: Option<u64>, timeout: Option<Durati
 	print(&entry, json);
 	match entry.event {
 		JournalEvent::Reload { applied: true, failures, .. } if failures.is_empty() => Ok(()),
-		JournalEvent::Reload { applied: true, .. } => Err(format!("the hot reload partly applied: {}.", auxtools_cli::reload::RESTART).into()),
+		JournalEvent::Reload { applied: true, .. } => Err(format!("the hot reload was partly applied. {}", auxtools_cli::reload::RESTART).into()),
 		_ => Err("the hot reload was rejected.".into())
 	}
 }
@@ -260,7 +260,7 @@ pub fn describe(event: &JournalEvent) -> (String, Vec<String>) {
 		} => (
 			match (applied, failures.is_empty()) {
 				(true, true) => format!("hot reload applied: {}", summary),
-				(true, false) => format!("hot reload partly applied: {}; {}", summary, auxtools_cli::reload::RESTART),
+				(true, false) => format!("hot reload partly applied: {}. {}", summary, auxtools_cli::reload::RESTART),
 				(false, _) => format!("hot reload not applied: {}", summary)
 			},
 			failures
@@ -473,8 +473,8 @@ mod tests {
 		};
 		assert!(
 			block(&entry).ends_with(
-				"hot reload partly applied: reloaded /answer; restart the world to be sure it runs the new code\n  failed: couldn't set a built-in \
-				 var: no\n  warning: careful"
+				"hot reload partly applied: reloaded /answer. Restart the world to run all of the new code.\n  failed: couldn't set a built-in var: \
+				 no\n  warning: careful"
 			),
 			"{}",
 			block(&entry)

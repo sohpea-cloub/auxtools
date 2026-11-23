@@ -248,7 +248,7 @@ fn refusals() {
 	);
 	let why = launcher.refused("launch", json!({ "dme": host_file("dap_test_host.dme"), "byondPath": "/nowhere/byond" }));
 	assert!(
-		why.contains("BYOND installation not found at"),
+		why.contains("byondPath /nowhere/byond has no BYOND installation"),
 		"unexpected missing-BYOND diagnostic: {:?}",
 		why
 	);
@@ -421,7 +421,7 @@ fn output_and_exit() {
 	assert!(exited["body"]["exitCode"].is_number(), "no exit code: {}", exited);
 	assert_eq!(category(&world, "The world exited"), "console");
 	assert!(
-		!world.output.contains("waiting to reconnect"),
+		!world.output.contains("Waiting to reconnect"),
 		"the launcher took the world's end for a lost connection:\n{}",
 		world.output
 	);

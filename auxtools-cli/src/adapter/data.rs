@@ -105,7 +105,7 @@ impl Adapter {
 			self.next_breakpoint_id += 1;
 			let known = self.data.places.get(&wanted.data_id).cloned();
 			let stop = self.debuggee.as_ref().map(Debuggee::stop_number);
-			const OVER: &str = "watch target expired; select it again";
+			const OVER: &str = "the watch target expired. Select it again";
 			let watched: Result<aux::Watch, String> = match &known {
 				_ if !self.debugging => Err("debugging is disabled".to_owned()),
 				_ if self.debuggee.is_none() => Err(self.not_connected().to_owned()),
@@ -191,7 +191,7 @@ impl Adapter {
 		self.data.places.retain(|_, (_, _, of_stop)| of_stop.is_none());
 		for breakpoint in &mut self.data.set {
 			if breakpoint.watch.take().is_some() && !self.data.places.contains_key(&breakpoint.data_id) {
-				breakpoint.message = Some("watch expired after reboot; select it again".to_owned());
+				breakpoint.message = Some("the watch ended when the world rebooted. Select it again".to_owned());
 				self.out.event(dap::BreakpointEvent {
 					reason: "changed".to_owned(),
 					breakpoint: breakpoint.shown()

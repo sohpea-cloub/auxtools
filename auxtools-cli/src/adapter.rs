@@ -50,8 +50,8 @@ const RUNTIMES: &str = "runtimes";
 const CAUGHT: &str = "caught";
 const STDDEF_REFERENCE: i64 = 1;
 
-pub const NO_LINES: &str =
-	"the world was compiled without debug information, so it has no line numbers: add #define DEBUG to the .dme and rebuild, or break on a proc";
+pub const NO_LINES: &str = "the world has no line numbers because it was compiled without debug information. Add #define DEBUG to the .dme and \
+                            rebuild, or set a breakpoint on a proc";
 const NO_CODE: &str = "no executable code at or after this line";
 const FUNCTION_BREAKPOINTS: &str = "<functions>";
 const STARTING: &str = "starting";
@@ -761,8 +761,10 @@ impl Adapter {
 				world
 			} => {
 				let applied = if self.debuggee.as_ref().is_some_and(|d| d.generation != world) {
-					self.out
-						.console(format!("Hot reload skipped: prepared before the world restarted: {}", summary.text(&[])));
+					self.out.console(format!(
+						"Hot reload skipped because the world restarted after it was prepared: {}",
+						summary.text(&[])
+					));
 					false
 				} else {
 					self.reload_seen = Some(std::time::SystemTime::now());
@@ -868,8 +870,8 @@ impl Adapter {
 					return None;
 				}
 				Some(format!(
-					"{}: removed from source. Calls by name no longer find it, but direct references such as call(/proc/name)() still run the old \
-					 definition until restart",
+					"{}: removed from source. Calls by name no longer find it. Direct references, such as call(/proc/name)(), still run the old \
+					 definition until the world restarts",
 					path
 				))
 			})
@@ -878,7 +880,7 @@ impl Adapter {
 		let summary_of_outcome = if result.applied {
 			summary.clone()
 		} else {
-			format!("reload failed ({})", summary)
+			format!("reload failed: {}", summary)
 		};
 		self.journal_reload_failures(
 			result.applied,
@@ -894,7 +896,7 @@ impl Adapter {
 			self.reload_state("failed", Some(result.errors.first().cloned().unwrap_or_default()));
 		} else if let Some(failed) = result.failures.first() {
 			self.out.console(format!(
-				"Hot reload partly applied: {} in {} ms; {}",
+				"Hot reload partly applied: {} in {} ms. {}",
 				summary,
 				took,
 				auxtools_cli::reload::RESTART
@@ -1039,7 +1041,7 @@ impl Adapter {
 
 		if saved_since && !reloading && self.said_changed.insert(path.clone()) {
 			self.out.console(format!(
-				"{} has changed since the world was built: without hot reloading, its breakpoints go by the code the world has, and may be on other \
+				"{} has changed since the world was built, and hot reload is off. Its breakpoints follow the built code, so they may be on other \
 				 lines",
 				Path::new(&path).file_name().unwrap_or_default().to_string_lossy()
 			));
@@ -1218,7 +1220,7 @@ impl Adapter {
 					id: Some(number),
 					verified: true,
 					line: Some(set_line.unwrap_or(line as u32).into()),
-					message: at_start.then(|| "This line initializes globals or static vars only at world startup.".to_owned()),
+					message: at_start.then(|| "This line runs only at world startup, to initialize globals or static vars.".to_owned()),
 					..Default::default()
 				},
 				Some(Err(e)) => unverified(&e),
@@ -1543,8 +1545,8 @@ impl Adapter {
 					if asleep > listed && !self.said_more_sleep {
 						self.said_more_sleep = true;
 						self.out.console(format!(
-							"{} procs are asleep: the list of threads has the first {} (\"sleepingThreads\" in the launch configuration sets how \
-							 many)",
+							"{} procs are asleep. The threads list shows the first {}. Set \"sleepingThreads\" in the launch configuration to show \
+							 more or fewer",
 							asleep, listed
 						));
 					}

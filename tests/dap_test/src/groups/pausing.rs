@@ -193,7 +193,9 @@ pub fn run() {
 	);
 	world.threads();
 	assert_eq!(
-		world.count("201 procs are asleep: the list of threads has the first 100 (\"sleepingThreads\" in the launch configuration sets how many)"),
+		world.count(
+			"201 procs are asleep. The threads list shows the first 100. Set \"sleepingThreads\" in the launch configuration to show more or fewer"
+		),
 		1,
 		"what the launcher said of the list:\n{}",
 		world.output

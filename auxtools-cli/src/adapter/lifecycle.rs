@@ -41,7 +41,7 @@ impl Prepared {
 			None => default_library()?
 		};
 		if args.port.is_some() && server == Server::DreamSeeker && cfg!(windows) {
-			return Err("port is unsupported with DreamSeeker; use server dreamdaemon".to_owned());
+			return Err("port cannot be used with DreamSeeker. Use server dreamdaemon".to_owned());
 		}
 		let mut game_args: Vec<String> = args.port.iter().map(u16::to_string).collect();
 		game_args.extend(args.args.clone().unwrap_or_else(|| default_args(server)));
@@ -420,7 +420,7 @@ impl Adapter {
 
 		if self.world.pid.is_some() && !self.world.ending {
 			if !self.world.shutting_down && !self.world.rebooting {
-				self.out.console(format!("Debug server disconnected ({}); waiting to reconnect", reason));
+				self.out.console(format!("Debug server disconnected: {}. Waiting to reconnect", reason));
 				self.progress_start(RESTARTING, "Waiting to reconnect".to_owned());
 			}
 			self.connect();
@@ -521,10 +521,10 @@ impl Adapter {
 			});
 		} else if self.world.unavailable {
 			self.out
-				.console(format!("Cannot call world.Del() without the debugger; terminating process {}", process));
+				.console(format!("Cannot call world.Del() without the debugger. Terminating process {}", process));
 			self.kill_world();
 		} else {
-			self.out.console(format!("Debug server disconnected; terminating process {}", process));
+			self.out.console(format!("Debug server disconnected. Terminating process {}", process));
 			self.kill_world();
 		}
 		Ok(Value::Null)
@@ -576,7 +576,7 @@ impl Adapter {
 			self.world.rebooting = false;
 			self.progress_end(RESTARTING);
 			self.out.console(format!(
-				"The world hasn't rebooted after {} seconds: its world/Reboot() may be waiting, or have declined",
+				"The world has not rebooted after {} seconds. Its world/Reboot() may still be running, or it may have returned without rebooting",
 				REBOOT_PATIENCE.as_secs()
 			));
 		}
@@ -634,7 +634,7 @@ impl Adapter {
 	pub(super) fn terminate_overdue(&mut self, process: u32) {
 		if self.world.ending && self.world_process() == Some(process) {
 			self.out.console(format!(
-				"Shutdown timed out after {} seconds; terminating process {}",
+				"Shutdown timed out after {} seconds. Terminating process {}",
 				local::test_patience(TERMINATE_GRACE).as_secs(),
 				process
 			));
@@ -682,7 +682,7 @@ pub(super) fn default_library() -> Result<PathBuf, String> {
 	let exe = std::env::current_exe().map_err(|e| e.to_string())?;
 	let library = exe.parent().map(|dir| dir.join(name)).unwrap_or_else(|| Path::new(name).to_owned());
 	if !library.is_file() {
-		return Err(format!("debug library not found at {} (debugLibrary)", library.display()));
+		return Err(format!("debug library not found at {}. Set debugLibrary to its path", library.display()));
 	}
 	Ok(library)
 }

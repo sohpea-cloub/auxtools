@@ -126,7 +126,7 @@ pub fn run() {
 	b.event("terminated");
 	for world in [&a, &b] {
 		assert!(
-			!world.output.contains("waiting to reconnect"),
+			!world.output.contains("Waiting to reconnect"),
 			"a session took the world's end for a lost connection:\n{}",
 			world.output
 		);

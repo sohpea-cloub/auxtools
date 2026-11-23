@@ -76,7 +76,7 @@ impl Adapter {
 	pub(super) fn join(&mut self, args: JoinArguments) -> Handled {
 		let address = self
 			.address()?
-			.ok_or("world has no listening port; set \"port\" in the launch configuration")?;
+			.ok_or("the world has no port to join. Set \"port\" in the launch configuration")?;
 		if !args.open || !cfg!(windows) {
 			return Ok(serde_json::json!({ "address": address, "opened": false }));
 		}

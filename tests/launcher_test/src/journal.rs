@@ -179,7 +179,7 @@ pub fn reloads(pid: u64, code: &Path) {
 		exit,
 		printed
 	);
-	attached.wait_output("Hot reload (by another launcher): reloaded /value");
+	attached.wait_output("Hot reload by another launcher: reloaded /value");
 	attached.disconnect(serde_json::json!({}));
 	println!("ok: attached launcher reload reports");
 

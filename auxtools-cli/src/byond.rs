@@ -51,8 +51,8 @@ pub fn bin_dir(byond_path: Option<&Path>) -> Result<PathBuf, String> {
 	}
 
 	match byond_path {
-		Some(path) => Err(format!("BYOND installation not found at {} (byondPath)", path.display())),
-		None => Err("BYOND not found; set byondPath to its installation directory".to_owned())
+		Some(path) => Err(format!("byondPath {} has no BYOND installation", path.display())),
+		None => Err("BYOND not found. Set byondPath to its installation directory".to_owned())
 	}
 }
 

@@ -30,9 +30,8 @@ fn partly_applied() {
 	let said = launcher.output.rsplit("Hot reload partly applied: ").next().unwrap();
 	assert!(
 		said.starts_with("reloaded /held_value in ")
-			&& said.contains(
-				" ms; restart the world to be sure it runs the new code\n    failed: couldn't set a built-in var: no\n    warning: a note\n"
-			),
+			&& said
+				.contains(" ms. Restart the world to run all of the new code.\n    failed: couldn't set a built-in var: no\n    warning: a note\n"),
 		"the launcher said: {}",
 		launcher.output
 	);

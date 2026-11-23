@@ -19,7 +19,10 @@ fn text(script: &Source) -> Result<Option<&str>, String> {
 	match script {
 		Ok(None) => Ok(None),
 		Ok(Some(ClientScript::Text(text))) => Ok(Some(text)),
-		Ok(Some(ClientScript::File(name))) => Err(format!("client/script references '{}'; resource-file scripts require a rebuild", name)),
+		Ok(Some(ClientScript::File(name))) => Err(format!(
+			"client/script references '{}'. A script in a resource file requires a rebuild",
+			name
+		)),
 		Err(why) => Err(why.clone())
 	}
 }

@@ -125,8 +125,10 @@ impl Adapter {
 		if files.len() > 5 {
 			named += &format!(" and {} more", files.len() - 5);
 		}
-		self.out
-			.console(format!("Hot reload: files newer than the .dmb may have unapplied changes: {}", named));
+		self.out.console(format!(
+			"Hot reload: files newer than the .dmb may have changes that were not applied: {}",
+			named
+		));
 		self.out.event(OutdatedEvent { files });
 	}
 }

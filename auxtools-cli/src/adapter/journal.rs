@@ -114,10 +114,10 @@ pub fn reload_by_another(entry: &aux::JournalEntry) -> Option<String> {
 		return None;
 	};
 	let mut text = if failures.is_empty() {
-		format!("Hot reload (by another launcher): {}", summary)
+		format!("Hot reload by another launcher: {}", summary)
 	} else {
 		format!(
-			"Hot reload partly applied (by another launcher): {}; {}",
+			"Hot reload partly applied by another launcher: {}. {}",
 			summary,
 			auxtools_cli::reload::RESTART
 		)

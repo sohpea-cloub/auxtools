@@ -36,12 +36,12 @@ fn shutdown_timeout_terminates_the_process() {
 	);
 	assert!(launcher.output.contains("Stopping the world"), "{}", launcher.output);
 	assert!(
-		launcher.output.contains("Shutdown timed out after 1 seconds; terminating process"),
+		launcher.output.contains("Shutdown timed out after 1 seconds. Terminating process"),
 		"the launcher didn't say why:\n{}",
 		launcher.output
 	);
 	assert!(
-		!launcher.output.contains("waiting to reconnect"),
+		!launcher.output.contains("Waiting to reconnect"),
 		"the launcher waited for the debugger of a world it was ending:\n{}",
 		launcher.output
 	);

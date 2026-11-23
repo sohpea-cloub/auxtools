@@ -39,7 +39,7 @@ fn flags_held(launcher: &mut Launcher, flags: &[&str]) {
 }
 
 fn added(flag: &str) -> Vec<(String, String)> {
-	vec![(format!("build flags changed (added {})", flag), "reboot".to_owned())]
+	vec![(format!("build flags changed: added {}", flag), "reboot".to_owned())]
 }
 
 fn reloaded_procs(reload: &auxtools_protocol::HotReloadRequest) -> Vec<String> {
@@ -84,7 +84,7 @@ fn held_for_build_flags() {
 
 	flags_held(&mut launcher, &[]);
 	assert_eq!(held(&mut launcher), [(
-		"build flags changed (removed FLAG_A)".to_owned(),
+		"build flags changed: removed FLAG_A".to_owned(),
 		"reboot".to_owned()
 	)]);
 	let mut world = rebooted(&stand_in, &mut launcher, world);
@@ -105,8 +105,8 @@ fn held_for_build_flags() {
 
 	flags_held(&mut launcher, &["FLAG_UNUSED", "FLAG_MAP"]);
 	assert_eq!(held(&mut launcher), [
-		("build flags changed (added FLAG_MAP)".to_owned(), "reboot".to_owned()),
-		("compiled maps changed (added flag_map.dmm)".to_owned(), "rebuild".to_owned())
+		("build flags changed: added FLAG_MAP".to_owned(), "reboot".to_owned()),
+		("compiled maps changed: added flag_map.dmm".to_owned(), "rebuild".to_owned())
 	]);
 
 	launcher.request("auxtoolsBuildFlags", json!({ "flags": ["FLAG_A"] }));

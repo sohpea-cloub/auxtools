@@ -347,7 +347,7 @@ impl Debuggee {
 				None => {
 					self.client.give_up(id);
 					return Err(if Instant::now() < deadline {
-						"debug server response not waited for: the client asked to disconnect".to_owned()
+						"stopped waiting for the debug server: the client asked to disconnect".to_owned()
 					} else {
 						"debug server response timed out".to_owned()
 					});
@@ -451,7 +451,7 @@ mod tests {
 			ending: false
 		};
 		let error = debuggee.request(&stuck, Some(&leaving)).unwrap_err();
-		assert_eq!(error, "debug server response not waited for: the client asked to disconnect");
+		assert_eq!(error, "stopped waiting for the debug server: the client asked to disconnect");
 		let waited = started.elapsed();
 		assert!(waited >= LEAVING_TIMEOUT && waited < LEAVING_TIMEOUT * 3, "{:?}", waited);
 

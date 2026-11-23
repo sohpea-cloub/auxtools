@@ -575,7 +575,7 @@ impl Code {
 			if !sharing.is_empty() {
 				let sharing: Vec<String> = sharing.iter().map(|other| other.display().to_string()).collect();
 				self.log(format!(
-					"{} shares a resource ID with {} (same bytes); appearances are unchanged. Rebuild to separate them",
+					"{} has the same bytes as {}, so they share a resource ID. Appearances that use it do not change. Rebuild to separate them",
 					path.display(),
 					sharing.join(", ")
 				));
@@ -849,7 +849,7 @@ impl Code {
 		}
 		(!changed.is_empty()).then(|| Refusal {
 			until: Until::Reboot,
-			..Refusal::new(Id::BuildFlagsChanged, "", format!("build flags changed ({})", changed.join("; ")))
+			..Refusal::new(Id::BuildFlagsChanged, "", format!("build flags changed: {}", changed.join("; ")))
 		})
 	}
 
@@ -884,7 +884,7 @@ impl Code {
 
 	fn reload_script(&self, watching: &mut Watching, restored: bool) -> AdapterConnected {
 		if let Some(why) = watching.script.problem() {
-			self.log(format!("client script: {}; the world keeps the script it has", why));
+			self.log(format!("client script not reloaded: {}. The world keeps its current script", why));
 		}
 		let Some(change) = watching.script.change() else {
 			return true;
@@ -1032,7 +1032,10 @@ impl Summary {
 			})
 			.collect();
 		if self.line_moves > 0 {
-			said.push(format!("remapped lines in {} additional procs", self.line_moves));
+			said.push(match self.line_moves {
+				1 => "updated the line numbers of 1 other proc".to_owned(),
+				n => format!("updated the line numbers of {} other procs", n)
+			});
 		}
 		if said.is_empty() {
 			return "no runtime changes".to_owned();
@@ -1447,7 +1450,7 @@ mod tests {
 		worker.write("c", &body("c", "return 2"));
 		worker.applied(false);
 		let reload = worker.prepared();
-		assert_eq!(reload.summary, "reloaded /b, /c; remapped lines in 1 additional procs");
+		assert_eq!(reload.summary, "reloaded /b, /c; updated the line numbers of 1 other proc");
 		assert_eq!(
 			reload.plan,
 			worker.full_plan(&[("b", &body("b", "return 1")), ("c", &body("c", "return 1"))], &["b", "c"], false)
@@ -1459,7 +1462,7 @@ mod tests {
 		worker.applied(false);
 		assert_eq!(
 			worker.prepared().summary,
-			"reloaded /b; added /more; remapped lines in 1 additional procs"
+			"reloaded /b; added /more; updated the line numbers of 1 other proc"
 		);
 		assert_eq!(worker.parses(), 2);
 
@@ -1538,7 +1541,7 @@ mod tests {
 		let original = |file: &str| body(file, "return 1");
 
 		worker.write("a", &body("a", "world.log << 1\n\treturn 2"));
-		assert_eq!(worker.prepared().summary, "reloaded /a; remapped lines in 1 additional procs");
+		assert_eq!(worker.prepared().summary, "reloaded /a; updated the line numbers of 1 other proc");
 		worker.write("b", &body("b", "return 2"));
 		worker.applied(false);
 		assert_eq!(worker.prepared().summary, "reloaded /b");
@@ -1546,7 +1549,7 @@ mod tests {
 		worker.reboot();
 		let restored = worker.prepared();
 		assert_eq!(restored.world, 1);
-		assert_eq!(restored.summary, "reloaded /a, /b; remapped lines in 1 additional procs");
+		assert_eq!(restored.summary, "reloaded /a, /b; updated the line numbers of 1 other proc");
 		assert_eq!(
 			restored.plan,
 			worker.full_plan(&[("a", &original("a")), ("b", &original("b"))], &["a", "b"], true)
@@ -1567,7 +1570,10 @@ mod tests {
 		worker.applied(false);
 		worker.reboot();
 		let restored = worker.prepared();
-		assert_eq!(restored.summary, "reloaded /a, /b, /d; added /more; remapped lines in 1 additional procs");
+		assert_eq!(
+			restored.summary,
+			"reloaded /a, /b, /d; added /more; updated the line numbers of 1 other proc"
+		);
 		let before = [("a", original("a")), ("b", original("b")), ("c", original("c")), ("d", original("d"))];
 		let before: Vec<(&str, &str)> = before.iter().map(|(file, text)| (*file, text.as_str())).collect();
 		assert_eq!(restored.plan, worker.full_plan(&before, &["a", "b", "c", "d"], true));
@@ -1605,7 +1611,7 @@ mod tests {
 		let mut worker = Worker::start("reuse");
 		let original = |file: &str| body(file, "return 1");
 		worker.write("a", &body("a", "world.log << 1\n\treturn 2"));
-		assert_eq!(worker.prepared().summary, "reloaded /a; remapped lines in 1 additional procs");
+		assert_eq!(worker.prepared().summary, "reloaded /a; updated the line numbers of 1 other proc");
 		worker.write("c", &(original("c") + "/proc/more()\n\treturn 1\n"));
 		worker.applied(false);
 		assert_eq!(worker.prepared().summary, "added /more");
@@ -1617,7 +1623,7 @@ mod tests {
 			worker.reboot();
 			let restored = worker.prepared();
 			assert_eq!(restored.world, world);
-			assert_eq!(restored.summary, "reloaded /a; added /more; remapped lines in 1 additional procs");
+			assert_eq!(restored.summary, "reloaded /a; added /more; updated the line numbers of 1 other proc");
 			assert_eq!(restored.plan, worker.full_plan(&before, &["a", "c"], true));
 			worker.applied(true);
 			assert_eq!(worker.parses(), 2);
@@ -1629,7 +1635,7 @@ mod tests {
 		assert_eq!(worker.parses(), 2);
 		worker.reboot();
 		let restored = worker.prepared();
-		assert_eq!(restored.summary, "reloaded /a, /d; added /more; remapped lines in 1 additional procs");
+		assert_eq!(restored.summary, "reloaded /a, /d; added /more; updated the line numbers of 1 other proc");
 		assert_eq!(worker.parses(), 3);
 
 		worker.write("e", &body("e", "return 2"));
@@ -1637,7 +1643,10 @@ mod tests {
 		worker.commands.send(Command::Reloaded(true)).unwrap();
 		let restored = worker.prepared();
 		assert_eq!(restored.world, 4);
-		assert_eq!(restored.summary, "reloaded /a, /d, /e; added /more; remapped lines in 1 additional procs");
+		assert_eq!(
+			restored.summary,
+			"reloaded /a, /d, /e; added /more; updated the line numbers of 1 other proc"
+		);
 		assert_eq!(worker.parses(), 4);
 
 		worker.commands.send(Command::Defines(vec![("FLAG".to_owned(), None)])).unwrap();
@@ -1657,7 +1666,10 @@ mod tests {
 		worker.reboot();
 		let restored = worker.prepared();
 		assert_eq!(restored.world, 6);
-		assert_eq!(restored.summary, "reloaded /a, /d, /e; added /more; remapped lines in 1 additional procs");
+		assert_eq!(
+			restored.summary,
+			"reloaded /a, /d, /e; added /more; updated the line numbers of 1 other proc"
+		);
 		worker.applied(true);
 		assert_eq!(worker.parses(), 6);
 	}

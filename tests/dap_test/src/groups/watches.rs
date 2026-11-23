@@ -245,7 +245,7 @@ pub fn run() {
 	world.run_to("watch", "/sc_watch", "watch_start");
 	let set = watch(&mut world, &[(&of_this_pause["dataId"], "", "")]);
 	assert_eq!(set[0]["verified"], false);
-	assert_eq!(set[0]["message"], "watch target expired; select it again");
+	assert_eq!(set[0]["message"], "the watch target expired. Select it again");
 	watch(&mut world, &[]);
 	world.resume_through("watch");
 	ok("pause-local watch target expiration");
@@ -273,7 +273,7 @@ pub fn run() {
 	world.wait_count("dap: world/New", 2);
 	assert_eq!(
 		changed(&mut world),
-		(shown, false, "watch expired after reboot; select it again".to_owned())
+		(shown, false, "the watch ended when the world rebooted. Select it again".to_owned())
 	);
 	world.wait_output("The world restarted");
 	world.run("watch");
