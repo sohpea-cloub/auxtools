@@ -159,7 +159,7 @@ dependencies = [
 [[package]]
 name = "byond-scan"
 version = "0.1.0"
-source = "git+https://github.com/Absolucy/byond-scan#362cbe051c27aaa6d9a06f0aaa245db8c35ebd00"
+source = "git+https://github.com/Absolucy/byond-scan?rev=362cbe051c27aaa6d9a06f0aaa245db8c35ebd00#362cbe051c27aaa6d9a06f0aaa245db8c35ebd00"
 dependencies = [
  "iced-x86",
  "libc",
