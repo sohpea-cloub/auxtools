@@ -1582,19 +1582,89 @@ fn add_type(new: &NewType) -> Result<(), String> {
 		writes.extend(builtin_writes(field, value).map_err(|e| format!("{}: {}", field, e))?);
 	}
 	let id = runtime_tables::add_type(parent, leaked_string(&new.path)?)?;
+	for place in TEXT_PLACES {
+		if let Ok(TypeString::Made(text)) = type_string(parent, place) {
+			set_type_string(id, place, TypeString::Made(text))?;
+		}
+	}
 	write_builtins(id, writes)
+}
+
+static TYPE_STRINGS: Mutex<BTreeMap<(u32, usize), u32>> = Mutex::new(BTreeMap::new());
+
+const MOB_KEY: usize = usize::MAX;
+
+const TEXT_PLACES: [usize; 7] = [
+	type_fields::NAME,
+	type_fields::DESC,
+	type_fields::ICON_STATE,
+	type_fields::TEXT,
+	type_fields::MAPTEXT,
+	type_fields::SUFFIX,
+	MOB_KEY
+];
+
+#[derive(Clone, Debug)]
+enum TypeString {
+	Built(u32),
+	Made(StringRef)
+}
+
+fn made_string(text: &str) -> Result<TypeString, String> {
+	StringRef::new(text)
+		.map(TypeString::Made)
+		.map_err(|_| format!("couldn't make the string {}", text))
+}
+
+fn type_string(type_id: u32, place: usize) -> Result<TypeString, String> {
+	let id = if place == MOB_KEY {
+		let mut key = NONE;
+		runtime_tables::set_mob_type(type_id, |mob| key = mob.key)?;
+		key
+	} else {
+		runtime_tables::type_field(type_id, place)?
+	};
+	if TYPE_STRINGS.lock().unwrap().get(&(type_id, place)) == Some(&id) {
+		Ok(TypeString::Made(unsafe { StringRef::from_id(raw_types::strings::StringId(id)) }))
+	} else {
+		Ok(TypeString::Built(id))
+	}
+}
+
+fn set_type_string(type_id: u32, place: usize, string: TypeString) -> Result<(), String> {
+	let id = match &string {
+		TypeString::Built(id) => *id,
+		TypeString::Made(text) => text.get_id().0
+	};
+	if place == MOB_KEY {
+		runtime_tables::set_mob_type(type_id, |mob| mob.key = id)?;
+	} else {
+		runtime_tables::set_type_field(type_id, place, id)?;
+	}
+	let mut held = TYPE_STRINGS.lock().unwrap();
+	let released = match string {
+		TypeString::Built(_) => held.remove(&(type_id, place)),
+		TypeString::Made(text) => {
+			std::mem::forget(text);
+			held.insert((type_id, place), id)
+		}
+	};
+	drop(held);
+	if let Some(released) = released {
+		release_string(released);
+	}
+	Ok(())
 }
 
 #[derive(Clone, Debug)]
 enum BuiltinWrite {
 	Word(usize, u32),
-	Text(usize, Option<StringRef>),
+	Text(usize, TypeString),
 	Half(usize, u16),
 	Byte(usize, u8),
 	Bits(usize, u32, u32),
 	Listed(u32, Vec<u32>),
-	Mob(&'static str, u32),
-	Key(Option<StringRef>)
+	Mob(&'static str, u32)
 }
 
 fn builtin_writes(var: &str, value: &ConstValue) -> Result<Vec<BuiltinWrite>, String> {
@@ -1605,8 +1675,8 @@ fn builtin_writes(var: &str, value: &ConstValue) -> Result<Vec<BuiltinWrite>, St
 		_ => Err("expected a number".to_owned())
 	};
 	let string = || match value {
-		ConstValue::Null => Ok(None),
-		ConstValue::String(text) => StringRef::new(text).map(Some).map_err(|_| format!("couldn't make the string {}", text)),
+		ConstValue::Null => Ok(TypeString::Built(NONE)),
+		ConstValue::String(text) => made_string(text),
 		_ => Err("expected text".to_owned())
 	};
 	let bits = |offset: usize, mask: u32, on: bool| Bits(offset, mask, if on { mask } else { 0 });
@@ -1709,7 +1779,7 @@ fn builtin_writes(var: &str, value: &ConstValue) -> Result<Vec<BuiltinWrite>, St
 			};
 			vec![Listed(leaked_string(var)?, words)]
 		}
-		"key" => vec![Key(string()?)],
+		"key" => vec![Text(MOB_KEY, string()?)],
 		"sight" => vec![Mob("sight", number()? as u32)],
 		"see_in_dark" => vec![Mob("see_in_dark", number()? as u32)],
 		"see_invisible" => vec![Mob("see_invisible", number()? as u32)],
@@ -1719,14 +1789,10 @@ fn builtin_writes(var: &str, value: &ConstValue) -> Result<Vec<BuiltinWrite>, St
 
 fn write_builtins(type_id: u32, writes: Vec<BuiltinWrite>) -> Result<(), String> {
 	use runtime_tables::{set_type_byte, set_type_field, set_type_half, type_field};
-	let id_of = |text: &Option<StringRef>| text.as_ref().map_or(NONE, |text| text.get_id().0);
 	for write in writes {
 		match write {
 			BuiltinWrite::Word(offset, word) => set_type_field(type_id, offset, word)?,
-			BuiltinWrite::Text(offset, text) => {
-				set_type_field(type_id, offset, id_of(&text))?;
-				std::mem::forget(text);
-			}
+			BuiltinWrite::Text(place, text) => set_type_string(type_id, place, text)?,
 			BuiltinWrite::Half(offset, half) => set_type_half(type_id, offset, half)?,
 			BuiltinWrite::Byte(offset, byte) => set_type_byte(type_id, offset, byte)?,
 			BuiltinWrite::Bits(offset, mask, bits) => {
@@ -1753,11 +1819,7 @@ fn write_builtins(type_id: u32, writes: Vec<BuiltinWrite>) -> Result<(), String>
 				"sight" => mob.sight = value,
 				"see_in_dark" => mob.see_in_dark = value as u8,
 				_ => mob.see_invisible = value as u8
-			})?,
-			BuiltinWrite::Key(key) => {
-				runtime_tables::set_mob_type(type_id, |mob| mob.key = id_of(&key))?;
-				std::mem::forget(key);
-			}
+			})?
 		}
 	}
 	Ok(())
@@ -1786,14 +1848,12 @@ fn const_value(value: &ConstValue, pending: &Pending) -> Result<(u32, u32), Stri
 	})
 }
 
-fn keep_string(id: u32) {
-	if id != NONE {
-		unsafe {
-			raw_types::funcs::inc_ref_count(raw_types::values::Value {
-				tag: raw_types::values::ValueTag::String,
-				data: raw_types::values::ValueData { id }
-			});
-		}
+fn release_string(id: u32) {
+	unsafe {
+		raw_types::funcs::dec_ref_count(raw_types::values::Value {
+			tag: raw_types::values::ValueTag::String,
+			data: raw_types::values::ValueData { id }
+		});
 	}
 }
 
@@ -2683,6 +2743,7 @@ fn world_has_debug_info() -> bool {
 #[shutdown]
 fn forget_world() {
 	ADDED_GLOBALS.lock().unwrap().clear();
+	TYPE_STRINGS.lock().unwrap().clear();
 	RELOADED.lock().unwrap().clear();
 	*WORLD_HAS_DEBUG_INFO.lock().unwrap() = None;
 	WAITING_WORLD_EDITS.lock().unwrap().clear();

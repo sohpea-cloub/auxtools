@@ -15,8 +15,8 @@ struct InheritedBuiltins {
 	parent: u32,
 	own: HashSet<u32>,
 	own_names: HashSet<String>,
-	name: u32,
-	text: u32
+	name: TypeString,
+	text: TypeString
 }
 
 static STAGED_PARENTS: Mutex<Option<HashMap<u32, u32>>> = Mutex::new(None);
@@ -222,12 +222,12 @@ fn prepare_one(
 			own: own.builtins.iter().map(|n| string_id(n)).collect::<Result<_, _>>()?,
 			own_names: own.builtins.iter().cloned().collect(),
 			name: match &own.name {
-				ConstValue::String(name) => string_id(name)?,
-				_ => NONE
+				ConstValue::String(name) => made_string(name)?,
+				_ => TypeString::Built(NONE)
 			},
 			text: match &own.text {
-				ConstValue::String(text) => string_id(text)?,
-				_ => NONE
+				ConstValue::String(text) => made_string(text)?,
+				_ => TypeString::Built(NONE)
 			}
 		});
 		prepared.appearances.insert(t);
@@ -303,8 +303,8 @@ fn inherit_builtins(b: &InheritedBuiltins) -> Result<Option<String>, String> {
 	if !b.own_names.contains("color") {
 		runtime_tables::copy_type_matrix(t, p, type_fields::COLOR_MATRIX)?;
 	}
-	set_type_field(t, type_fields::NAME, b.name)?;
-	set_type_field(t, type_fields::TEXT, b.text)?;
+	set_type_string(t, type_fields::NAME, b.name.clone())?;
+	set_type_string(t, type_fields::TEXT, b.text.clone())?;
 
 	let parent_list = inherit::listed_entries(&runtime_tables::misc_words(type_field(p, type_fields::BUILTIN_VALUES)?).unwrap_or_default());
 	let own_values = runtime_tables::misc_words(type_field(t, type_fields::BUILTIN_VALUES)?).unwrap_or_default();

@@ -71,11 +71,12 @@ pub(super) fn copy_builtin(type_id: u32, from: u32, var: &str) -> Result<(), Str
 	for place in places(var)? {
 		match place {
 			Word(offset, _) => set_type_field(type_id, offset, type_field(from, offset)?)?,
-			Text(offset, _) => {
-				let word = type_field(from, offset)?;
-				keep_string(word);
-				set_type_field(type_id, offset, word)?
+			Text(MOB_KEY, _) => {
+				if let Ok(key) = type_string(from, MOB_KEY) {
+					set_type_string(type_id, MOB_KEY, key)?
+				}
 			}
+			Text(place, _) => set_type_string(type_id, place, type_string(from, place)?)?,
 			Half(offset, _) => {
 				let half = (type_field(from, offset & !3)? >> ((offset & 2) * 8)) as u16;
 				runtime_tables::set_type_half(type_id, offset, half)?
@@ -97,21 +98,13 @@ pub(super) fn copy_builtin(type_id: u32, from: u32, var: &str) -> Result<(), Str
 					set_type_field(type_id, offset, (word & !mask) | (type_field(from, offset)? & mask))?;
 				}
 			}
-			Mob(..) | Key(_) => {
+			Mob(var, _) => {
 				let mut parent = None;
 				if runtime_tables::set_mob_type(from, |mob| parent = Some(*mob)).is_err() {
 					continue;
 				}
 				let parent = parent.unwrap();
-				let var = match place {
-					Mob(var, _) => var,
-					_ => {
-						keep_string(parent.key);
-						"key"
-					}
-				};
 				runtime_tables::set_mob_type(type_id, |mob| match var {
-					"key" => mob.key = parent.key,
 					"sight" => mob.sight = parent.sight,
 					"see_in_dark" => mob.see_in_dark = parent.see_in_dark,
 					_ => mob.see_invisible = parent.see_invisible

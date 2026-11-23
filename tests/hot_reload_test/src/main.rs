@@ -1589,15 +1589,67 @@ fn types(built: Built) {
 		"3",
 		"the references to a key that three mob types got"
 	);
-	let changes = source.edit("reload.dm", "\tkey = \"helper_key\"\n", "\tkey = null\n");
+	let changes = source.edit(
+		"reload.dm",
+		"/mob/helper/small\n\tsight = 4\n",
+		"/mob/helper/small\n\tsight = 4\n\n/mob/helper/later\n"
+	);
+	assert_eq!(changes.plan.new_types.len(), 1, "{:?}", changes.plan.new_types);
 	reload(&mut watcher, &changes);
 	assert_eq!(
 		eval(&mut client, "#string-refs helper_key"),
-		"3",
-		"the references to a key that three mob types no longer have"
+		"4",
+		"the references to a key that a new subtype inherited"
+	);
+	let changes = source.edit("reload.dm", "\tkey = \"helper_key\"\n", "\tkey = null\n");
+	assert_eq!(changes.plan.builtin_defaults[0].types.len(), 4, "{:?}", changes.plan.builtin_defaults);
+	reload(&mut watcher, &changes);
+	assert_eq!(
+		eval(&mut client, "#string-refs helper_key"),
+		"0",
+		"the references to a key that no mob type has"
 	);
 	assert_eq!(eval(&mut client, "isnull((new /mob/helper/small).key)"), "1");
 	println!("ok: a mob key default gives each type a reference");
+
+	let refs = |client: &mut Client, texts: [&str; 2]| texts.map(|text| eval(client, &format!("#string-refs {}", text)));
+	let changes = source.edit(
+		"reload.dm",
+		"/proc/first_def()\n",
+		"/obj/crate/labelled\n\tdesc = \"label_one\"\n\n/proc/first_def()\n"
+	);
+	reload(&mut watcher, &changes);
+	let changes = source.edit("reload.dm", "/proc/first_def()\n", "/obj/crate/labelled/small\n\n/proc/first_def()\n");
+	reload(&mut watcher, &changes);
+	assert_eq!(
+		refs(&mut client, ["label_one", "label_two"]),
+		["2", "0"],
+		"after a subtype inherited a desc"
+	);
+	let changes = source.edit("reload.dm", "\"label_one\"", "\"label_two\"");
+	reload(&mut watcher, &changes);
+	assert_eq!(refs(&mut client, ["label_one", "label_two"]), ["0", "2"], "after the desc changed");
+	let changes = source.edit(
+		"reload.dm",
+		"/obj/crate/labelled/small\n",
+		"/obj/crate/labelled/small\n\tdesc = \"label_small\"\n"
+	);
+	reload(&mut watcher, &changes);
+	assert_eq!(
+		refs(&mut client, ["label_two", "label_small"]),
+		["1", "1"],
+		"after the subtype got its own desc"
+	);
+	let changes = source.edit("reload.dm", "\tdesc = \"label_small\"\n", "");
+	assert_eq!(changes.plan.builtin_inherited.len(), 1, "{:?}", changes.plan);
+	reload(&mut watcher, &changes);
+	assert_eq!(
+		refs(&mut client, ["label_two", "label_small"]),
+		["2", "0"],
+		"after the subtype inherited the desc again"
+	);
+	assert_eq!(eval(&mut client, "initial(/obj/crate/labelled/small::desc)"), "\"label_two\"");
+	println!("ok: a type releases the strings it no longer has");
 
 	assert_eq!(eval(&mut client, "#fail-reload append"), "the next reload fails at Append");
 	let changes = source.edit(
@@ -1615,8 +1667,8 @@ fn types(built: Built) {
 	reload(&mut watcher, &changes);
 	assert_eq!(
 		eval(&mut client, "#string-refs unwritten_desc"),
-		"3",
-		"the references to a desc that three mob types got"
+		"4",
+		"the references to a desc that four mob types got"
 	);
 	println!("ok: a failed reload holds no reference to the strings it didn't write");
 
