@@ -52,6 +52,7 @@ fn on_another_thread(raw_string: raw_types::values::Value) -> Vec<String> {
 	must_panic(&mut failures, "Proc::find", || drop(Proc::find("/proc/do_tests")));
 	must_panic(&mut failures, "Proc::from_id", || drop(Proc::from_id(ProcId(0))));
 	must_panic(&mut failures, "Proc::overrides", || drop(Proc::overrides("/proc/do_tests")));
+	must_panic(&mut failures, "byond_string!", || drop(byond_string!("auxtest_thread")));
 	must_panic(&mut failures, "shut_down_with_world", shut_down_with_world);
 	must_panic(&mut failures, "init_on_next_world_load", || init_on_next_world_load(None));
 	must_panic(&mut failures, "instruction_hook::ticks_since_last", || {
@@ -115,6 +116,7 @@ fn test_threads() {
 fn after_shutdown() -> Vec<String> {
 	let mut failures = vec![];
 	must_fail(&mut failures, "Value::from_string", Value::from_string("auxtest"), "shut down");
+	must_panic(&mut failures, "byond_string!", || drop(byond_string!("auxtest_after_shutdown")));
 	must_panic(&mut failures, "Proc::find", || drop(Proc::find("/proc/do_tests")));
 	if catch_unwind(shut_down_with_world).is_err() {
 		failures.push("shut_down_with_world panicked on BYOND's thread".to_owned());

@@ -61,6 +61,8 @@
   `instruction_hook::ticks_since_last` panics on a thread other than BYOND's.
 - A `raw_types::values::Value` prints a string as its tag and ID. Print the `Value` to see the
   text.
+- `byond_string!` returns a `StringRef` that holds its own reference, not a `&'static
+  StringRef`. Pass it by value.
 
 ### For users of dmasm
 
