@@ -1,27 +1,29 @@
 # DMASM and the DM bytecode instruction set
 
-`dmasm` turns a BYOND proc's bytecode into named instructions and back. This
-file lists every instruction it decodes, what each one takes off the operand
-stack, what it leaves there, and what it does.
+`dmasm` converts a BYOND proc's bytecode to named instructions and back. This
+file lists every instruction that it decodes. For each one, it gives the values
+the instruction takes off the operand stack, the values it leaves there, and
+what it does.
 
-Everything here describes BYOND 516, checked on 516.1687 unless a row says
-otherwise, as of 2026-10-04.
+This file describes BYOND 516 as of 2026-10-04. Rows were checked on 516.1687,
+unless the row names another build.
 
-Three things to know before trusting a row:
+Before you rely on a row, note these points:
 
-- **The instruction list and operand shapes come from `src/instructions.rs`.**
-  That file wins over this one. Its operand counts were compared against the
-  interpreter's own handlers on eleven Windows builds, 516.1659 to 516.1688, on
-  2026-10-04, and they agree. That comparison could not check `Input` and
-  `InputColor`, and it cannot see a `Variable` operand at all, so a missing
-  `Variable` would pass it.
-- **Behavior rows are summaries**, and the BYOND binary wins over them.
-- **Every row says how it is known**, in its last column. About a quarter of the
-  rows are marked `dm`: their stack effect comes from what the compiler emits
-  around them, and nobody has read the handler.
+- **`bytecode/src/instructions.rs` defines the instructions and their
+  operands.** If this file disagrees with it, that file is right. On
+  2026-10-04, its operand counts were compared with the interpreter's handlers
+  on eleven Windows builds, 516.1659 to 516.1688, and they agree. The comparison
+  could not check `Input` and `InputColor`. It also cannot see a `Variable`
+  operand, so it would not detect a missing `Variable`.
+- **The behavior in each row is a summary.** If it disagrees with the BYOND
+  binary, the binary is right.
+- **The last column of each row gives the evidence for it.** About a quarter of
+  the rows are marked `dm`. Their stack effect comes from the code that the
+  compiler emits around the instruction. Nobody has read their handlers.
 
-The instruction names are `dmasm`'s, not BYOND's. Some are guesses and two are
-known to be wrong (`Log10`, `LocateRef`); the rows say so.
+The instruction names are `dmasm`'s, not BYOND's. Some are guesses, and two are
+known to be wrong: `Log10` and `LocateRef`. Their rows say so.
 
 ## Bytecode shape
 
@@ -34,35 +36,35 @@ known to be wrong (`Log10`, `LocateRef`); the rows say so.
 
 ## VM state
 
-What an instruction can read or write.
+The state that an instruction can read or write:
 
-| State | What it is | Written by | Read by |
+| State | Description | Written by | Read by |
 |---|---|---|---|
 | Operand stack | Array of 8-byte Values (tag, data). The first ten live in a buffer inside the proc's frame, then it moves to the heap | most instructions | most instructions |
 | Test flag | One byte, true or false | `Test`, `IsLoc`/`IsMob`/`IsObj`/`IsArea`/`IsTurf`/`IsMovable`, `IsNaN`, `IsInf`, `IsIn`, `IterNext`, `TestEquiv`, `TestNotEquiv` | `Jz`, `Jnz`, `JzLoop`, `JnzLoop`, `GetFlag` |
 | `dot` | The proc's `.` variable, its default return value | `SetVar dot`, compound assignment on `dot` | `End`, `GetVar dot` |
 | `cache` | One Value: the object or list whose member is being accessed | the `SetCache` variable form, `SetCacheJmpIfNull`, `SetCachePopJmpIfNull`, `PopCache` | field reads and writes, calls by name |
 | `cache_key` | One Value: the index into `cache` | `SetVar cache_key`, `PopCacheKey` | the `cache[cache_key]` variable form |
-| `src`, `usr`, `args`, locals | The frame's own values | `SetVar` and friends | `GetVar` and friends |
+| `src`, `usr`, `args`, locals | Values in the current call frame | `SetVar` and friends | `GetVar` and friends |
 | Active iterator | Array, length, index, type filter and a kind byte for the innermost `for ... in` loop | `IterLoad`, `IterNext` | `IterNext`, `KeyValueIter` |
 | Saved iterators | A linked stack of outer loops' iterators | `IterPush` | `IterPop` |
 | Catch frames | A linked stack, one node per open `try` | `Try` | `Catch`, `TryJmp`, a thrown error |
 | Loop budget | A countdown that catches runaway loops | every `*Loop` jump and `TryJmp` | same |
-| File and line | Where a runtime error says it happened | `DbgFile`, `DbgLine` | error reporting |
+| File and line | Source location reported for a runtime error | `DbgFile`, `DbgLine` | error reporting |
 
-Two facts about this state that are easy to get wrong:
+Two points about this state are easy to get wrong:
 
 - **There is no separate cache stack.** `PushCache` and `PushCacheKey` save the
-  register into the operand stack itself, at index 0 (the bottom), and shift
-  every live operand up one slot.
-- **The test flag and "a Number on the stack" are different results.** Some
-  predicates write only the flag and push nothing. The compiler follows those
-  with `GetFlag` when it wants the answer as a value. Treating one kind as the
-  other leaves the stack one entry off from that point on.
+  register in the operand stack, at index 0, which is the bottom. Every live
+  operand moves up one slot.
+- **The test flag and a Number on the stack are different results.** Some
+  predicates set only the flag and push nothing. When the compiler needs the
+  result as a value, it emits `GetFlag` after them. If a reader confuses the two
+  kinds, its count of the stack is off by one from that point on.
 
 ## Text syntax
 
-`dmasm` prints assembly and has no reader for it. The printed form:
+`dmasm` prints assembly, but it can't read it back. The printed form:
 
 - One instruction, label or comment per line.
 - A comment starts with `;`.
@@ -77,7 +79,7 @@ Two facts about this state that are easy to get wrong:
 | `u32` | 1 | decimal | the word itself |
 | `i32` | 1 | signed decimal | the word's bits, read as signed |
 | `Label` | 1 | `LAB_0012` or a name | absolute word offset in the proc |
-| `DMString` | 1 | `"text"` | string-table id. An id that falls in `0xFFCD..=0xFFEF` is stored with bit `0x1000_0000` set, so it cannot be mistaken for an access modifier |
+| `DMString` | 1 | `"text"` | string-table id. An id in `0xFFCD..=0xFFEF` is stored with bit `0x1000_0000` set, so that it can't be read as an access modifier |
 | `Proc` | 1 | the proc's path | proc-table id |
 | `Value` | 2, or 3 for a Number | see "Value" | see "Value" |
 | `Variable` | 1 or more | see "Variable" | see "Variable" |
@@ -97,10 +99,10 @@ word0 = tag in bits 0..7, data bits 16..23 in bits 8..15
 word1 = data bits 0..15
 ```
 
-So a constant's data is at most 24 bits. A Number takes three words instead:
-`0x2A`, the upper 16 bits of the `f32`, the lower 16 bits.
+So a constant's data has at most 24 bits. A Number takes three words instead:
+`0x2A`, then the upper 16 bits of the `f32`, then the lower 16 bits.
 
-Tags `dmasm` accepts in a `Value` operand, and how it prints them:
+The tags that `dmasm` accepts in a `Value` operand, and how it prints them:
 
 | Tag | Printed as |
 |---|---|
@@ -117,11 +119,13 @@ Any other tag stops disassembly with an unknown-value error.
 
 ### Variable
 
-Names something to read, write or call. The first word decides the form:
+A `Variable` names something to read, write or call. Its first word selects
+the form:
 
-- A word outside `0xFFCD..=0xFFEF` is a string id. That is a field read on
-  whatever is in `cache`, printed `cache["name"]`.
-- A word inside that range is an access modifier, followed by its own operands.
+- A word outside `0xFFCD..=0xFFEF` is a string id. It names a field of the
+  value in `cache`, and prints as `cache["name"]`.
+- A word inside that range is an access modifier. The modifier's operands
+  follow it.
 
 | Word | Form | Extra operands | Refers to |
 |---|---|---|---|
@@ -133,8 +137,8 @@ Names something to read, write or call. The first word decides the form:
 | `0xFFD8` | `cache` | - | the `cache` register |
 | `0xFFD9` | `arg(n)` | `u32` | argument `n` |
 | `0xFFDA` | `local(n)` | `u32` | local `n` |
-| `0xFFDB` | `global("name")` | `u32` | slot in the global variable array. `dmasm` prints the name, but the slot is what identifies it: two `var/static` with one name in one proc are two slots |
-| `0xFFDC` | `cache = a; b` | two `Variable`s | load `a` into `cache`, then evaluate `b` against it. This is how `a.b` is spelled |
+| `0xFFDB` | `global("name")` | `u32` | slot in the global variable array. `dmasm` prints the name, but the slot identifies the variable: two `var/static` with the same name in one proc have two slots |
+| `0xFFDC` | `cache = a; b` | two `Variable`s | load `a` into `cache`, then evaluate `b` on it. `a.b` compiles to this form |
 | `0xFFDD` | `dynamic_proc("name")` | `DMString` | a proc looked up by name on `cache` |
 | `0xFFDE` | `dynamic_verb("name")` | `DMString` | same, for a verb |
 | `0xFFDF` | `static_proc(path)` | `Proc` | a proc by id |
@@ -148,33 +152,31 @@ Names something to read, write or call. The first word decides the form:
 | `0xFFEF` | `&var` | a `Variable` | pointer to the variable |
 
 `0xFFD1`-`0xFFD4`, `0xFFD6`, `0xFFD7`, `0xFFE1`, `0xFFE2` and `0xFFE9`-`0xFFEE`
-are in the range but `dmasm` has no form for them. Meeting one stops
-disassembly.
+are in the range, but `dmasm` has no form for them. Disassembly stops at any of
+them.
 
-The interpreter does not decode a `Variable` inside each instruction's handler.
-Two shared functions do it, one for reads and one for writes, and they read the
-operand words themselves. That is why `SetVar`'s handler contains no operand
-decoding at all.
+Instruction handlers don't decode `Variable` operands themselves. Two shared
+functions do it, one for reads and one for writes, and they read the operand
+words. So `SetVar`'s handler has no operand decoding at all.
 
-A call through a bare `dynamic_proc` (no `cache = ...;` in front) means the
-receiver is already in `cache` from an earlier instruction, possibly across a
-branch. `o?.f(a)` is the usual source: `SetCacheJmpIfNull` loads `cache`, and
-the `Call` after it has no `cache = ...;` of its own.
+A call through a bare `dynamic_proc`, without `cache = ...;` before it, uses the
+object that an earlier instruction put in `cache`, possibly before a branch.
+This usually comes from `o?.f(a)`: `SetCacheJmpIfNull` loads `cache`, and the
+`Call` after it has no `cache = ...;`.
 
 ### Argument counts, and the 65535 marker
 
-An `arg_count` operand says how many Values the instruction takes off the
-stack. On `Call`, `CallStatement` and `CallParentArgs` the value **65535 is not
-a count**. It means one Value is on the stack and it is a list to spread over
-the callee's parameters, which is what `f(arglist(L))` and `f(a = 1, b = 2)`
-both compile to. Global calls never carry the marker; they use
-`CallGlobalArgList` instead. § "Calls" lists which call shape gets which
-encoding.
+An `arg_count` operand gives the number of Values that the instruction takes
+off the stack. On `Call`, `CallStatement` and `CallParentArgs`, the value
+**65535 is not a count**. It means that the stack holds one Value, a list, and
+the list's items become the callee's arguments. Both `f(arglist(L))` and
+`f(a = 1, b = 2)` compile to this. Global calls never use the marker: they use
+`CallGlobalArgList` instead. § "Calls" lists the encoding of each kind of call.
 
 ### Type filter
 
-The second operand of `IterLoad`. It carries the coarse category of a typed
-loop variable (`for(var/mob/M in L)`) or an `as` clause.
+The second operand of `IterLoad`. It holds the broad category of a typed loop
+variable, as in `for(var/mob/M in L)`, or of an `as` clause.
 
 | Bit | Name | Bit | Name |
 |---|---|---|---|
@@ -188,28 +190,28 @@ loop variable (`for(var/mob/M in L)`) or an `as` clause.
 | `0x80` | null | `0x20000` | color |
 | `0x100` | area | | |
 
-A bit `dmasm` does not know stops disassembly.
+Disassembly stops at a bit that `dmasm` doesn't know.
 
 ## Instructions
 
 How to read the table:
 
-- **Instruction** is the declaration from `src/instructions.rs`, operands
-  included.
-- **Stack** is `taken -> left`, counted in Values. `flag` means the instruction
-  writes the test flag. `?` means nobody has established it.
-- Stack contents are written bottom to top, so in `list, index` the index is on
-  top.
-- **Basis** says how the row is known:
+- **Instruction** is the declaration from `bytecode/src/instructions.rs`, with
+  its operands.
+- **Stack** is `taken -> left`, counted in Values. `flag` means that the
+  instruction sets the test flag. `?` means that nobody has found the value.
+- Stack contents are written from bottom to top. In `list, index`, the index is
+  on top.
+- **Basis** gives the evidence for the row:
 
 | Basis | Meaning |
 |---|---|
 | `read` | The interpreter's handler was read in the BYOND binary, or the behavior was measured on a live world, or both |
 | `jit` | A JIT compiler built on `dmasm` compiles this instruction. It declares the stack effect and checks it on every compile, and its test suite compares results against the interpreter |
-| `asm` | The interpreter's handler was read once in disassembly on 2026-10-04 (516.1687 Windows) for this file, sometimes with the functions it calls. Where a row says what DM source compiles to, that came from compiling a throwaway world with `dm.exe` 516.1687 and disassembling it with `dmasm`. Nothing was run |
-| `dmasm` | `dmasm`'s own expression compiler emits it for that builtin with that many arguments (`compiler/src/compiler/builtin_procs.rs`). The single pushed result is assumed from the compiler treating it as a value. Nothing here has read the handler |
-| `dm` | `dm.exe` 516.1687 compiled a small proc that uses the builtin, and `dmasm` disassembled it (2026-10-04). **Taken** is how many values the compiler pushed just before the instruction. **Left** comes from what the compiler did next: `Ret` or `Pop` means one value, `GetFlag` means the result went to the test flag, nothing means zero. The handler was not read, so what the instruction does with its values is the builtin's documented behavior, not something checked here |
-| `name` | Only the name and the operand shape. Treat the behavior as a guess |
+| `asm` | The interpreter's handler was read once in disassembly for this file, on 2026-10-04 (516.1687 Windows), sometimes with the functions it calls. Where a row gives the DM source that compiles to the instruction, a test world was compiled with `dm.exe` 516.1687 and disassembled with `dmasm`. Nothing was run |
+| `dmasm` | `dmasm`'s compiler emits the instruction for that builtin with that number of arguments (`compiler/src/compiler/builtin_procs.rs`). The compiler uses the instruction as a value, so the row assumes that it pushes one result. Nobody has read the handler |
+| `dm` | `dm.exe` 516.1687 compiled a small proc that uses the builtin, and `dmasm` disassembled it (2026-10-04). **Taken** is the number of values that the compiler pushed just before the instruction. **Left** comes from the compiler's next instruction: `Ret` or `Pop` means one value, `GetFlag` means that the result went to the test flag, and nothing means zero. Nobody read the handler, so the row describes the builtin's documented behavior, not checked behavior |
+| `name` | Only the name and the operands are known. Treat the behavior as a guess |
 
 | Op | Instruction | Stack | Behavior | Basis |
 |---|---|---|---|---|
@@ -246,7 +248,7 @@ How to read the table:
 | `0x1F` | `Block` | 2 -> 1 | `block(start, end)` used as an expression | dmasm |
 | `0x20` | `BlockTarget` | 2 -> 1 | `block(start, end)` written as the left side of `<<`. Pushes the shared scratch list itself, with no copy | asm |
 | `0x21` | `Prob` | 1 -> 1 | `prob(p)`. Pushes the Number 1 or 0 | jit |
-| `0x22` | `Rand` | 1 -> 1 | `rand()` and `rand(high)`. The compiler pushes null for the no-argument form. BYOND's own `/generator/proc/Rand` uses it too, on the generator's handle | dm |
+| `0x22` | `Rand` | 1 -> 1 | `rand()` and `rand(high)`. The compiler pushes null for the no-argument form. BYOND's built-in `/generator/proc/Rand` uses it too, on the generator's handle | dm |
 | `0x23` | `RandRange` | 2 -> 1 | `rand(low, high)` | dm |
 | `0x24` | `Sleep` | 1 -> 0 | `sleep(n)`. `n >= 0` parks the proc and its callers. `-5 < n < 0` parks only when the server is behind. `n <= -5` runs a string-table self-check and does not park | read |
 | `0x25` | `Spawn(destination: Label)` | 1 -> 0 | `spawn(delay) { body }`. The label is where the **parent** continues, not where the child starts: the frame is copied with its position already on the body, then the parent jumps to the label. The parent never yields | read |
@@ -301,7 +303,7 @@ How to read the table:
 | `0x58` | `NewListTarget(arg_count: u32)` | n -> 1 | `list(a, b)` written as the left side of `<<`. Moves `arg_count` values into the shared scratch list and pushes it, with no copy | asm |
 | `0x59` | `Range` | 2 -> 1 | `range(dist, center)`. Fills the shared scratch list and pushes it, with no copy (§ "The shared scratch list"). The compiler puts `CopyList` right after it, except when the range is the left side of `<<` | asm |
 | `0x5A` | `LocatePos` | 3 -> 1 | `locate(x, y, z)`. Truncates toward zero. 0, a negative, an out-of-range or a non-number coordinate gives null, never an error | read |
-| `0x5B` | `LocateRef` | 1 -> 1 | **The name is narrower than the opcode.** This is all of one-argument `locate(X)`: a `[0x...]` reference string, an atom `tag` string, or an atom type path (first instance of that type). `locate(/datum/foo)` is always null. `locate(/area/foo)` creates the area when none exists | read |
+| `0x5B` | `LocateRef` | 1 -> 1 | **The name covers less than the opcode does.** The opcode is all of one-argument `locate(X)`: a `[0x...]` reference string, an atom `tag` string, or an atom type path (first instance of that type). `locate(/datum/foo)` is always null. `locate(/area/foo)` creates the area when none exists | read |
 | `0x5C` | `Flick` | 2 -> 0 | `flick(icon, object)` | dm |
 | `0x5D` | `Shutdown` | 0 -> 0 | `shutdown()` with no arguments | dm |
 | `0x5E` | `Startup(arg_count: u32)` | n -> ? | `startup()`. Parks the proc once the child world starts | dmasm |
@@ -425,9 +427,9 @@ How to read the table:
 | `0xDB` | `Text2Ascii` | 2 -> 1 | `text2ascii(text, pos)`. The compiler pushes null for a missing position | dmasm |
 | `0xDC` | `Ascii2Text` | 1 -> 1 | `ascii2text(n)` | dmasm |
 | `0xDD` | `IconStates` | 1 -> 1 | `icon_states(icon)` | dm |
-| `0xDE` | `IconNew(arg_count: u32)` | n -> 1 | Builds the icon value behind an `/icon` datum. BYOND's own `/icon/New` pushes its five arguments, emits `IconNew 5` and stores the result in the datum's `icon` var; `/icon/proc/operator:=` uses `IconNew 1` | dm |
-| `0xDF` | `TurnOrFlipIcon(filter_mode: u32, var: Variable)` | 1 -> 0 | `icon.Turn(angle)` or `icon.Flip(dir)` on the icon in `var`, written back in place. BYOND's own `/icon` procs use `filter_mode` 5 for `Turn`, 9 for `Turn` when its second argument is true, and 6 for `Flip`. Not `Turn` (`0x6B`) | dm |
-| `0xE0` | `IconBlendSimple(var: Variable)` | 2 -> 0 | `_dm_icon_blend(icon, other, function)` with no position. Stack is `other, function`. Same code as `IconBlend`, with the position fixed at 1, 1. BYOND's own `/icon/proc/Blend` always passes a position, so this only comes from DM code that calls `_dm_icon_blend` itself | asm |
+| `0xDE` | `IconNew(arg_count: u32)` | n -> 1 | Builds the icon value behind an `/icon` datum. BYOND's built-in `/icon/New` pushes its five arguments, emits `IconNew 5` and stores the result in the datum's `icon` var; `/icon/proc/operator:=` uses `IconNew 1` | dm |
+| `0xDF` | `TurnOrFlipIcon(filter_mode: u32, var: Variable)` | 1 -> 0 | `icon.Turn(angle)` or `icon.Flip(dir)` on the icon in `var`, written back in place. BYOND's built-in `/icon` procs use `filter_mode` 5 for `Turn`, 9 for `Turn` when its second argument is true, and 6 for `Flip`. Not `Turn` (`0x6B`) | dm |
+| `0xE0` | `IconBlendSimple(var: Variable)` | 2 -> 0 | `_dm_icon_blend(icon, other, function)` with no position. Stack is `other, function`. Same code as `IconBlend`, with the position fixed at 1, 1. BYOND's built-in `/icon/proc/Blend` always passes a position, so this only comes from DM code that calls `_dm_icon_blend` itself | asm |
 | `0xE1` | `IconIntensity(var: Variable)` | 3 -> 0 | `icon.SetIntensity(r, g, b)` on the icon in `var`. `/icon/proc/SetIntensity` swaps a null `g` or `b` for -1 first | dm |
 | `0xE2` | `IconSwapColor(var: Variable)` | 2 -> 0 | `icon.SwapColor(old, new)` on the icon in `var` | dm |
 | `0xE3` | `ShiftIcon(var: Variable)` | 3 -> 0 | `icon.Shift(dir, offset, wrap)` on the icon in `var` | dm |
@@ -465,7 +467,7 @@ How to read the table:
 | `0x103` | `Eval` | 1 -> 1 | Runs DM Script. A string is compiled and run, and a compile failure raises a runtime error carrying the compiler's message. A prepared script handle is run as it is. Pushes the script's result, or null for any other input | asm |
 | `0x104` | `DmsPrepare` | 2 -> 1 | Stack is `kernel, text`. Compiles the text against the kernel and pushes the compiled script. On a compile failure it appears to push the error text instead; that branch was read in the decompiler only | asm |
 | `0x105` | `IconDrawBox(var: Variable)` | 5 -> 0 | `icon.DrawBox(color, x1, y1, x2, y2)` on the icon in `var` | dm |
-| `0x106` | `IconInsert(arg_count: u32, var: Variable)` | n -> 1 | `icon.Insert(new_icon, icon_state, dir, frame, moving, delay)`. BYOND's own `/icon/proc/Insert` pushes the icon and those six, count 7. Also writes the icon in `var`; the proc pops the pushed value. Until 2026-10-04 `dmasm` declared no `var` here, and printed that word and the `Pop` after it as a made-up `CallPath 81` | asm |
+| `0x106` | `IconInsert(arg_count: u32, var: Variable)` | n -> 1 | `icon.Insert(new_icon, icon_state, dir, frame, moving, delay)`. BYOND's built-in `/icon/proc/Insert` pushes the icon and those six, count 7. Also writes the icon in `var`; the proc pops the pushed value. Until 2026-10-04 `dmasm` declared no `var` here, and printed that word and the `Pop` after it as a made-up `CallPath 81` | asm |
 | `0x107` | `UrlEncode` | 2 -> 1 | `url_encode(text, format)`. The compiler pushes null for a missing format | dmasm |
 | `0x108` | `UrlDecode` | 1 -> 1 | `url_decode(text)` | dmasm |
 | `0x109` | `Md5` | 1 -> 1 | `md5(text)` | dmasm |
@@ -475,7 +477,7 @@ How to read the table:
 | `0x10D` | `WinGet` | 3 -> 1 | `winget(player, control, params)`. Parks the proc once the query is sent | dmasm |
 | `0x10E` | `WinClone` | 3 -> 0 | `winclone(player, window, clone_name)` | dm |
 | `0x10F` | `WinShow` | 3 -> 0 | `winshow(player, window, show)` | dm |
-| `0x110` | `IconMapColors(arg_count: u32, var: Variable)` | n+1 -> 1 | `icon.MapColors()`. BYOND's own `/icon/proc/MapColors` pushes the icon and then 4, 5, 12 or 20 arguments, and the count leaves the icon out, unlike `IconInsert`. The stack effect is taken from those pushes, not from the handler. Writes the icon in `var`, and had the same missing operand in `dmasm` as `IconInsert` until 2026-10-04 | asm |
+| `0x110` | `IconMapColors(arg_count: u32, var: Variable)` | n+1 -> 1 | `icon.MapColors()`. BYOND's built-in `/icon/proc/MapColors` pushes the icon and then 4, 5, 12 or 20 arguments, and the count leaves the icon out, unlike `IconInsert`. The stack effect is taken from those pushes, not from the handler. Writes the icon in `var`, and had the same missing operand in `dmasm` as `IconInsert` until 2026-10-04 | asm |
 | `0x111` | `IconScale(var: Variable)` | 3 -> 1 | `icon.Scale(width, height)`. Stack is `icon, width, height`. Also writes the icon in `var`; `/icon/proc/Scale` pops the pushed value | dm |
 | `0x112` | `IconCrop(var: Variable)` | 5 -> 1 | `icon.Crop(x1, y1, x2, y2)`. Stack is `icon, x1, y1, x2, y2`. Also writes the icon in `var`; `/icon/proc/Crop` pops the pushed value | dm |
 | `0x113` | `Rgba` | 4 -> 1 | `rgb(r, g, b, a)` | dm |
@@ -484,7 +486,7 @@ How to read the table:
 | `0x116` | `CallLib(arg_count: u32)` | n+2 -> 1 | `call_ext(lib, func)(args)`. Stack is `lib, func, arg0..argN-1`. A `byond,await:` call parks the proc and resumes with `lib` still under the result | read |
 | `0x117` | `CallLibArgList` | 3 -> 1 | `call_ext(lib, func)(arglist(L))`. Leaks one reference per list item per call | read |
 | `0x118` | `WinExists` | 2 -> 1 | `winexists(player, control)`. Parks the proc once the query is sent | dmasm |
-| `0x119` | `IconBlend(var: Variable)` | 4 -> 0 | `icon.Blend(other, function, x, y)`. Stack is `other, function, x, y`, as BYOND's own `/icon/proc/Blend` pushes them. Blends into the icon held in `var` and writes it back | asm |
+| `0x119` | `IconBlend(var: Variable)` | 4 -> 0 | `icon.Blend(other, function, x, y)`. Stack is `other, function, x, y`, as BYOND's built-in `/icon/proc/Blend` pushes them. Blends into the icon held in `var` and writes it back | asm |
 | `0x11A` | `IconSize` | 2 -> 1 | `icon.Width()` and `icon.Height()`. Stack is `icon, which`, where `which` is 1 for width and 2 for height | dm |
 | `0x11B` | `Bounds(arg_count: u32)` | n -> 1 | `bounds(...)`, up to five arguments. Shares one handler with `OBounds` on 516.1669 | dmasm |
 | `0x11C` | `OBounds(arg_count: u32)` | n -> 1 | `obounds(...)` | dmasm |
@@ -499,10 +501,10 @@ How to read the table:
 | `0x125` | `WalkAwaySpeed` | 5 -> 0 | `walk_away(ref, target, max, lag, speed)` | dm |
 | `0x126` | `WalkTowardsSpeed` | 4 -> 0 | `walk_towards(ref, target, lag, speed)` | dm |
 | `0x127` | `WalkRandSpeed` | 3 -> 0 | `walk_rand(ref, lag, speed)` | dm |
-| `0x128` | `Animate` | 1 -> 1 | `animate(...)` with at least one change. Takes one associative list built by `NewAssocList` just before it. The object, when there is one, rides in that list under the key `1`; the chained form `animate(alpha = b)` has no such entry. As a statement the compiler pops the result | dm |
+| `0x128` | `Animate` | 1 -> 1 | `animate(...)` with at least one change. Takes one associative list built by `NewAssocList` just before it. If there is an object, it is in that list under the key `1`. The chained form `animate(alpha = b)` has no such entry. As a statement the compiler pops the result | dm |
 | `0x129` | `NullAnimate` | 1 -> 1 | `animate(object)` with an object and no changes. The name is misleading: the object is its one argument | dm |
 | `0x12A` | `MatrixNew(arg_count: u32)` | n -> 1 | `matrix(...)`, up to six arguments | dmasm |
-| `0x12B` | `Database(arg_count: u32)` | n -> 1 | Every database operation, not only creating one. All of BYOND's own `/database` and `/database/query` procs (`Open`, `Close`, `Error`, `Add`, `Execute`, `NextRow`, `GetRowData` and the rest) push `src` first, then one or two more values, and emit `Database 2` or `Database 3`. Which value picks the operation was not worked out | dm |
+| `0x12B` | `Database(arg_count: u32)` | n -> 1 | Every database operation, not only creating one. All of BYOND's built-in `/database` and `/database/query` procs (`Open`, `Close`, `Error`, `Add`, `Execute`, `NextRow`, `GetRowData` and the rest) push `src` first, then one or two more values, and emit `Database 2` or `Database 3`. Which value picks the operation was not worked out | dm |
 | `0x12C` | `Try(unk0: Label)` | 0 -> 0 | Opens a `try`. Pushes a catch frame recording the stack depth and the label. A throw inside the block lands on the label with the thrown value on the stack | read |
 | `0x12D` | `Throw` | 1 -> 0 | `throw x` | dm |
 | `0x12E` | `Catch(unk0: Label)` | 0 -> 0 | Leaves a `try` block normally. Jumps to the label and frees every catch frame whose range the label falls outside. It is a jump, not the start of the handler | asm |
@@ -553,7 +555,7 @@ How to read the table:
 | `0x15B` | `PushCacheKey` | 0 -> 0 | `PushCache` for the `cache_key` register | read |
 | `0x15C` | `PopCacheKey` | 0 -> 0 | `PopCache` for the `cache_key` register | read |
 | `0x15D` | `Time2TextTZ(arg_count: u32)` | n -> 1 | `time2text(t, format, timezone)`, and only that three-argument form | read |
-| `0x15E` | `MakeGenerator(unk0: u32)` | n -> 1 | Builds the handle behind a `/generator` datum. `generator(a, b, c, d)` itself compiles to `new /generator(...)`; BYOND's own `/generator/New` then pushes four values, emits `MakeGenerator 4` and stores the result in the datum's `_binobj` var | dm |
+| `0x15E` | `MakeGenerator(unk0: u32)` | n -> 1 | Builds the handle behind a `/generator` datum. `generator(a, b, c, d)` itself compiles to `new /generator(...)`; BYOND's built-in `/generator/New` then pushes four values, emits `MakeGenerator 4` and stores the result in the datum's `_binobj` var | dm |
 | `0x15F` | `SpliceText` | 4 -> 1 | `splicetext(text, start, end, insert)` | dmasm |
 | `0x160` | `SpliceTextChar` | 4 -> 1 | `splicetext_char(...)` | dmasm |
 | `0x161` | `RgbEx` | 5 -> 1 | `rgb()` when the compiler cannot prove the color space is plain RGB (`dmasm` source comment). For `rgb(a, b, c, space = d)` the stack is `a, b, c, null, d`: the null is the missing alpha | dm |
@@ -600,13 +602,13 @@ How to read the table:
 | `0x18a` | `ValuesDot` | 2 -> 1 | `values_dot(A, B)` | read |
 | `0x18b` | `ValuesCutUnder` | 3 -> 1 | `values_cut_under(L, min, inclusive)`. The compiler pushes null for a missing `inclusive`. Pushes the number removed. **Under is `0x18B`, over is `0x18C`** | read |
 | `0x18c` | `ValuesCutOver` | 3 -> 1 | `values_cut_over(L, max, inclusive)` | read |
-| `0x1337` | `AuxtoolsDebugBreak` | - | Not a BYOND opcode: it is outside `0x000..=0x18C`. An `auxtools` debugger extension | name |
-| `0x1338` | `AuxtoolsDebugBreakNop` | - | Not a BYOND opcode. The second `auxtools` extension word | name |
+| `0x1337` | `AuxtoolsDebugBreak` | - | Not a BYOND opcode: it is outside `0x000..=0x18C`. The `auxtools` debugger uses it | name |
+| `0x1338` | `AuxtoolsDebugBreakNop` | - | Not a BYOND opcode. The second `auxtools` debugger opcode | name |
 
 ### Operators
 
-The arithmetic and bitwise rows above are short on purpose. Three rules cover
-most surprises, and each was measured on a live world:
+These three rules explain most surprises in the arithmetic and bitwise rows.
+Each rule was measured in a running world:
 
 - **Null is not always 0.** `-`, `*`, `&`, `<<`, `>>`, `%` and `%%` read null
   as 0. `+`, `|` and `^` return the other operand untouched, so `null | 5.7`
@@ -615,12 +617,12 @@ most surprises, and each was measured on a live world:
 - **A list on the left changes the operator.** `+`, `-`, `&`, `|` and `^` each
   have a list form that builds a new list. The compound forms (`+=` and so on)
   change the list in place.
-- **Bitwise operators work on 24 bits**, because that is how many whole-number
-  bits an `f32` holds.
+- **Bitwise operators work on 24 bits**, because an `f32` holds 24 bits of a
+  whole number.
 
 ### Calls
 
-Every call shape and where its pieces sit on the stack:
+Each kind of call, and the order of its values on the stack:
 
 | DM | Instruction | Stack before |
 |---|---|---|
@@ -642,13 +644,12 @@ A called proc always gets a frame padded to its declared parameter count.
 
 ### Loops
 
-These are `dm.exe` 516.1687 output, disassembled with `dmasm` on 2026-10-04,
-debug lines removed.
+These listings are `dm.exe` 516.1687 output, disassembled with `dmasm` on
+2026-10-04, without debug lines.
 
-`for(var/x in L)`. A top-level loop has no `IterPush` or `IterPop`; they only
-wrap a loop nested inside another one. The store comes **before** the `Jz`, so
-the null that `IterNext` pushes at the end is stored too and the stack is
-empty on both edges:
+`for(var/x in L)`. Only a loop inside another loop has `IterPush` and `IterPop`
+around it. The store comes **before** the `Jz`. So the loop also stores the
+null that `IterNext` pushes at the end, and the stack is empty on both paths:
 
 ```text
           GetVar arg(0)
@@ -694,9 +695,9 @@ LAB_0025: PopN 2
 
 ### Try and catch
 
-Same source and date as the loops above. `Try`'s label is the start of the
-catch block, and the thrown value is on the stack when execution lands there.
-`Catch` sits at the end of the `try` body and jumps over the catch block:
+From the same compiler and date as the loops above. `Try`'s label is the
+start of the catch block. When execution jumps there, the thrown value is on the
+stack. `Catch` is at the end of the `try` body, and jumps over the catch block:
 
 ```text
           Try LAB_0011
@@ -709,60 +710,60 @@ LAB_0021:
 
 ## The shared scratch list
 
-The VM keeps one list with id 0 and reuses it instead of allocating: an
-instruction empties it, fills it, and pushes a reference to list 0. That
-reference only stays valid until the next instruction that refills the list.
+The VM keeps one list with id 0, and reuses it instead of allocating a new
+list. An instruction empties the list, fills it and pushes a reference to list 0.
+The reference is valid only until the next instruction that fills the list
+again.
 
-- `View`, `OView`, `Block` and `BlockXYZ` fill it and swap in a private copy
-  inside the same handler.
-- `Range` and `ORange` push it uncopied, and the compiler puts `CopyList` after
-  them.
+- `View`, `OView`, `Block` and `BlockXYZ` fill the list, and then push a private
+  copy in its place, in the same handler.
+- `Range` and `ORange` push the list without a copy, and the compiler puts
+  `CopyList` after them.
 - When the list is the left side of `<<`, as in `view() << "hi"`, the compiler
-  skips the copy, presumably because `Output` uses the list up straight away.
-  That is what `ViewTarget`, `OViewTarget`, `BlockTarget`, `BlockXYZTarget` and
-  `NewListTarget` are for, and it is the only place found so far where `Range`
-  and `ORange` appear with no `CopyList` behind them.
+  doesn't copy it. This is probably because `Output` uses the list at once. The
+  instructions for this position are `ViewTarget`, `OViewTarget`, `BlockTarget`,
+  `BlockXYZTarget` and `NewListTarget`. In the cases examined, this is the only
+  position where `Range` and `ORange` have no `CopyList` after them.
 
-`viewers()`, `hearers()` and `newlist()` have no such form: on the left of
-`<<` they compile to the same instruction as anywhere else.
+`viewers()`, `hearers()` and `newlist()` have no such form. On the left of `<<`,
+they compile to the same instruction as anywhere else.
 
 ## Opcode slots dmasm does not decode
 
-`dmasm` stops with an unknown-opcode error on any of these.
+`dmasm` stops with an unknown-opcode error at any of these.
 
-No DM statement is known to make `dm.exe` 516.1687 emit them. The 2013
-compiler (§ "The 2013 compiler") has no line that emits any of them directly
-either, except
-`0x26` and `0xCE` on a path nothing reaches. A full SS13 codebase (77,118
-named procs) disassembled with no errors on 2026-09-12.
+No known DM statement makes `dm.exe` 516.1687 emit them. The 2013 compiler
+(§ "The 2013 compiler") also has no code that emits any of them directly. The
+exceptions are `0x26` and `0xCE`, on a code path that nothing reaches. On
+2026-09-12, a full SS13 codebase of 77,118 named procs disassembled without
+errors.
 
-**Do not read "a station codebase reads clean" as proof a slot is dead.**
-Twelve slots that used to be on this list were live, and `dmasm` could not
-disassemble a proc holding any of them until it gained them on 2026-10-04:
+**A codebase that disassembles without errors doesn't prove that a slot is
+unused.** Twelve slots that were on this list are in use. Before 2026-10-04,
+`dmasm` couldn't disassemble a proc that contained any of them:
 
 | Slots | What emits them |
 |---|---|
 | `0x163`, `0x17B` | `gradient(list(...), index)` and `call_ext(handle)(arglist(L))` |
 | `0x0A` | `target << key(file)` |
 | `0x1D`, `0x1E`, `0x20`, `0x58`, `0x171` | `view()`, `oview()`, `block()` or `list()` as the left side of `<<` |
-| `0xAE` | every `range()` and `orange()`. `dmasm` used to read it as an operand of `Range`, which broke on `range() << x` |
+| `0xAE` | every `range()` and `orange()`. `dmasm` used to read it as an operand of `Range`, which failed on `range() << x` |
 | `0xA3`, `0xA4` | the old `waitfor` block statement |
 | `0xE0` | `_dm_icon_blend()` with three arguments |
 
-What found them: the same builtin can compile to a different instruction
-depending on where it sits, so a probe has to try it as a value, as a loop
-source and as the left side of `<<`. The 2013 compiler's code is the fastest
-way to learn which positions matter.
+A builtin can compile to another instruction in another position. So to test
+a builtin, use it as a value, as a loop source and as the left side of `<<`.
+The 2013 compiler's code is the fastest way to find the positions that matter.
 
-Every row below was read on 516.1687 Windows on 2026-10-04: the handler in
-disassembly, and the functions it calls. Nothing here was run, so a row
-describes what the code does, not a measured result.
+Each row below was read in 516.1687 Windows on 2026-10-04: the handler in
+disassembly, and the functions it calls. Nothing was run, so a row describes
+what the code does, not a measured result.
 
-Three rows (`0x26`, `0xCE`, `0xD5`) also lean on the 2013 Linux build
-500.1205, which kept its function names and holds the DM compiler as well as
-the interpreter (§ "The 2013 compiler"). Where a row says what that compiler
-pushes, it was read from the compiler's code. Its handlers for these three
-slots read the same stack slots as the 516.1687 ones.
+Three rows, `0x26`, `0xCE` and `0xD5`, also use the 2013 Linux build 500.1205.
+That build kept its function names, and it contains the DM compiler as well as
+the interpreter (§ "The 2013 compiler"). Where a row gives the values that this
+compiler pushes, they come from the compiler's code. Its handlers for these
+three slots read the same stack slots as those of 516.1687.
 
 | Op | Operands | Stack | What it does |
 |---|---|---|---|
@@ -775,11 +776,12 @@ slots read the same stack slots as the 516.1687 ones.
 | `0xCE` | none | 3 -> 0 | `0x26` for `arglist(L)`. Stack is `proc, delay, list`. Passes the list as the one argument with the "arguments come from a list" flag set. The delay is read from the top of the stack here too, so it is always the list and never the `delay` slot. The 2013 compiler swaps `0x26` for this when the first argument after the delay is `arglist()`, on the same path nothing reaches |
 | `0xD5` | `arg_count: u32` | n+1 -> 0 | Old `target << sound(file, repeat, wait, channel, volume)` taking 1 to 5 sound arguments. The file is the first of the `arg_count` values and `repeat`, `wait`, `channel`, `volume` follow it; a missing volume is 100. The handler reads the target from the `repeat` slot, not from the slot under the arguments, so `repeat` is used as the target as well; with one argument it reads one slot past the top of the stack. The 2013 handler does the same, and the 2013 compiler already has no code that emits this, `0x06` or `0xD6`. Not run |
 | `0xD6` | none | 2 -> 0 | Old `target << S` for a `/sound` datum. Stack is `target, sound`. Reads five vars off the datum and sends them through the same code as `0xD5` |
-| `0xD8` | none | 0 -> 0 | The bad-instruction slot. Raises `BYOND Error: bad instruction: <number>` and carries on |
+| `0xD8` | none | 0 -> 0 | The bad-instruction slot. Raises `BYOND Error: bad instruction: <number>` and continues |
+
 ## Older names
 
-`dmasm`'s `src/opcodes_unused.rs` keeps an earlier name list, and extools uses
-some of the same names. Where they differ from the current ones:
+An earlier version of `dmasm` used other names for some instructions, and
+extools uses some of the same names. Where they differ from the current names:
 
 | Op | Older name | Current name |
 |---|---|---|
@@ -800,47 +802,47 @@ some of the same names. Where they differ from the current ones:
 When `dmasm` gains or changes an instruction:
 
 1. Check the operand count against the interpreter's handler for that opcode.
-   An instruction that reads a word `dmasm` does not declare desyncs the
-   disassembler from that point on: the missed word is read as the next
-   opcode, and the error shows up an instruction or two later.
-2. Add or fix the row here, copying the declaration from `src/instructions.rs`
-   as written.
-3. Give the row the weakest basis that is true.
+   If the handler reads a word that `dmasm` doesn't declare, the disassembler
+   reads that word as the next opcode. The error then shows up an instruction
+   or two later.
+2. Add or fix the row here. Copy the declaration from
+   `bytecode/src/instructions.rs` exactly.
+3. In the basis column, give only what the check established: the weakest
+   basis that is true.
 4. Update the date at the top of this file.
 
-To find out what DM source produces an instruction, write the construct into a
-throwaway `.dme`, compile it with `dm.exe`, and disassemble the procs in the
-resulting `.dmb`. An unknown-opcode error from that is how `0x163` and `0x17B`
-turned out to be live, and the `dm` rows in the table came from the same loop.
-Three things that make it work:
+To find the DM source that produces an instruction, write the construct in a
+test `.dme`, compile it with `dm.exe`, and disassemble the procs in the `.dmb`.
+An unknown-opcode error from this showed that `0x163` and `0x17B` are in use.
+The `dm` rows in the table came from the same method. Three tips:
 
 - Try each builtin in every position: as a value, as a loop source, and as the
   left side of `<<`. The position can change the instruction.
-- Every compiled world also carries BYOND's own `/icon`, `/sound`,
-  `/database`, `/regex` and `/generator` procs. Those bodies show the icon and
-  database instructions with their real arguments.
-- The compiler folds constants, so a probe built only from literals may
-  compile to a single `PushInt`. Use proc arguments as the inputs.
+- Every compiled world also contains BYOND's built-in `/icon`, `/sound`,
+  `/database`, `/regex` and `/generator` procs. Their code shows the icon and
+  database instructions with real arguments.
+- The compiler folds constants, so a probe that uses only literals can compile
+  to a single `PushInt`. Use proc arguments as the inputs.
 
 ### The 2013 compiler
 
-When no probe produces a slot, the old compiler can say which statement emits
-it. BYOND 500.1205 for Linux (2013) shipped a `libbyond.so` that kept its C++
-function names, and that library holds the DM compiler as well as the
-interpreter. Every opcode number compared so far means the same thing there
-and in 516 (`0x07` to `0x0A`, `0x25`, `0x26`, `0xCE`, `0xD5`).
+When no probe produces a slot, the old compiler can show which statement emits
+it. BYOND 500.1205 for Linux (2013) has a `libbyond.so` that kept its C++
+function names. That library contains the DM compiler as well as the
+interpreter. Each opcode number compared so far means the same in 500.1205 and
+in 516: `0x07` to `0x0A`, `0x25`, `0x26`, `0xCE` and `0xD5`.
 
 | What | Where in `libbyond.so` 500.1205 |
 |---|---|
 | Emit one bytecode word | `ProcCode::Add(ushort)`. Look for a constant passed as its argument |
 | Emit a call instruction | `ProcCode::CallInst(Node*, ushort, Node*, Node*, ushort)`. The opcode is the second argument, and it swaps in the `arglist()` variant by itself |
 | Statement and builtin dispatch | `ProcCode::EvalProcBlockInternal(Node*, ulong)`, one large switch on the statement's token id |
-| Token names | An array of `char*` in the data section. Token id = index + 1 |
+| Token names | An array of `char*` in the data section. The token id is the index plus 1 |
 
 A constant that matches an opcode number is not always an opcode. `Add(6)`
 after `Add(0xDF)` is the mode operand of `TurnOrFlipIcon`, not opcode `0x06`.
 
-That is how `0x0A` turned out to be `target << key(file)`, how the `Target`
-instructions were traced to the left side of `<<`, and how `0xA3`/`0xA4` were
-traced to the `waitfor` block. The `DreamMaker` from the same build still runs
-on Linux and rejects the same `spawn` spellings 516 does.
+This method found that `0x0A` is `target << key(file)`, that the `Target`
+instructions are for the left side of `<<`, and that `0xA3` and `0xA4` are for
+the `waitfor` block. The `DreamMaker` of the same build still runs on Linux, and
+it rejects the same `spawn` forms as 516.
