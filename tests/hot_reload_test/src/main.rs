@@ -2122,6 +2122,8 @@ fn types(built: Built) {
 	assert_eq!(eval(&mut client, "helper_greets(old_helper)"), "\"hi\"");
 	assert_eq!(eval(&mut client, "call(old_helper, \"wave\")()"), "\"wave\"");
 
+	let verb_refs = |client: &mut Client| ["Greet", "Friends", "Pals"].map(|text| eval(client, &format!("#string-refs {}", text)));
+	let greet = verb_refs(&mut client)[0].clone();
 	let changes = source.edit("reload.dm", "\tset category = \"Helpers\"\n", "\tset category = \"Friends\"\n");
 	assert_eq!((changes.plan.reloads.len(), changes.plan.settings.len()), (1, 1));
 	reload(&mut watcher, &changes);
@@ -2130,6 +2132,23 @@ fn types(built: Built) {
 		eval(&mut client, "verb_report(new /mob/helper/small)"),
 		"\"Greet:Friends,Wave Hello:,Greet:Friends\""
 	);
+	assert_eq!(
+		verb_refs(&mut client),
+		[greet.as_str(), "2", "0"],
+		"after the category changed to Friends"
+	);
+	for (from, to, refs) in [("Friends", "Pals", ["0", "2"]), ("Pals", "Friends", ["2", "0"])] {
+		let category = |name: &str| format!("\tset category = \"{}\"\n", name);
+		let changes = source.edit("reload.dm", &category(from), &category(to));
+		reload(&mut watcher, &changes);
+		assert_eq!(
+			verb_refs(&mut client),
+			[greet.as_str(), refs[0], refs[1]],
+			"after the category changed to {}",
+			to
+		);
+	}
+	println!("ok: a verb's setting holds one reference to its new string and releases the old one");
 
 	let changes = source.edit("reload.dm", "/mob/helper/small/greet()\n\treturn \"[..()]!\"\n", "");
 	reload(&mut watcher, &changes);

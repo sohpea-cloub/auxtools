@@ -37,7 +37,7 @@ pub struct Prepared {
 	new_procs: Vec<PreparedNewProc>,
 	init_procs: Vec<PreparedInitProc>,
 	code: Vec<PreparedCode>,
-	entry_words: Vec<(u32, usize, u32)>,
+	entry_words: Vec<(u32, SettingWord)>,
 	renames: Vec<Rename>,
 	appearances: BTreeSet<u32>,
 	builtin_writes: Vec<(u32, Vec<BuiltinWrite>)>,
@@ -271,7 +271,7 @@ struct PreparedCode {
 	bytecode_id: u32,
 	locals: Option<LocalsTable>,
 	params_id: Option<u32>,
-	settings: Vec<(usize, u32)>,
+	settings: Vec<SettingWord>,
 	rename: Option<Rename>,
 	local_names: Option<Vec<String>>,
 	lines: Option<Vec<(u32, u32)>>
@@ -289,6 +289,7 @@ struct PreparedInitProc {
 
 struct PreparedNewProc {
 	entry: ProcEntryWords,
+	settings: Vec<SettingWord>,
 	id: u32,
 	place: ProcKey,
 	local_names: Vec<String>,
@@ -506,7 +507,7 @@ pub fn prepare(request: &HotReloadRequest, warnings: &mut Vec<String>, skipped: 
 			let entry = runtime_tables::proc_entry(proc.id).ok_or_else(|| format!("{}: couldn't read its table entry", describe(proc_ref)))?;
 			let words = settings_words(&entry, &change.settings, &proc_ref.path)?;
 			prepared.renames.extend(renamed(&proc, &entry, &words));
-			Ok(words.into_iter().map(move |(word, value)| (proc.id.0, word, value)))
+			Ok(words.into_iter().map(move |setting| (proc.id.0, setting)))
 		});
 		match words {
 			Ok(words) => prepared.entry_words.extend(words),
@@ -969,20 +970,66 @@ fn proc_static(
 	}
 }
 
-fn settings_words(entry: &ProcEntryWords, settings: &ProcSettings, path: &str) -> Result<Vec<(usize, u32)>, String> {
-	let string = |text: Option<&str>| text.map_or(Ok(NONE), leaked_string);
+#[derive(Clone)]
+struct SettingWord {
+	word: usize,
+	value: u32,
+	made: Option<StringRef>
+}
+
+impl SettingWord {
+	const fn number(word: usize, value: u32) -> Self {
+		Self { word, value, made: None }
+	}
+
+	fn string(word: usize, text: Option<&str>) -> Result<Self, String> {
+		let Some(text) = text else {
+			return Ok(Self::number(word, NONE));
+		};
+		let made = new_string(text)?;
+		Ok(Self {
+			word,
+			value: made.get_id().0,
+			made: Some(made)
+		})
+	}
+}
+
+fn settings_words(entry: &ProcEntryWords, settings: &ProcSettings, path: &str) -> Result<Vec<SettingWord>, String> {
 	let basename = path.rsplit('/').next().unwrap_or(path).replace('_', " ");
 	let words = [
-		(
+		SettingWord::number(
 			ProcEntryWords::FLAGS,
 			(entry.0[ProcEntryWords::FLAGS] & !ProcSettings::FLAGS) | settings.flags()
 		),
-		(ProcEntryWords::SETTINGS, settings.packed()),
-		(ProcEntryWords::NAME, string(Some(settings.name.as_deref().unwrap_or(&basename)))?),
-		(ProcEntryWords::DESC, string(settings.desc.as_deref())?),
-		(ProcEntryWords::CATEGORY, string(settings.category.as_deref())?)
+		SettingWord::number(ProcEntryWords::SETTINGS, settings.packed()),
+		SettingWord::string(ProcEntryWords::NAME, Some(settings.name.as_deref().unwrap_or(&basename)))?,
+		SettingWord::string(ProcEntryWords::DESC, settings.desc.as_deref())?,
+		SettingWord::string(ProcEntryWords::CATEGORY, settings.category.as_deref())?
 	];
-	Ok(words.into_iter().filter(|&(word, value)| entry.0[word] != value).collect())
+	Ok(words.into_iter().filter(|setting| entry.0[setting.word] != setting.value).collect())
+}
+
+static PROC_STRINGS: Mutex<BTreeMap<(u32, usize), u32>> = Mutex::new(BTreeMap::new());
+
+fn hold_setting(proc: u32, setting: SettingWord) {
+	let mut held = PROC_STRINGS.lock().unwrap();
+	let released = match setting.made {
+		Some(made) => {
+			std::mem::forget(made);
+			held.insert((proc, setting.word), setting.value)
+		}
+		None => held.remove(&(proc, setting.word))
+	};
+	drop(held);
+	if let Some(released) = released {
+		release_string(released);
+	}
+}
+
+fn set_setting(proc: u32, setting: SettingWord) {
+	runtime_tables::set_proc_entry_word(raw_types::procs::ProcId(proc), setting.word, setting.value);
+	hold_setting(proc, setting);
 }
 
 #[derive(Clone, Copy)]
@@ -994,8 +1041,8 @@ struct Rename {
 	basename: u32
 }
 
-fn renamed(proc: &Proc, entry: &ProcEntryWords, words: &[(usize, u32)]) -> Option<Rename> {
-	let to = words.iter().find(|&&(word, _)| word == ProcEntryWords::NAME)?.1;
+fn renamed(proc: &Proc, entry: &ProcEntryWords, words: &[SettingWord]) -> Option<Rename> {
+	let to = words.iter().find(|setting| setting.word == ProcEntryWords::NAME)?.value;
 	let from = entry.0[ProcEntryWords::NAME];
 	if from == NONE || from == to {
 		return None;
@@ -1376,8 +1423,9 @@ fn prepare_new_proc(
 	entry.0[ProcEntryWords::PATH] = string(&path)?;
 	entry.0[ProcEntryWords::PATH_BASENAME] = string(&new.name)?;
 	let settings = new.code.settings.clone().unwrap_or_default();
-	for (word, value) in settings_words(&entry, &settings, &new.name).map_err(fail)? {
-		entry.0[word] = value;
+	let settings = settings_words(&entry, &settings, &new.name).map_err(fail)?;
+	for setting in &settings {
+		entry.0[setting.word] = setting.value;
 	}
 	entry.0[ProcEntryWords::BYTECODE] = runtime_tables::intern_misc(&bytecode).map_err(fail)?;
 	entry.0[ProcEntryWords::LOCALS] = locals_table(&new.code.locals, template.0[ProcEntryWords::LOCALS]).map_err(fail)?;
@@ -1493,6 +1541,7 @@ fn prepare_new_proc(
 
 	Ok(PreparedNewProc {
 		entry,
+		settings,
 		id,
 		place: new.code.proc.clone(),
 		local_names: new.code.locals.clone(),
@@ -2449,6 +2498,9 @@ fn append_entries(prepared: &Prepared, added: &mut Added) -> Result<Vec<u32>, St
 		let id = failing(FailAt::Append)
 			.and_then(|()| runtime_tables::append_proc(&new.entry))
 			.map_err(|e| format!("couldn't add a proc: {}", e))?;
+		for setting in &new.settings {
+			hold_setting(id.0, setting.clone());
+		}
 		if id.0 != new.id {
 			return Err(format!("new proc ID mismatch: got {}, expected {}", id.0, new.id));
 		}
@@ -2614,8 +2666,8 @@ pub fn apply<K: Claimant, T>(
 			failures.push(format!("could not update dynamic lookup for renamed proc: {}", e));
 		}
 	}
-	for (proc, word, value) in prepared.entry_words {
-		runtime_tables::set_proc_entry_word(raw_types::procs::ProcId(proc), word, value);
+	for (proc, setting) in prepared.entry_words {
+		set_setting(proc, setting);
 	}
 	let mut var_tables = vec![];
 	for (type_id, field, words) in prepared.type_fields {
@@ -2696,7 +2748,7 @@ struct UnhookedCode<K, T> {
 }
 
 fn apply_code<K: Claimant, T>(
-	p: PreparedCode,
+	mut p: PreparedCode,
 	breakpoints: &mut HashMap<(raw_types::procs::ProcId, u16), BTreeMap<K, T>>,
 	failures: &mut Vec<String>
 ) -> Option<UnhookedCode<K, T>> {
@@ -2751,8 +2803,8 @@ fn apply_code<K: Claimant, T>(
 	if let Some(params) = p.params_id {
 		runtime_tables::set_proc_entry_word(p.proc.id, ProcEntryWords::PARAMETERS, params);
 	}
-	for &(word, value) in &p.settings {
-		runtime_tables::set_proc_entry_word(p.proc.id, word, value);
+	for setting in std::mem::take(&mut p.settings) {
+		set_setting(p.proc.id.0, setting);
 	}
 
 	let (new_ptr, _) = unsafe { p.proc.bytecode_mut_ptr() };
@@ -3202,6 +3254,7 @@ fn world_has_debug_info() -> bool {
 fn forget_world() {
 	ADDED_GLOBALS.lock().unwrap().clear();
 	TYPE_STRINGS.lock().unwrap().clear();
+	PROC_STRINGS.lock().unwrap().clear();
 	TABLE_STRINGS.lock().unwrap().clear();
 	LISTED_STRINGS.lock().unwrap().clear();
 	UNSETTLED_TYPES.lock().unwrap().clear();
