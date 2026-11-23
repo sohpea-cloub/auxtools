@@ -34,12 +34,10 @@ pub enum Id {
     NoSuchProc,
     ImplicitNewUntyped,
     UnsupportedSetting,
-
     FoldedAngle,
     BitOperandOutOfRange,
     FoldedRgb,
     ProcPathNotDeclared,
-
     ByondShiftAssignDiscarded,
     ByondIncrementOperator,
     ByondPowerCallsMultiply,
@@ -56,7 +54,6 @@ pub enum Id {
     ByondFoldedTestFlag,
     ByondZeroWeightPick,
     ByondDefaultDivisionDropped,
-
     ParentChanged,
     ReparentedToRoot,
     MovedVarConflicts,
@@ -74,7 +71,6 @@ pub enum Id {
     FixedParseError,
     MapsChanged,
     BuildFlagsChanged,
-
     RemovedProcRetained,
     RemovedTypeRetained,
     RemovedVarRetained,

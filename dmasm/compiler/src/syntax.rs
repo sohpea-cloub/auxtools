@@ -423,7 +423,7 @@ mod tests {
         &tree.root().get().procs[name].value[0]
     }
 
-    fn returned(tree: &ObjectTree) -> &Expression {
+    fn returned_by_f(tree: &ObjectTree) -> &Expression {
         match &proc_of(tree, "f").code.as_ref().unwrap()[0].elem {
             Statement::Return(Some(value)) => value,
             other => panic!("not a return: {:?}", other),
@@ -660,7 +660,7 @@ mod tests {
             ("StaticField + \"StaticField(\\\"x\\\")\"", false),
         ] {
             let tree = parsed(&format!("/proc/f()\n\treturn {code}\n"));
-            assert_eq!(has_static_field(returned(&tree)), has, "{}", code);
+            assert_eq!(has_static_field(returned_by_f(&tree)), has, "{}", code);
         }
     }
 
