@@ -39,6 +39,7 @@ impl<T: Into<Value> + Clone> TryFrom<&HashMap<String, T>> for Value {
 	type Error = Runtime;
 
 	fn try_from(hashmap: &HashMap<String, T>) -> Result<Self, Self::Error> {
+		crate::check_live("Value::try_from")?;
 		let res = List::new();
 
 		for (k, v) in hashmap {
@@ -54,6 +55,7 @@ impl<A: Into<Value> + Clone, B: Into<Value> + Clone> TryFrom<&HashMap<A, B>> for
 	type Error = Runtime;
 
 	fn try_from(hashmap: &HashMap<A, B>) -> Result<Self, Self::Error> {
+		crate::check_live("Value::try_from")?;
 		let res = List::new();
 
 		for (k, v) in hashmap {

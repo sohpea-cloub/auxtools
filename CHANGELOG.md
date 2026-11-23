@@ -47,6 +47,18 @@
 - Weak reference ids now include a namespace for each library. A datum that an older version
   tagged gets a new id, and the older version's handles to it no longer upgrade.
 - A hook can name a parameter `args`.
+- A `Value`, `Proc`, `StringRef` or `List` can be made only on BYOND's thread while a world is
+  live, from `auxtools_init` until the shutdown. The functions that make them, and the other
+  safe functions that reach BYOND, check this. They return an error if they return a `Result`,
+  and panic otherwise. `world_is_live` tells you beforehand. The crate documentation gives the
+  rules.
+- `Value::WORLD` and `Value::GLOBAL` are now the functions `Value::world()` and
+  `Value::globals()`. Null and numbers no longer call BYOND, so any thread can make them.
+- `init_on_world_load` is `unsafe`. `init_on_next_world_load` and `shut_down_with_world` panic
+  on a thread other than BYOND's.
+- `hooks::init`, `hooks::shutdown`, `hooks::clear_hooks` and `version::init` are no longer
+  public. `hooks::hook` and `instruction_hook::set_handler` fail unless a world is live, and
+  `instruction_hook::ticks_since_last` panics on a thread other than BYOND's.
 
 ### For users of dmasm
 

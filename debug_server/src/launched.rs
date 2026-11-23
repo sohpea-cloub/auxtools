@@ -163,7 +163,7 @@ fn read_command_line() -> (Vec<String>, String) {
 fn attach() {
 	let attached = crate::guard(|| {
 		let _ = COMMAND_LINE.set(read_command_line());
-		auxtools::init_on_world_load(&WORLD_LOAD)
+		unsafe { auxtools::init_on_world_load(&WORLD_LOAD) }
 	});
 	if let Err(e) = attached.and_then(|initialised| initialised) {
 		let _ = crate::guard(|| failed(&e));
@@ -284,7 +284,7 @@ fn start() {
 		}
 	}
 
-	if let Ok(port) = Value::WORLD.get_number(byond_string!("port")) {
+	if let Ok(port) = Value::world().get_number(byond_string!("port")) {
 		waker::set_port(port as u16);
 	}
 	crate::journal::world_loaded();

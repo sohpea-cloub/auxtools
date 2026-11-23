@@ -70,7 +70,7 @@ impl WeakValue {
 	/// the handle was made. Panics on any thread other than BYOND's.
 	pub fn upgrade(&self) -> Option<Value> {
 		assert!(crate::on_byond_thread(), "WeakValue::upgrade must run on BYOND's thread");
-		if self.world != crate::world_generation() {
+		if !crate::world_is_live() || self.world != crate::world_generation() {
 			return None;
 		}
 		let real_val = unsafe { Value::from_raw(self.inner) };

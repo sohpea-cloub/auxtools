@@ -35,7 +35,9 @@ impl Proc {
 	/// The override id of a proc set apart by [`Proc::set_apart`].
 	pub const APART: u32 = u32::MAX;
 
+	#[track_caller]
 	pub fn overrides<S: Into<String>>(path: S) -> Vec<Self> {
+		crate::expect_live("Proc::overrides");
 		let path = strip_path(path.into());
 		PROCS_BY_NAME.with(|h| h.borrow().get(&path).cloned().unwrap_or_default())
 	}
@@ -60,16 +62,22 @@ impl Proc {
 
 	/// Finds the first definition of `path`. [`Proc::find_override`] finds the
 	/// others.
+	#[track_caller]
 	pub fn find<S: Into<String>>(path: S) -> Option<Self> {
+		crate::expect_live("Proc::find");
 		get_proc(path)
 	}
 
 	/// With [`Proc::APART`], finds the proc set apart for `path`.
+	#[track_caller]
 	pub fn find_override<S: Into<String>>(path: S, override_id: u32) -> Option<Self> {
+		crate::expect_live("Proc::find_override");
 		get_proc_override(path, override_id)
 	}
 
+	#[track_caller]
 	pub fn from_id(id: raw_types::procs::ProcId) -> Option<Self> {
+		crate::expect_live("Proc::from_id");
 		let proc_entry = entry_by_id(id);
 		if proc_entry.is_null() {
 			return None;
@@ -120,7 +128,9 @@ impl Proc {
 		crate::bytecode_manager::set_bytecode(self, bytecode)
 	}
 
+	#[track_caller]
 	pub fn add_to_table(first: raw_types::procs::ProcId) {
+		crate::expect_live("Proc::add_to_table");
 		let mut id = first.0;
 		while let Some(proc) = Proc::from_id(raw_types::procs::ProcId(id)) {
 			register_proc(proc);

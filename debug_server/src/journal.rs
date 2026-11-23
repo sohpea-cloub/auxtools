@@ -34,7 +34,7 @@ fn now_ms() -> u64 {
 }
 
 pub fn world_time() -> f64 {
-	Value::WORLD.get_number(byond_string!("time")).map_or(0.0, f64::from)
+	Value::world().get_number(byond_string!("time")).map_or(0.0, f64::from)
 }
 
 pub fn add(event: JournalEvent) -> JournalEntry {

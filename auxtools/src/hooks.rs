@@ -79,7 +79,7 @@ impl std::fmt::Debug for HookFailure {
 	}
 }
 
-pub fn init() -> Result<(), String> {
+pub(crate) fn init() -> Result<(), String> {
 	unsafe {
 		let runtime_hook = RawDetour::new(raw_types::funcs::runtime_byond as *const (), runtime_hook as *const ()).unwrap();
 
@@ -100,7 +100,7 @@ pub fn init() -> Result<(), String> {
 	Ok(())
 }
 
-pub fn shutdown() {
+pub(crate) fn shutdown() {
 	unsafe {
 		DETOURS.with(|detours_cell| {
 			let detours = detours_cell.borrow();
@@ -212,7 +212,7 @@ fn hook_by_id(id: raw_types::procs::ProcId, hook: ProcHook, hook_path: String) -
 	}
 }
 
-pub fn clear_hooks() {
+pub(crate) fn clear_hooks() {
 	PROC_HOOKS.0.borrow_mut().clear();
 	unsafe {
 		HOOKED_LOW_WORDS.fill(0);
@@ -220,6 +220,9 @@ pub fn clear_hooks() {
 }
 
 pub fn hook<S: Into<String>>(name: S, hook: ProcHook) -> Result<(), HookFailure> {
+	if !crate::world_is_live() {
+		return Err(HookFailure::NotInitialized);
+	}
 	match super::proc::get_proc(name) {
 		Some(p) => hook_by_id(p.id, hook, p.path.to_owned()),
 		None => Err(HookFailure::ProcNotFound)
@@ -251,6 +254,9 @@ fn call_hook(hook: ProcHook, src: &Value, usr: &Value, args: Vec<Value>) -> DMRe
 }
 
 fn hook_failed(proc_id: raw_types::procs::ProcId, error: &crate::Runtime) {
+	if !crate::world_is_live() {
+		return;
+	}
 	let path = PROC_HOOKS.0.borrow().get(&proc_id).map(|(_, path)| path.clone()).unwrap_or_default();
 	if let (Some(trace), Ok(message)) = (
 		Proc::find("/proc/auxtools_stack_trace"),
@@ -275,7 +281,7 @@ pub unsafe fn proc_starting(ctx: *mut raw_types::procs::ExecutionContext) {
 		return;
 	}
 	let instance = *(*ctx).proc_instance();
-	if crate::on_proc_call((*instance).proc, (*instance).src.tag) && *(*ctx).bytecode_offset() == 0 {
+	if crate::on_proc_call((*instance).proc, (*instance).src.tag) && *(*ctx).bytecode_offset() == 0 && crate::world_is_live() {
 		if let Some(proc) = Proc::from_id((*instance).proc) {
 			let (now, _) = proc.bytecode_mut_ptr();
 			*(*ctx).bytecode_mut() = now;

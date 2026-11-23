@@ -132,6 +132,9 @@ var/datum/weak_test_datum
 /proc/auxtest_tables()
 	CRASH()
 
+/proc/auxtest_threads()
+	CRASH()
+
 /proc/auxtest_weak_values()
 	CRASH()
 
@@ -211,6 +214,7 @@ BIG_TWINS(auxtest_big_a, auxtest_big_b)
 	ASSERT(auxtest_procs() == TRUE)
 	ASSERT(auxtest_strings() == TRUE)
 	ASSERT(auxtest_tables() == TRUE)
+	ASSERT(auxtest_threads() == TRUE)
 	ASSERT(auxtest_value_from() == TRUE)
 	ASSERT(auxtest_code_before_shutdown() == TRUE)
 	ASSERT(auxtest_shared_code() == TRUE)
@@ -242,6 +246,9 @@ BIG_TWINS(auxtest_big_a, auxtest_big_b)
 	var/restored = call_ext(auxtest_dll, "auxtest_code_after_shutdown")()
 	if (restored != "SUCCESS")
 		auxtest_out("FAILED: [restored ? restored : "the check of the code after shutdown gave an empty string"]")
+	var/after_shutdown = call_ext(auxtest_dll, "auxtest_after_shutdown")()
+	if (after_shutdown != "ok")
+		auxtest_out("FAILED: [after_shutdown ? after_shutdown : "the checks after shutdown returned nothing"]")
 
 /world/New()
 	do_tests()

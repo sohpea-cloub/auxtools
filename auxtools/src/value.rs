@@ -35,6 +35,9 @@ impl std::hash::Hash for Value {
 
 impl Drop for Value {
 	fn drop(&mut self) {
+		if self.holds_no_reference() {
+			return;
+		}
 		unsafe {
 			raw_types::funcs::dec_ref_count(self.raw);
 		}
@@ -42,14 +45,6 @@ impl Drop for Value {
 }
 
 impl Value {
-	/// DM's `global.vars`.
-	pub const GLOBAL: Self = Self {
-		raw: raw_types::values::Value {
-			tag: raw_types::values::ValueTag::World,
-			data: raw_types::values::ValueData { id: 1 }
-		},
-		phantom: PhantomData {}
-	};
 	pub const NULL: Self = Self {
 		raw: raw_types::values::Value {
 			tag: raw_types::values::ValueTag::Null,
@@ -57,32 +52,45 @@ impl Value {
 		},
 		phantom: PhantomData {}
 	};
-	pub const WORLD: Self = Self {
-		raw: raw_types::values::Value {
-			tag: raw_types::values::ValueTag::World,
-			data: raw_types::values::ValueData { id: 0 }
-		},
-		phantom: PhantomData {}
-	};
 
-	pub unsafe fn new(tag: raw_types::values::ValueTag, data: raw_types::values::ValueData) -> Value {
-		let raw = raw_types::values::Value { tag, data };
-		raw_types::funcs::inc_ref_count(raw);
+	const fn holds_no_reference(&self) -> bool {
+		matches!(
+			self.raw.tag,
+			raw_types::values::ValueTag::Null | raw_types::values::ValueTag::Number | raw_types::values::ValueTag::World
+		)
+	}
 
-		Value {
-			raw,
+	const fn world_value(id: u32) -> Self {
+		Self {
+			raw: raw_types::values::Value {
+				tag: raw_types::values::ValueTag::World,
+				data: raw_types::values::ValueData { id }
+			},
 			phantom: PhantomData {}
 		}
 	}
 
-	#[deprecated(note = "please use the `GLOBAL` const instead")]
-	pub const fn globals() -> Value {
-		Self::GLOBAL
+	#[track_caller]
+	pub fn world() -> Self {
+		crate::expect_live("Value::world");
+		Self::world_value(0)
 	}
 
-	#[deprecated(note = "please use the `WORLD` const instead")]
-	pub const fn world() -> Value {
-		Self::WORLD
+	#[track_caller]
+	pub fn globals() -> Self {
+		crate::expect_live("Value::globals");
+		Self::world_value(1)
+	}
+
+	pub unsafe fn new(tag: raw_types::values::ValueTag, data: raw_types::values::ValueData) -> Value {
+		let value = Value {
+			raw: raw_types::values::Value { tag, data },
+			phantom: PhantomData {}
+		};
+		if !value.holds_no_reference() {
+			raw_types::funcs::inc_ref_count(value.raw);
+		}
+		value
 	}
 
 	#[deprecated(note = "please use the `NULL` const instead")]
@@ -101,7 +109,8 @@ impl Value {
 	}
 
 	pub fn turf_by_id(id: u32) -> DMResult {
-		let world = Self::WORLD;
+		crate::check_live("Value::turf_by_id")?;
+		let world = Self::world();
 		let max_x = world.get_number(crate::byond_string!("maxx"))? as u32;
 		let max_y = world.get_number(crate::byond_string!("maxy"))? as u32;
 		let max_z = world.get_number(crate::byond_string!("maxz"))? as u32;
@@ -114,7 +123,8 @@ impl Value {
 
 	/// Coordinates start at 1, as in DM.
 	pub fn turf(x: u32, y: u32, z: u32) -> DMResult {
-		let world = Self::WORLD;
+		crate::check_live("Value::turf")?;
+		let world = Self::world();
 		let max_x = world.get_number(crate::byond_string!("maxx"))? as u32;
 		let max_y = world.get_number(crate::byond_string!("maxy"))? as u32;
 		let max_z = world.get_number(crate::byond_string!("maxz"))? as u32;
@@ -289,20 +299,11 @@ impl Value {
 	}
 
 	pub fn from_string<S: AsRef<str>>(data: S) -> DMResult {
-		let string = CString::new(data.as_ref()).map_err(|_| runtime!("tried to create string containing NUL"))?;
-
-		unsafe {
-			let mut id = raw_types::strings::StringId(0);
-
-			assert_eq!(raw_types::funcs::get_string_id(&mut id, string.as_ptr()), 1);
-
-			Ok(Value::new(raw_types::values::ValueTag::String, raw_types::values::ValueData {
-				string: id
-			}))
-		}
+		Self::from_string_raw(data.as_ref().as_bytes())
 	}
 
 	pub fn from_string_raw(data: &[u8]) -> DMResult {
+		crate::check_live("Value::from_string")?;
 		let string = CString::new(data).map_err(|_| runtime!("tried to create string containing NUL"))?;
 
 		unsafe {

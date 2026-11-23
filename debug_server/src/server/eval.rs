@@ -479,7 +479,7 @@ impl Server {
 			has_src_var: &|name| src.as_ref().is_some_and(|src| has_var(src, name)),
 			has_src_proc: &|name| src.as_ref().is_some_and(|src| crate::assemble_env::AssembleEnv::has_proc(src, name)),
 			global: &|name| {
-				if has_var(&Value::GLOBAL, name) {
+				if has_var(&Value::globals(), name) {
 					Some(dmasm::compiler::ExprGlobal::Listed)
 				} else {
 					hot_reload::added_global(name).map(dmasm::compiler::ExprGlobal::Id)

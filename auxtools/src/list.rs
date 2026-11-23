@@ -16,12 +16,15 @@ impl List {
 		Ok(Self { value: val.clone() })
 	}
 
+	#[track_caller]
 	pub fn new() -> Self {
 		Self::default()
 	}
 
 	/// A list of `len` nulls.
+	#[track_caller]
 	pub fn with_size(len: u32) -> Self {
+		crate::expect_live("List::with_size");
 		let mut id: raw_types::lists::ListId = raw_types::lists::ListId(0);
 		unsafe {
 			assert_eq!(raw_types::funcs::create_list(&mut id, len), 1);
@@ -136,6 +139,9 @@ impl List {
 	/// Asks BYOND, because a `filters` list and a single filter have the same
 	/// tag.
 	pub fn is_list(value: &Value) -> bool {
+		if matches!(value.raw.tag, raw_types::values::ValueTag::Null | raw_types::values::ValueTag::Number) {
+			return false;
+		}
 		let mut is_list: u8 = 0;
 		unsafe {
 			assert_eq!(raw_types::funcs::value_is_list(&mut is_list, value.raw), 1);

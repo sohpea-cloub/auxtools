@@ -223,7 +223,7 @@ impl Server {
 
 			Request::WorldInfo => {
 				let (args, cwd) = crate::launched::command_line();
-				let port = Value::WORLD.get_number(byond_string!("port")).map_or(0, |port| port as u16);
+				let port = Value::world().get_number(byond_string!("port")).map_or(0, |port| port as u16);
 				self.answer(Response::WorldInfo { args, cwd, port });
 			}
 
