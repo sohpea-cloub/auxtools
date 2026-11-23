@@ -2229,9 +2229,13 @@ pub fn apply<K: Ord + std::hash::Hash + Copy, T>(
 	renumber(&prepared.removed_procs, &prepared.new_procs);
 
 	let mut renames = prepared.renames;
+	let mut unhooked = vec![];
 	for p in prepared.code {
 		renames.extend(p.rename);
-		apply_code(p, breakpoints, moved_breakpoints, warnings);
+		unhooked.extend(apply_code(p, breakpoints));
+	}
+	for code in unhooked {
+		restore_breakpoints(code, breakpoints, moved_breakpoints, warnings);
 	}
 	for r in renames {
 		if let Err(e) = rename(r) {
@@ -2298,12 +2302,17 @@ pub fn apply<K: Ord + std::hash::Hash + Copy, T>(
 	}
 }
 
+struct UnhookedCode<K, T> {
+	code: PreparedCode,
+	old_code: std::sync::Arc<crate::code_index::Code>,
+	old_file: Option<u32>,
+	hooked: Vec<(u32, u32, Option<String>, Option<BTreeMap<K, T>>)>
+}
+
 fn apply_code<K: Ord + std::hash::Hash + Copy, T>(
 	p: PreparedCode,
-	breakpoints: &mut HashMap<(raw_types::procs::ProcId, u16), BTreeMap<K, T>>,
-	moved_breakpoints: &mut MovedBreakpoints<K>,
-	warnings: &mut Vec<String>
-) {
+	breakpoints: &mut HashMap<(raw_types::procs::ProcId, u16), BTreeMap<K, T>>
+) -> Option<UnhookedCode<K, T>> {
 	let (old_ptr, _) = unsafe { p.proc.bytecode_mut_ptr() };
 	mark_reloaded(p.proc.id.0, if p.lines.is_some() { Reloaded::Lines } else { Reloaded::Code });
 
@@ -2328,7 +2337,10 @@ fn apply_code<K: Ord + std::hash::Hash + Copy, T>(
 		})
 		.collect();
 
-	let local_names = p.local_names.unwrap_or_else(|| auxtools::debug::local_names_for(&p.proc, old_ptr));
+	let local_names = p
+		.local_names
+		.clone()
+		.unwrap_or_else(|| auxtools::debug::local_names_for(&p.proc, old_ptr));
 	let old_file = {
 		let old = original_code(&p.proc);
 		auxtools::remember_bytecode(old_ptr, &old);
@@ -2342,7 +2354,7 @@ fn apply_code<K: Ord + std::hash::Hash + Copy, T>(
 	if let Some(params) = p.params_id {
 		unsafe { runtime_tables::set_proc_entry_word(p.proc.id, ProcEntryWords::PARAMETERS, params) };
 	}
-	for (word, value) in p.settings {
+	for &(word, value) in &p.settings {
 		unsafe { runtime_tables::set_proc_entry_word(p.proc.id, word, value) };
 	}
 
@@ -2350,9 +2362,27 @@ fn apply_code<K: Ord + std::hash::Hash + Copy, T>(
 	auxtools::debug::set_local_names(new_ptr, local_names);
 	crate::code_index::proc_changed(p.proc.id);
 
-	let Some(old_code) = old_code.filter(|_| !hooked.is_empty()) else {
-		return;
-	};
+	let old_code = old_code.filter(|_| !hooked.is_empty())?;
+	Some(UnhookedCode {
+		code: p,
+		old_code,
+		old_file,
+		hooked
+	})
+}
+
+fn restore_breakpoints<K: Ord + std::hash::Hash + Copy, T>(
+	unhooked: UnhookedCode<K, T>,
+	breakpoints: &mut HashMap<(raw_types::procs::ProcId, u16), BTreeMap<K, T>>,
+	moved_breakpoints: &mut MovedBreakpoints<K>,
+	warnings: &mut Vec<String>
+) {
+	let UnhookedCode {
+		code: p,
+		old_code,
+		old_file,
+		hooked
+	} = unhooked;
 	let new_code = crate::code_index::of(&p.proc);
 	let firsts = match (old_code.lines().next(), new_code.lines().next()) {
 		(Some(old_first), Some(new_first)) if old_file != debug_file(&p.bytecode) => Some((old_first, new_first)),

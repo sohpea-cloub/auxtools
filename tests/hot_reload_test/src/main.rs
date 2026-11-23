@@ -1000,7 +1000,15 @@ fn debugger(built: Built) {
 		"twin_runs += 2; } /proc/second() { twin_waiting += 1; while (twin_hold) sleep(1); twin_runs += 2; }"
 	);
 	assert_eq!(changes.plan.reloads.len(), 2, "{:?}", changes.plan);
+	let line = source.line_of("reload.dm", "TWINS(twin_a, twin_b)");
+	let offset = offset_of(&mut client, "/twin_a", line);
+	twin_breakpoint(&mut client, "twin_a", offset, true);
 	reload(&mut watcher, &changes);
+	twin_run(&mut client, "twin_b", line, 2, false);
+	twin_run(&mut client, "twin_a", line, 2, true);
+	let offset = offset_of(&mut client, "/twin_a", line);
+	twin_breakpoint(&mut client, "twin_a", offset, false);
+	println!("ok: a breakpoint kept across a reload that gives procs the same code stops only its own proc");
 	twin_breakpoints(&mut client, &source, 2);
 	println!("ok: procs that a reload gave the same code have separate breakpoints");
 }
@@ -1028,70 +1036,74 @@ fn twin_breakpoints(client: &mut Client, source: &Source, step: u32) {
 		.unwrap_or_else(|| panic!("/twin_a has no instruction with twin_runs: {:?}", disassembly.instructions))
 		.offset as u32;
 
-	let breakpoint = |client: &mut Client, twin: &str, offset: u32, set: bool| {
-		let instruction = InstructionRef {
-			proc: ProcRef {
-				path: format!("/{}", twin),
-				override_id: 0
-			},
-			offset
-		};
-		match client.request(if set {
-			Request::BreakpointSet {
-				instruction,
-				condition: None,
-				hit: None,
-				log: None,
-				exact: true
-			}
-		} else {
-			Request::BreakpointUnset { instruction, exact: true }
-		}) {
-			Response::BreakpointSet {
-				result: BreakpointSetResult::Success { .. }
-			}
-			| Response::BreakpointUnset { success: true, .. } => {}
-			other => panic!(
-				"couldn't {} the breakpoint at {} in {}: {:?}",
-				if set { "set" } else { "take away" },
-				offset,
-				twin,
-				other
-			)
-		}
-	};
-	let number = |client: &mut Client, var: &str| -> u32 { eval(client, var).parse().unwrap() };
-	let run = |client: &mut Client, twin: &str, stops: bool| {
-		let runs = number(client, "twin_runs");
-		eval(client, &format!("twin_armed = /proc/{}", twin));
-		if stops {
-			assert_eq!(client.expect_pause(), BreakpointReason::Breakpoint);
-			assert_eq!(paused_line(client), (format!("/{}", twin), Some(line)));
-			client.resume();
-		}
-		wait_for(client, "twin_runs", &(runs + step).to_string());
-	};
-
-	let waiting = number(client, "twin_waiting");
+	let waiting = twin_number(client, "twin_waiting");
 	eval(client, "twin_hold = TRUE");
 	eval(client, "twin_armed = /proc/twin_b");
 	wait_for(client, "twin_waiting", &(waiting + 1).to_string());
-	breakpoint(client, "twin_a", counts, true);
-	let runs = number(client, "twin_runs");
+	twin_breakpoint(client, "twin_a", counts, true);
+	let runs = twin_number(client, "twin_runs");
 	eval(client, "twin_hold = FALSE");
 	wait_for(client, "twin_runs", &(runs + step).to_string());
-	run(client, "twin_a", true);
-	breakpoint(client, "twin_a", counts, false);
+	twin_run(client, "twin_a", line, step, true);
+	twin_breakpoint(client, "twin_a", counts, false);
 
-	breakpoint(client, "twin_a", offset, true);
-	run(client, "twin_b", false);
-	run(client, "twin_a", true);
-	breakpoint(client, "twin_b", offset, true);
-	breakpoint(client, "twin_a", offset, false);
-	run(client, "twin_b", true);
-	run(client, "twin_a", false);
-	breakpoint(client, "twin_b", offset, false);
-	run(client, "twin_b", false);
+	twin_breakpoint(client, "twin_a", offset, true);
+	twin_run(client, "twin_b", line, step, false);
+	twin_run(client, "twin_a", line, step, true);
+	twin_breakpoint(client, "twin_b", offset, true);
+	twin_breakpoint(client, "twin_a", offset, false);
+	twin_run(client, "twin_b", line, step, true);
+	twin_run(client, "twin_a", line, step, false);
+	twin_breakpoint(client, "twin_b", offset, false);
+	twin_run(client, "twin_b", line, step, false);
+}
+
+fn twin_breakpoint(client: &mut Client, twin: &str, offset: u32, set: bool) {
+	let instruction = InstructionRef {
+		proc: ProcRef {
+			path: format!("/{}", twin),
+			override_id: 0
+		},
+		offset
+	};
+	match client.request(if set {
+		Request::BreakpointSet {
+			instruction,
+			condition: None,
+			hit: None,
+			log: None,
+			exact: true
+		}
+	} else {
+		Request::BreakpointUnset { instruction, exact: true }
+	}) {
+		Response::BreakpointSet {
+			result: BreakpointSetResult::Success { .. }
+		}
+		| Response::BreakpointUnset { success: true, .. } => {}
+		other => panic!(
+			"couldn't {} the breakpoint at {} in {}: {:?}",
+			if set { "set" } else { "take away" },
+			offset,
+			twin,
+			other
+		)
+	}
+}
+
+fn twin_number(client: &mut Client, var: &str) -> u32 {
+	eval(client, var).parse().unwrap()
+}
+
+fn twin_run(client: &mut Client, twin: &str, line: u32, step: u32, stops: bool) {
+	let runs = twin_number(client, "twin_runs");
+	eval(client, &format!("twin_armed = /proc/{}", twin));
+	if stops {
+		assert_eq!(client.expect_pause(), BreakpointReason::Breakpoint);
+		assert_eq!(paused_line(client), (format!("/{}", twin), Some(line)));
+		client.resume();
+	}
+	wait_for(client, "twin_runs", &(runs + step).to_string());
 }
 
 fn definitions(built: Built) {
