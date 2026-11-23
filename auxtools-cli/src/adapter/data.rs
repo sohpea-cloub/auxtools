@@ -186,6 +186,7 @@ impl Adapter {
 				id: breakpoint.id,
 				claim: 0,
 				at: None,
+				file: None,
 				line: None,
 				trigger: Trigger::default(),
 				log: None,

@@ -802,7 +802,40 @@ fn initializers_after_reboot_at_an_area() {
 	world.end();
 }
 
+fn proc_moved_to_another_file() {
+	let (mut world, dir) = watched_world("proc_moved");
+	let (tool, line) = world.marks.place("sub_tool");
+	let set = world.set_breakpoints(&tool, json!([line]));
+	assert_eq!(set[0]["verified"], true, "{}", set[0]);
+	const SUB_TOOL: &str = "/proc/sub_tool(n)\n\treturn n + 1 // @sub_tool\n";
+	std::fs::write(dir.join("sub/moved.dm"), SUB_TOOL).unwrap();
+	world.drop_events("breakpoint");
+	edit(&mut world, "sub/tool.dm", SUB_TOOL, "#include \"moved.dm\"\n");
+	let (moved, line) = world.marks.place("sub_tool");
+	let told = world.event("breakpoint")["body"]["breakpoint"].clone();
+	let path = told["source"]["path"].as_str().map(PathBuf::from);
+	assert_eq!(
+		(
+			&told["id"],
+			&told["verified"],
+			&told["line"],
+			path.as_deref().and_then(|path| path.file_name())
+		),
+		(&set[0]["id"], &json!(true), &json!(line), moved.file_name()),
+		"{}",
+		told
+	);
+	world.run_through("declares");
+	world.run("tools");
+	let stop = world.stop();
+	assert_eq!((stop.proc.as_str(), stop.line), ("/sub_tool", line));
+	world.resume_through("tools");
+	ok("source breakpoint on a proc moved to another file");
+	world.end();
+}
+
 pub fn files() {
+	proc_moved_to_another_file();
 	override_restored_before_map();
 	initializers_after_reboot();
 	initializers_after_reboot_at_an_area();

@@ -43,6 +43,7 @@ pub struct SetBreakpoint {
 	pub id: i64,
 	pub claim: u32,
 	pub at: Option<InstructionRef>,
+	pub file: Option<String>,
 	pub line: Option<u32>,
 	pub trigger: Trigger,
 	pub log: Option<String>,
