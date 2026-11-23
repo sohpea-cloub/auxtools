@@ -21,7 +21,7 @@ impl Codes {
 
 	pub(super) fn code_of(&self, frame: &debug::StackFrame, old: bool) -> CodeRef {
 		let mut code = CodeRef {
-			proc: frame.proc.id.0,
+			proc: frame.proc.id().0,
 			old: 0
 		};
 		if old {
@@ -138,11 +138,11 @@ impl Codes {
 		};
 		Ok(ProcInfo {
 			proc: unnamed::proc_ref(&proc),
-			code: CodeRef { proc: proc.id.0, old: 0 },
+			code: CodeRef { proc: proc.id().0, old: 0 },
 			file: code_index::file_of(&proc),
 			line: code_index::of(&proc).lines().next(),
 			definitions,
-			reloaded: hot_reload::reloaded(proc.id.0)
+			reloaded: hot_reload::reloaded(proc.id().0)
 		})
 	}
 

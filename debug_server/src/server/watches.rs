@@ -92,7 +92,7 @@ impl Watches {
 		let now = unsafe { read_slot(frame.context, slot) }.ok_or("the frame has no such var")?;
 		let place = Place::Slot {
 			instance: unsafe { instance_id(frame.instance) },
-			proc: frame.proc.id,
+			proc: frame.proc.id(),
 			slot
 		};
 		Ok((place, unsafe { Value::from_raw(now) }))

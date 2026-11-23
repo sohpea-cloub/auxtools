@@ -16,10 +16,19 @@ use crate::*;
 /// fn assert_send<T: Send>() {}
 /// assert_send::<auxtools::Proc>();
 /// ```
+///
+/// Its ID can't be changed, so it always names an entry of its world.
+///
+/// ```compile_fail,E0616
+/// fn renumber(proc: &mut auxtools::Proc) {
+///     proc.id = auxtools::raw_types::procs::ProcId(u32::MAX);
+/// }
+/// ```
 #[derive(Clone)]
 pub struct Proc {
-	pub id: raw_types::procs::ProcId,
+	pub(crate) id: raw_types::procs::ProcId,
 	pub path: String,
+	world: u32,
 	not_send: PhantomData<*mut ()>
 }
 
@@ -54,9 +63,16 @@ impl Proc {
 		PROCS_BY_NAME.with(|h| h.borrow_mut().insert(path, procs));
 	}
 
-	/// Valid only until DM code runs again. BYOND moves the table when it
-	/// grows.
+	pub const fn id(&self) -> raw_types::procs::ProcId {
+		self.id
+	}
+
+	/// Null once the proc's world has ended. Valid only until DM code runs
+	/// again. BYOND moves the table when it grows.
 	pub fn entry(&self) -> *mut raw_types::procs::ProcEntry {
+		if self.world != crate::world_generation() {
+			return std::ptr::null_mut();
+		}
 		entry_by_id(self.id)
 	}
 
@@ -86,6 +102,7 @@ impl Proc {
 		Some(Proc {
 			id,
 			path,
+			world: crate::world_generation(),
 			not_send: PhantomData
 		})
 	}
@@ -104,16 +121,25 @@ impl Proc {
 		Some(StringRef::from_id(file_id))
 	}
 
+	/// Empty once the proc's world has ended.
 	pub fn parameter_names(&self) -> Vec<StringRef> {
+		let entry = self.entry();
+		if entry.is_null() {
+			return vec![];
+		}
 		unsafe {
-			let (data, count) = raw_types::misc::get_parameters((*self.entry()).metadata.parameters);
+			let (data, count) = raw_types::misc::get_parameters((*entry).metadata.parameters);
 			(0..count).map(|i| StringRef::from_variable_id((*data.add(i)).name)).collect()
 		}
 	}
 
 	pub fn local_names(&self) -> Vec<StringRef> {
+		let entry = self.entry();
+		if entry.is_null() {
+			return vec![];
+		}
 		unsafe {
-			let (names, count) = raw_types::misc::get_locals((*self.entry()).metadata.locals);
+			let (names, count) = raw_types::misc::get_locals((*entry).metadata.locals);
 			(0..count).map(|i| StringRef::from_variable_id(*names.add(i))).collect()
 		}
 	}
@@ -139,7 +165,11 @@ impl Proc {
 	}
 
 	pub fn locals_count(&self) -> usize {
-		unsafe { raw_types::misc::get_locals((*self.entry()).metadata.locals).1 }
+		let entry = self.entry();
+		if entry.is_null() {
+			return 0;
+		}
+		unsafe { raw_types::misc::get_locals((*entry).metadata.locals).1 }
 	}
 
 	pub unsafe fn bytecode_mut_ptr(&self) -> (*mut u32, u16) {
@@ -151,8 +181,12 @@ impl Proc {
 		std::slice::from_raw_parts(ptr, count as usize)
 	}
 
-	/// Calls the proc with a null `src` and `usr`.
+	/// Calls the proc with a null `src` and `usr`. Fails once the proc's world
+	/// has ended.
 	pub fn call(&self, args: &[&Value]) -> runtime::DMResult {
+		if self.world != crate::world_generation() {
+			return Err(runtime!("{} can't be called, because its world has ended", self.path));
+		}
 		let mut ret = raw_types::values::Value {
 			tag: raw_types::values::ValueTag::Null,
 			data: raw_types::values::ValueData { id: 0 }
@@ -203,8 +237,11 @@ impl Proc {
 
 impl fmt::Debug for Proc {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-		let path = unsafe { (*self.entry()).path };
-		write!(f, "Proc({:?})", unsafe { StringRef::from_id(path) })
+		let entry = self.entry();
+		if entry.is_null() {
+			return write!(f, "Proc({}, ended)", self.id.0);
+		}
+		write!(f, "Proc({:?})", unsafe { StringRef::from_id((*entry).path) })
 	}
 }
 

@@ -231,6 +231,9 @@ pub fn hook<S: Into<String>>(name: S, hook: ProcHook) -> Result<(), HookFailure>
 
 impl Proc {
 	pub fn hook(&self, func: ProcHook) -> Result<(), HookFailure> {
+		if self.entry().is_null() {
+			return Err(HookFailure::ProcNotFound);
+		}
 		hook_by_id(self.id, func, self.path.to_owned())
 	}
 

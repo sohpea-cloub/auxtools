@@ -1,4 +1,5 @@
 use std::{
+	cell::RefCell,
 	collections::HashMap,
 	convert::TryFrom,
 	panic::{catch_unwind, AssertUnwindSafe}
@@ -96,6 +97,8 @@ fn on_another_thread(raw_string: raw_types::values::Value) -> Vec<String> {
 	failures
 }
 
+thread_local!(static KEPT_PROC: RefCell<Option<Proc>> = const { RefCell::new(None) });
+
 #[hook("/proc/auxtest_threads")]
 fn test_threads() {
 	let string = Value::from_string("auxtest raw")?;
@@ -110,6 +113,8 @@ fn test_threads() {
 	if format!("{}", string) != "\"auxtest raw\"" {
 		return Err(runtime!("test_threads: a string value prints as {}, expected \"auxtest raw\"", string));
 	}
+	let kept = Proc::find("/proc/auxtest_hooked_global").ok_or_else(|| runtime!("test_threads: /proc/auxtest_hooked_global not defined"))?;
+	KEPT_PROC.with(|proc| *proc.borrow_mut() = Some(kept));
 	Ok(Value::from(true))
 }
 
@@ -120,6 +125,21 @@ fn after_shutdown() -> Vec<String> {
 	must_panic(&mut failures, "Proc::find", || drop(Proc::find("/proc/do_tests")));
 	if catch_unwind(shut_down_with_world).is_err() {
 		failures.push("shut_down_with_world panicked on BYOND's thread".to_owned());
+	}
+	match KEPT_PROC.with(|proc| proc.borrow_mut().take()) {
+		None => failures.push("no proc was kept from the live world".to_owned()),
+		Some(proc) => {
+			if !proc.entry().is_null() {
+				failures.push(format!("{} has an entry", proc.path));
+			}
+			if !proc.parameter_names().is_empty() || proc.locals_count() != 0 {
+				failures.push(format!("{} has parameters or locals", proc.path));
+			}
+			must_fail(&mut failures, "Proc::call", proc.call(&[]), "world has ended");
+			if !matches!(proc.hook(no_hook), Err(HookFailure::ProcNotFound)) {
+				failures.push(format!("hooking {} didn't fail with ProcNotFound", proc.path));
+			}
+		}
 	}
 	failures
 }

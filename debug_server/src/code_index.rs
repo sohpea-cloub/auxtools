@@ -343,12 +343,12 @@ fn index_for_sure() -> MutexGuard<'static, Index> {
 pub fn of(proc: &Proc) -> Arc<Code> {
 	let (at, len) = unsafe { proc.bytecode_mut_ptr() };
 	let at = at as usize;
-	if let Some(code) = index().and_then(|index| index.get(proc.id.0, at, len)) {
+	if let Some(code) = index().and_then(|index| index.get(proc.id().0, at, len)) {
 		return code;
 	}
 	let code = Arc::new(Code::read(&original_code(proc), &mut crate::DisassembleEnv));
 	if let Some(mut index) = index() {
-		index.keep(proc.id.0, at, len, code.clone());
+		index.keep(proc.id().0, at, len, code.clone());
 	}
 	code
 }

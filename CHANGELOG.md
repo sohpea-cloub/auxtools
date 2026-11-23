@@ -63,6 +63,9 @@
   text.
 - `byond_string!` returns a `StringRef` that holds its own reference, not a `&'static
   StringRef`. Pass it by value.
+- `Proc::id` is now a method. A `Proc` from a world that has ended has no entry:
+  `parameter_names` and `local_names` are empty, `locals_count` is 0, and `call` and `hook`
+  fail.
 
 ### For users of dmasm
 

@@ -280,7 +280,7 @@ fn start() {
 	for path in HELPER_OVERRIDES {
 		if let Some(proc) = definition_count(path).checked_sub(1).and_then(|last| Proc::find_override(path, last)) {
 			proc.set_apart();
-			hot_reload::pin_world_proc(proc.id.0);
+			hot_reload::pin_world_proc(proc.id().0);
 		}
 	}
 

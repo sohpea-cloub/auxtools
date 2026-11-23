@@ -38,7 +38,7 @@ impl Spawns {
 		let mut in_stub = false;
 		while !at.is_null() {
 			let id = proc_of(at);
-			if id == stub.id {
+			if id == stub.id() {
 				if unsafe { *(*at).throw_handler() } != 0 {
 					return;
 				}
@@ -46,7 +46,7 @@ impl Spawns {
 					return;
 				}
 				in_stub = true;
-			} else if in_stub && id == spawned.id {
+			} else if in_stub && id == spawned.id() {
 				let number = unsafe { Value::from_raw(*(**(*at).proc_instance()).args()) }.as_number().ok();
 				if let Some((_, error @ None)) = number.and_then(|number| self.spawned.get_mut(&(number as u64))) {
 					*error = Some(format!("runtime error: {}", Evaluation::error_with_stack(message, ctx)));
@@ -67,13 +67,13 @@ impl Spawns {
 
 	pub(super) fn set_stub_locals(&mut self, stub: &Proc, locals: &[String]) -> Result<(), String> {
 		use auxtools::runtime_tables::{self, ProcEntryWords};
-		let now = unsafe { runtime_tables::proc_entry(stub.id) }
+		let now = unsafe { runtime_tables::proc_entry(stub.id()) }
 			.ok_or("couldn't read the spawn stub's proc entry")?
 			.0[ProcEntryWords::LOCALS];
 		let none = *self.spawn_stub_locals.get_or_insert(now);
 		let table = hot_reload::locals_table(locals, none)?;
 		if table != now {
-			unsafe { runtime_tables::set_proc_entry_word(stub.id, ProcEntryWords::LOCALS, table) };
+			unsafe { runtime_tables::set_proc_entry_word(stub.id(), ProcEntryWords::LOCALS, table) };
 		}
 		Ok(())
 	}

@@ -66,7 +66,7 @@ impl Server {
 				let (file, line) = start_of(bytecode, &proc);
 				Some(ProfiledCode {
 					proc: unnamed::proc_ref(&proc),
-					code: CodeRef { proc: proc.id.0, old },
+					code: CodeRef { proc: proc.id().0, old },
 					file,
 					line,
 					total

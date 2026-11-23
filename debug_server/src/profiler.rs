@@ -325,7 +325,7 @@ impl Profiler {
 			unsafe { auxtools::bytecode_at(bytecode) }?.len()
 		};
 		Some(Box::new(Code {
-			proc: proc.id.0,
+			proc: proc.id().0,
 			bytecode: bytecode as usize,
 			index: vec![0; len].into_boxed_slice(),
 			counters: vec![],

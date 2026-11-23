@@ -242,11 +242,11 @@ impl Evaluation {
 		let none = match locals.is_empty() {
 			true => None,
 			false => {
-				let none = unsafe { runtime_tables::proc_entry(proc.id) }
+				let none = unsafe { runtime_tables::proc_entry(proc.id()) }
 					.ok_or("couldn't read the stub's proc entry")?
 					.0[ProcEntryWords::LOCALS];
 				let table = hot_reload::locals_table(locals, none)?;
-				unsafe { runtime_tables::set_proc_entry_word(proc.id, ProcEntryWords::LOCALS, table) };
+				unsafe { runtime_tables::set_proc_entry_word(proc.id(), ProcEntryWords::LOCALS, table) };
 				Some(none)
 			}
 		};
@@ -255,7 +255,7 @@ impl Evaluation {
 		if crate::WORLD_ENDS.load(std::sync::atomic::Ordering::Relaxed) == ends {
 			Self::show_tries(tries);
 			if let Some(none) = none {
-				unsafe { runtime_tables::set_proc_entry_word(proc.id, ProcEntryWords::LOCALS, none) };
+				unsafe { runtime_tables::set_proc_entry_word(proc.id(), ProcEntryWords::LOCALS, none) };
 			}
 		}
 		Ok(result)
@@ -718,7 +718,7 @@ pub(crate) fn is_expression_frame(ctx: *mut raw_types::procs::ExecutionContext) 
 	let id = unsafe { (**(*ctx).proc_instance()).proc };
 	["/proc/auxtools_expr_stub", "/proc/auxtools_spawn_stub"]
 		.into_iter()
-		.any(|path| Proc::find(path).is_some_and(|stub| stub.id == id))
+		.any(|path| Proc::find(path).is_some_and(|stub| stub.id() == id))
 }
 
 fn texts(diagnostics: &[dmasm::diagnostic::Diagnostic]) -> Vec<String> {

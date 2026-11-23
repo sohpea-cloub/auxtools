@@ -15,7 +15,8 @@
 //! them, and no method passes them to BYOND.
 //!
 //! A handle belongs to the world it was made in. Don't keep one after the hook
-//! or call that made it returns. Keep a [`WeakValue`] instead.
+//! or call that made it returns. A [`Proc`] from an ended world reads as
+//! missing, but a [`Value`] can't tell. Keep a [`WeakValue`] instead.
 //!
 //! The `unsafe` functions don't check. Their `# Safety` sections say what they
 //! need.
