@@ -45,7 +45,7 @@ fn not_listening(e: io::Error) -> io::Error {
 	io::Error::new(
 		e.kind(),
 		format!(
-			"no debug server is listening in it: {}. Either it isn't a world with auxtools' debug library loaded, or its world is still loading",
+			"no debug server is listening: {}. The process may not have the auxtools debug library loaded, or its world may still be loading",
 			e
 		)
 	)
@@ -53,8 +53,8 @@ fn not_listening(e: io::Error) -> io::Error {
 
 pub fn incompatible(theirs: u32) -> io::Error {
 	io::Error::other(format!(
-		"its debug library speaks protocol {}, and this auxtools speaks {}: use the auxtools that goes with it (the one that started the world), or \
-		 start the world with this one",
+		"the world uses debug protocol {}, and this auxtools uses protocol {}. Use the auxtools that started the world, or restart the world with \
+		 this one",
 		theirs, PROTOCOL_VERSION
 	))
 }
@@ -75,7 +75,7 @@ fn read_hello(stream: Stream) -> io::Result<(Stream, Hello)> {
 		return Err(io::Error::new(
 			io::ErrorKind::TimedOut,
 			format!(
-				"its debug library said nothing for {} seconds after the connection opened: the process is stopped or hung",
+				"the debug library did not answer within {} seconds of connecting. The process is stopped or hung",
 				HELLO_PATIENCE.as_secs()
 			)
 		));
@@ -126,7 +126,7 @@ impl Shared {
 impl Connection {
 	fn check(&self) -> io::Result<()> {
 		if self.hung_up.load(Ordering::SeqCst) {
-			return Err(io::Error::new(io::ErrorKind::NotConnected, "the connection was hung up"));
+			return Err(io::Error::new(io::ErrorKind::NotConnected, "the connection was closed"));
 		}
 		Ok(())
 	}
@@ -281,7 +281,7 @@ fn probe(stream: Stream, until: Instant) -> std::sync::mpsc::Receiver<io::Result
 					Ok(Some(probed)) => Ok(probed),
 					Ok(None) => Ok(Probed::Unanswered),
 					Err(Lost::Unsent(e)) => Err(e),
-					Err(Lost::Closed | Lost::Incompatible(_)) => Err(io::Error::other("it hung up"))
+					Err(Lost::Closed | Lost::Incompatible(_)) => Err(io::Error::other("the world closed the connection"))
 				}
 			});
 			let _ = sender.send(answer);

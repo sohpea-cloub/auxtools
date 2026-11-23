@@ -127,7 +127,7 @@ fn eval_failures(pid: &str, code: &Path) {
 	for (args, said) in [
 		(&["eval", "1 +"][..], "parser error: "),
 		(&["eval", "nothing_called_this"][..], "undefined var: nothing_called_this"),
-		(&["eval", "--frame", "9", "1"][..], "frame 9 does not exist: the paused stack has "),
+		(&["eval", "--frame", "9", "1"][..], "frame 9 does not exist. The paused stack has "),
 		(&["eval"][..], "eval requires an expression: EXPRESSION, --file FILE, or - for stdin.")
 	] {
 		let got = fails(pid, args);
@@ -295,7 +295,7 @@ fn where_breakpoints_bound(pid: &str, code: &Path) {
 	assert_eq!(
 		ran.err,
 		format!(
-			"breakpoint set at /value  attach_host.dm:{} (line {} has no code; this is the next line that has)\n",
+			"breakpoint set at /value  attach_host.dm:{}. Line {} has no code, so the breakpoint is on the next line with code\n",
 			declared + 1,
 			declared
 		)
@@ -342,8 +342,8 @@ fn where_breakpoints_bound(pid: &str, code: &Path) {
 	assert_eq!(
 		ran.err,
 		format!(
-			"breakpoint set at (global init)  attach_host.dm:{}: this line initializes globals or static vars only at world startup\nerror: timed \
-			 out after 1 second waiting for the world to pause.\n",
+			"breakpoint set at (global init)  attach_host.dm:{}. This line runs only at world startup, to initialize globals or static vars\nerror: \
+			 timed out after 1 second waiting for the world to pause.\n",
 			cached
 		)
 	);
@@ -820,7 +820,7 @@ fn spawned(pid: &str, code: &Path) {
 	assert!(stepped.contains("#0 /auxtools_spawn_stub  "), "step-out said {}", stepped);
 	let stepped = run(pid, &["step-out", "--timeout", "10"], 0);
 	assert!(
-		stepped.err.contains("no frame remained to pause in") && stepped.out.ends_with(": running\n"),
+		stepped.err.contains("No frame was left to pause in.") && stepped.out.ends_with(": running\n"),
 		"step-out said {}{}",
 		stepped.out,
 		stepped.err
@@ -853,7 +853,7 @@ fn spawned(pid: &str, code: &Path) {
 	assert!(
 		ran.out.is_empty()
 			&& ran.err.starts_with("error: timed out after 0.5 seconds waiting for spawn ")
-			&& ran.err.trim_end().ends_with(" to finish. It keeps running."),
+			&& ran.err.trim_end().ends_with(" to finish. The spawned code keeps running."),
 		"unexpected eval output: {}{}",
 		ran.out,
 		ran.err
@@ -885,7 +885,7 @@ fn steps_that_end_elsewhere(pid: &str, dir: &Path) {
 		"{}",
 		state
 	);
-	assert_eq!(ran.err, "step completed with the world running: no frame remained to pause in.\n");
+	assert_eq!(ran.err, "the step completed with the world running. No frame was left to pause in.\n");
 	assert_eq!(json_of(pid, &["status", "--json"])["paused"], false);
 	println!("ok: step exhaustion succeeds with world running");
 
@@ -898,7 +898,10 @@ fn steps_that_end_elsewhere(pid: &str, dir: &Path) {
 		"step-over said {}",
 		ran.out
 	);
-	assert_eq!(ran.err, "the step ended /fail_deeper with a runtime error: list index out of bounds\n");
+	assert_eq!(
+		ran.err,
+		"/fail_deeper ended with a runtime error during the step: list index out of bounds\n"
+	);
 	run(pid, &["continue"], 0);
 	println!("ok: a step reports the runtime error that ended its proc");
 

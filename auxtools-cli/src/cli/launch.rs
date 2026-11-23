@@ -38,11 +38,7 @@ struct Options {
 pub fn launch(args: &args::Launch, replaces_args: bool) -> Result<()> {
 	let dmb = absolute(&args.dmb)?;
 	if !dmb.is_file() {
-		return Err(format!(
-			"{} does not exist. Compile the world first: the launcher does not compile the DMB.",
-			dmb.display()
-		)
-		.into());
+		return Err(format!("{} does not exist. The launcher does not build the world. Build it first.", dmb.display()).into());
 	}
 
 	let program = match &args.server {
@@ -262,7 +258,7 @@ fn detach(options: &Options, as_json: bool) -> Result<()> {
 			return Err(Failure(
 				TIMED_OUT,
 				format!(
-					"timed out after {} seconds waiting for the world to start; it was terminated. See the launcher log: {}",
+					"timed out after {} seconds waiting for the world to start. The world was stopped. The launcher log is {}.",
 					COMING_UP.as_secs(),
 					log.display()
 				)
@@ -283,7 +279,7 @@ fn detach(options: &Options, as_json: bool) -> Result<()> {
 			);
 		} else {
 			match unavailable {
-				Some(why) => say!("pid {}: running without debugging: {}. Use 'auxtools stop' to terminate it.", pid, why),
+				Some(why) => say!("pid {}: running without debugging: {}. Use 'auxtools stop' to stop it.", pid, why),
 				None => say!("pid {}: started", pid)
 			}
 			say!("launcher: pid {}", launcher_pid);
@@ -296,7 +292,7 @@ fn detach(options: &Options, as_json: bool) -> Result<()> {
 	match line.as_deref().and_then(|line| line.strip_prefix("failed ")) {
 		Some(why) => Err(why.to_owned().into()),
 		None => Err(format!(
-			"the world did not start: its launcher exited{} first. The end of the launcher log ({}):\n{}",
+			"the world did not start because its launcher exited{}. The end of the launcher log {}:\n{}",
 			status.map(|code| format!(" with code {}", code)).unwrap_or_default(),
 			log.display(),
 			last_lines(&log, 20)
@@ -374,7 +370,7 @@ mod interrupts {
 					continue;
 				}
 				let asked = if seen == 0 {
-					printer.line("Interrupted: requesting graceful shutdown (interrupt again to force exit)");
+					printer.line("Interrupted: requesting graceful shutdown. Interrupt again to terminate the world.");
 					Ask::Stop
 				} else {
 					printer.line("Interrupted again: terminating the world");

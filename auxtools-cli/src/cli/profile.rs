@@ -34,7 +34,7 @@ pub fn profile(world: &mut World, args: &args::Profile) -> Result<()> {
 	let report = profile::stop(ended, listed, |request| world.request(request))?;
 
 	if let Some(file) = &args.html {
-		std::fs::write(file, profile::html(&report)).map_err(|e| format!("cannot write {}: {}", file.display(), e))?;
+		std::fs::write(file, profile::html(&report)).map_err(|e| format!("cannot write {}: {}.", file.display(), e))?;
 	}
 	if args.json {
 		say!("{}", report.json());

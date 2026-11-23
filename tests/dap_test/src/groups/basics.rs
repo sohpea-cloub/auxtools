@@ -267,7 +267,7 @@ fn refusals() {
 	let why = launcher.refused("attach", json!({ "processId": std::process::id() }));
 	assert!(
 		why.starts_with(&format!(
-			"cannot connect to process {}: no debug server is listening in it: ",
+			"cannot connect to process {}: no debug server is listening: ",
 			std::process::id()
 		)),
 		"attaching to this test said {:?}",

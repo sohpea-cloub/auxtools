@@ -500,7 +500,7 @@ fn command_line_shape() {
 		),
 		(
 			&["--response-timeout", "1", "stop"],
-			"error: --response-timeout cannot be used with 'stop': it waits for the process to exit; use --timeout."
+			"error: --response-timeout cannot be used with 'stop'. Use --timeout to set how long stop waits."
 		),
 		(
 			&["trace"],
@@ -657,7 +657,7 @@ fn listed_and_refused(pid: u32, theirs: u32, ours: u32) {
 	assert_eq!(code, 1, "{}", printed);
 	assert!(
 		printed.contains(&format!(
-			"its debug library speaks protocol {}, and this auxtools speaks {}",
+			"the world uses debug protocol {}, and this auxtools uses protocol {}.",
 			theirs, ours
 		)),
 		"attaching to another version's world said {}",
@@ -794,7 +794,7 @@ fn no_debugger() {
 	assert_eq!(code, 1, "{}", printed);
 	assert!(
 		printed.contains(&format!(
-			"error: debugger initialization failed for pid {}: {}. The world is running; use 'auxtools stop' to terminate it.",
+			"error: debugger initialization failed for pid {}: {}. The world is still running. Use 'auxtools stop' to stop it.",
 			pid, WHY
 		)),
 		"status said {}",
@@ -805,7 +805,7 @@ fn no_debugger() {
 	let (code, printed) = launcher_command(&["--pid", &pid_text, "stop", "--json"]);
 	assert_eq!(code, 0, "{}", printed);
 	assert!(
-		printed.contains(r#"{"killed":true,"pid":"#) && printed.contains("world.Del() could not be called"),
+		printed.contains(r#"{"killed":true,"pid":"#) && printed.contains("world.Del() could not run"),
 		"stop said {}",
 		printed
 	);
@@ -870,7 +870,7 @@ fn command_line_more(pid: u64, dir: &Path) {
 	assert!(printed.contains("globals:"), "unexpected vars --globals output: {}", printed);
 	let printed = cli.run(&["vars", "--frame", "7"], 1);
 	assert!(
-		printed.starts_with("error: frame 7 does not exist: the paused stack has "),
+		printed.starts_with("error: frame 7 does not exist. The paused stack has "),
 		"vars --frame 7 said {}",
 		printed
 	);
@@ -880,7 +880,7 @@ fn command_line_more(pid: u64, dir: &Path) {
 	assert_eq!(cli.run(&["eval", "--", "-rounds", "<", "0"], 0).trim(), "1");
 	let printed = cli.run(&["eval", "--frame", "7", "1"], 1);
 	assert!(
-		printed.starts_with("error: frame 7 does not exist: the paused stack has "),
+		printed.starts_with("error: frame 7 does not exist. The paused stack has "),
 		"eval --frame 7 said {}",
 		printed
 	);
@@ -1022,7 +1022,7 @@ fn command_line_more(pid: u64, dir: &Path) {
 	let (code, printed) = launcher_command(&["--pid", "4000000000", "status"]);
 	assert_eq!(code, 1);
 	assert!(
-		printed.starts_with("error: cannot connect to process 4000000000: no debug server is listening in it: "),
+		printed.starts_with("error: cannot connect to process 4000000000: no debug server is listening: "),
 		"status said {}",
 		printed
 	);
@@ -1656,7 +1656,7 @@ fn foreground(server: &str) {
 		let (got, printed) = launcher_command(&args.iter().map(String::as_str).collect::<Vec<_>>());
 		assert_eq!(got, 1, "launch of a world that isn't there gave {}: {}", got, printed);
 		assert!(
-			printed.contains("nothing.dmb does not exist. Compile the world first"),
+			printed.contains("nothing.dmb does not exist. The launcher does not build the world. Build it first."),
 			"launch said {}",
 			printed
 		);
@@ -1811,7 +1811,8 @@ fn detached(server: &str) {
 				(
 					2,
 					format!(
-						"error: timed out after {} waiting for the world to respond; it is busy or hung. Set --response-timeout to wait longer.\n",
+						"error: timed out after {} waiting for the world to respond. The world is busy or hung. Set --response-timeout to wait \
+						 longer.\n",
 						seconds
 					)
 					.as_str()
@@ -2013,7 +2014,7 @@ fn stops(server: &str) {
 	let printed = cli.run(&["stop", "--timeout", "10"], 1);
 	assert!(
 		printed.starts_with(&format!(
-			"error: world.Del() failed with a runtime error (see the world's log), so the world (pid {}) is still running.",
+			"error: world.Del() failed with a runtime error. World process {} is still running.",
 			pid
 		)),
 		"stop said {}",
@@ -2027,10 +2028,7 @@ fn stops(server: &str) {
 	println!("ok: stop reports a failing world/Del");
 	let printed = cli.run(&["stop", "--timeout", "1"], 2);
 	assert!(
-		printed.starts_with(&format!(
-			"error: timed out after 1 second waiting for the world process (pid {}) to exit.",
-			pid
-		)),
+		printed.starts_with(&format!("error: timed out after 1 second waiting for world process {} to exit.", pid)),
 		"stop said {}",
 		printed
 	);
@@ -2040,7 +2038,7 @@ fn stops(server: &str) {
 		serde_json::from_str(printed.lines().next().unwrap_or_default()).unwrap_or_else(|_| panic!("stop --json said {}", printed));
 	assert_eq!(stopped, json!({ "pid": pid, "stopped": true, "killed": true }), "stop said {}", printed);
 	assert!(
-		printed.contains("graceful shutdown timed out after 0 seconds; the process was terminated."),
+		printed.contains("graceful shutdown timed out after 0 seconds, so the process was terminated."),
 		"stop said {}",
 		printed
 	);
