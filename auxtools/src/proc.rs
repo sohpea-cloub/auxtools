@@ -157,9 +157,10 @@ impl Proc {
 		Err(runtime!("External proc call failed"))
 	}
 
-	/// Gives this proc the override id [`Proc::APART`]. The other definitions
-	/// keep their ids. A path has only one proc set apart, so this replaces any
-	/// earlier one.
+	/// Gives this proc the override index [`Proc::APART`]. The proc keeps its
+	/// BYOND proc ID. Later definitions move down one override index. Only the
+	/// most recently set-apart proc for this path can be found with
+	/// [`Proc::APART`].
 	pub fn set_apart(&self) {
 		PROC_OVERRIDE_IDS.with(|override_ids| {
 			let mut override_ids = override_ids.borrow_mut();
