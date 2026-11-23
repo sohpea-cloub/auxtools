@@ -223,6 +223,20 @@ fn paused_line(client: &mut Client) -> (String, Option<u32>) {
 	}
 }
 
+fn paused_offset(client: &mut Client) -> (String, u32) {
+	match client.request(Request::StackFrames {
+		stack_id: 0,
+		start_frame: Some(0),
+		count: Some(1)
+	}) {
+		Response::StackFrames { frames, .. } => {
+			let frame = frames.into_iter().next().expect("paused with no frames");
+			(frame.instruction.proc.path, frame.instruction.offset)
+		}
+		other => panic!("expected StackFrames, got {:?}", other)
+	}
+}
+
 fn offset_of(client: &mut Client, proc: &str, line: u32) -> u32 {
 	match client.request(Request::Offset {
 		proc: ProcRef {
@@ -1150,6 +1164,59 @@ fn debugger(built: Built) {
 		twin_run(&mut client, "chained_target", lines[kept], 2, false);
 	}
 	println!("ok: breakpoints that a reload moves onto each other's old places can each be taken away");
+
+	let changes = source.edit(
+		"reload.dm",
+		"/proc/first_def()\n",
+		"var/exact_step = 0\nvar/exact_value = 0\n\n/proc/exact_target()\n\texact_step += 1\n\texact_value = exact_step; \
+		 twin_runs++\n\n/proc/first_def()\n"
+	);
+	reload(&mut watcher, &changes);
+	let line = source.line_of("reload.dm", "\texact_value = exact_step;");
+	let after_assignment = |client: &mut Client| {
+		let on_line = line_instructions(client, "/exact_target", line);
+		(on_line.iter().find(|(_, text)| text.contains("twin_runs")))
+			.unwrap_or_else(|| panic!("no instruction on line {} uses twin_runs: {:?}", line, on_line))
+			.0
+	};
+	let before = after_assignment(&mut client);
+	assert!(before > offset_of(&mut client, "/exact_target", line), "twin_runs++ starts line {}", line);
+	let exact = |offset: u32| InstructionRef {
+		proc: ProcRef {
+			path: "/exact_target".to_owned(),
+			override_id: 0
+		},
+		offset
+	};
+	let response = client.request(Request::BreakpointSet {
+		instruction: exact(before),
+		condition: Some("exact_value == exact_step".to_owned()),
+		hit: None,
+		log: None,
+		exact: true
+	});
+	assert!(
+		matches!(response, Response::BreakpointSet {
+			result: BreakpointSetResult::Success { .. }
+		}),
+		"couldn't set a breakpoint at {}: {:?}",
+		before,
+		response
+	);
+	let changes = source.edit("reload.dm", "\texact_step += 1\n", "\texact_step = exact_step + 1\n");
+	let result = reload(&mut watcher, &changes);
+	assert!(result.warnings.is_empty(), "{:?}", result.warnings);
+	let after = after_assignment(&mut client);
+	let runs = twin_number(&mut client, "twin_runs");
+	eval(&mut client, "exact_value = 0");
+	eval(&mut client, "twin_armed = /proc/exact_target");
+	assert_eq!(client.expect_pause(), BreakpointReason::Breakpoint);
+	assert_eq!(paused_offset(&mut client), ("/exact_target".to_owned(), after));
+	client.resume();
+	wait_for(&mut client, "twin_runs", &(runs + 1).to_string());
+	twin_breakpoint(&mut client, "exact_target", before, false);
+	twin_run(&mut client, "exact_target", line, 1, false);
+	println!("ok: an instruction breakpoint on a line a reload keeps stays on its instruction");
 
 	let changes = source.edit(
 		"reload.dm",

@@ -2538,6 +2538,7 @@ pub fn apply<K: Ord + std::hash::Hash + Copy, T>(
 struct UnhookedCode<K, T> {
 	code: PreparedCode,
 	old_code: std::sync::Arc<crate::code_index::Code>,
+	old_bytecode: Vec<u32>,
 	old_file: Option<u32>,
 	hooked: Vec<(u32, Option<u32>, Option<String>, Option<BTreeMap<K, T>>)>
 }
@@ -2576,11 +2577,9 @@ fn apply_code<K: Ord + std::hash::Hash + Copy, T>(
 		.local_names
 		.clone()
 		.unwrap_or_else(|| auxtools::debug::local_names_for(&p.proc, old_ptr));
-	let old_file = {
-		let old = original_code(&p.proc);
-		auxtools::remember_bytecode(old_ptr, &old);
-		debug_file(&old)
-	};
+	let old_bytecode = original_code(&p.proc).into_owned();
+	auxtools::remember_bytecode(old_ptr, &old_bytecode);
+	let old_file = debug_file(&old_bytecode);
 
 	runtime_tables::set_proc_entry_word(p.proc.id, ProcEntryWords::BYTECODE, p.bytecode_id);
 	match p.locals {
@@ -2617,6 +2616,7 @@ fn apply_code<K: Ord + std::hash::Hash + Copy, T>(
 	Some(UnhookedCode {
 		code: p,
 		old_code,
+		old_bytecode,
 		old_file,
 		hooked
 	})
@@ -2631,6 +2631,7 @@ fn restore_breakpoints<K: Ord + std::hash::Hash + Copy, T>(
 	let UnhookedCode {
 		code: p,
 		old_code,
+		old_bytecode,
 		old_file,
 		hooked
 	} = unhooked;
@@ -2667,10 +2668,10 @@ fn restore_breakpoints<K: Ord + std::hash::Hash + Copy, T>(
 				"{}: removed the breakpoint at instruction {}: the new code has no instruction there before its first line",
 				p.name, old_offset
 			)),
-			Some(line) => {
+			Some(old_line) => {
 				let line = match &p.lines {
-					Some(lines) if other_file.is_none() => map_line(line, lines),
-					_ => line
+					Some(lines) if other_file.is_none() => map_line(old_line, lines),
+					_ => old_line
 				};
 				let moved = firsts
 					.filter(|(old_first, _)| line >= *old_first)
@@ -2680,7 +2681,11 @@ fn restore_breakpoints<K: Ord + std::hash::Hash + Copy, T>(
 				let line = moved.unwrap_or(line);
 				new_code
 					.offset_of(line, wanted)
-					.map(|offset| (offset, format!("on line {}", line)))
+					.map(|start| {
+						let kept = (old_code.offset_of(old_line, wanted))
+							.and_then(|old_start| same_place(&old_code, &old_bytecode, old_start, old_offset, &p.bytecode, start));
+						(kept.unwrap_or(start), format!("on line {}", line))
+					})
 					.ok_or_else(|| format!("{}: removed breakpoint on line {}: no executable code after reload", p.name, line))
 			}
 		};
@@ -2701,6 +2706,12 @@ fn restore_breakpoints<K: Ord + std::hash::Hash + Copy, T>(
 		new_moves.extend(known_as.into_iter().filter(|key| key.1 != offset).map(|key| (key, offset)));
 	}
 	moved_breakpoints.extend(new_moves);
+}
+
+fn same_place(old_code: &crate::code_index::Code, old: &[u32], old_start: u32, old_offset: u32, new: &[u32], new_start: u32) -> Option<u32> {
+	let length = (old_offset.checked_sub(old_start)? as usize) + old_code.instruction_length(old_offset)?;
+	let span = |code: &[u32], start: u32| code.get(start as usize..start as usize + length).map(<[u32]>::to_vec);
+	(span(old, old_start)? == span(new, new_start)?).then_some(new_start + (old_offset - old_start))
 }
 
 fn keep_claims<K: Ord, T>(
