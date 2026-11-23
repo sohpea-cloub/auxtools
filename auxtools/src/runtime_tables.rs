@@ -168,6 +168,7 @@ struct Functions {
 	path_cache: Option<*const *mut u8>,
 	type_stride: usize,
 	crt_realloc: extern "C" fn(*mut c_void, usize) -> *mut c_void,
+	crt_free: extern "C" fn(*mut c_void),
 	type_count: *const u32,
 	type_table: *const *mut u8,
 	name_maps: *const *mut ProcNameMap,
@@ -200,19 +201,29 @@ pub(crate) fn reset() {
 }
 
 #[cfg(windows)]
-fn crt_realloc() -> Result<extern "C" fn(*mut c_void, usize) -> *mut c_void, String> {
+fn ucrtbase(name: &std::ffi::CStr) -> Result<usize, String> {
 	unsafe {
 		use winapi::um::libloaderapi::{GetModuleHandleA, GetProcAddress};
 		let module = GetModuleHandleA(c"ucrtbase.dll".as_ptr());
 		if module.is_null() {
 			return Err("Couldn't find ucrtbase.dll".to_owned());
 		}
-		let realloc = GetProcAddress(module, c"realloc".as_ptr());
-		if realloc.is_null() {
-			return Err("Couldn't find realloc in ucrtbase.dll".to_owned());
+		let function = GetProcAddress(module, name.as_ptr());
+		if function.is_null() {
+			return Err(format!("Couldn't find {} in ucrtbase.dll", name.to_string_lossy()));
 		}
-		Ok(std::mem::transmute(realloc))
+		Ok(function as usize)
 	}
+}
+
+#[cfg(windows)]
+fn crt_realloc() -> Result<extern "C" fn(*mut c_void, usize) -> *mut c_void, String> {
+	Ok(unsafe { std::mem::transmute::<usize, _>(ucrtbase(c"realloc")?) })
+}
+
+#[cfg(windows)]
+fn crt_free() -> Result<extern "C" fn(*mut c_void), String> {
+	Ok(unsafe { std::mem::transmute::<usize, _>(ucrtbase(c"free")?) })
 }
 
 #[cfg(unix)]
@@ -221,6 +232,14 @@ fn crt_realloc() -> Result<extern "C" fn(*mut c_void, usize) -> *mut c_void, Str
 		fn realloc(ptr: *mut c_void, size: usize) -> *mut c_void;
 	}
 	Ok(unsafe { std::mem::transmute::<unsafe extern "C" fn(*mut c_void, usize) -> *mut c_void, _>(realloc) })
+}
+
+#[cfg(unix)]
+fn crt_free() -> Result<extern "C" fn(*mut c_void), String> {
+	extern "C" {
+		fn free(ptr: *mut c_void);
+	}
+	Ok(unsafe { std::mem::transmute::<unsafe extern "C" fn(*mut c_void), _>(free) })
 }
 
 #[cfg(windows)]
@@ -264,6 +283,7 @@ fn resolve() -> Result<Functions, String> {
 			register_typepath: register_typepath.map(|address| address.map(|address| std::mem::transmute::<usize, extern "C" fn(u32)>(address))),
 			type_stride: type_stride(build),
 			crt_realloc: crt_realloc()?,
+			crt_free: crt_free()?,
 			type_count: type_count as *const u32,
 			type_table: type_table as *const *mut u8,
 			name_maps: find!("proc_name_maps")? as *const *mut ProcNameMap,
@@ -1011,6 +1031,7 @@ impl Drop for NameMapPlan {
 				for at in 0..self.count as usize {
 					(functions.free_shared)((*self.buckets.add(at)).ids as *mut c_void);
 				}
+				(functions.crt_free)(self.buckets as *mut c_void);
 			}
 		}
 	}
