@@ -72,6 +72,8 @@
   65,535 procs for one name.
 - `runtime_tables::set_mob_type` is replaced by `mob_type`, which reads a mob type's entry, and
   `set_mob_setting`, which changes its key, sight, see_in_dark or see_invisible.
+- `debug::set_local_names` and `debug::has_local_names` take a `&Proc` first. Pass the proc
+  whose local names you record or check.
 
 ### For users of dmasm
 
