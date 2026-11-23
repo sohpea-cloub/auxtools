@@ -116,8 +116,8 @@ Exit codes:
   If world.Del() returns without ending the world, the debugger still shuts
   down. In a launched world, a runtime error in world.Del() leaves the debugger
   running, and stop reports the failure.
-  Pass --kill with the first stop command. After world.Del() runs, the
-  debugger may be gone, and a second stop may not reach the world.
+  Pass --kill to allow forced termination after the timeout. You can retry
+  with --kill while the debugger is reachable.
   With --kill, the command terminates the process when --timeout passes, or at
   once when world.Del() fails. If the debug library could not start,
   world.Del() cannot run, and the command terminates the process at once.

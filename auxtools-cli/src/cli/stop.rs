@@ -29,14 +29,19 @@ fn gone_by(pid: u32, until: Instant) -> bool {
 	}
 }
 
-fn ended_by(world: &mut World, until: Instant) -> Result<bool> {
+enum Ended {
+	Exited,
+	TimedOut { disconnected: bool }
+}
+
+fn ended_by(world: &mut World, until: Instant) -> Result<Ended> {
 	loop {
 		if !local::alive(world.pid) {
-			return Ok(true);
+			return Ok(Ended::Exited);
 		}
 		let now = Instant::now();
 		if now >= until {
-			return Ok(false);
+			return Ok(Ended::TimedOut { disconnected: false });
 		}
 		match world.next(Some(until.min(now + INTERVAL))) {
 			Ok(Some(Response::Eval(Err(error)))) if !error.message.starts_with(RUNTIME_ERROR) => {}
@@ -50,7 +55,8 @@ fn ended_by(world: &mut World, until: Instant) -> Result<bool> {
 			}
 			Ok(_) => {}
 			Err(e) if world.unavailable.is_some() => return Err(e),
-			Err(_) => return Ok(gone_by(world.pid, until))
+			Err(_) if gone_by(world.pid, until) => return Ok(Ended::Exited),
+			Err(_) => return Ok(Ended::TimedOut { disconnected: true })
 		}
 	}
 }
@@ -76,8 +82,8 @@ pub fn stop(world: &mut World, args: &args::Stop) -> Result<()> {
 		}
 		Err(e) => return Err(e)
 	}
-	let failed = match ended_by(world, until) {
-		Ok(true) => {
+	let (failed, disconnected) = match ended_by(world, until) {
+		Ok(Ended::Exited) => {
 			done(
 				args.json,
 				json!({ "pid": pid, "stopped": true, "killed": false }),
@@ -85,19 +91,24 @@ pub fn stop(world: &mut World, args: &args::Stop) -> Result<()> {
 			);
 			return Ok(());
 		}
-		Ok(false) => None,
-		Err(_) if world.unavailable.is_some() => None,
-		Err(e) if args.kill => Some(e),
+		Ok(Ended::TimedOut { disconnected }) => (None, disconnected),
+		Err(_) if world.unavailable.is_some() => (None, false),
+		Err(e) if args.kill => (Some(e), false),
 		Err(e) => return Err(e)
 	};
 	if !args.kill && world.unavailable.is_none() {
+		let lost = if disconnected {
+			" The connection to the debugger ended before the process exited."
+		} else {
+			""
+		};
 		return Err(Failure(
 			TIMED_OUT,
 			format!(
-				"timed out after {} waiting for world process {} to exit. world.Del() closed the debugger, so auxtools cannot reach the world now. \
-				 To terminate a world that does not exit, pass --kill to stop.",
+				"timed out after {} waiting for world process {} to exit.{} To terminate the process, run stop again with --kill.",
 				seconds_text(timeout),
-				pid
+				pid,
+				lost
 			)
 		));
 	}
