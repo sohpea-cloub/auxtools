@@ -703,8 +703,10 @@ fn prepared_code(
 
 	let locals_id = if reload.locals.len() == proc.locals_count() {
 		None
+	} else if reload.locals.is_empty() {
+		Some(empty_locals().map_err(|e| format!("{}: {}", name, e))?)
 	} else {
-		Some(locals_table(&reload.locals, entry.0[ProcEntryWords::LOCALS]).map_err(|e| format!("{}: {}", name, e))?)
+		Some(locals_table(&reload.locals, NONE).map_err(|e| format!("{}: {}", name, e))?)
 	};
 
 	let params_id =
@@ -1012,6 +1014,14 @@ pub(crate) fn locals_table(names: &[String], empty: u32) -> Result<u32, String> 
 		words.push(id);
 	}
 	runtime_tables::intern_misc(&words)
+}
+
+fn empty_locals() -> Result<u32, String> {
+	(0..)
+		.map_while(|id| runtime_tables::proc_entry(raw_types::procs::ProcId(id)))
+		.map(|entry| entry.0[ProcEntryWords::LOCALS])
+		.find(|&id| id != NONE && runtime_tables::misc_words(id).is_some_and(|names| names.is_empty()))
+		.ok_or_else(|| "no proc in the world has an empty locals table to share. Rebuild to remove its last local".to_owned())
 }
 
 fn value_code(code: ProcReload) -> ProcReload {

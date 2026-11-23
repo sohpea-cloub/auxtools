@@ -1126,6 +1126,32 @@ fn debugger(built: Built) {
 	unset(&mut other, on_line[on_line.len() - 1]);
 	other.leave();
 	println!("ok: instruction breakpoints keep their conditions across a reload, at the start or on one instruction");
+
+	let changes = source.edit(
+		"reload.dm",
+		"/proc/first_def()\n",
+		"/proc/local_dropper()\n\tvar/dropped = 1\n\ttwin_waiting += 1\n\twhile (twin_hold) sleep(1)\n\ttwin_runs += dropped\n\n/proc/first_def()\n"
+	);
+	reload(&mut watcher, &changes);
+	let waiting = twin_number(&mut client, "twin_waiting");
+	eval(&mut client, "twin_hold = TRUE");
+	eval(&mut client, "twin_armed = /proc/local_dropper");
+	wait_for(&mut client, "twin_waiting", &(waiting + 1).to_string());
+	let changes = source.edit_many("reload.dm", &[
+		("\tvar/dropped = 1\n", ""),
+		("\ttwin_runs += dropped\n", "\ttwin_runs += 1\n")
+	]);
+	assert_eq!(changes.plan.reloads.len(), 1, "{:?}", changes.plan);
+	reload(&mut watcher, &changes);
+	eval(&mut client, "twin_armed = /proc/local_dropper");
+	wait_for(&mut client, "twin_waiting", &(waiting + 2).to_string());
+	let mut names = frame_locals(&mut client, &["/local_dropper"]).remove(0);
+	names.sort();
+	assert_eq!(names, ["", "dropped"], "the locals of a call from before the reload and one after");
+	let runs = twin_number(&mut client, "twin_runs");
+	eval(&mut client, "twin_hold = FALSE");
+	wait_for(&mut client, "twin_runs", &(runs + 2).to_string());
+	println!("ok: a reload that removes a proc's last local gives new calls no locals");
 }
 
 fn sleep_named_twins(client: &mut Client) -> u32 {
@@ -1144,42 +1170,50 @@ fn wake_named_twins(client: &mut Client, runs: u32, added: u32) {
 }
 
 fn named_twin_locals(client: &mut Client) -> Vec<String> {
+	let twins = ["/twin_c", "/twin_d"];
+	frame_locals(client, &twins)
+		.into_iter()
+		.zip(twins)
+		.map(|(frames, twin)| frames.into_iter().next().unwrap_or_else(|| panic!("no frame of {}", twin)))
+		.collect()
+}
+
+fn frame_locals(client: &mut Client, procs: &[&str]) -> Vec<Vec<String>> {
 	let response = client.request(Request::Pause);
 	assert!(matches!(response, Response::Ack), "expected Ack for Pause, got {:?}", response);
 	assert_eq!(client.expect_pause(), BreakpointReason::Pause);
 	let Response::Stacks { stacks, .. } = client.request(Request::Stacks { sleeping: Some(1000) }) else {
 		panic!("expected Stacks");
 	};
-	let mut names = vec![];
-	for twin in ["/twin_c", "/twin_d"] {
-		let frame = stacks
-			.iter()
-			.find_map(|stack| {
-				let Response::StackFrames { frames, .. } = client.request(Request::StackFrames {
-					stack_id: stack.id,
-					start_frame: None,
-					count: None
-				}) else {
-					panic!("expected StackFrames");
-				};
-				frames.into_iter().find(|frame| frame.instruction.proc.path == twin)
-			})
-			.unwrap_or_else(|| panic!("no frame of {} in {:?}", twin, stacks));
-		let Response::Scopes { locals: Some(locals), .. } = client.request(Request::Scopes { frame_id: frame.id }) else {
-			panic!("expected the scopes of {}", twin);
-		};
-		let Response::Variables { vars } = client.request(Request::Variables {
-			vars: locals,
-			start: None,
+	let mut found = vec![vec![]; procs.len()];
+	for stack in &stacks {
+		let Response::StackFrames { frames, .. } = client.request(Request::StackFrames {
+			stack_id: stack.id,
+			start_frame: None,
 			count: None
 		}) else {
-			panic!("expected the locals of {}", twin);
+			panic!("expected StackFrames");
 		};
-		let locals: Vec<String> = vars.into_iter().map(|var| var.name).filter(|name| name != ".").collect();
-		names.push(locals.join(","));
+		for frame in frames {
+			let Some(at) = procs.iter().position(|proc| *proc == frame.instruction.proc.path) else {
+				continue;
+			};
+			let Response::Scopes { locals: Some(locals), .. } = client.request(Request::Scopes { frame_id: frame.id }) else {
+				panic!("expected the scopes of {}", procs[at]);
+			};
+			let Response::Variables { vars } = client.request(Request::Variables {
+				vars: locals,
+				start: None,
+				count: None
+			}) else {
+				panic!("expected the locals of {}", procs[at]);
+			};
+			let locals: Vec<String> = vars.into_iter().map(|var| var.name).filter(|name| name != ".").collect();
+			found[at].push(locals.join(","));
+		}
 	}
 	client.resume();
-	names
+	found
 }
 
 fn twin_breakpoints(client: &mut Client, source: &Source, step: u32) {
