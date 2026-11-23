@@ -98,6 +98,10 @@ else
 			wait "${pids[$test]}"
 			status=$?
 			unset "pids[$test]"
+			if [ $status -eq 0 ] && grep -q "^thread '[^']*'.* panicked at" "$work/$test.log"; then
+				echo "$test panicked, but its exit status was 0" >>"$work/$test.log"
+				status=1
+			fi
 			echo "::group::$test"
 			cat "$work/$test.log"
 			echo "::endgroup::"
