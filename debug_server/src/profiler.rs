@@ -92,6 +92,7 @@ pub struct Profiler {
 	evaluating: bool,
 	last_instruction: usize,
 	samples: Box<[Sample]>,
+	replaced_floor: f64,
 	calls: Vec<Call>,
 	ran: u64,
 	timed: u64,
@@ -104,33 +105,7 @@ static mut RUNNING: bool = false;
 
 pub fn start(only: Option<Vec<u32>>) {
 	unsafe {
-		PROFILER = Some(Box::new(Profiler {
-			only,
-			codes: HashMap::new(),
-			cache: [(0, std::ptr::null_mut()); CODE_CACHE_SLOTS],
-			last: Frame::NONE,
-			last_parent: Frame::NONE,
-			last_counter: At::NONE,
-			last_opcode: 0,
-			sleep: dmasm::Opcode::Sleep.word(),
-			evaluating: false,
-			last_instruction: 0,
-			samples: vec![
-				Sample {
-					instruction: 0,
-					timed: 0,
-					ticks: 0,
-					passed: 0
-				};
-				SAMPLE_SLOTS
-			]
-			.into_boxed_slice(),
-			calls: Vec::new(),
-			ran: 0,
-			timed: 0,
-			started: (Instant::now(), timestamp()),
-			stopped: None
-		}));
+		PROFILER = Some(Box::new(Profiler::new(only)));
 		RUNNING = true;
 	}
 	time_instructions(true);
@@ -207,6 +182,37 @@ pub(crate) fn can_jump(opcode: u32) -> bool {
 }
 
 impl Profiler {
+	fn new(only: Option<Vec<u32>>) -> Self {
+		Profiler {
+			only,
+			codes: HashMap::new(),
+			cache: [(0, std::ptr::null_mut()); CODE_CACHE_SLOTS],
+			last: Frame::NONE,
+			last_parent: Frame::NONE,
+			last_counter: At::NONE,
+			last_opcode: 0,
+			sleep: dmasm::Opcode::Sleep.word(),
+			evaluating: false,
+			last_instruction: 0,
+			samples: vec![
+				Sample {
+					instruction: 0,
+					timed: 0,
+					ticks: 0,
+					passed: 0
+				};
+				SAMPLE_SLOTS
+			]
+			.into_boxed_slice(),
+			replaced_floor: f64::INFINITY,
+			calls: Vec::new(),
+			ran: 0,
+			timed: 0,
+			started: (Instant::now(), timestamp()),
+			stopped: None
+		}
+	}
+
 	unsafe fn enter(&mut self, ctx: *mut raw_types::procs::ExecutionContext, evaluating: bool) {
 		if evaluating != self.evaluating {
 			self.evaluating = evaluating;
@@ -283,6 +289,9 @@ impl Profiler {
 			sample.passed += 1;
 			return;
 		} else {
+			if sample.timed >= FLOOR_HITS {
+				self.replaced_floor = self.replaced_floor.min(sample.ticks as f64 / sample.timed as f64);
+			}
 			*sample = Sample {
 				instruction: self.last_instruction,
 				timed: 0,
@@ -349,7 +358,7 @@ impl Profiler {
 		let floor = (self.samples.iter())
 			.filter(|sample| sample.timed >= FLOOR_HITS)
 			.map(|sample| sample.ticks as f64 / sample.timed as f64)
-			.fold(f64::INFINITY, f64::min);
+			.fold(self.replaced_floor, f64::min);
 		if floor.is_finite() {
 			floor
 		} else {
@@ -439,4 +448,24 @@ pub fn instructions(bytecode: usize) -> Option<Vec<ProfiledInstruction>> {
 		.collect();
 	instructions.sort_by_key(|instruction| instruction.offset);
 	Some(instructions)
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	#[test]
+	fn floor_keeps_samples_that_another_instruction_replaced() {
+		let mut profiler = Profiler::new(None);
+		profiler.last_instruction = 0x1000;
+		for _ in 0..FLOOR_HITS {
+			profiler.sample(100);
+		}
+		profiler.last_instruction = 0x1000 + SAMPLE_SLOTS * 4;
+		for _ in 0..=SAMPLE_PATIENCE {
+			profiler.sample(500);
+		}
+		assert_eq!(profiler.samples[0x1000 >> 2].instruction, profiler.last_instruction);
+		assert_eq!(profiler.floor(), 100.0);
+	}
 }
