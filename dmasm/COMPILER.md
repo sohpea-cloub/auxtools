@@ -332,9 +332,8 @@ before the code that uses it. Each entry says what would go wrong if other code 
 - `other_file` means that the last line record named another file, such as a default's file,
   or would have if the default hadn't folded. The next line record then names the proc's file
   again first. Without debug information, it stays set, which does no harm.
-- `mul_lhs` is set for a `*` that is the left operand of another `*`, with or without
-  parentheses. The next binary operation, which is that `*`, takes it and doesn't use the square
-  form.
+- When a multiplication is the left operand of another multiplication, `mul_lhs` suppresses
+  `PowSquare` for the inner multiplication. Parentheses do not change this rule.
 - `condition_chain` is set while an `if` or `while` condition that is a `&&` or `||` compiles.
   The first `&&` or `||`, which is the condition itself, takes it.
 
