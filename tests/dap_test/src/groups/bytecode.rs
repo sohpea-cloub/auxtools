@@ -335,12 +335,17 @@ fn old_code() {
 	let ret = address(&after[after.iter().position(|i| address(&i["address"]) == moved).unwrap() + 1]["address"]);
 	let set = break_at(&mut world, &[mul, ret]);
 	assert_eq!(set[1]["verified"], true, "{}", set[1]);
+	let by_ret = set[1]["id"].as_u64().unwrap();
 	world.run("middle");
 	let stop = world.stop();
 	assert_eq!(frame_address(&mut world), moved);
 	assert_eq!((stop.reason.as_str(), &stop.hit), ("instruction breakpoint", &vec![id]));
 	world.resume();
-	world.stopped("instruction breakpoint");
+	let stop = world.stop();
+	assert_eq!(
+		(stop.reason.as_str(), &stop.hit, frame_address(&mut world)),
+		("instruction breakpoint", &vec![by_ret], ret)
+	);
 	break_at(&mut world, &[]);
 	world.resume_through("middle");
 	ok("moved instruction breakpoint kept when another is added");
