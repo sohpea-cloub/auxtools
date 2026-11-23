@@ -2421,6 +2421,40 @@ fn types(built: Built) {
 	assert_eq!(eval(&mut client, "static_label()"), "\"static_text\"");
 	println!("ok: a refused new proc and static local hold no reference to their strings");
 
+	let changes = source.edit_many("reload.dm", &[
+		(
+			"\tvar/added_label = \"added_text\"\n",
+			"\tvar/static/added_label = \"kid_text\"\n\tvar/list/kid_list = list()\n"
+		),
+		(
+			"/proc/first_def()\n",
+			"/proc/prefab_kid()\n\treturn new /datum/labelled/kid{kid_list = 5}\n\n/proc/first_def()\n"
+		)
+	]);
+	let Request::HotReload(mut refused) = reload_request(&changes) else {
+		unreachable!()
+	};
+	assert_eq!(changes.plan.redeclared.len(), 1, "{:?}", changes.plan);
+	assert_eq!(changes.plan.init_procs.len(), 1, "{:?}", changes.plan);
+	refused.plan.new_vars.push(dmasm::reload::NewVar {
+		type_path: "/datum/labelled".to_owned(),
+		var: "kid_missing".to_owned(),
+		flags: 0,
+		value: dmasm::reload::ConstValue::Path("/datum/no_such_type".to_owned()),
+		init: None,
+		moved_from: vec![]
+	});
+	let result = expect_reload_result(watcher.request(Request::HotReload(refused)));
+	assert!(!result.applied, "a reload with a var of a missing type was applied: {:?}", result);
+	let kid_strings = ["kid_text", "/datum/labelled/kid/proc/(init)", "/datum/labelled/kid/proc/(map_init)"];
+	let references = kid_strings.map(|text| eval(&mut client, &format!("#string-refs {}", text)));
+	assert_eq!(references, ["0", "0", "0"], "references to {:?} after a refused reload", kid_strings);
+	reload(&mut watcher, &changes);
+	assert_eq!(eval(&mut client, "#string-refs kid_text"), "1", "after the static was set");
+	let kid = "\"[(new /datum/labelled/kid).added_label] [length((new /datum/labelled/kid).kid_list)] [prefab_kid():kid_list]\"";
+	assert_eq!(eval(&mut client, kid), "\"kid_text 0 5\"");
+	println!("ok: a refused static value, init proc and prefab hold no reference to their strings");
+
 	assert_eq!(eval(&mut client, "#fail-reload append"), "the next reload fails at Append");
 	let changes = source.edit(
 		"reload.dm",

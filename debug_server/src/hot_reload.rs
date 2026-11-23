@@ -43,11 +43,11 @@ pub struct Prepared {
 	builtin_writes: Vec<(u32, Vec<BuiltinWrite>)>,
 	type_fields: Vec<(u32, usize, u32)>,
 	run_once: Vec<(u32, String, Vec<u32>)>,
-	global_values: Vec<(u32, (u32, u32))>,
+	global_values: Vec<(u32, (u32, u32), Option<StringRef>)>,
 	global_init_now: Option<Vec<u32>>,
 	global_init_at_start: Option<raw_types::procs::ProcId>,
 	in_lists: Vec<(u32, ProcEntryWords)>,
-	instances: Vec<(u32, runtime_tables::Instance, ProcEntryWords)>,
+	instances: Vec<(u32, runtime_tables::Instance, ProcEntryWords, StringRef)>,
 	builtin_inherits: Vec<(u32, String)>,
 	reparent: reparent::PreparedReparents,
 	new_types: Vec<String>,
@@ -75,7 +75,7 @@ struct AddedVars {
 #[derive(Default)]
 struct StagedInstances {
 	existing: Option<Vec<runtime_tables::Instance>>,
-	new: Vec<(runtime_tables::Instance, ProcEntryWords, Vec<u32>)>
+	new: Vec<(runtime_tables::Instance, ProcEntryWords, Vec<u32>, StringRef)>
 }
 
 impl StagedInstances {
@@ -96,7 +96,7 @@ impl StagedInstances {
 			return Ok(id as u32);
 		}
 		let count = existing.len() as u32;
-		if let Some(id) = self.new.iter().position(|(i, _, code)| i.tag == tag && i.data == data && code == init) {
+		if let Some(id) = self.new.iter().position(|(i, _, code, _)| i.tag == tag && i.data == data && code == init) {
 			return Ok(count + id as u32);
 		}
 
@@ -111,9 +111,11 @@ impl StagedInstances {
 		] {
 			entry.0[word] = NONE;
 		}
-		entry.0[ProcEntryWords::PATH] = leaked_string(&format!("{}/proc/(map_init)", path))?;
+		let path = new_string(&format!("{}/proc/(map_init)", path))?;
+		entry.0[ProcEntryWords::PATH] = path.get_id().0;
 		entry.0[ProcEntryWords::BYTECODE] = runtime_tables::intern_misc(init)?;
-		self.new.push((runtime_tables::Instance { tag, data, init: NONE }, entry, init.to_vec()));
+		self.new
+			.push((runtime_tables::Instance { tag, data, init: NONE }, entry, init.to_vec(), path));
 		Ok(count + self.new.len() as u32 - 1)
 	}
 }
@@ -147,7 +149,8 @@ struct StagedProcs {
 	own: HashMap<(u32, usize), Vec<u32>>,
 	listed_after: HashMap<u32, u32>,
 	removed: HashSet<u32>,
-	world: HashMap<String, Vec<u32>>
+	world: HashMap<String, Vec<u32>>,
+	strings: Vec<StringRef>
 }
 
 impl StagedProcs {
@@ -284,7 +287,8 @@ enum LocalsTable {
 
 struct PreparedInitProc {
 	type_id: u32,
-	proc: Option<(ProcEntryWords, Vec<String>)>
+	proc: Option<(ProcEntryWords, Vec<String>)>,
+	path: Option<StringRef>
 }
 
 struct PreparedNewProc {
@@ -314,7 +318,7 @@ struct NewProcOnType {
 	field: usize,
 	map_entries: Vec<(u32, u32, Vec<u32>)>,
 	relinked: Vec<u32>,
-	paths: Vec<(u32, u32)>,
+	paths: Vec<(u32, StringRef)>,
 	after: Option<u32>
 }
 
@@ -618,7 +622,7 @@ pub fn prepare(request: &HotReloadRequest, warnings: &mut Vec<String>, skipped: 
 		.new
 		.into_iter()
 		.enumerate()
-		.map(|(n, (instance, entry, _))| (first_instance + n as u32, instance, entry))
+		.map(|(n, (instance, entry, _, path))| (first_instance + n as u32, instance, entry, path))
 		.collect();
 	if !prepared.new_globals.is_empty() {
 		if let Err(e) = runtime_tables::global_vars_available() {
@@ -1310,7 +1314,11 @@ fn prepare_init_proc(
 	let fail = |e: String| format!("{}: {}", shown, e);
 	let type_id = find_type(&init.type_path).map_err(fail)?;
 	let Some(code) = &init.code else {
-		return Ok(PreparedInitProc { type_id, proc: None });
+		return Ok(PreparedInitProc {
+			type_id,
+			proc: None,
+			path: None
+		});
 	};
 
 	let current = runtime_tables::type_field(type_id, type_fields::INIT_PROC).map_err(fail)?;
@@ -1322,8 +1330,11 @@ fn prepare_init_proc(
 	.ok_or_else(|| fail("couldn't find a proc entry to copy".to_owned()))?;
 	let bytecode = assemble(&shown, code, current.as_ref(), pending, world_globals, added)?;
 	let mut entry = template;
+	let mut path = None;
 	if current.is_none() {
-		entry.0[ProcEntryWords::PATH] = leaked_string(&format!("{}/proc/(init)", init.type_path)).map_err(fail)?;
+		let made = new_string(&format!("{}/proc/(init)", init.type_path)).map_err(fail)?;
+		entry.0[ProcEntryWords::PATH] = made.get_id().0;
+		path = Some(made);
 		entry.0[ProcEntryWords::NAME] = NONE;
 		entry.0[ProcEntryWords::DESC] = NONE;
 		entry.0[ProcEntryWords::CATEGORY] = NONE;
@@ -1336,7 +1347,8 @@ fn prepare_init_proc(
 
 	Ok(PreparedInitProc {
 		type_id,
-		proc: Some((entry, code.locals.clone()))
+		proc: Some((entry, code.locals.clone())),
+		path
 	})
 }
 
@@ -1548,9 +1560,12 @@ fn prepare_new_proc(
 			};
 			let path = String::from(unsafe { StringRef::from_id(raw_types::strings::StringId(path)) });
 			if let Some(at) = path.rfind("/proc/") {
-				let renamed = leaked_string(&format!("{}/{}", &path[..at], &path[at + "/proc/".len()..])).map_err(fail)?;
+				let renamed = new_string(&format!("{}/{}", &path[..at], &path[at + "/proc/".len()..])).map_err(fail)?;
 				match staged.entries.get_mut(&proc) {
-					Some(e) => e.0[ProcEntryWords::PATH] = renamed,
+					Some(e) => {
+						e.0[ProcEntryWords::PATH] = renamed.get_id().0;
+						staged.strings.push(renamed);
+					}
 					None => paths.push((proc, renamed))
 				}
 			}
@@ -2333,7 +2348,7 @@ fn prepare_redeclared(
 	added: &mut AddedVars,
 	type_vars: &mut TypeVars,
 	pending: &mut Pending,
-	global_values: &mut Vec<(u32, (u32, u32))>
+	global_values: &mut Vec<(u32, (u32, u32), Option<StringRef>)>
 ) -> Result<(), String> {
 	const STATIC: u32 = 1;
 	let fail = |e: String| format!("{}/var/{}: {}", var.type_path, var.var, e);
@@ -2346,13 +2361,15 @@ fn prepare_redeclared(
 		if let Some(init) = &var.init {
 			added.run_once.push((id, format!("/var/{}", var.var), (**init).clone()));
 		} else if let Some(value) = &var.value {
-			global_values.push((id, const_value(value, pending).map_err(fail)?));
+			let (value, text) = owned_value(value, pending).map_err(fail)?;
+			global_values.push((id, value, text));
 		}
 		return Ok(());
 	}
 
 	let type_id = find_type(&var.type_path).map_err(fail)?;
-	let name = leaked_string(&var.var).map_err(fail)?;
+	let name_string = new_string(&var.var).map_err(fail)?;
+	let name = name_string.get_id().0;
 	let declared = type_vars.declared(type_id).map_err(fail)?.clone();
 	let id = declared
 		.chunks(2)
@@ -2383,7 +2400,8 @@ fn prepare_redeclared(
 		if let Some(init) = &var.init {
 			added.run_once.push((id, format!("{}/var/{}", var.type_path, var.var), (**init).clone()));
 		} else if let Some(value) = &var.value {
-			global_values.push((id, const_value(value, pending).map_err(fail)?));
+			let (value, text) = owned_value(value, pending).map_err(fail)?;
+			global_values.push((id, value, text));
 		}
 	}
 	Ok(())
@@ -2536,10 +2554,11 @@ fn append_entries(prepared: &Prepared, added: &mut Added) -> Result<Vec<u32>, St
 			return Err(format!("new proc ID mismatch: got {}, expected {}", id.0, new.id));
 		}
 	}
-	for (expected, instance, entry) in &prepared.instances {
-		let id = runtime_tables::add_proc(entry)
-			.and_then(|init| runtime_tables::add_instance(runtime_tables::Instance { init: init.0, ..*instance }))
-			.map_err(|e| format!("couldn't add a prefab: {}", e))?;
+	for (expected, instance, entry, path) in &prepared.instances {
+		let fail = |e: String| format!("couldn't add a prefab: {}", e);
+		let init = runtime_tables::add_proc(entry).map_err(fail)?;
+		std::mem::forget(path.clone());
+		let id = runtime_tables::add_instance(runtime_tables::Instance { init: init.0, ..*instance }).map_err(fail)?;
 		added.prefabs += 1;
 		if id != *expected {
 			return Err(format!("prefab ID mismatch: got {}, expected {}", id, expected));
@@ -2559,9 +2578,9 @@ fn append_entries(prepared: &Prepared, added: &mut Added) -> Result<Vec<u32>, St
 		init_procs.push(match &init.proc {
 			None => NONE,
 			Some((entry, _)) => {
-				runtime_tables::add_proc(entry)
-					.map_err(|e| format!("couldn't add an init proc: {}", e))?
-					.0
+				let id = runtime_tables::add_proc(entry).map_err(|e| format!("couldn't add an init proc: {}", e))?;
+				std::mem::forget(init.path.clone());
+				id.0
 			}
 		});
 	}
@@ -2652,8 +2671,9 @@ pub fn apply<K: Claimant, T>(
 			for &proc in &on_type.relinked {
 				runtime_tables::set_proc_entry_word(raw_types::procs::ProcId(proc), ProcEntryWords::NEXT_OVERRIDE, id);
 			}
-			for &(proc, path) in &on_type.paths {
-				runtime_tables::set_proc_entry_word(raw_types::procs::ProcId(proc), ProcEntryWords::PATH, path);
+			for (proc, path) in &on_type.paths {
+				runtime_tables::set_proc_entry_word(raw_types::procs::ProcId(*proc), ProcEntryWords::PATH, path.get_id().0);
+				std::mem::forget(path.clone());
 			}
 		}
 
@@ -2719,9 +2739,10 @@ pub fn apply<K: Claimant, T>(
 		let _ = runtime_tables::forget_type_appearance(type_id);
 	}
 
-	for (id, (tag, data)) in prepared.global_values {
-		if let Err(e) = runtime_tables::set_global_words(id, tag as u8, data) {
-			failures.push(format!("couldn't set a static var's value: {}", e));
+	for (id, (tag, data), text) in prepared.global_values {
+		match runtime_tables::set_global_words(id, tag as u8, data) {
+			Ok(()) => std::mem::forget(text),
+			Err(e) => failures.push(format!("couldn't set a static var's value: {}", e))
 		}
 	}
 
