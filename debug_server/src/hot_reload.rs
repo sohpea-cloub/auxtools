@@ -1701,11 +1701,44 @@ fn add_type(new: &NewType) -> Result<Inherited, String> {
 			set_type_string(id, place, TypeString::Made(text))?;
 		}
 	}
+	for name in listed_held_by(parent) {
+		inherit_listed(id, parent, name);
+	}
 	write_builtins(id, writes)?;
 	Ok(inherited)
 }
 
 static TYPE_STRINGS: Mutex<BTreeMap<(u32, usize), u32>> = Mutex::new(BTreeMap::new());
+
+static LISTED_STRINGS: Mutex<BTreeMap<(u32, u32), Option<u32>>> = Mutex::new(BTreeMap::new());
+
+fn hold_listed(type_id: u32, name: u32, text: Option<Option<u32>>) {
+	let mut held = LISTED_STRINGS.lock().unwrap();
+	let released = match text {
+		Some(text) => held.insert((type_id, name), text),
+		None => held.remove(&(type_id, name))
+	};
+	drop(held);
+	if let Some(text) = released {
+		std::iter::once(name).chain(text).for_each(release_string);
+	}
+}
+
+fn inherit_listed(type_id: u32, from: u32, name: u32) {
+	let text = LISTED_STRINGS.lock().unwrap().get(&(from, name)).copied();
+	if let Some(text) = text {
+		for id in std::iter::once(name).chain(text) {
+			std::mem::forget(unsafe { StringRef::from_id(raw_types::strings::StringId(id)) });
+		}
+	}
+	hold_listed(type_id, name, text);
+}
+
+fn listed_held_by(type_id: u32) -> Vec<u32> {
+	(LISTED_STRINGS.lock().unwrap().range((type_id, 0)..=(type_id, u32::MAX)))
+		.map(|(&(_, name), _)| name)
+		.collect()
+}
 
 const MOB_KEY: usize = usize::MAX;
 
@@ -1938,8 +1971,10 @@ fn write_builtins(type_id: u32, writes: Vec<BuiltinWrite>) -> Result<(), String>
 				words.push(name_id);
 				words.extend_from_slice(&value);
 				set_type_field(type_id, type_fields::BUILTIN_VALUES, runtime_tables::intern_misc(&words)?)?;
+				let text_id = text.as_ref().map(|text| text.get_id().0);
 				std::mem::forget(name);
 				std::mem::forget(text);
+				hold_listed(type_id, name_id, Some(text_id));
 			}
 			BuiltinWrite::Mob(var, value) => runtime_tables::set_mob_type(type_id, |mob| match var {
 				"sight" => mob.sight = value,
@@ -2954,6 +2989,7 @@ fn world_has_debug_info() -> bool {
 fn forget_world() {
 	ADDED_GLOBALS.lock().unwrap().clear();
 	TYPE_STRINGS.lock().unwrap().clear();
+	LISTED_STRINGS.lock().unwrap().clear();
 	UNSETTLED_TYPES.lock().unwrap().clear();
 	RELOADED.lock().unwrap().clear();
 	*WORLD_HAS_DEBUG_INFO.lock().unwrap() = None;

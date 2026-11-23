@@ -317,6 +317,14 @@ fn inherit_builtins(b: &InheritedBuiltins) -> Result<Option<String>, String> {
 	}
 	let list = if words.is_empty() { NONE } else { runtime_tables::intern_misc(&words)? };
 	set_type_field(t, type_fields::BUILTIN_VALUES, list)?;
+	let inherited: BTreeSet<u32> = listed_held_by(t)
+		.into_iter()
+		.chain(listed_held_by(p))
+		.filter(|name| !b.own.contains(name))
+		.collect();
+	for name in inherited {
+		inherit_listed(t, p, name);
+	}
 
 	let mut block = [0u32; 5];
 	for (i, word) in block.iter_mut().enumerate() {

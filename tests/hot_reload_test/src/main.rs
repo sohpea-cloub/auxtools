@@ -1985,8 +1985,48 @@ fn types(built: Built) {
 		(target_name + 4).to_string(),
 		"the references to render_target's name after four mob types got it"
 	);
-	assert_eq!(eval(&mut client, "(new /mob/helper/small).render_target"), "\"unwritten_target\"");
 	println!("ok: a failed reload holds no reference to the strings it didn't write");
+
+	let small_target = (
+		"/mob/helper/small\n\tsight = 4\n",
+		"/mob/helper/small\n\tsight = 4\n\trender_target = \"unwritten_target\"\n"
+	);
+	let changes = source.edit_many("reload.dm", &[
+		("\trender_target = \"unwritten_target\"\n", "\trender_target = \"second_target\"\n"),
+		small_target
+	]);
+	reload(&mut watcher, &changes);
+	let targets = |client: &mut Client| {
+		let [unwritten, second] = refs(client, ["unwritten_target", "second_target"]);
+		[unwritten, second, eval(client, "#string-refs render_target")]
+	};
+	let counts = |unwritten: u32, second: u32, names: u32| [unwritten, second, target_name + names].map(|count| count.to_string());
+	assert_eq!(
+		targets(&mut client),
+		counts(1, 3, 4),
+		"after a render_target changed and a subtype kept the old one"
+	);
+	let changes = source.edit_many("reload.dm", &[
+		(small_target.1, small_target.0),
+		("/mob/helper/later\n", "/mob/helper/later\n\n/mob/helper/latest\n")
+	]);
+	assert_eq!(changes.plan.builtin_inherited.len(), 1, "{:?}", changes.plan);
+	reload(&mut watcher, &changes);
+	assert_eq!(
+		targets(&mut client),
+		counts(0, 5, 5),
+		"after a subtype inherited a render_target and a new one got it"
+	);
+	let changes = source.edit_many("reload.dm", &[("\trender_target = \"second_target\"\n", ""), small_target]);
+	reload(&mut watcher, &changes);
+	assert_eq!(
+		targets(&mut client),
+		counts(1, 0, 1),
+		"after a render_target was cleared and a subtype kept its own"
+	);
+	assert_eq!(eval(&mut client, "(new /mob/helper/small).render_target"), "\"unwritten_target\"");
+	assert_eq!(eval(&mut client, "(new /mob/helper/latest).render_target"), "null");
+	println!("ok: a list-backed default releases the strings a type no longer has");
 
 	assert_eq!(eval(&mut client, "#fail-reload append"), "the next reload fails at Append");
 	let changes = source.edit(
