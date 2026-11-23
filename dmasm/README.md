@@ -59,5 +59,8 @@ next `// Guards:` line. These comments can follow:
 - `// Builds: A-B` gives the builds whose DreamMaker accepts the case.
 - `// Known [A-B]: PATH  WHY` marks a proc that differs on purpose, and WHY gives the reason. It
   can also mark a bug that is not fixed yet. WHY then says so.
+- `// Known [A-B] on glibc 2.41: PATH  WHY` marks a proc that differs only when DreamMaker rounds
+  the radians of inverse trigonometric functions to f32. Linux DreamMaker does this with glibc
+  2.41 or later. The comparison builds `arctan(2)` first to find out.
 
 The comparison skips the debug line records and the global init proc.

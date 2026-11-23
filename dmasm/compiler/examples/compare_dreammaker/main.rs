@@ -15,7 +15,14 @@ struct Case {
     guards: String,
     source: String,
     builds: Option<Builds>,
-    known: Vec<(Option<Builds>, String, String)>,
+    known: Vec<Known>,
+}
+
+struct Known {
+    builds: Option<Builds>,
+    on_rounding_glibc: bool,
+    path: String,
+    why: String,
 }
 
 fn usage() -> ExitCode {
@@ -84,6 +91,19 @@ fn main() -> ExitCode {
         eprintln!("error: can't create {}: {e}.", out.display());
         return ExitCode::from(2);
     }
+    let rounds_radians = match rounds_radians(&dreammaker, &out) {
+        Ok(rounds) => rounds,
+        Err(e) => {
+            eprintln!("error: can't find out how DreamMaker folds arctan(2): {e}.");
+            return ExitCode::from(2);
+        }
+    };
+    if rounds_radians {
+        println!(
+            "note: this DreamMaker rounds the radians of inverse trigonometric functions to f32, \
+             as it does with glibc 2.41 or later"
+        );
+    }
 
     let threads = std::thread::available_parallelism().map_or(4, |n| n.get()) * 4;
     let next = AtomicUsize::new(0);
@@ -96,8 +116,8 @@ fn main() -> ExitCode {
                 let known = case
                     .known
                     .iter()
-                    .filter(|(builds, ..)| on(*builds))
-                    .map(|(_, path, why)| (path.clone(), why.clone()))
+                    .filter(|k| on(k.builds) && (rounds_radians || !k.on_rounding_glibc))
+                    .map(|k| (k.path.clone(), k.why.clone()))
                     .collect();
                 let outcome = run_case(case, &known, &dreammaker, &out, byond, show);
                 results.lock().unwrap().push((i, outcome));
@@ -234,9 +254,11 @@ fn read_corpus(dir: &Path) -> Result<Vec<Case>, String> {
                         .ok_or_else(|| format!("{file}: `Builds: {range}`, not A-B"))?,
                 );
             } else if let Some(known) = comment.strip_prefix("Known") {
-                let bad = || format!("{file}: `{line}`, not `// Known [A-B]: PATH  WHY`");
+                let bad =
+                    || format!("{file}: `{line}`, not `// Known [A-B] [on glibc 2.41]: PATH  WHY`");
                 let (builds, rest) = known.split_once(':').ok_or_else(bad)?;
-                let builds = match builds.trim() {
+                let on_rounding_glibc = builds.trim().ends_with("on glibc 2.41");
+                let builds = match builds.trim().trim_end_matches("on glibc 2.41").trim() {
                     "" => None,
                     range => Some(parse_builds(range).ok_or_else(bad)?),
                 };
@@ -244,8 +266,12 @@ fn read_corpus(dir: &Path) -> Result<Vec<Case>, String> {
                     .trim()
                     .split_once(char::is_whitespace)
                     .ok_or_else(bad)?;
-                case.known
-                    .push((builds, path.to_owned(), why.trim().to_owned()));
+                case.known.push(Known {
+                    builds,
+                    on_rounding_glibc,
+                    path: path.to_owned(),
+                    why: why.trim().to_owned(),
+                });
             }
         }
         let several = file_cases.len() > 1;
@@ -259,6 +285,37 @@ fn read_corpus(dir: &Path) -> Result<Vec<Case>, String> {
         }
     }
     Ok(cases)
+}
+
+fn rounds_radians(dreammaker: &Path, out: &Path) -> Result<bool, String> {
+    let dir = out.join("radians-probe");
+    std::fs::create_dir_all(&dir)
+        .and_then(|_| std::fs::write(dir.join("world.dme"), "/proc/f()\n\treturn arctan(2)\n"))
+        .map_err(|e| format!("can't write it to {}: {e}", dir.display()))?;
+    let built = dreammaker_command(dreammaker)
+        .arg("world.dme")
+        .current_dir(&dir)
+        .output()
+        .map_err(|e| e.to_string())?;
+    let data = std::fs::read(dir.join("world.dmb"))
+        .map_err(|e| format!("{}: {e}", String::from_utf8_lossy(&built.stdout).trim()))?;
+    let dmb = dmb::Dmb::load(&data).map_err(|e| format!("can't read its .dmb: {e}"))?;
+    let code = dmb
+        .procs
+        .iter()
+        .find(|p| dmb.proc_path(p) == Some(b"/proc/f".as_slice()))
+        .map(|p| dmb.bytecode(p))
+        .ok_or("its .dmb has no /proc/f")?;
+    let push = dmasm_bytecode::Opcode::PushVal.word();
+    match code {
+        [op, 0x2A, high, low, ..] if *op == push => {
+            Ok(((high << 16) | low) == 63.43495f32.to_bits())
+        }
+        _ => Err(format!(
+            "its code starts with {:x?}",
+            &code[..code.len().min(4)]
+        )),
+    }
 }
 
 fn run_case(
