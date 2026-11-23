@@ -37,11 +37,21 @@
   the proc already has one, so other procs and tables that share the entry keep their code. It
   fails and changes nothing when the proc can't get an entry of its own, as for a proc of 65,535
   words.
-- Weak reference ids now include a namespace for each library. A datum that an older version
-  tagged gets a new id, and the older version's handles to it no longer upgrade.
-- A hook can name a parameter `args`.
+- `own_code` gives a proc a code entry of its own and keeps its code at the same address, so its
+  running frames see a patch to the code. It is `unsafe`: no other library may have replaced the
+  proc's code. `copy_code` gives a proc an entry of its own with a copy of its code at a new
+  address.
 - `debug::set_local_names` and `debug::has_local_names` take a `&Proc` first. Pass the proc
-  whose local names you record or check.
+  whose local names you record or check. Procs that share code can have different local names.
+- A hook binds its parameters by position, and `_` skips an argument. A parameter declared as
+  `Value` gets a `Value`, and one declared as `&Value` gets a reference. Other parameter types
+  and patterns are a compile error. A hook can name a parameter `args`.
+- Weak reference ids are now text, with a namespace for each library, so they stay exact past
+  2^24 and two libraries never issue the same id. A datum that an older version tagged gets a
+  new id, and the older version's handles to it no longer upgrade.
+- `Value::call` no longer leaks references to its arguments when the proc name holds a NUL.
+- A `NameMapPlan` that is dropped without being written frees all of its memory.
+- `instruction_hooking::InstructionHookToAny` is gone. `InstructionHook` no longer requires it.
 
 ### For users of dmasm
 
