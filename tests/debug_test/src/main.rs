@@ -4,8 +4,8 @@ use std::{
 };
 
 use auxtools_protocol::{
-	BreakpointReason, BreakpointSetResult, ContinueKind, InstructionRef, LogPart, ProcRef, ProfileReply, ProfileRequest, ProfileTotals, ProfiledCode,
-	Request, Response, RuntimeFilter, VariablesRef
+	BreakpointReason, BreakpointSetResult, ContinueKind, DataChange, InstructionRef, LogPart, ProcRef, ProfileReply, ProfileRequest, ProfileTotals,
+	ProfiledCode, Request, Response, RuntimeFilter, VariablesRef, WatchPlace
 };
 use test_support::{
 	debug::{Client, World},
@@ -824,6 +824,51 @@ fn loop_back_to_the_start() {
 		instructions
 	);
 	println!("ok: a loop back to the first instruction through a conditional breakpoint isn't counted as calls");
+
+	pause(&mut client);
+	break_back(&mut client, None);
+	eval(&mut client, None, "spawn()\n\tprofiled_countdown(3)");
+	client.resume();
+	assert_eq!(client.expect_pause(), BreakpointReason::Breakpoint);
+	let response = client.request(Request::BreakpointUnset {
+		instruction: InstructionRef {
+			proc: counted.proc.clone(),
+			offset: back.offset as u32
+		},
+		exact: true
+	});
+	assert!(matches!(response, Response::BreakpointUnset { success: true, .. }), "{:?}", response);
+	let response = client.request(Request::WatchSet {
+		place: WatchPlace::Expression {
+			frame_id: Some(0),
+			expression: "n".to_owned()
+		},
+		condition: None,
+		hit: None
+	});
+	let Response::WatchSet(Ok(watch)) = response else {
+		panic!("expected a watch on n, got {:?}", response);
+	};
+	client.resume();
+	for (old, new) in [("2", "1"), ("1", "0")] {
+		let changed = BreakpointReason::Data {
+			changes: vec![DataChange {
+				id: watch.id,
+				name: "n".to_owned(),
+				old: old.to_owned(),
+				new: new.to_owned()
+			}]
+		};
+		assert_eq!(client.expect_pause(), changed);
+		client.resume();
+	}
+	let ended = client.recv();
+	assert!(
+		matches!(&ended, Response::WatchEnded { id, reason } if *id == watch.id && reason == "watched proc returned"),
+		"expected the watch to end when the proc returned, got {:?}",
+		ended
+	);
+	println!("ok: a watch on an argument lasts through a loop back to the first instruction");
 }
 
 fn false_condition_on_a_caught_throw() {

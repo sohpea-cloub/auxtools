@@ -167,6 +167,10 @@ fn get_proc_ctx(stack_id: u32) -> (*mut raw_types::procs::ExecutionContext, *mut
 	}
 }
 
+pub(crate) fn starts_call(ctx: *mut raw_types::procs::ExecutionContext) -> bool {
+	unsafe { *(*ctx).bytecode_offset() == 0 && !(ctx == STEPPER.last_frame && crate::profiler::can_jump(STEPPER.last_opcode)) }
+}
+
 unsafe fn mark(ctx: *mut raw_types::procs::ExecutionContext) -> Option<ProcInstanceRef> {
 	if ctx.is_null() {
 		None
@@ -449,7 +453,7 @@ impl InstructionHook for Server {
 				| DebuggerAction::StepOut { target: frame }
 				| DebuggerAction::StepOverInstruction { target: frame, .. }
 				| DebuggerAction::StepIntoInstruction { parent: frame, .. } => {
-					if *(*ctx).bytecode_offset() == 0 && !(ctx == STEPPER.last_frame && crate::profiler::can_jump(STEPPER.last_opcode)) {
+					if starts_call(ctx) {
 						(**(*ctx).proc_instance()).mega_hack = 0;
 					}
 					frame.forget_copy(ctx);
