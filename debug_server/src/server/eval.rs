@@ -528,7 +528,7 @@ impl Server {
 		}
 		let proc = Proc::find("/proc/auxtools_expr_stub").ok_or("the world has no /proc/auxtools_expr_stub to evaluate expressions in")?;
 
-		proc.set_bytecode(assembly);
+		unsafe { proc.set_bytecode(assembly) };
 
 		let ends = crate::WORLD_ENDS.load(std::sync::atomic::Ordering::Relaxed);
 		let result = Evaluation::call_with_locals(&proc, &locals, &arg_values)?;
@@ -555,27 +555,27 @@ impl Server {
 								ArgType::Dot => {
 									let dot = (*ctx).dot_mut();
 									let _ = Value::from_raw_owned(*dot);
-									*dot = value.raw;
+									*dot = value.raw();
 								}
 								ArgType::Usr => {
 									let _ = Value::from_raw_owned((*instance).usr);
-									(*instance).usr = value.raw;
+									(*instance).usr = value.raw();
 								}
 								ArgType::Src => {
 									let _ = Value::from_raw_owned((*instance).src);
-									(*instance).src = value.raw;
+									(*instance).src = value.raw();
 								}
 								ArgType::Arg(idx) => {
 									let args = (*instance).args();
 									let arg = args.add(*idx as usize);
 									let _ = Value::from_raw_owned(*arg);
-									(*arg) = value.raw;
+									(*arg) = value.raw();
 								}
 								ArgType::Local(idx) => {
 									let locals = *(*ctx).locals();
 									let local = locals.add(*idx as usize);
 									let _ = Value::from_raw_owned(*local);
-									(*local) = value.raw;
+									(*local) = value.raw();
 								}
 								ArgType::Given => continue
 							}

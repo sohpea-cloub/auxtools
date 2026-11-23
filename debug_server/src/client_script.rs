@@ -104,7 +104,7 @@ fn check_built(fields: &Fields, built: Option<&str>) -> Result<(), String> {
 fn write_text(fields: &Fields, text: Option<Value>) {
 	let id = match text {
 		Some(value) => {
-			let id = unsafe { value.raw.data.id };
+			let id = unsafe { value.raw().data.id };
 			std::mem::forget(value);
 			Some(id)
 		}

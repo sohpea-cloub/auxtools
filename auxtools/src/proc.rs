@@ -110,7 +110,10 @@ impl Proc {
 		}
 	}
 
-	pub fn set_bytecode(&self, bytecode: Vec<u32>) {
+	/// # Safety
+	/// Call on BYOND's thread while a world is live. `bytecode` must be code
+	/// that BYOND can run for this proc.
+	pub unsafe fn set_bytecode(&self, bytecode: Vec<u32>) {
 		crate::bytecode_manager::set_bytecode(self, bytecode);
 	}
 

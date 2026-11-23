@@ -2267,7 +2267,7 @@ pub fn apply<K: Ord + std::hash::Hash + Copy, T>(
 	if let Some(bytecode) = prepared.global_init_now {
 		match Proc::find("/proc/auxtools_expr_stub") {
 			Some(stub) => {
-				stub.set_bytecode(bytecode);
+				unsafe { stub.set_bytecode(bytecode) };
 				if let Err(e) = stub.call(&[]) {
 					warnings.push(format!("(global init): {}", e.message));
 				}
@@ -2280,7 +2280,7 @@ pub fn apply<K: Ord + std::hash::Hash + Copy, T>(
 			failures.push(format!("{}: missing /proc/auxtools_expr_stub for initializer evaluation", name));
 			continue;
 		};
-		stub.set_bytecode(bytecode);
+		unsafe { stub.set_bytecode(bytecode) };
 		let ends = crate::WORLD_ENDS.load(std::sync::atomic::Ordering::Relaxed);
 		let tries = crate::server::Evaluation::hide_tries();
 		let result = stub.call(&[]);

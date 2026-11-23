@@ -115,7 +115,7 @@ impl Server {
 			match &watch.place {
 				Place::Pointer(pointer) => match auxtools::pointer::read_raw(pointer) {
 					Some(now) => {
-						if !same(now, watch.last.raw) {
+						if !same(now, watch.last.raw()) {
 							changed.push((index, now));
 						}
 					}
@@ -137,7 +137,7 @@ impl Server {
 						}
 						match read_slot(ctx, *slot) {
 							Some(now) => {
-								if !same(now, watch.last.raw) {
+								if !same(now, watch.last.raw()) {
 									changed.push((index, now));
 								}
 							}
@@ -293,7 +293,7 @@ impl Server {
 			state.invalidate_stacks();
 		}
 		let pointer = pointer?;
-		let names_something = pointer.raw.tag == ValueTag::Pointer && pointer.to_string().is_ok_and(|text| !text.is_empty());
+		let names_something = pointer.raw().tag == ValueTag::Pointer && pointer.to_string().is_ok_and(|text| !text.is_empty());
 		if !names_something || auxtools::pointer::read_raw(&pointer).is_none() {
 			return Err("the expression has no lasting target to watch. Select an object variable, a list entry or a global".to_owned());
 		}
@@ -371,7 +371,8 @@ impl Server {
 							Some(key)
 						} else {
 							let key = entries.get(number).map_err(runtime)?;
-							let has_value = key.raw.tag != ValueTag::Number && entries.get(&key).is_ok_and(|of_key| of_key.raw.tag != ValueTag::Null);
+							let has_value =
+								key.raw().tag != ValueTag::Number && entries.get(&key).is_ok_and(|of_key| of_key.raw().tag != ValueTag::Null);
 							has_value.then_some(key)
 						};
 						let pointer = match key {

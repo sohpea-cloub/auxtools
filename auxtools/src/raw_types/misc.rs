@@ -103,7 +103,7 @@ impl Parameters_V2 {
 	}
 }
 
-pub fn set_bytecode(id: BytecodeId, new_bytecode: *mut u32, new_bytecode_count: u16) {
+pub unsafe fn set_bytecode(id: BytecodeId, new_bytecode: *mut u32, new_bytecode_count: u16) {
 	let mut misc: *mut c_void = std::ptr::null_mut();
 	unsafe {
 		assert_eq!(super::funcs::get_misc_by_id(&mut misc, id.as_misc_id()), 1);
@@ -117,7 +117,10 @@ pub fn set_bytecode(id: BytecodeId, new_bytecode: *mut u32, new_bytecode_count: 
 }
 
 /// Takes a permanent reference to a misc entry, so BYOND never frees it.
-pub fn add_ref<T: AsMiscId>(id: &T) {
+///
+/// # Safety
+/// Call on BYOND's thread while a world is live.
+pub unsafe fn add_ref<T: AsMiscId>(id: &T) {
 	let mut misc: *mut c_void = std::ptr::null_mut();
 	unsafe {
 		assert_eq!(super::funcs::get_misc_by_id(&mut misc, id.as_misc_id()), 1);
@@ -129,7 +132,7 @@ pub fn add_ref<T: AsMiscId>(id: &T) {
 	}
 }
 
-pub fn get_bytecode(id: BytecodeId) -> (*mut u32, u16) {
+pub unsafe fn get_bytecode(id: BytecodeId) -> (*mut u32, u16) {
 	let mut misc: *mut c_void = std::ptr::null_mut();
 	unsafe {
 		assert_eq!(super::funcs::get_misc_by_id(&mut misc, id.as_misc_id()), 1);
@@ -139,7 +142,7 @@ pub fn get_bytecode(id: BytecodeId) -> (*mut u32, u16) {
 	unsafe { ((*misc).bytecode.bytecode, (*misc).bytecode.count) }
 }
 
-pub fn get_locals(id: LocalsId) -> (*const strings::VariableId, usize) {
+pub unsafe fn get_locals(id: LocalsId) -> (*const strings::VariableId, usize) {
 	let mut misc: *mut c_void = std::ptr::null_mut();
 	unsafe {
 		assert_eq!(super::funcs::get_misc_by_id(&mut misc, id.as_misc_id()), 1);
@@ -149,7 +152,7 @@ pub fn get_locals(id: LocalsId) -> (*const strings::VariableId, usize) {
 	unsafe { ((*misc).locals.names, (*misc).locals.count as usize) }
 }
 
-pub fn get_parameters(id: ParametersId) -> (*const ParametersData, usize) {
+pub unsafe fn get_parameters(id: ParametersId) -> (*const ParametersData, usize) {
 	let mut misc: *mut c_void = std::ptr::null_mut();
 	unsafe {
 		assert_eq!(super::funcs::get_misc_by_id(&mut misc, id.as_misc_id()), 1);

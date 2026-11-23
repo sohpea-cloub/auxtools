@@ -95,9 +95,9 @@ pub(super) fn object_values(object: &Value) -> Vec<(String, Value)> {
 }
 
 pub(super) fn render(value: &Value, depth: u32) -> Rendered {
-	match value.raw.tag {
+	match value.raw().tag {
 		ValueTag::Null => return Rendered::Null,
-		ValueTag::Number => return Rendered::Number(unsafe { value.raw.data.number }),
+		ValueTag::Number => return Rendered::Number(unsafe { value.raw().data.number }),
 		ValueTag::String => return Rendered::Text(value.as_string().unwrap_or_default()),
 		_ => {}
 	}
@@ -156,6 +156,6 @@ pub(super) fn entries_of(list: &List, depth: u32) -> Vec<(Rendered, Option<Rende
 }
 
 pub(super) fn reference(value: &Value) -> String {
-	let id = unsafe { value.raw.data.id };
-	format!("[0x{:x}]", (value.raw.tag.0 as u32) << 24 | id)
+	let id = unsafe { value.raw().data.id };
+	format!("[0x{:x}]", (value.raw().tag.0 as u32) << 24 | id)
 }
