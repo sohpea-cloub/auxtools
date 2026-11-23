@@ -695,6 +695,19 @@ pub fn unhook_all() {
 	}
 }
 
+pub(crate) fn original_opcode(opcode_ptr: *mut u32) -> u32 {
+	let opcode = unsafe { *opcode_ptr };
+	if opcode != OPCODE_DEBUG_BREAK {
+		return opcode;
+	}
+	let original = ORIGINAL_BYTECODE
+		.lock()
+		.unwrap()
+		.get(&PtrKey::new(opcode_ptr))
+		.and_then(|original| original.first().copied());
+	original.unwrap_or(opcode)
+}
+
 pub fn hooked_offsets(proc: &Proc) -> Vec<u32> {
 	let (start, count) = unsafe { proc.bytecode_mut_ptr() };
 	let start = start as usize;

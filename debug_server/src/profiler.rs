@@ -283,7 +283,7 @@ impl Profiler {
 		};
 		self.last = frame;
 		self.last_parent = parent;
-		self.last_opcode = unsafe { *bytecode.add(offset) };
+		self.last_opcode = crate::instruction_hooking::original_opcode(unsafe { bytecode.add(offset) });
 		self.last_instruction = bytecode as usize + offset * std::mem::size_of::<u32>();
 	}
 

@@ -719,21 +719,52 @@ fn loop_back_to_the_start() {
 			override_id: 0
 		}]
 	};
-	assert_eq!(profile_request(&mut client, only), Ok(ProfileReply::Started));
-	assert_eq!(eval(&mut client, None, "profiled_countdown(5)"), "0");
-	let totals = profile_totals(&mut client, ProfileRequest::Stop);
-	let counted = profiled(&totals, "/profiled_countdown");
-	let Ok(ProfileReply::Code(instructions)) = profile_request(&mut client, ProfileRequest::Code { code: counted.code }) else {
-		panic!("expected the instructions of {:?}", counted);
+	let count_down = |client: &mut Client| {
+		assert_eq!(profile_request(client, only.clone()), Ok(ProfileReply::Started));
+		assert_eq!(eval(client, None, "profiled_countdown(5)"), "0");
+		let totals = profile_totals(client, ProfileRequest::Stop);
+		let counted = profiled(&totals, "/profiled_countdown");
+		let Ok(ProfileReply::Code(instructions)) = profile_request(client, ProfileRequest::Code { code: counted.code }) else {
+			panic!("expected the instructions of {:?}", counted);
+		};
+		assert_eq!(
+			instructions.first().map(|first| (first.offset, first.hits)),
+			Some((0, 6)),
+			"{:?}",
+			instructions
+		);
+		assert_eq!(counted.total.calls, 1, "{:?}", counted);
+		counted.clone()
 	};
-	assert_eq!(
-		instructions.first().map(|first| (first.offset, first.hits)),
-		Some((0, 6)),
-		"{:?}",
-		instructions
-	);
-	assert_eq!(counted.total.calls, 1, "{:?}", counted);
+	let counted = count_down(&mut client);
 	println!("ok: a loop back to the first instruction isn't counted as calls");
+
+	let Response::Disassemble(Ok(disassembly)) = client.request(Request::Disassemble { code: counted.code }) else {
+		panic!("expected the disassembly of {:?}", counted);
+	};
+	let back = (disassembly.instructions.iter().rev())
+		.find(|instruction| instruction.text.starts_with("Jmp"))
+		.unwrap_or_else(|| panic!("no jump back in {:?}", disassembly.instructions));
+	let response = client.request(Request::BreakpointSet {
+		instruction: InstructionRef {
+			proc: counted.proc.clone(),
+			offset: back.offset as u32
+		},
+		condition: None,
+		hit: None,
+		log: None,
+		exact: true
+	});
+	assert!(
+		matches!(response, Response::BreakpointSet {
+			result: BreakpointSetResult::Success { .. }
+		}),
+		"a breakpoint on `{}` got {:?}",
+		back.text,
+		response
+	);
+	count_down(&mut client);
+	println!("ok: a loop back to the first instruction through a breakpoint isn't counted as calls");
 }
 
 fn waiting_world_ends() {
