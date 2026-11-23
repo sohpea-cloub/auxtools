@@ -238,7 +238,11 @@ fn protocol(world: &World, mut client: Client) -> Client {
 	] {
 		assert_eq!(locate(&mut client, file, returns), expected, "{}", file);
 	}
-	assert_eq!(locate(&mut client, "debug_test_host.dm", returns - 1), expected);
+	assert_eq!(
+		locate(&mut client, "debug_test_host.dm", returns - 1),
+		expected,
+		"the line of a proc's declaration finds the code on the next"
+	);
 	assert_eq!(locate(&mut client, "another_file.dm", returns), vec![]);
 	assert_eq!(locate(&mut client, "debug_test_host.dm", 100_000), vec![]);
 	println!("ok: the code on a file's line is found by the file's name, a longer path, backslashes and another case");
@@ -627,7 +631,11 @@ fn profile(world: &World, mut client: Client) -> Client {
 	assert!(near(calling.total.callee_ns, looped.total.own_ns), "{:?} called {:?}", calling, looped);
 	println!("ok: callee timing");
 
-	assert_eq!(profile_totals(&mut client, ProfileRequest::Totals), totals);
+	assert_eq!(
+		profile_totals(&mut client, ProfileRequest::Totals),
+		totals,
+		"a stopped profile's totals are kept until the next"
+	);
 	let code = match client.request(Request::ProcInfo { proc: proc("/overrun") }) {
 		Response::ProcInfo(Ok(info)) => info.code,
 		other => panic!("expected ProcInfo, got {:?}", other)
