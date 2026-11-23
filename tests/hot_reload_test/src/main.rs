@@ -2016,6 +2016,53 @@ fn definitions(built: Built) {
 	assert!(result.failures.is_empty(), "{:?}", result.failures);
 	assert_eq!(eval(&mut client, "(new /datum/animal/named).sound == /client/proc/named_verb"), "1");
 	println!("ok: new proc references in type defaults");
+
+	assert_eq!(eval(&mut client, "(new /datum/early).speak()"), "\"declaration, then override\"");
+	let changes = source.edit("reload.dm", "\"declaration, then [..()]\"", "\"edited declaration, then [..()]\"");
+	reload(&mut watcher, &changes);
+	assert_eq!(eval(&mut client, "(new /datum/early).speak()"), "\"edited declaration, then override\"");
+	println!("ok: a declaration after its override is edited");
+
+	assert_eq!(
+		eval(&mut client, "(new /datum/early_apart).speak()"),
+		"\"declaration apart, then override apart\""
+	);
+	let changes = source.edit("main.dm", "\"override apart\"", "\"edited override apart\"");
+	reload(&mut watcher, &changes);
+	assert_eq!(
+		eval(&mut client, "(new /datum/early_apart).speak()"),
+		"\"declaration apart, then edited override apart\""
+	);
+	println!("ok: an override in a file before its declaration's is edited");
+
+	assert_eq!(eval(&mut client, "calls_early_global()"), "\"early declared\"");
+	let changes = source.edit("reload.dm", "\"early declared\"", "\"edited early declared\"");
+	reload(&mut watcher, &changes);
+	assert_eq!(eval(&mut client, "calls_early_global()"), "\"edited early declared\"");
+	println!("ok: a global declaration after another definition is edited");
+
+	let changes = source.edit(
+		"reload.dm",
+		"/proc/first_def()\n",
+		"/datum/early_new/speak()\n\treturn \"new override\"\n\n/datum/early_new/proc/speak()\n\treturn \"new declaration, then \
+		 [..()]\"\n\n/proc/first_def()\n"
+	);
+	reload(&mut watcher, &changes);
+	assert_eq!(
+		eval(&mut client, "(new /datum/early_new).speak()"),
+		"\"new declaration, then new override\""
+	);
+	println!("ok: an override and its later declaration added together");
+
+	assert_eq!(eval(&mut client, "(new /datum/late).speak()"), "\"late declaration, then \"");
+	let changes = source.edit(
+		"reload.dm",
+		"/datum/late/proc/speak()\n",
+		"/datum/late/speak()\n\treturn \"late override\"\n\n/datum/late/proc/speak()\n"
+	);
+	reload(&mut watcher, &changes);
+	assert_eq!(eval(&mut client, "(new /datum/late).speak()"), "\"late declaration, then late override\"");
+	println!("ok: an override added before its declaration");
 }
 
 fn types(built: Built) {

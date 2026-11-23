@@ -1,3 +1,6 @@
+/early_global()
+	return "early unreachable"
+
 /proc/auxtools_launched_world_del()
 	CRASH("auxtools not loaded")
 
@@ -134,3 +137,6 @@ var/datum/declared/declared_one = new
 /sound/hr_st
 	parent_type = /sound/hr_sa
 	frequency = 3
+
+/datum/early_apart/speak()
+	return "override apart"

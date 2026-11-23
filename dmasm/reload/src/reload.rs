@@ -972,17 +972,14 @@ impl Snapshot {
         crate::compiler::new_tree();
         let mut procs = BTreeMap::new();
         for ty in tree.iter_types() {
-            for (name, type_proc) in ty.get().procs.iter() {
-                let mut override_id = 0;
-                for (index, value) in type_proc.value.iter().enumerate() {
-                    if value.location.file == FileId::BUILTINS {
-                        continue;
-                    }
+            for name in ty.get().procs.keys() {
+                for (override_id, index) in
+                    definition_order(ty, name.as_str()).into_iter().enumerate()
+                {
                     let key = ProcKey {
                         path: proc_path(ty, name.as_str()),
-                        override_id,
+                        override_id: override_id as u32,
                     };
-                    override_id += 1;
                     procs.insert(
                         key,
                         (ty.get().path.clone(), name.as_str().to_owned(), index),
@@ -2508,10 +2505,53 @@ fn compare_inits(old: &Snapshot, new: &Snapshot, changes: &mut Changes) {
     }
 }
 
-fn real(p: &dreammaker::objtree::TypeProc) -> Vec<&ProcValue> {
-    p.value
-        .iter()
-        .filter(|v| v.location.file != FileId::BUILTINS)
+const STDDEF_PROC_BLOCKS: &[&str] = &[
+    "/sound",
+    "/icon",
+    "/matrix",
+    "/database",
+    "/database/query",
+    "/regex",
+    "/generator",
+];
+
+fn definition_order(ty: TypeRef, name: &str) -> Vec<usize> {
+    let Some(proc) = ty.get().procs.get(name) else {
+        return vec![];
+    };
+    let declaration = proc
+        .declaration
+        .as_ref()
+        .filter(|d| d.location.file != FileId::BUILTINS);
+    let place = |v: &ProcValue| match declaration {
+        Some(d) if v.location == d.location => {
+            if d.kind == dreammaker::ast::ProcDeclKind::Proc
+                && STDDEF_PROC_BLOCKS.contains(&ty.get().path.as_str())
+            {
+                return None;
+            }
+            ty.get()
+                .procs
+                .values()
+                .filter_map(|p| p.declaration.as_ref())
+                .filter(|other| other.kind == d.kind && other.location.file != FileId::BUILTINS)
+                .map(|other| other.location)
+                .min()
+        }
+        _ => Some(v.location),
+    };
+    let mut order: Vec<usize> = (0..proc.value.len())
+        .filter(|&i| proc.value[i].location.file != FileId::BUILTINS)
+        .collect();
+    order.sort_by_key(|&i| place(&proc.value[i]));
+    order
+}
+
+fn real<'a>(ty: TypeRef<'a>, name: &str) -> Vec<&'a ProcValue> {
+    let values = ty.get().procs.get(name).map_or(&[][..], |p| &p.value[..]);
+    definition_order(ty, name)
+        .into_iter()
+        .map(|i| &values[i])
         .collect()
 }
 
@@ -2897,8 +2937,8 @@ fn compare_types(
         let op = o.map_or(&no_procs, |o| &o.get().procs);
         let np = &n.get().procs;
         for (name, proc) in np.iter() {
-            let old_values = op.get(name).map(real).unwrap_or_default();
-            let new_values = real(proc);
+            let old_values = o.map(|o| real(o, name.as_str())).unwrap_or_default();
+            let new_values = real(n, name.as_str());
             let (old_count, new_count) = (old_values.len(), new_values.len());
             let path = proc_path(n, name.as_str());
             let verb = n
@@ -2921,7 +2961,11 @@ fn compare_types(
                     });
                 }
                 for (override_id, _) in map.iter().enumerate().filter(|(_, old)| old.is_none()) {
-                    let declared = override_id == 0 && proc.declaration.is_some() && old_count == 0;
+                    let declared = old_count == 0
+                        && proc
+                            .declaration
+                            .as_ref()
+                            .is_some_and(|d| d.location == new_values[override_id].location);
                     if n.is_root() && !declared {
                         changes.warnings.push(note(
                             Id::UnreachableGlobalDefinition,
@@ -2972,7 +3016,7 @@ fn compare_types(
             }
         }
         for name in op.keys().filter(|name| !np.contains_key(*name)) {
-            let old_values = real(&op[name]);
+            let old_values = o.map(|o| real(o, name.as_str())).unwrap_or_default();
             if !old_values.is_empty() {
                 removed(old, n, name.as_str(), &old_values, changes);
             }

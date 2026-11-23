@@ -187,7 +187,7 @@ pub(super) fn reparent(
             }
         }
         for (name, proc) in t.get().procs.iter() {
-            if real(proc).is_empty() {
+            if real(*t, name.as_str()).is_empty() {
                 continue;
             }
             if proc.declaration.is_some() {

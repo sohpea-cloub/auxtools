@@ -1197,6 +1197,157 @@ fn another_definition_of_a_global_proc_is_a_proc_of_its_own() {
     );
 }
 
+fn pushed_ints(nodes: &[Node]) -> Vec<String> {
+    nodes
+        .iter()
+        .filter_map(|node| match node {
+            Node::Instruction(instruction @ Instruction::PushInt(_), ()) => {
+                Some(format!("{instruction:?}"))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn definitions_are_numbered_in_the_order_dreammaker_gives_them() {
+    let cases = [
+        (
+            "override-first",
+            "/datum/p/f()\n\treturn 1\n/datum/p/proc/f()\n\treturn 2\n",
+            "/datum/p/f",
+            1,
+        ),
+        (
+            "after-a-declared-proc",
+            "/datum/p/proc/g()\n/datum/p/f()\n\treturn 1\n/datum/p/proc/f()\n\treturn 2\n",
+            "/datum/p/f",
+            0,
+        ),
+        (
+            "between-overrides",
+            "/datum/p/f()\n\treturn 1\n/datum/p/proc/g()\n/datum/p/f()\n\treturn 3\n/datum/p/proc/f()\n\treturn 2\n",
+            "/datum/p/f",
+            1,
+        ),
+        (
+            "after-a-declared-verb",
+            "/datum/p/verb/g()\n/datum/p/f()\n\treturn 1\n/datum/p/proc/f()\n\treturn 2\n",
+            "/datum/p/f",
+            1,
+        ),
+        (
+            "verb-after-a-declared-verb",
+            "/datum/p/verb/g()\n/datum/p/f()\n\treturn 1\n/datum/p/verb/f()\n\treturn 2\n",
+            "/datum/p/f",
+            0,
+        ),
+        (
+            "after-a-parent-proc",
+            "/datum/proc/g()\n/datum/p/f()\n\treturn 1\n/datum/p/proc/f()\n\treturn 2\n",
+            "/datum/p/f",
+            1,
+        ),
+        (
+            "global",
+            "/g()\n\treturn 1\n/proc/g()\n\treturn 2\n",
+            "/g",
+            1,
+        ),
+        (
+            "type-with-procs-in-stddef",
+            "/icon/f()\n\treturn 1\n/icon/proc/f()\n\treturn 2\n",
+            "/icon/f",
+            0,
+        ),
+        (
+            "type-without-procs-in-stddef",
+            "/mob/f()\n\treturn 1\n/mob/proc/f()\n\treturn 2\n",
+            "/mob/f",
+            1,
+        ),
+    ];
+    for (name, code, path, declaration) in cases {
+        let changes = changes_of(name, code, &code.replace("return 2", "return 5"));
+        assert_eq!(reloaded(&changes), [key(path, declaration)], "{name}");
+    }
+}
+
+#[test]
+fn an_override_in_an_earlier_file_comes_before_the_declaration() {
+    let world = World::new(
+        "override-in-earlier-file",
+        "/datum/p/proc/f()\n\treturn 2\n",
+    );
+    std::fs::write(world.dir.join("code/a.dm"), "/datum/p/f()\n\treturn 1\n").unwrap();
+    std::fs::write(
+        world.dir.join("world.dme"),
+        "#include \"code/a.dm\"\n#include \"code/code.dm\"\n",
+    )
+    .unwrap();
+    let old = world.parse();
+    world.write("/datum/p/proc/f()\n\treturn 5\n");
+    let new = world.parse();
+    let edited: HashSet<PathBuf> = vec![PathBuf::from("code/code.dm")].into_iter().collect();
+    assert_eq!(
+        reloaded(&diff(&old, &new, Some(&edited))),
+        [key("/datum/p/f", 1)]
+    );
+}
+
+#[test]
+fn an_override_and_its_later_declaration_are_added_in_order() {
+    let cases = [
+        ("/datum/p\n", "/datum/p/f", "/datum/p/", false),
+        ("var/x = 1\n", "/g", "/", true),
+    ];
+    for (before, path, prefix, global) in cases {
+        let name = &path[path.rfind('/').unwrap() + 1..];
+        let after =
+            format!("{before}{prefix}{name}()\n\treturn 1\n{prefix}proc/{name}()\n\treturn 2\n");
+        let changes = changes("added-override-first", before, &after);
+        assert!(changes.refused.is_empty(), "{:?}", changes.refused);
+        let added: Vec<(ProcKey, bool, Vec<String>)> = changes
+            .plan
+            .new_procs
+            .iter()
+            .map(|p| (p.code.proc.clone(), p.declared, pushed_ints(&p.code.nodes)))
+            .collect();
+        assert_eq!(
+            added,
+            [
+                (key(path, 0), false, vec!["PushInt(1)".to_owned()]),
+                (key(path, 1), true, vec!["PushInt(2)".to_owned()])
+            ],
+            "{path}"
+        );
+        let unreachable = texts(&changes.warnings)
+            .iter()
+            .filter(|w| w.contains("unreachable"))
+            .count();
+        assert_eq!(
+            unreachable, global as usize,
+            "{path}: {:?}",
+            changes.warnings
+        );
+    }
+
+    let changes = changes(
+        "added-override-before-declaration",
+        "/datum/p/proc/f()\n\treturn 2\n",
+        "/datum/p/f()\n\treturn 1\n/datum/p/proc/f()\n\treturn 2\n",
+    );
+    assert!(changes.refused.is_empty(), "{:?}", changes.refused);
+    let added: Vec<(ProcKey, bool)> = changes
+        .plan
+        .new_procs
+        .iter()
+        .map(|p| (p.code.proc.clone(), p.declared))
+        .collect();
+    assert_eq!(added, [(key("/datum/p/f", 0), false)]);
+    assert!(reloaded(&changes).is_empty(), "{:?}", reloaded(&changes));
+}
+
 #[test]
 fn in_lists_are_the_words_dreammaker_writes() {
     let cases = [

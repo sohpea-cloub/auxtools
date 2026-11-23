@@ -222,3 +222,21 @@ var/mob/helper/small/old_helper = new
 
 /proc/first_def()
 	return "first"
+
+/datum/early/speak()
+	return "override"
+
+/datum/early/proc/speak()
+	return "declaration, then [..()]"
+
+/datum/early_apart/proc/speak()
+	return "declaration apart, then [..()]"
+
+/datum/late/proc/speak()
+	return "late declaration, then [..()]"
+
+/proc/early_global()
+	return "early declared"
+
+/proc/calls_early_global()
+	return early_global()
