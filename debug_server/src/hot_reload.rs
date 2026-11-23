@@ -718,8 +718,10 @@ fn prepared_code(
 	};
 	let rename = renamed(&proc, &entry, &settings);
 
-	let (at, _) = unsafe { proc.bytecode_mut_ptr() };
-	if entry.0[ProcEntryWords::BYTECODE] == bytecode_id && debug::local_names_for(&proc, at) != reload.locals {
+	let old_names = code_address(bytecode_id)
+		.filter(|&at| entry.0[ProcEntryWords::BYTECODE] == bytecode_id || debug::has_local_names(&proc, at))
+		.map(|at| debug::local_names_for(&proc, at));
+	if old_names.is_some_and(|names| names != reload.locals) {
 		failing(FailAt::Copy).map_err(|e| format!("{}: {}", name, e))?;
 		if bytecode.len() >= u16::MAX as usize {
 			return Err(format!(
@@ -742,6 +744,16 @@ fn prepared_code(
 		local_names: Some(reload.locals.clone()),
 		lines: None
 	})
+}
+
+fn code_address(bytecode_id: u32) -> Option<*const u32> {
+	let mut entry = std::ptr::null_mut();
+	unsafe {
+		if raw_types::funcs::get_misc_by_id(&mut entry, raw_types::misc::MiscId::from_raw(bytecode_id)) != 1 || entry.is_null() {
+			return None;
+		}
+		Some((*(entry as *const raw_types::misc::Misc_V2)).bytecode.bytecode)
+	}
 }
 
 enum StartingInit {

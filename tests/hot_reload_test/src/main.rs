@@ -1152,6 +1152,34 @@ fn debugger(built: Built) {
 	eval(&mut client, "twin_hold = FALSE");
 	wait_for(&mut client, "twin_runs", &(runs + 2).to_string());
 	println!("ok: a reload that removes a proc's last local gives new calls no locals");
+
+	let sleeping = sleep_named_twins(&mut client);
+	let changes = source.edit("reload.dm", "twin_runs += second_local * 2; }", "twin_runs += second_local * 3; }");
+	assert_eq!(changes.plan.reloads.len(), 1, "{:?}", changes.plan);
+	reload(&mut watcher, &changes);
+	let back = source.edit_many("reload.dm", &[
+		("second_local * 3", "second_local * 2"),
+		("twin_d, d_local)", "twin_d, d_again)")
+	]);
+	assert_eq!(back.plan.reloads.len(), 1, "{:?}", back.plan);
+	assert_eq!(eval(&mut client, "#fail-reload copy"), "the next reload fails at Copy");
+	let result = expect_reload_result(watcher.request(reload_request(&back)));
+	assert!(!result.applied, "a reload back to code whose copy failed was applied: {:?}", result);
+	assert_eq!(result.errors, ["/twin_d: asked for with #fail-reload"]);
+	wake_named_twins(&mut client, sleeping, 4);
+	let sleeping = sleep_named_twins(&mut client);
+	let mut names = named_twin_locals(&mut client);
+	wake_named_twins(&mut client, sleeping, 5);
+	reload(&mut watcher, &back);
+	let sleeping = sleep_named_twins(&mut client);
+	names.extend(named_twin_locals(&mut client));
+	wake_named_twins(&mut client, sleeping, 4);
+	let expected = ["c_renamed", "d_local", "c_renamed", "d_again"];
+	assert_eq!(
+		names, expected,
+		"the locals' names of twin_c and twin_d after the refused reload and after the retry"
+	);
+	println!("ok: a reload back to earlier code checks the copy for new local names first");
 }
 
 fn sleep_named_twins(client: &mut Client) -> u32 {
