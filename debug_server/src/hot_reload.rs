@@ -1598,22 +1598,32 @@ pub fn add_types(new_types: &[NewType]) -> Result<usize, Vec<String>> {
 	runtime_tables::types_available().map_err(|e| vec![format!("adding types isn't available on this build of BYOND: {}", e)])?;
 	code_changed();
 
-	let differ: Vec<String> = {
+	let refused: Vec<String> = {
 		let unsettled = UNSETTLED_TYPES.lock().unwrap();
 		new_types
 			.iter()
-			.filter(|new| unsettled.get(&new.path).is_some_and(|added| added != *new))
-			.map(|new| {
-				format!(
-					"{}: a reload that failed added this type with another parent or other built-in values. Undo the change to them, or rebuild the \
-					 .dmb and restart the world",
-					new.path
-				)
+			.filter_map(|new| {
+				let (added, inherited) = unsettled.get(&new.path)?;
+				if added != new {
+					Some(format!(
+						"{}: a reload that failed added this type with another parent or other built-in values. Undo the change to them, or rebuild \
+						 the .dmb and restart the world",
+						new.path
+					))
+				} else if !inherits_as_added(new, inherited) {
+					Some(format!(
+						"{}: a reload that failed added this type, and the values it inherits have changed since. Undo the change to them, or \
+						 rebuild the .dmb and restart the world",
+						new.path
+					))
+				} else {
+					None
+				}
 			})
 			.collect()
 	};
-	if !differ.is_empty() {
-		return Err(differ);
+	if !refused.is_empty() {
+		return Err(refused);
 	}
 
 	let mut added = 0;
@@ -1621,28 +1631,78 @@ pub fn add_types(new_types: &[NewType]) -> Result<usize, Vec<String>> {
 		if find_type(&new.path).is_ok() {
 			continue;
 		}
-		add_type(new).map_err(|e| vec![format!("{}: {}", new.path, e)])?;
-		UNSETTLED_TYPES.lock().unwrap().insert(new.path.clone(), new.clone());
+		let inherited = add_type(new).map_err(|e| vec![format!("{}: {}", new.path, e)])?;
+		UNSETTLED_TYPES.lock().unwrap().insert(new.path.clone(), (new.clone(), inherited));
 		added += 1;
 	}
 	Ok(added)
 }
 
-static UNSETTLED_TYPES: Mutex<BTreeMap<String, NewType>> = Mutex::new(BTreeMap::new());
+static UNSETTLED_TYPES: Mutex<BTreeMap<String, (NewType, Inherited)>> = Mutex::new(BTreeMap::new());
 
-fn add_type(new: &NewType) -> Result<(), String> {
+#[derive(PartialEq)]
+struct Inherited {
+	record: Vec<u32>,
+	builtins: Vec<u32>,
+	mob: Option<(u32, u32, u8, u8)>
+}
+
+fn inherited(parent: u32) -> Result<Inherited, String> {
+	use type_fields::*;
+	let words = [
+		NAME,
+		DESC,
+		ICON,
+		ICON_STATE,
+		TEXT,
+		MAPTEXT,
+		MAPTEXT_X,
+		MAPTEXT_WIDTH,
+		FLAGS,
+		FLAGS_HIGH,
+		DIR & !3
+	]
+	.into_iter()
+	.chain((0x40..0x54).step_by(4))
+	.chain([SUFFIX, LAYER]);
+	let mut mob = None;
+	let _ = runtime_tables::set_mob_type(parent, |m| mob = Some((m.key, m.sight, m.see_in_dark, m.see_invisible)));
+	Ok(Inherited {
+		record: words.map(|offset| runtime_tables::type_field(parent, offset)).collect::<Result<_, _>>()?,
+		builtins: runtime_tables::misc_words(runtime_tables::type_field(parent, BUILTIN_VALUES)?).unwrap_or_default(),
+		mob
+	})
+}
+
+fn inherits_as_added(new: &NewType, inherited_then: &Inherited) -> bool {
+	let (Ok(parent), Ok(type_id)) = (find_type(&new.parent), find_type(&new.path)) else {
+		return false;
+	};
+	let shared = |field: usize| {
+		let words = |t: u32| runtime_tables::type_field(t, field).ok().and_then(runtime_tables::misc_words);
+		words(type_id).is_some() && words(type_id) == words(parent)
+	};
+	inherited(parent).is_ok_and(|now| now == *inherited_then)
+		&& shared(type_fields::VAR_TABLE)
+		&& shared(type_fields::DECLARED_VARS)
+		&& runtime_tables::type_field(type_id, type_fields::INIT_PROC) == runtime_tables::type_field(parent, type_fields::INIT_PROC)
+}
+
+fn add_type(new: &NewType) -> Result<Inherited, String> {
 	let parent = find_type(&new.parent)?;
 	let mut writes = vec![];
 	for (field, value) in &new.fields {
 		writes.extend(builtin_writes(field, value).map_err(|e| format!("{}: {}", field, e))?);
 	}
+	let inherited = inherited(parent)?;
 	let id = runtime_tables::add_type(parent, leaked_string(&new.path)?)?;
 	for place in TEXT_PLACES {
 		if let Ok(TypeString::Made(text)) = type_string(parent, place) {
 			set_type_string(id, place, TypeString::Made(text))?;
 		}
 	}
-	write_builtins(id, writes)
+	write_builtins(id, writes)?;
+	Ok(inherited)
 }
 
 static TYPE_STRINGS: Mutex<BTreeMap<(u32, usize), u32>> = Mutex::new(BTreeMap::new());
