@@ -138,6 +138,18 @@ var/datum/weak_test_datum
 /proc/auxtest_value_from()
 	CRASH()
 
+/proc/auxtest_code_r()
+	return "r"
+
+/proc/auxtest_code_t()
+	return "t"
+
+/proc/auxtest_code_u()
+	return "u"
+
+/proc/auxtest_code_before_shutdown()
+	CRASH()
+
 /proc/do_tests()
 	var/auxtest_dll = auxtools_test_dll()
 	var/init_result = call_ext(auxtest_dll, "auxtools_init")()
@@ -151,6 +163,7 @@ var/datum/weak_test_datum
 	ASSERT(auxtest_strings() == TRUE)
 	ASSERT(auxtest_tables() == TRUE)
 	ASSERT(auxtest_value_from() == TRUE)
+	ASSERT(auxtest_code_before_shutdown() == TRUE)
 
 	var/datum/weak_test = new
 	ASSERT(auxtest_weak_values(weak_test, weak_kept_datum) == TRUE)
@@ -158,7 +171,7 @@ var/datum/weak_test_datum
 
 	if (auxtest_inc_counter() == 8)
 		auxtest_fail_next_init()
-		call_ext(auxtest_dll, "auxtools_shutdown")()
+		auxtest_shut_down(auxtest_dll)
 		var/upgraded = call_ext(auxtest_dll, "auxtest_upgrade_kept_weak")()
 		if (upgraded != "none")
 			auxtest_out("FAILED: a weak reference upgraded after shutdown gave [upgraded ? upgraded : "an empty string"], expected none")
@@ -168,8 +181,14 @@ var/datum/weak_test_datum
 		call_ext(auxtest_dll, "auxtools_shutdown")()
 		shutdown()
 	else
-		call_ext(auxtest_dll, "auxtools_shutdown")()
+		auxtest_shut_down(auxtest_dll)
 		world.Reboot()
+
+/proc/auxtest_shut_down(auxtest_dll)
+	call_ext(auxtest_dll, "auxtools_shutdown")()
+	var/failure = call_ext(auxtest_dll, "auxtest_code_after_shutdown")()
+	if (failure)
+		auxtest_out("FAILED: [failure]")
 
 /world/New()
 	do_tests()

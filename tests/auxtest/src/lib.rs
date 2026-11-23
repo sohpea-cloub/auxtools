@@ -2,6 +2,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use auxtools::*;
 
+mod bytecode;
 mod hooks;
 mod lists;
 mod procs;
