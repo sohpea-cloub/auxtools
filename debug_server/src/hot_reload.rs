@@ -535,9 +535,14 @@ pub fn prepare(request: &HotReloadRequest, warnings: &mut Vec<String>, skipped: 
 		let writes = builtin_writes(&default.var, &default.value).map_err(|e| format!("{}: {}", default.var, e));
 		match writes {
 			Ok(writes) => {
+				let mut given = false;
 				for path in &default.types {
 					match find_type(path) {
 						Ok(type_id) => {
+							if given {
+								writes.iter().filter_map(BuiltinWrite::string).for_each(keep_string);
+							}
+							given = true;
 							prepared.builtin_writes.push((type_id, writes.clone()));
 							prepared.appearances.insert(type_id);
 						}
@@ -1588,6 +1593,17 @@ enum BuiltinWrite {
 	Mob(&'static str, u32)
 }
 
+impl BuiltinWrite {
+	fn string(&self) -> Option<u32> {
+		match *self {
+			BuiltinWrite::Word(offset, id) if offset != type_fields::ICON && offset != type_fields::LAYER => Some(id),
+			BuiltinWrite::Mob("key", id) => Some(id),
+			_ => None
+		}
+		.filter(|&id| id != NONE)
+	}
+}
+
 fn builtin_writes(var: &str, value: &ConstValue) -> Result<Vec<BuiltinWrite>, String> {
 	use BuiltinWrite::*;
 	let number = || match value {
@@ -1771,6 +1787,29 @@ fn const_value(value: &ConstValue, pending: &Pending) -> Result<(u32, u32), Stri
 				.ok_or_else(|| format!("couldn't find the file {}", file))?
 		)
 	})
+}
+
+fn keep_string(id: u32) {
+	if id != NONE {
+		unsafe {
+			raw_types::funcs::inc_ref_count(raw_types::values::Value {
+				tag: raw_types::values::ValueTag::String,
+				data: raw_types::values::ValueData { id }
+			});
+		}
+	}
+}
+
+#[cfg(feature = "test-commands")]
+pub fn string_references(text: &str) -> Result<u32, String> {
+	let string = StringRef::new(text).map_err(|e| e.message)?;
+	let mut entry = std::ptr::null_mut();
+	unsafe {
+		if raw_types::funcs::get_string_table_entry(&mut entry, string.get_id()) != 1 || entry.is_null() {
+			return Err(format!("there's no string table entry for {}", text));
+		}
+		Ok((*entry).ref_count - 1)
+	}
 }
 
 fn leaked_string(text: &str) -> Result<u32, String> {

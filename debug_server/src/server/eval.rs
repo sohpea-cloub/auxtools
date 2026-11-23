@@ -348,6 +348,11 @@ impl Server {
 				hot_reload::fail_next(at);
 				format!("the next reload fails at {:?}", at)
 			}
+			#[cfg(feature = "test-commands")]
+			Ok(console::Command::StringReferences(text)) => match hot_reload::string_references(text) {
+				Ok(count) => count.to_string(),
+				Err(e) => format!("Failed: {}", e)
+			},
 			Ok(console::Command::Help(text)) => text.to_owned(),
 			Err(error) => error
 		}

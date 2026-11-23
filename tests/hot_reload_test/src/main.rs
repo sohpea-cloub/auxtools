@@ -1573,6 +1573,29 @@ fn types(built: Built) {
 
 	let changes = source.edit(
 		"reload.dm",
+		"/mob/helper/small\n\tsight = 4\n",
+		"/mob/helper\n\tkey = \"helper_key\"\n\n/mob/helper/small\n\tsight = 4\n"
+	);
+	assert_eq!(changes.plan.builtin_defaults.len(), 1, "{:?}", changes.plan.builtin_defaults);
+	assert_eq!(changes.plan.builtin_defaults[0].types.len(), 3, "{:?}", changes.plan.builtin_defaults);
+	reload(&mut watcher, &changes);
+	assert_eq!(
+		eval(&mut client, "#string-refs helper_key"),
+		"3",
+		"the references to a key that three mob types got"
+	);
+	let changes = source.edit("reload.dm", "\tkey = \"helper_key\"\n", "\tkey = null\n");
+	reload(&mut watcher, &changes);
+	assert_eq!(
+		eval(&mut client, "#string-refs helper_key"),
+		"3",
+		"the references to a key that three mob types no longer have"
+	);
+	assert_eq!(eval(&mut client, "isnull((new /mob/helper/small).key)"), "1");
+	println!("ok: a mob key default gives each type a reference");
+
+	let changes = source.edit(
+		"reload.dm",
 		"/proc/first_def()\n\treturn \"first\"\n",
 		"/proc/first_def()\n\treturn \"first\"\n\n/first_def()\n\treturn \"second\"\n"
 	);

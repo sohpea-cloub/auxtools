@@ -47,17 +47,6 @@ fn set_listed(type_id: u32, entries: &[Vec<u32>]) -> Result<(), String> {
 	unsafe { runtime_tables::set_type_field(type_id, type_fields::BUILTIN_VALUES, list) }
 }
 
-fn keep_string(id: u32) {
-	if id != NONE {
-		unsafe {
-			raw_types::funcs::inc_ref_count(raw_types::values::Value {
-				tag: raw_types::values::ValueTag::String,
-				data: raw_types::values::ValueData { id }
-			});
-		}
-	}
-}
-
 pub(super) fn builtin_in_table(type_id: u32, _var: &str) -> bool {
 	type_and_ancestors(type_id)
 		.into_iter()

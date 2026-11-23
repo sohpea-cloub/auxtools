@@ -10,6 +10,8 @@ pub enum Command<'a> {
 	Script,
 	#[cfg(feature = "test-commands")]
 	FailReload(crate::hot_reload::FailAt),
+	#[cfg(feature = "test-commands")]
+	StringReferences(&'a str),
 	Help(&'static str)
 }
 
@@ -48,6 +50,9 @@ Show login script string ID, resource IDs and text
 
 Usage: script
 ";
+
+#[cfg(feature = "test-commands")]
+const STRING_REFS_USAGE: &str = "string-refs <text>";
 
 #[cfg(feature = "test-commands")]
 const FAIL_RELOAD_USAGE: &str = "fail-reload <append|change>";
@@ -102,6 +107,14 @@ pub fn parse(command: &str) -> Result<Command<'_>, String> {
 				))
 			}
 		}
+		#[cfg(feature = "test-commands")]
+		"string-refs" => {
+			at_most(&args, 1, STRING_REFS_USAGE)?;
+			match args.first() {
+				Some(text) => Ok(Command::StringReferences(text)),
+				None => Err(format!("error: a string is required\n\nUsage: {}\n", STRING_REFS_USAGE))
+			}
+		}
 		"help" => {
 			at_most(&args, 1, "help [COMMAND]")?;
 			match args.first().copied() {
@@ -151,6 +164,8 @@ mod tests {
 		assert_eq!((parse("skin"), parse("script")), (Ok(Command::Skin), Ok(Command::Script)));
 		#[cfg(feature = "test-commands")]
 		assert_eq!(parse("fail-reload append"), Ok(Command::FailReload(crate::hot_reload::FailAt::Append)));
+		#[cfg(feature = "test-commands")]
+		assert_eq!(parse("string-refs key"), Ok(Command::StringReferences("key")));
 		#[cfg(not(feature = "test-commands"))]
 		assert!(parse("skin").is_err() && parse("script").is_err() && parse("help skin").is_err() && parse("fail-reload append").is_err());
 	}
