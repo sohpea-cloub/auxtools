@@ -968,6 +968,19 @@ fn watches_at_the_end() {
 	client.resume();
 	expect_returned(&mut client, dot);
 	println!("ok: a frame watch stops for a change right before its proc returns");
+
+	pause(&mut client);
+	break_exactly(&mut client, &end, None);
+	let steps = watch_steps(&mut client, "steps");
+	assert_eq!(client.expect_pause(), changed(steps, "steps", "null", "1"));
+	client.resume();
+	assert_eq!(client.expect_pause(), changed(steps, "steps", "1", "2"));
+	client.resume();
+	expect_returned(&mut client, steps);
+	assert_eq!(client.expect_pause(), BreakpointReason::Breakpoint);
+	assert_eq!(paused_at(&mut client), ("/watched_steps".to_owned(), end.offset));
+	client.resume();
+	println!("ok: a frame watch ends when its proc returns through a breakpoint");
 }
 
 fn false_condition_on_a_caught_throw() {

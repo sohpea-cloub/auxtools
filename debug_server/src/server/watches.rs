@@ -149,7 +149,7 @@ impl Server {
 								continue;
 							}
 						}
-						let opcode = *(*(*ctx).bytecode()).add(*(*ctx).bytecode_offset() as usize);
+						let opcode = crate::instruction_hooking::original_opcode((*(*ctx).bytecode()).add(*(*ctx).bytecode_offset() as usize));
 						if opcode == dmasm::Opcode::Ret.word() || opcode == dmasm::Opcode::End.word() {
 							returning.push(watch.id);
 						}
