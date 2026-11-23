@@ -34,9 +34,9 @@ fn without_existing_statics(plan: &mut Plan, before: &Snapshot) {
 
 pub fn resource_names(request: &HotReloadRequest) -> Vec<String> {
 	#[derive(Default)]
-	struct Named(Vec<String>);
+	struct ResourceNames(Vec<String>);
 
-	impl Named {
+	impl ResourceNames {
 		fn value(&mut self, value: &dmasm::reload::ConstValue) {
 			if let dmasm::reload::ConstValue::Resource(name) = value {
 				self.add(name);
@@ -62,7 +62,7 @@ pub fn resource_names(request: &HotReloadRequest) -> Vec<String> {
 		}
 	}
 
-	impl dmasm::assembler::AssembleEnv for Named {
+	impl dmasm::assembler::AssembleEnv for ResourceNames {
 		fn get_string_index(&mut self, _: &[u8]) -> Option<u32> {
 			Some(0)
 		}
@@ -93,7 +93,7 @@ pub fn resource_names(request: &HotReloadRequest) -> Vec<String> {
 		}
 	}
 
-	let mut named = Named::default();
+	let mut named = ResourceNames::default();
 	let plan = &request.plan;
 	for code in plan.reloads.iter().chain(plan.new_procs.iter().map(|new| &new.code)) {
 		named.code(&code.nodes, &code.statics);

@@ -16,6 +16,7 @@ use winapi::{
 const ATTACH_EXPORT: &[u8] = b"auxtools_debug_attach\0";
 
 const PATCH_LEN: usize = 6;
+const PROCESS_BASIC_INFORMATION_CLASS: u32 = 0;
 
 fn last_error(what: &str) -> String {
 	format!("{}: {}", what, std::io::Error::last_os_error())
@@ -71,7 +72,7 @@ fn entry_point(process: HANDLE) -> Result<usize, String> {
 	let status = unsafe {
 		query(
 			process,
-			0,
+			PROCESS_BASIC_INFORMATION_CLASS,
 			&mut info as *mut _ as *mut c_void,
 			size_of::<ProcessBasicInformation>() as u32,
 			null_mut()

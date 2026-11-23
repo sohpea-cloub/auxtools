@@ -27,7 +27,7 @@ fn connect_to(name: String) -> io::Result<Stream> {
 }
 
 pub fn connect(pid: u32) -> io::Result<Stream> {
-	let (stream, hello) = greeted(open(pid)?)?;
+	let (stream, hello) = read_hello(open(pid)?)?;
 	if hello.protocol != PROTOCOL_VERSION {
 		return Err(incompatible(hello.protocol));
 	}
@@ -35,7 +35,7 @@ pub fn connect(pid: u32) -> io::Result<Stream> {
 }
 
 pub fn open(pid: u32) -> io::Result<Stream> {
-	connect_to(world_name(pid)).map_err(|e| old_protocol(pid).map_or(e, incompatible))
+	connect_to(world_name(pid)).map_err(|e| auxtools3_protocol(pid).map_or(e, incompatible))
 }
 
 pub fn incompatible(theirs: u32) -> io::Error {
@@ -48,7 +48,7 @@ pub fn incompatible(theirs: u32) -> io::Error {
 
 const HELLO_PATIENCE: Duration = Duration::from_secs(5);
 
-fn greeted(stream: Stream) -> io::Result<(Stream, Hello)> {
+fn read_hello(stream: Stream) -> io::Result<(Stream, Hello)> {
 	let stream = Arc::new(stream);
 	let (sender, receiver) = std::sync::mpsc::channel();
 	let mut reader = Shared(stream.clone());
@@ -70,7 +70,7 @@ fn greeted(stream: Stream) -> io::Result<(Stream, Hello)> {
 	Ok((stream, hello))
 }
 
-fn old_protocol(pid: u32) -> Option<u32> {
+fn auxtools3_protocol(pid: u32) -> Option<u32> {
 	(1..=LAST_NAMED_PROTOCOL)
 		.rev()
 		.find(|version| connect_to(old_socket_name(*version, pid)).is_ok())
@@ -115,7 +115,7 @@ pub struct World {
 }
 
 enum Probed {
-	Info(Vec<String>, String),
+	Info { args: Vec<String>, cwd: String },
 	Unavailable(String),
 	Incompatible(u32)
 }
@@ -154,7 +154,7 @@ pub fn worlds() -> Vec<World> {
 				unavailable: None
 			};
 			match answer.map(|answer| answer.recv_timeout(until.saturating_duration_since(Instant::now()))) {
-				Some(Ok(Ok(Probed::Info(args, cwd)))) => Some(World {
+				Some(Ok(Ok(Probed::Info { args, cwd }))) => Some(World {
 					pid,
 					program: program.clone(),
 					dmb: world_dmb(&args, &cwd),
@@ -171,7 +171,7 @@ pub fn worlds() -> Vec<World> {
 				}),
 				Some(Ok(Ok(Probed::Incompatible(protocol)))) => Some(unknown(protocol, false, None)),
 				Some(Err(_)) => Some(unknown(PROTOCOL_VERSION, true, Some(false))),
-				Some(Ok(Err(_))) | None => old_protocol(pid).map(|protocol| unknown(protocol, false, None))
+				Some(Ok(Err(_))) | None => auxtools3_protocol(pid).map(|protocol| unknown(protocol, false, None))
 			}
 		})
 		.collect()
@@ -205,7 +205,7 @@ fn probed(client: &mut Client) -> Result<Probed, Lost> {
 				to,
 				response: Response::WorldInfo { args, cwd, .. },
 				..
-			}) if Some(to) == asked => return Ok(Probed::Info(args, cwd)),
+			}) if Some(to) == asked => return Ok(Probed::Info { args, cwd }),
 			Some(Heard::Event(Response::Unavailable { reason })) => return Ok(Probed::Unavailable(reason)),
 			Some(Heard::Event(Response::Disconnect)) => return Err(Lost::Closed),
 			_ => {}

@@ -32,7 +32,7 @@ pub trait Listener: Send + 'static {
 
 enum Read {
 	Hello(Hello),
-	Message(ServerMessage, u64)
+	Message { message: ServerMessage, events_read: u64 }
 }
 
 pub struct Client {
@@ -97,7 +97,7 @@ impl Client {
 		while !self.greeted {
 			match self.next(until)? {
 				Some(Read::Hello(hello)) => self.greet(&hello)?,
-				Some(Read::Message(..)) => {}
+				Some(Read::Message { .. }) => {}
 				None => return Ok(false)
 			}
 		}
@@ -145,7 +145,7 @@ impl Client {
 					self.greet(&hello)?;
 					continue;
 				}
-				Read::Message(message, events) => (message, events)
+				Read::Message { message, events_read } => (message, events_read)
 			};
 			match self.requests.sort(message) {
 				Sorted::Answer(to, response) => return Ok(Some(Heard::Answer { to, response, after: events })),
@@ -187,19 +187,19 @@ fn read_on(reader: &mut Shared, greeted: bool, read: &Sender<Read>, mut listener
 			return Ok(());
 		}
 	}
-	let mut events = 0;
+	let mut events_read = 0;
 	loop {
 		let message: ServerMessage = auxtools_protocol::read(reader)?;
 		if message.reply_to.is_none() {
-			events += 1;
+			events_read += 1;
 			if let Some(listener) = &mut listener {
-				if listener.event(events, message.response).is_break() {
+				if listener.event(events_read, message.response).is_break() {
 					return Ok(());
 				}
 				continue;
 			}
 		}
-		if read.send(Read::Message(message, events)).is_err() {
+		if read.send(Read::Message { message, events_read }).is_err() {
 			return Ok(());
 		}
 	}

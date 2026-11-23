@@ -39,7 +39,7 @@ const fn compiler() -> &'static str {
 pub fn bin_dir(byond_path: Option<&Path>) -> Result<PathBuf, String> {
 	let candidates: Vec<PathBuf> = match byond_path {
 		Some(path) => vec![path.to_owned()],
-		None => installed()
+		None => usual_install_dirs()
 	};
 
 	for dir in &candidates {
@@ -56,7 +56,7 @@ pub fn bin_dir(byond_path: Option<&Path>) -> Result<PathBuf, String> {
 	}
 }
 
-fn installed() -> Vec<PathBuf> {
+fn usual_install_dirs() -> Vec<PathBuf> {
 	let mut dirs = vec![];
 
 	if let Some(system) = std::env::var_os("BYOND_SYSTEM") {
