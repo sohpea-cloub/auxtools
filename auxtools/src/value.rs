@@ -1,6 +1,10 @@
 use super::{raw_types, string};
 use crate::{list, runtime, runtime::DMResult};
-use std::{ffi::CString, fmt, marker::PhantomData};
+use std::{
+	ffi::{CStr, CString},
+	fmt,
+	marker::PhantomData
+};
 
 /// A value that a DM var can hold. Don't keep it after your hook returns.
 ///
@@ -243,7 +247,7 @@ impl Value {
 	pub fn to_dmstring(&self) -> DMResult<string::StringRef> {
 		match self.raw.tag {
 			raw_types::values::ValueTag::Null | raw_types::values::ValueTag::Number | raw_types::values::ValueTag::String => {
-				return string::StringRef::new(format!("{}", self.raw).as_str())
+				return string::StringRef::new(format!("{}", self).as_str())
 			}
 
 			_ => {}
@@ -262,7 +266,7 @@ impl Value {
 	pub fn to_string(&self) -> DMResult<String> {
 		match self.raw.tag {
 			raw_types::values::ValueTag::Null | raw_types::values::ValueTag::Number | raw_types::values::ValueTag::String => {
-				return Ok(format!("{}", self.raw))
+				return Ok(format!("{}", self))
 			}
 
 			_ => {}
@@ -343,12 +347,22 @@ impl Clone for Value {
 
 impl fmt::Display for Value {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-		write!(f, "{}", self.raw)
+		match self.raw.tag {
+			raw_types::values::ValueTag::String => unsafe {
+				let mut entry: *mut raw_types::strings::StringEntry = std::ptr::null_mut();
+				assert_eq!(raw_types::funcs::get_string_table_entry(&mut entry, self.raw.data.string), 1);
+				write!(f, "{:?}", string::text_of(CStr::from_ptr((*entry).data).to_bytes()))
+			},
+			_ => write!(f, "{}", self.raw)
+		}
 	}
 }
 
 impl fmt::Debug for Value {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-		write!(f, "{:?}", self.raw)
+		match self.raw.tag {
+			raw_types::values::ValueTag::String => fmt::Display::fmt(self, f),
+			_ => write!(f, "{:?}", self.raw)
+		}
 	}
 }

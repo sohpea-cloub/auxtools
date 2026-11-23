@@ -59,6 +59,8 @@
 - `hooks::init`, `hooks::shutdown`, `hooks::clear_hooks` and `version::init` are no longer
   public. `hooks::hook` and `instruction_hook::set_handler` fail unless a world is live, and
   `instruction_hook::ticks_since_last` panics on a thread other than BYOND's.
+- A `raw_types::values::Value` prints a string as its tag and ID. Print the `Value` to see the
+  text.
 
 ### For users of dmasm
 

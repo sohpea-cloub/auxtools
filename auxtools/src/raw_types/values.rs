@@ -1,5 +1,5 @@
-use super::{funcs, lists, strings};
-use std::{ffi::CStr, fmt};
+use super::{lists, strings};
+use std::fmt;
 
 macro_rules! value_tags {
 	(
@@ -128,12 +128,6 @@ impl fmt::Display for Value {
 			match self.tag {
 				ValueTag::Null => write!(f, "null"),
 				ValueTag::Number => write!(f, "{}", self.data.number),
-				ValueTag::String => {
-					let id = self.data.string;
-					let mut entry: *mut strings::StringEntry = std::ptr::null_mut();
-					assert_eq!(funcs::get_string_table_entry(&mut entry, id), 1);
-					write!(f, "{:?}", crate::text_of(CStr::from_ptr((*entry).data).to_bytes()))
-				}
 				_ => write!(f, "Value({}, {})", self.tag.0, self.data.id)
 			}
 		}
@@ -146,12 +140,6 @@ impl fmt::Debug for Value {
 			match self.tag {
 				ValueTag::Null => write!(f, "null"),
 				ValueTag::Number => write!(f, "{:?}", self.data.number),
-				ValueTag::String => {
-					let id = self.data.string;
-					let mut entry: *mut strings::StringEntry = std::ptr::null_mut();
-					assert_eq!(funcs::get_string_table_entry(&mut entry, id), 1);
-					write!(f, "{:?}", crate::text_of(CStr::from_ptr((*entry).data).to_bytes()))
-				}
 				_ => write!(f, "Value({}, {})", self.tag.0, self.data.id)
 			}
 		}

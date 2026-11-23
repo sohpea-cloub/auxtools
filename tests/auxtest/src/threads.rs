@@ -34,7 +34,7 @@ fn no_hook(_: &Value, _: &Value, _: Vec<Value>) -> DMResult {
 
 fn no_handler(_: *mut raw_types::procs::ExecutionContext) {}
 
-fn on_another_thread() -> Vec<String> {
+fn on_another_thread(raw_string: raw_types::values::Value) -> Vec<String> {
 	let mut failures = vec![];
 	let other_thread = "another thread";
 	must_fail(&mut failures, "Value::from_string", Value::from_string("auxtest"), other_thread);
@@ -70,6 +70,12 @@ fn on_another_thread() -> Vec<String> {
 		failures.push("world_is_live is true".to_owned());
 	}
 
+	let printed = [format!("{}", raw_string), format!("{:?}", raw_string)];
+	let expected = format!("Value(6, {})", unsafe { raw_string.data.id });
+	if printed != [expected.clone(), expected.clone()] {
+		failures.push(format!("a raw string value prints as {:?}, expected {:?} both ways", printed, expected));
+	}
+
 	let free = catch_unwind(|| {
 		let null = Value::NULL;
 		let number = Value::from(1.5);
@@ -91,12 +97,17 @@ fn on_another_thread() -> Vec<String> {
 
 #[hook("/proc/auxtest_threads")]
 fn test_threads() {
-	let failures = quiet(|| std::thread::spawn(on_another_thread).join())
+	let string = Value::from_string("auxtest raw")?;
+	let raw_string = string.raw();
+	let failures = quiet(|| std::thread::spawn(move || on_another_thread(raw_string)).join())
 		.ok()
 		.and_then(Result::ok)
 		.unwrap_or_else(|| vec!["the thread itself panicked".to_owned()]);
 	if !failures.is_empty() {
 		return Err(runtime!("test_threads: on another thread, {}", failures.join("; ")));
+	}
+	if format!("{}", string) != "\"auxtest raw\"" {
+		return Err(runtime!("test_threads: a string value prints as {}, expected \"auxtest raw\"", string));
 	}
 	Ok(Value::from(true))
 }
