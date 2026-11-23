@@ -2040,8 +2040,8 @@ fn stops(server: &str) {
 	assert!(
 		printed.starts_with(&format!(
 			"error: timed out after 1 second waiting for world process {} to exit. The connection to the debugger ended before the process exited. \
-			 To terminate the process, run stop again with --kill.",
-			pid
+			 To terminate the process, end process {} through the operating system.",
+			pid, pid
 		)),
 		"stop said {}",
 		printed
