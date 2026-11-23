@@ -798,6 +798,32 @@ fn loop_back_to_the_start() {
 	break_back(&mut client, Some("n < 10"));
 	step_back(&mut client);
 	println!("ok: a step from a conditional breakpoint on a loop back to the first instruction stops there");
+
+	run_out(&mut client);
+	assert_eq!(profile_request(&mut client, only.clone()), Ok(ProfileReply::Started));
+	eval(&mut client, None, "spawn()\n\tprofiled_countdown(5)");
+	client.resume();
+	let start = Instant::now();
+	let totals = loop {
+		let totals = profile_totals(&mut client, ProfileRequest::Totals);
+		if totals.codes.first().is_some_and(|code| code.total.hits == counted.total.hits) {
+			break profile_totals(&mut client, ProfileRequest::Stop);
+		}
+		assert!(start.elapsed() < Duration::from_secs(10), "the countdown never ended: {:?}", totals);
+		std::thread::sleep(Duration::from_millis(20));
+	};
+	let looped = profiled(&totals, "/profiled_countdown");
+	let Ok(ProfileReply::Code(instructions)) = profile_request(&mut client, ProfileRequest::Code { code: looped.code }) else {
+		panic!("expected the instructions of {:?}", looped);
+	};
+	assert_eq!(
+		(looped.total.calls, instructions.first().map(|first| (first.offset, first.hits))),
+		(1, Some((0, 6))),
+		"{:?} {:?}",
+		looped,
+		instructions
+	);
+	println!("ok: a loop back to the first instruction through a conditional breakpoint isn't counted as calls");
 }
 
 fn paused_at(client: &mut Client) -> (String, u32) {
