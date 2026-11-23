@@ -50,7 +50,8 @@ pub(super) fn builtin_in_table(type_id: u32, _var: &str) -> bool {
 }
 
 fn copy_table_entry(type_id: u32, from: u32, var: &str) -> Result<(), String> {
-	let key = leaked_string(var)?;
+	let name = new_string(var)?;
+	let key = name.get_id().0;
 	let table = |t: u32| -> Result<Vec<u32>, String> {
 		Ok(runtime_tables::misc_words(runtime_tables::type_field(t, type_fields::VAR_TABLE)?).unwrap_or_default())
 	};

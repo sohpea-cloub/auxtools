@@ -2746,6 +2746,23 @@ fn declarations(built: Built) {
 	assert_eq!(eval(&mut client, sound), "\"0 3 5\"");
 	println!("ok: sound parent change");
 
+	let pan = |client: &mut Client| eval(client, "#string-refs pan");
+	let before = pan(&mut client);
+	for _ in 0..2 {
+		let changes = source.edit("main.dm", "\tfrequency = 3\n", "\tfrequency = 3\n\tpan = 4\n");
+		reload(&mut watcher, &changes);
+		let changes = source.edit("main.dm", "\tfrequency = 3\n\tpan = 4\n", "\tfrequency = 3\n");
+		assert_eq!(changes.plan.builtin_inherited.len(), 1, "{:?}", changes.plan);
+		reload(&mut watcher, &changes);
+	}
+	assert_eq!(
+		pan(&mut client),
+		before,
+		"references to the var name pan after a sound type inherited it twice"
+	);
+	assert_eq!(eval(&mut client, "(new /sound/hr_st).pan"), "0");
+	println!("ok: a built-in var a sound type inherits again takes no reference to its name");
+
 	assert_eq!(eval(&mut client, "kept_limits.max_doubled()"), "6");
 	let changes = source.edit("main.dm", "\tvar/const/MAX = 3\n", "\tvar/const/MAX = 7\n");
 	assert_eq!(changes.consts, ["MAX"]);
