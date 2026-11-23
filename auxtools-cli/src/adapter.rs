@@ -962,13 +962,19 @@ impl Adapter {
 		};
 		let mut changed = HashSet::new();
 		let mut instructions = vec![];
+		let mut unlinked = vec![];
 		for (key, breakpoints) in self.set.lock().unwrap().iter_mut() {
 			let exact = key == INSTRUCTION_BREAKPOINTS;
+			let by_name = key == FUNCTION_BREAKPOINTS;
 			breakpoints.retain_mut(|breakpoint| {
 				if breakpoint.at.is_none() {
 					return true;
 				}
 				let now = placed.iter().find(|placed| placed.id == breakpoint.claim);
+				if by_name && now.is_some_and(|now| now.unlinked) {
+					unlinked.push(breakpoint.claim);
+					return false;
+				}
 				if now.is_some_and(|now| breakpoint.at.as_ref() == Some(&now.at) && breakpoint.file == now.file && breakpoint.line == now.line) {
 					return true;
 				}
@@ -987,6 +993,9 @@ impl Adapter {
 		}
 		changed.remove(INSTRUCTION_BREAKPOINTS);
 		self.relocated.extend(changed);
+		for claim in unlinked {
+			let _ = self.remove_breakpoint(claim);
+		}
 		for (id, removed) in instructions {
 			if removed {
 				self.removed_by_reload.insert(id);
@@ -1521,11 +1530,11 @@ impl Adapter {
 		};
 		let mut told = vec![];
 		for (id, name, condition, hit) in unset {
-			let (breakpoint, Some(in_world)) = self.function_breakpoint(id, &name, condition, hit.as_deref(), &mut vec![]) else {
-				continue;
-			};
-			let mut set = self.set.lock().unwrap();
-			set.entry(FUNCTION_BREAKPOINTS.to_owned()).or_default().push(in_world);
+			let (breakpoint, in_world) = self.function_breakpoint(id, &name, condition, hit.as_deref(), &mut vec![]);
+			if let Some(in_world) = in_world {
+				let mut set = self.set.lock().unwrap();
+				set.entry(FUNCTION_BREAKPOINTS.to_owned()).or_default().push(in_world);
+			}
 			told.push(breakpoint);
 		}
 		self.tell(told, false);

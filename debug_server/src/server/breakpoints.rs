@@ -233,16 +233,19 @@ impl Server {
 			let Some(proc) = Proc::from_id(proc) else {
 				continue;
 			};
+			let named = unnamed::proc_ref(&proc);
+			let unlinked = unnamed::find(&named.path, named.override_id).is_none_or(|found| found.id != proc.id);
 			for who in claims.keys().filter(|who| Some(who.client) == client) {
 				let (file, line) = Codes::breakpoint_place(&proc, offset.into());
 				placed.push(PlacedBreakpoint {
 					id: who.id,
 					at: InstructionRef {
-						proc: unnamed::proc_ref(&proc),
+						proc: named.clone(),
 						offset: offset.into()
 					},
 					file,
-					line
+					line,
+					unlinked
 				});
 			}
 		}

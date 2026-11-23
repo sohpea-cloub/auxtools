@@ -274,7 +274,9 @@ pub struct PlacedBreakpoint {
 	pub id: u32,
 	pub at: InstructionRef,
 	pub file: Option<String>,
-	pub line: Option<u32>
+	pub line: Option<u32>,
+	#[serde(default)]
+	pub unlinked: bool
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
