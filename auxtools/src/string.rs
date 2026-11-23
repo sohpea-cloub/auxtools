@@ -19,7 +19,7 @@ pub fn text_of(bytes: &[u8]) -> String {
 }
 
 pub struct StringRef {
-	pub value: Value
+	value: Value
 }
 
 impl StringRef {
@@ -40,9 +40,7 @@ impl StringRef {
 			return None;
 		}
 
-		Some(StringRef {
-			value: unsafe { Value::from_raw(value.raw) }
-		})
+		Some(StringRef { value })
 	}
 
 	pub unsafe fn from_id(id: raw_types::strings::StringId) -> Self {
@@ -81,7 +79,7 @@ impl StringRef {
 
 impl Clone for StringRef {
 	fn clone(&self) -> Self {
-		Self::from_value(self.value.clone()).unwrap()
+		StringRef { value: self.value.clone() }
 	}
 }
 
