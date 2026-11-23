@@ -11,6 +11,8 @@ use auxtools_cli::{
 };
 use auxtools_protocol::{ContinueKind, EvalResponse, InstructionRef, ProcRef, Request, RequestId, Response, WORLD_SHUTTING_DOWN};
 
+const SEE_THE_WORLD_RESUME: Duration = Duration::from_secs(3);
+
 const USAGE: &str = "\
 usage: debug_client WORLD.dmb --proc PATH --line N [options] [WATCH...]
 
@@ -98,16 +100,19 @@ fn parse_args() -> Result<Options, String> {
 	})
 }
 
-struct Connection(Client, VecDeque<Response>);
+struct Connection {
+	client: Client,
+	early_events: VecDeque<Response>
+}
 
 impl Connection {
 	fn send(&mut self, request: &Request) {
-		self.0.tell(request, None).unwrap();
+		self.client.tell(request, None).unwrap();
 		println!(">> {:?}", request);
 	}
 
 	fn recv_any(&mut self) -> Option<(Option<RequestId>, Response)> {
-		match self.0.hear(None) {
+		match self.client.hear(None) {
 			Ok(Some(Heard::Answer { to, response, .. })) => Some((Some(to), response)),
 			Ok(Some(Heard::Event(event))) => Some((None, event)),
 			Ok(None) | Err(_) => {
@@ -117,7 +122,7 @@ impl Connection {
 		}
 	}
 
-	fn recv_shown(&mut self) -> Option<(Option<RequestId>, Response)> {
+	fn recv_skipping_notifications(&mut self) -> Option<(Option<RequestId>, Response)> {
 		loop {
 			match self.recv_any()? {
 				(_, Response::Notification { message }) => println!("<< notification: {}", message.trim_end()),
@@ -135,25 +140,25 @@ impl Connection {
 		}
 	}
 
-	fn recv(&mut self) -> Option<Response> {
-		if let Some(event) = self.1.pop_front() {
+	fn recv_event(&mut self) -> Option<Response> {
+		if let Some(event) = self.early_events.pop_front() {
 			return Some(event);
 		}
 		loop {
-			if let (None, event) = self.recv_shown()? {
+			if let (None, event) = self.recv_skipping_notifications()? {
 				return Some(event);
 			}
 		}
 	}
 
 	fn request(&mut self, request: Request) -> Option<Response> {
-		let id = self.0.ask(&request, None).unwrap();
+		let id = self.client.ask(&request, None).unwrap();
 		println!(">> {:?}", request);
 		loop {
-			match self.recv_shown()? {
+			match self.recv_skipping_notifications()? {
 				(Some(to), answer) if Some(to) == id => return Some(answer),
 				(Some(_), _) => {}
-				(None, event) => self.1.push_back(event)
+				(None, event) => self.early_events.push_back(event)
 			}
 		}
 	}
@@ -226,7 +231,10 @@ fn main() {
 	let Ok(client) = when_listening(game.pid(), None, Client::connect) else {
 		std::process::exit(1);
 	};
-	let mut conn = Connection(client, VecDeque::new());
+	let mut conn = Connection {
+		client,
+		early_events: VecDeque::new()
+	};
 	println!("== connected to DreamDaemon");
 
 	let offset = match conn.request(Request::Offset {
@@ -257,7 +265,7 @@ fn main() {
 	conn.request(Request::Configured);
 
 	loop {
-		let Some(response) = conn.recv() else {
+		let Some(response) = conn.recv_event() else {
 			std::process::exit(1);
 		};
 		if let Response::BreakpointHit { .. } = response {
@@ -274,7 +282,7 @@ fn main() {
 	conn.request(Request::Continue {
 		kind: ContinueKind::Continue
 	});
-	std::thread::sleep(Duration::from_secs(3));
+	std::thread::sleep(SEE_THE_WORLD_RESUME);
 	conn.send(&Request::Disconnect);
 	game.kill();
 }
@@ -288,13 +296,14 @@ fn start(options: &Options) -> Result<Game, String> {
 			std::env::current_exe().map_err(|e| e.to_string())?.with_file_name(name)
 		}
 	};
+	let wait_for_debugger = true;
 	Game::start(
 		Launch {
 			program: bin.join(Server::DreamDaemon.program()),
 			dmb: &options.dmb,
 			args: &options.args,
 			env: &HashMap::new(),
-			debug: Some((library, true))
+			debug: Some((library, wait_for_debugger))
 		},
 		|_, line| print!("  | {}", line),
 		|code| println!("== the world exited ({:?})", code)
