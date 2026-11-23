@@ -78,6 +78,56 @@ jobs:
       - name: Lint
         run: ci/clippy.sh --locked --target "$TARGET" --workspace
 
+  minimum-rust:
+    name: Build with Rust ${{ matrix.rust }}
+    if: (github.event_name == 'workflow_dispatch' || github.repository_owner == 'willox' || github.repository_owner == 'auxtools') && !inputs.version
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - rust: "1.95"
+            manifests: Cargo.toml
+            packages: --workspace
+          - rust: "1.88"
+            manifests: auxtools/Cargo.toml auxtools-impl/Cargo.toml dmasm/bytecode/Cargo.toml
+            packages: -p auxtools -p auxtools-impl -p dmasm-bytecode
+    env:
+      TARGET: i686-unknown-linux-gnu
+      RUSTUP_TOOLCHAIN: ${{ matrix.rust }}
+      MANIFESTS: ${{ matrix.manifests }}
+      PACKAGES: ${{ matrix.packages }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Check that the manifests name this Rust version
+        run: |
+          for manifest in $MANIFESTS; do
+            grep -qxF "rust-version = \"$RUSTUP_TOOLCHAIN\"" "$manifest" || { echo "::error::$manifest doesn't name rust-version $RUSTUP_TOOLCHAIN"; exit 1; }
+          done
+
+      - name: Install the 32-bit compiler
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gcc-multilib g++-multilib
+
+      - name: Install Rust
+        run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --target "$TARGET" --no-self-update
+
+      - name: Restore downloaded crates
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+          key: crates-linux-${{ hashFiles('Cargo.lock') }}
+          restore-keys: crates-linux-
+
+      - name: Build
+        run: cargo build --locked --target "$TARGET" $PACKAGES
+
   build-linux:
     name: Build for Linux
     if: github.event_name == 'workflow_dispatch' || github.repository_owner == 'willox' || github.repository_owner == 'auxtools'

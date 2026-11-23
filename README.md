@@ -383,7 +383,9 @@ Linux binaries need glibc 2.35 or later. Windows binaries need Windows 10 or lat
 C runtime statically. `ci/check-linux.sh` and `ci/check-windows.sh` check these requirements.
 
 CI pins its Rust version and action versions. `rust-toolchain.toml` selects the same Rust
-version and both targets for local builds. Format code with
+version and both targets for local builds. CI also builds the workspace with Rust 1.95, and
+`auxtools`, `auxtools-impl` and `dmasm-bytecode` with Rust 1.88. These are the minimum versions
+that the manifests name. Format code with
 `cargo +nightly-2026-10-24 fmt --all`. The rustfmt configuration uses options that need nightly.
 
 CI downloads BYOND from the [BYOND build mirror](https://byond-builds.dm-lang.org) and checks
