@@ -104,6 +104,58 @@ auxtools check tgstation.dme -DCIBUILDING --byond-version 516.1689
 
 Findings use `FILE:LINE: PROC: diagnostic`. Pass the build's defines with `-D` and select its version with `--byond-version`. Exit code 5 means bugs were found; 0 means none were found. Unsupported procs and parse errors are reported as unchecked and do not affect the exit code. Runtime-only bugs, such as errors swallowed inside operator overloads, are not detected.
 
+## The auxtools library
+
+The `auxtools` crate lets a Rust library hook DM procs and work with BYOND values. It isn't on crates.io. Depend on it through git, pinned to a release tag, and build the library as a `cdylib` for a 32-bit target (`i686-unknown-linux-gnu` or `i686-pc-windows-msvc`):
+
+```toml
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+auxtools = { git = "https://github.com/auxtools/auxtools", tag = "v4.0.0" }
+```
+
+A hook replaces a DM proc's code with a Rust function. auxtools installs the hooks when DM calls `auxtools_init`:
+
+```rust
+use auxtools::*;
+
+#[hook("/proc/add_one")]
+fn add_one(x: Value) {
+	Ok(Value::from(x.as_number()? + 1.0))
+}
+```
+
+The world declares the proc and calls `auxtools_init` before it uses the hook. It calls `auxtools_shutdown` before it reboots or ends. An error from a hook calls `/proc/auxtools_stack_trace`, which raises it as a DM runtime error:
+
+```dm
+/proc/add_one(x)
+	CRASH("mylib isn't loaded")
+
+/proc/auxtools_stack_trace(msg)
+	CRASH(msg)
+
+/proc/mylib()
+	return world.system_type == MS_WINDOWS ? "mylib.dll" : "./libmylib.so"
+
+/world/New()
+	var/result = call_ext(mylib(), "auxtools_init")()
+	if(result != "SUCCESS")
+		world.log << "mylib: [result]"
+	. = ..()
+
+/world/Reboot()
+	call_ext(mylib(), "auxtools_shutdown")()
+	. = ..()
+
+/world/Del()
+	call_ext(mylib(), "auxtools_shutdown")()
+	. = ..()
+```
+
+`auxtools_init` returns `SUCCESS`, or `FAILED` with the reason. The library's API can change between major versions. [tests/auxtest](tests/auxtest) and its world in [tests/auxtest_host](tests/auxtest_host) use most of it.
+
 ## Supported BYOND versions
 
 Windows and Linux: 515.1637–515.1647 and 516.1648–516.1689.
