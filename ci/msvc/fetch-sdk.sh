@@ -1,6 +1,6 @@
 #!/bin/sh
-# Fetch Microsoft C runtime and Windows SDK headers/import libraries
-# for Linux cross-compilation to i686-pc-windows-msvc.
+# Fetch the Microsoft C runtime and the Windows SDK headers and import
+# libraries, to cross-compile for i686-pc-windows-msvc on Linux.
 #
 #     ci/msvc/fetch-sdk.sh DIRECTORY
 #

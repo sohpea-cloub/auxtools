@@ -3,17 +3,18 @@
 #
 #     ci/run-tests.sh PROGRAMS BYOND [TEST...]
 #
-# PROGRAMS contains test binaries, launcher and debug library; the debug
-# library has to be one built with `--features debug_server/test-commands`,
-# for the console commands the suites inspect a world with. BYOND is
-# the installation directory containing bin/. Run from the repository root.
+# PROGRAMS contains the test binaries, the launcher and the debug library. The
+# debug library must be built with `--features debug_server/test-commands`,
+# because the suites inspect a world with those console commands. BYOND is
+# the installation directory that contains bin/. Run from the repository root.
 #
 # Set WINE=wine to run Windows binaries on Linux.
 #
-# The tests run side by side, each in target/run-tests/TEST with its own
-# copy of the test worlds, and each prints its output when it ends. A test
-# still running after TIMEOUT seconds (900) is ended and fails. Set SERIAL=1
-# to run them one at a time from the repository root, with no time limit.
+# The tests run in parallel, each in target/run-tests/TEST with its own copy
+# of the test worlds. Each test prints its output when it ends. A test that
+# still runs after TIMEOUT seconds, 900 by default, is ended and fails. Set
+# SERIAL=1 to run them one at a time from the repository root, with no time
+# limit.
 #
 # With no TEST arguments, also run PROGRAMS/unit tests if that directory exists.
 set -u

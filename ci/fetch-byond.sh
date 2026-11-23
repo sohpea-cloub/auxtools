@@ -3,7 +3,7 @@
 #
 #     ci/fetch-byond.sh VERSION linux|windows DIRECTORY
 #
-# DIRECTORY/byond is the build afterwards, the directory with bin/ in it.
+# Afterwards, DIRECTORY/byond is the build: the directory with bin/ in it.
 #
 # Try the BYOND build mirror first, then byond.com. BYOND_MIRROR overrides
 # the mirror URL. Verify against ci/byond.sha256 before extraction.
