@@ -2379,6 +2379,30 @@ fn types(built: Built) {
 	assert_eq!(eval(&mut client, "(new /datum/labelled/kid).added_label"), "\"added_text\"");
 	println!("ok: a refused new var holds no reference to its name or its string");
 
+	let changes = source.edit(
+		"reload.dm",
+		"/proc/first_def()\n",
+		"/proc/static_label()\n\tvar/static/label = \"static_text\"\n\treturn label\n\n/proc/first_def()\n"
+	);
+	let Request::HotReload(mut refused) = reload_request(&changes) else {
+		unreachable!()
+	};
+	refused.plan.new_vars.push(dmasm::reload::NewVar {
+		type_path: "/datum/labelled".to_owned(),
+		var: "static_missing".to_owned(),
+		flags: 0,
+		value: dmasm::reload::ConstValue::Path("/datum/no_such_type".to_owned()),
+		init: None,
+		moved_from: vec![]
+	});
+	let result = expect_reload_result(watcher.request(Request::HotReload(refused)));
+	assert!(!result.applied, "a reload with a var of a missing type was applied: {:?}", result);
+	assert_eq!(eval(&mut client, "#string-refs static_text"), "0", "after a refused reload");
+	reload(&mut watcher, &changes);
+	assert_eq!(eval(&mut client, "#string-refs static_text"), "1", "after the static was added");
+	assert_eq!(eval(&mut client, "static_label()"), "\"static_text\"");
+	println!("ok: a refused new static local holds no reference to its string");
+
 	assert_eq!(eval(&mut client, "#fail-reload append"), "the next reload fails at Append");
 	let changes = source.edit(
 		"reload.dm",

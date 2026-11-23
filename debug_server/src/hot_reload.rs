@@ -127,14 +127,14 @@ impl AddedVars {
 		if let Some(id) = variable_ids(name.as_bytes()).first().or_else(|| self.param_names.get(name)).copied() {
 			return Ok(id);
 		}
-		let id = self.add(new_string(name)?, (0, 0));
+		let id = self.add(new_string(name)?, ((0, 0), None));
 		self.param_names.insert(name.to_owned(), id);
 		Ok(id)
 	}
 
-	fn add(&mut self, name: StringRef, value: (u32, u32)) -> u32 {
+	fn add(&mut self, name: StringRef, (value, text): ((u32, u32), Option<StringRef>)) -> u32 {
 		let id = self.next_id();
-		self.vars.push(PreparedNewVar { id, name, value, text: None });
+		self.vars.push(PreparedNewVar { id, name, value, text });
 		id
 	}
 }
@@ -1604,8 +1604,8 @@ fn new_statics(
 			continue;
 		}
 		let value = match (&local.value, &local.init) {
-			(Some(value), _) => const_value(value, pending).map_err(|e| format!("static local {}: {}", local.name, e))?,
-			(None, Some(_)) => (0, 0),
+			(Some(value), _) => owned_value(value, pending).map_err(|e| format!("static local {}: {}", local.name, e))?,
+			(None, Some(_)) => ((0, 0), None),
 			(None, None) => return Err(format!("static local {} has no initial value to start with", local.name))
 		};
 		let id = added.add(new_string(&local.name)?, value);
@@ -2070,6 +2070,16 @@ fn const_value(value: &ConstValue, pending: &Pending) -> Result<(u32, u32), Stri
 	})
 }
 
+fn owned_value(value: &ConstValue, pending: &Pending) -> Result<((u32, u32), Option<StringRef>), String> {
+	match value {
+		ConstValue::String(text) => {
+			let text = new_string(text)?;
+			Ok(((raw_types::values::ValueTag::String.0 as u32, text.get_id().0), Some(text)))
+		}
+		value => Ok((const_value(value, pending)?, None))
+	}
+}
+
 fn release_string(id: u32) {
 	unsafe {
 		raw_types::funcs::dec_ref_count(raw_types::values::Value {
@@ -2151,13 +2161,7 @@ fn prepare_new_var(
 	}
 
 	let id = added.next_id();
-	let (value, text) = match &new.value {
-		ConstValue::String(text) => {
-			let text = new_string(text).map_err(fail)?;
-			((raw_types::values::ValueTag::String.0 as u32, text.get_id().0), Some(text))
-		}
-		value => (const_value(value, pending).map_err(fail)?, None)
-	};
+	let (value, text) = owned_value(&new.value, pending).map_err(fail)?;
 	let name_ref = new_string(&new.var).map_err(fail)?;
 	let name = name_ref.get_id().0;
 	type_vars.new_names.insert(id, name);
@@ -2341,7 +2345,7 @@ fn prepare_var_default(
 			None if inherit::builtin_in_table(type_id, &default.var) => {
 				let id = match variable_ids(default.var.as_bytes()).first() {
 					Some(&id) => id,
-					None => added.add(new_string(&default.var).map_err(fail)?, (0, 0))
+					None => added.add(new_string(&default.var).map_err(fail)?, ((0, 0), None))
 				};
 				let at = table.chunks(4).position(|entry| entry[0] > key).unwrap_or(table.len() / 4);
 				table.splice(at * 4..at * 4, [key, id, value.0, value.1]);
