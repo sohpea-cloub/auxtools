@@ -1,25 +1,11 @@
-use std::sync::Mutex;
-
 use auxtools::*;
 
-static KEPT: Mutex<Option<WeakValue>> = Mutex::new(None);
-
-byond_ffi_fn! { auxtest_upgrade_kept_weak() {
-	let kept = KEPT.lock().unwrap().take()?;
-	Some(if kept.upgrade().is_some() { "upgraded" } else { "none" }.to_owned())
-} }
-
 #[hook("/proc/auxtest_weak_values")]
-fn test_weak_values(someval: Value, kept: Value) {
+fn test_weak_values(someval: Value) {
 	let weak = someval.as_weak()?;
-	*KEPT.lock().unwrap() = Some(kept.as_weak()?);
 
 	if weak.upgrade().is_none() {
 		return Err(runtime!("test_weak_values: Failed to upgrade weak reference to existing value"));
-	}
-
-	if std::thread::spawn(move || weak.upgrade().is_some()).join().is_ok() {
-		return Err(runtime!("test_weak_values: a weak reference was upgraded on another thread"));
 	}
 
 	Proc::find("/proc/del_value")

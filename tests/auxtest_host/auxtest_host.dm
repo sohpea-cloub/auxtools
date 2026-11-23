@@ -34,8 +34,6 @@
 /proc/del_value(v)
 	del v
 
-var/datum/weak_kept_datum = new
-
 var/datum/weak_test_datum
 /proc/create_datum_for_weak()
 	weak_test_datum = new
@@ -129,9 +127,6 @@ var/datum/weak_test_datum
 /proc/auxtest_tables()
 	CRASH()
 
-/proc/auxtest_threads()
-	CRASH()
-
 /proc/auxtest_weak_values()
 	CRASH()
 
@@ -211,26 +206,24 @@ BIG_TWINS(auxtest_big_a, auxtest_big_b)
 	ASSERT(auxtest_procs() == TRUE)
 	ASSERT(auxtest_strings() == TRUE)
 	ASSERT(auxtest_tables() == TRUE)
-	ASSERT(auxtest_threads() == TRUE)
 	ASSERT(auxtest_value_from() == TRUE)
 	ASSERT(auxtest_code_before_shutdown() == TRUE)
 	ASSERT(auxtest_shared_code() == TRUE)
 	ASSERT(auxtest_entry_users() == TRUE)
 
 	var/datum/weak_test = new
-	ASSERT(auxtest_weak_values(weak_test, weak_kept_datum) == TRUE)
+	ASSERT(auxtest_weak_values(weak_test) == TRUE)
 	ASSERT(weak_test == null)
 
 	if (auxtest_inc_counter() == 8)
 		auxtest_shut_down(auxtest_dll)
-		var/upgraded = call_ext(auxtest_dll, "auxtest_upgrade_kept_weak")()
-		if (upgraded != "none")
-			auxtest_out("FAILED: a weak reference upgraded after shutdown gave [upgraded ? upgraded : "an empty string"], expected none")
 		call_ext(auxtest_dll, "auxtest_fail_next_init")()
 		auxtest_failed_init(auxtest_dll)
+		var/shut_down = call_ext(auxtest_dll, "auxtools_shutdown")()
+		if (shut_down != "SUCCESS")
+			auxtest_out("FAILED: auxtools_shutdown after a failed init gave [shut_down ? shut_down : "an empty string"], expected SUCCESS")
 
 		auxtest_out("SUCCESS: Finished")
-		call_ext(auxtest_dll, "auxtools_shutdown")()
 		shutdown()
 	else
 		auxtest_shut_down(auxtest_dll)
@@ -240,9 +233,6 @@ BIG_TWINS(auxtest_big_a, auxtest_big_b)
 	var/shut_down = call_ext(auxtest_dll, "auxtools_shutdown")()
 	if (shut_down != "SUCCESS")
 		auxtest_out("FAILED: auxtools_shutdown gave [shut_down ? shut_down : "an empty string"], expected SUCCESS")
-	var/after_shutdown = call_ext(auxtest_dll, "auxtest_after_shutdown")()
-	if (after_shutdown != "ok")
-		auxtest_out("FAILED: [after_shutdown ? after_shutdown : "the checks after shutdown returned nothing"]")
 	var/init_again = call_ext(auxtest_dll, "auxtools_init")()
 	if (init_again != "SUCCESS")
 		auxtest_out("FAILED: auxtools_init after a shutdown gave [init_again ? init_again : "an empty string"], expected SUCCESS")

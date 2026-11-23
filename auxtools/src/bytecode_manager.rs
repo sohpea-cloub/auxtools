@@ -96,7 +96,7 @@ pub fn shutdown() {
 	}
 }
 
-unsafe fn state() -> &'static mut State {
+fn state() -> &'static mut State {
 	unsafe { (*BYTECODE_ALLOCATIONS.get()).as_mut().unwrap() }
 }
 
@@ -125,21 +125,14 @@ unsafe fn references(entry: u32) -> Result<u32, String> {
 }
 
 /// Keeps `bytecode` as the code at `ptr` for readers of old frames.
-#[track_caller]
 pub fn remember_bytecode(ptr: *const u32, bytecode: &[u32]) {
-	crate::expect_live("remember_bytecode");
 	changed();
-	unsafe { state() }
-		.retired_by_address
-		.entry(ptr as usize)
-		.or_insert_with(|| bytecode.to_vec());
+	state().retired_by_address.entry(ptr as usize).or_insert_with(|| bytecode.to_vec());
 }
 
 /// The code at `ptr`, if it is code that this library replaced or kept.
-#[track_caller]
 pub fn bytecode_at(ptr: *const u32) -> Option<Vec<u32>> {
-	crate::expect_live("bytecode_at");
-	let state = unsafe { state() };
+	let state = state();
 
 	if let Some(bytecode) = state.retired_by_address.get(&(ptr as usize)) {
 		return Some(bytecode.clone());
@@ -209,9 +202,8 @@ unsafe fn give_own_entry(state: &mut State, proc: &Proc, keep_address: bool) -> 
 /// code keeps its address, so its running frames run any patch to it.
 ///
 /// # Safety
-/// Call on BYOND's thread while a world is live. No other library has
-/// replaced `proc`'s code: the new entry takes over the code's buffer, and that
-/// library would free the buffer when it shuts down.
+/// No other library has replaced `proc`'s code. The new entry takes over the
+/// code's buffer, and that library would free the buffer when it shuts down.
 pub unsafe fn own_code(proc: &Proc) -> Result<(), String> {
 	let state = state();
 	if owned_entry(state, proc).is_none() {
@@ -222,11 +214,8 @@ pub unsafe fn own_code(proc: &Proc) -> Result<(), String> {
 
 /// Gives `proc` a new code entry of its own, with a copy of its code at a new
 /// address.
-///
-/// # Safety
-/// Call on BYOND's thread while a world is live.
-pub unsafe fn copy_code(proc: &Proc) -> Result<(), String> {
-	give_own_entry(state(), proc, false)
+pub fn copy_code(proc: &Proc) -> Result<(), String> {
+	unsafe { give_own_entry(state(), proc, false) }
 		.map(|_| ())
 		.map_err(|e| format!("{} couldn't get a copy of its code: {}", proc.path, e))
 }

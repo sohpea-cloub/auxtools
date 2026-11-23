@@ -163,7 +163,7 @@ fn read_command_line() -> (Vec<String>, String) {
 fn attach() {
 	let attached = crate::guard(|| {
 		let _ = COMMAND_LINE.set(read_command_line());
-		unsafe { auxtools::init_on_world_load(&WORLD_LOAD) }
+		auxtools::init_on_world_load(&WORLD_LOAD)
 	});
 	if let Err(e) = attached.and_then(|initialised| initialised) {
 		let _ = crate::guard(|| failed(&e));
@@ -280,11 +280,11 @@ fn start() {
 	for path in HELPER_OVERRIDES {
 		if let Some(proc) = definition_count(path).checked_sub(1).and_then(|last| Proc::find_override(path, last)) {
 			proc.set_apart();
-			hot_reload::pin_world_proc(proc.id().0);
+			hot_reload::pin_world_proc(proc.id.0);
 		}
 	}
 
-	if let Ok(port) = Value::world().get_number(byond_string!("port")) {
+	if let Ok(port) = Value::WORLD.get_number(byond_string!("port")) {
 		waker::set_port(port as u16);
 	}
 	crate::journal::world_loaded();

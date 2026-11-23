@@ -8,7 +8,6 @@ mod lists;
 mod procs;
 mod strings;
 mod tables;
-mod threads;
 mod value_from;
 mod weak;
 

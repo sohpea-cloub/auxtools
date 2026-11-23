@@ -169,7 +169,7 @@ impl StagedProcs {
 	fn world_definitions(&mut self, path: &str) -> &mut Vec<u32> {
 		self.world
 			.entry(path.to_owned())
-			.or_insert_with(|| Proc::overrides(path).iter().map(|p| p.id().0).collect())
+			.or_insert_with(|| Proc::overrides(path).iter().map(|p| p.id.0).collect())
 	}
 
 	fn own(&self, type_id: u32, field: usize) -> Result<Vec<u32>, String> {
@@ -467,7 +467,7 @@ pub fn prepare(request: &HotReloadRequest, warnings: &mut Vec<String>, skipped: 
 	if let Some(init) = global_init {
 		match prepare_global_init(init, &pending, &mut world_globals, &mut added, warnings) {
 			Ok(Some(StartingInit::Proc(code, at_start))) => {
-				prepared.global_init_at_start = at_start.then_some(code.proc.id());
+				prepared.global_init_at_start = at_start.then_some(code.proc.id);
 				prepared.code.push(code);
 				restarted = true;
 			}
@@ -487,10 +487,10 @@ pub fn prepare(request: &HotReloadRequest, warnings: &mut Vec<String>, skipped: 
 		let proc_ref = &change.proc;
 		let words = find(proc_ref).and_then(|proc| {
 			let entry =
-				unsafe { runtime_tables::proc_entry(proc.id()) }.ok_or_else(|| format!("{}: couldn't read its table entry", describe(proc_ref)))?;
+				unsafe { runtime_tables::proc_entry(proc.id) }.ok_or_else(|| format!("{}: couldn't read its table entry", describe(proc_ref)))?;
 			let words = settings_words(&entry, &change.settings, &proc_ref.path)?;
 			prepared.renames.extend(renamed(&proc, &entry, &words));
-			Ok(words.into_iter().map(move |(word, value)| (proc.id().0, word, value)))
+			Ok(words.into_iter().map(move |(word, value)| (proc.id.0, word, value)))
 		});
 		match words {
 			Ok(words) => prepared.entry_words.extend(words),
@@ -704,7 +704,7 @@ fn prepared_code(
 	world_globals: &mut WorldGlobals,
 	added: &mut AddedVars
 ) -> Result<PreparedCode, String> {
-	let entry = unsafe { runtime_tables::proc_entry(proc.id()) }.ok_or_else(|| format!("{}: couldn't read its table entry", name))?;
+	let entry = unsafe { runtime_tables::proc_entry(proc.id) }.ok_or_else(|| format!("{}: couldn't read its table entry", name))?;
 	let bytecode_id = unsafe { runtime_tables::intern_misc(&bytecode) }.map_err(|e| format!("{}: {}", name, e))?;
 
 	let locals_id = if reload.locals.len() == proc.locals_count() {
@@ -783,13 +783,13 @@ fn prepare_global_init(
 		let bytecode = assemble_with(NAME, &code, None, known, pending, world_globals, added)?;
 		return Ok(Some(StartingInit::Now(bytecode)));
 	};
-	if proc.id() != start && debug::CallStacks::active().iter().any(|frame| frame.proc.id() == proc.id()) {
+	if proc.id != start && debug::CallStacks::active().iter().any(|frame| frame.proc.id == proc.id) {
 		warnings.push(ran());
 		return Ok(None);
 	}
 	let known = global_slots(&code, &init.proc_statics, pending, added, world_globals);
 	let bytecode = assemble_with(NAME, &code, None, known, pending, world_globals, added)?;
-	let at_start = proc.id() == start;
+	let at_start = proc.id == start;
 	prepared_code(proc, NAME.to_owned(), &code, bytecode, pending, world_globals, added).map(|code| Some(StartingInit::Proc(code, at_start)))
 }
 
@@ -900,7 +900,7 @@ fn global_slots(
 fn global_init_proc() -> Option<Proc> {
 	let proc = crate::unnamed::find(auxtools_protocol::GLOBAL_INIT, 0)?;
 	let types = unsafe { runtime_tables::type_count() }.ok()?;
-	let a_types = (0..types).any(|type_id| unsafe { runtime_tables::type_field(type_id, type_fields::INIT_PROC) }.ok() == Some(proc.id().0));
+	let a_types = (0..types).any(|type_id| unsafe { runtime_tables::type_field(type_id, type_fields::INIT_PROC) }.ok() == Some(proc.id.0));
 	(!a_types).then_some(proc)
 }
 
@@ -959,9 +959,9 @@ fn renamed(proc: &Proc, entry: &ProcEntryWords, words: &[(usize, u32)]) -> Optio
 	let path = strip_path(&proc.path);
 	let (type_path, _) = path.rsplit_once('/')?;
 	let type_id = find_type(type_path).ok()?;
-	let on_map = unsafe { runtime_tables::named_procs(type_id, from) }.is_ok_and(|procs| procs.contains(&proc.id().0));
+	let on_map = unsafe { runtime_tables::named_procs(type_id, from) }.is_ok_and(|procs| procs.contains(&proc.id.0));
 	on_map.then_some(Rename {
-		proc: proc.id().0,
+		proc: proc.id.0,
 		type_id,
 		from,
 		to,
@@ -1186,7 +1186,7 @@ fn prepare_init_proc(
 	let current = unsafe { runtime_tables::type_field(type_id, type_fields::INIT_PROC) }.map_err(fail)?;
 	let current = (current != NONE).then(|| Proc::from_id(raw_types::procs::ProcId(current))).flatten();
 	let template = match &current {
-		Some(proc) => unsafe { runtime_tables::proc_entry(proc.id()) },
+		Some(proc) => unsafe { runtime_tables::proc_entry(proc.id) },
 		None => proc_template().ok()
 	}
 	.ok_or_else(|| fail("couldn't find a proc entry to copy".to_owned()))?;
@@ -1213,7 +1213,7 @@ fn prepare_init_proc(
 fn prepare_removal(removed: &RemovedProc, staged: &mut StagedProcs) -> Result<PreparedRemoval, String> {
 	let shown = describe(&removed.proc);
 	let fail = |e: String| format!("{}: {}", shown, e);
-	let id = find(&removed.proc)?.id().0;
+	let id = find(&removed.proc)?.id.0;
 	let entry = staged.entry(id).ok_or_else(|| fail("couldn't read its table entry".to_owned()))?;
 	let next = entry.0[ProcEntryWords::NEXT_OVERRIDE];
 
@@ -2372,7 +2372,7 @@ fn apply_code<K: Ord + std::hash::Hash + Copy, T>(
 	failures: &mut Vec<String>
 ) -> Option<UnhookedCode<K, T>> {
 	let (old_ptr, _) = unsafe { p.proc.bytecode_mut_ptr() };
-	mark_reloaded(p.proc.id().0, if p.lines.is_some() { Reloaded::Lines } else { Reloaded::Code });
+	mark_reloaded(p.proc.id.0, if p.lines.is_some() { Reloaded::Lines } else { Reloaded::Code });
 
 	if !auxtools::debug::has_local_names(&p.proc, old_ptr) {
 		let names = auxtools::debug::local_names_for(&p.proc, old_ptr);
@@ -2389,7 +2389,7 @@ fn apply_code<K: Ord + std::hash::Hash + Copy, T>(
 			let other_file = (code.place(offset, false).and_then(|(file, _)| file))
 				.filter(|&file| code.file().is_some_and(|own| own != file))
 				.map(str::to_owned);
-			let known = breakpoints.remove(&(p.proc.id(), offset as u16));
+			let known = breakpoints.remove(&(p.proc.id, offset as u16));
 			let _ = unhook_instruction(&p.proc, offset);
 			Some((offset, line, other_file, known))
 		})
@@ -2405,20 +2405,20 @@ fn apply_code<K: Ord + std::hash::Hash + Copy, T>(
 		debug_file(&old)
 	};
 
-	unsafe { runtime_tables::set_proc_entry_word(p.proc.id(), ProcEntryWords::BYTECODE, p.bytecode_id) };
+	unsafe { runtime_tables::set_proc_entry_word(p.proc.id, ProcEntryWords::BYTECODE, p.bytecode_id) };
 	if let Some(locals) = p.locals_id {
-		unsafe { runtime_tables::set_proc_entry_word(p.proc.id(), ProcEntryWords::LOCALS, locals) };
+		unsafe { runtime_tables::set_proc_entry_word(p.proc.id, ProcEntryWords::LOCALS, locals) };
 	}
 	if let Some(params) = p.params_id {
-		unsafe { runtime_tables::set_proc_entry_word(p.proc.id(), ProcEntryWords::PARAMETERS, params) };
+		unsafe { runtime_tables::set_proc_entry_word(p.proc.id, ProcEntryWords::PARAMETERS, params) };
 	}
 	for &(word, value) in &p.settings {
-		unsafe { runtime_tables::set_proc_entry_word(p.proc.id(), word, value) };
+		unsafe { runtime_tables::set_proc_entry_word(p.proc.id, word, value) };
 	}
 
 	let (new_ptr, _) = unsafe { p.proc.bytecode_mut_ptr() };
 	let names_at = if auxtools::debug::has_local_names(&p.proc, new_ptr) && auxtools::debug::local_names_for(&p.proc, new_ptr) != local_names {
-		unsafe { auxtools::copy_code(&p.proc) }.map(|()| unsafe { p.proc.bytecode_mut_ptr() }.0)
+		auxtools::copy_code(&p.proc).map(|()| unsafe { p.proc.bytecode_mut_ptr() }.0)
 	} else {
 		Ok(new_ptr)
 	};
@@ -2426,7 +2426,7 @@ fn apply_code<K: Ord + std::hash::Hash + Copy, T>(
 		Ok(at) => auxtools::debug::set_local_names(&p.proc, at, local_names),
 		Err(e) => failures.push(format!("{}: new calls show the old names of its locals: {}", p.name, e))
 	}
-	crate::code_index::proc_changed(p.proc.id());
+	crate::code_index::proc_changed(p.proc.id);
 
 	let old_code = old_code.filter(|_| !hooked.is_empty())?;
 	Some(UnhookedCode {
@@ -2463,7 +2463,7 @@ fn restore_breakpoints<K: Ord + std::hash::Hash + Copy, T>(
 
 		let mut known_as: Vec<(raw_types::procs::ProcId, u32, K)> = moved_breakpoints
 			.iter()
-			.filter(|((proc, ..), at)| *proc == p.proc.id() && **at == old_offset)
+			.filter(|((proc, ..), at)| *proc == p.proc.id && **at == old_offset)
 			.map(|(key, _)| *key)
 			.collect();
 		for key in &known_as {
@@ -2471,7 +2471,7 @@ fn restore_breakpoints<K: Ord + std::hash::Hash + Copy, T>(
 		}
 		for client in known.iter().flat_map(BTreeMap::keys) {
 			if !known_as.iter().any(|(.., other)| other == client) {
-				known_as.push((p.proc.id(), old_offset, *client));
+				known_as.push((p.proc.id, old_offset, *client));
 			}
 		}
 
@@ -2497,7 +2497,7 @@ fn restore_breakpoints<K: Ord + std::hash::Hash + Copy, T>(
 		}
 
 		if let Some(known) = known {
-			breakpoints.insert((p.proc.id(), offset as u16), known);
+			breakpoints.insert((p.proc.id, offset as u16), known);
 		}
 		for key in known_as {
 			if key.1 != offset {
@@ -2669,7 +2669,7 @@ fn renumber(removed: &[PreparedRemoval], added: &[PreparedNewProc]) {
 	for path in paths {
 		let mut procs: Vec<Proc> = Proc::overrides(path.as_str())
 			.into_iter()
-			.filter(|p| !removed_ids.contains(&p.id().0) && !added_ids.contains(&p.id().0))
+			.filter(|p| !removed_ids.contains(&p.id.0) && !added_ids.contains(&p.id.0))
 			.collect();
 		let mut new: Vec<&PreparedNewProc> = added.iter().filter(|a| strip_path(&a.place.path) == path).collect();
 		new.sort_by_key(|a| a.place.override_id);
@@ -2686,7 +2686,7 @@ fn renumber(removed: &[PreparedRemoval], added: &[PreparedNewProc]) {
 fn proc_template() -> Result<ProcEntryWords, String> {
 	Proc::find("/proc/auxtools_expr_stub")
 		.or_else(|| Proc::find("/icon/proc/Width"))
-		.and_then(|proc| unsafe { runtime_tables::proc_entry(proc.id()) })
+		.and_then(|proc| unsafe { runtime_tables::proc_entry(proc.id) })
 		.ok_or_else(|| "couldn't find a proc entry to copy (/proc/auxtools_expr_stub or /icon/proc/Width)".to_owned())
 }
 
@@ -2848,15 +2848,11 @@ impl WorldGlobals {
 	fn of(&mut self, proc: &Proc) -> Rc<GlobalUses> {
 		let (at, len) = unsafe { proc.bytecode_mut_ptr() };
 		let at = at as usize;
-		if let Some((_, _, read)) = self
-			.procs
-			.get(&proc.id().0)
-			.filter(|(was_at, was_len, _)| *was_at == at && *was_len == len)
-		{
+		if let Some((_, _, read)) = self.procs.get(&proc.id.0).filter(|(was_at, was_len, _)| *was_at == at && *was_len == len) {
 			return read.clone();
 		}
 		let read = Rc::new(GlobalUses::read(&original_code(proc)));
-		self.procs.insert(proc.id().0, (at, len, read.clone()));
+		self.procs.insert(proc.id.0, (at, len, read.clone()));
 		read
 	}
 

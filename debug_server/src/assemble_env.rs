@@ -73,7 +73,7 @@ fn ancestry(ty: &str) -> Vec<String> {
 fn found(proc: Proc, warning: Option<String>) -> dmasm::compiler::FoundProc {
 	dmasm::compiler::FoundProc {
 		tag: raw_types::values::ValueTag::ProcRef.0,
-		data: proc.id().0,
+		data: proc.id.0,
 		warning
 	}
 }
@@ -139,7 +139,7 @@ impl dmasm::assembler::AssembleEnv for AssembleEnv {
 	}
 
 	fn get_proc_index(&mut self, path: &str) -> Option<u32> {
-		Proc::find(path).map(|p| p.id().0)
+		Proc::find(path).map(|p| p.id.0)
 	}
 
 	fn get_type(&mut self, path: &str) -> Option<(u8, u32)> {
@@ -160,7 +160,7 @@ impl dmasm::assembler::AssembleEnv for AssembleEnv {
 			return Some(found);
 		}
 
-		last_definition(path).map(|proc| (raw_types::values::ValueTag::ProcRef.0, proc.id().0))
+		last_definition(path).map(|proc| (raw_types::values::ValueTag::ProcRef.0, proc.id.0))
 	}
 
 	fn get_resource_index(&mut self, path: &str) -> Option<u32> {

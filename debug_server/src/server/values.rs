@@ -560,7 +560,7 @@ impl Pausing {
 				constants += 1;
 				continue;
 			}
-			let value = Value::globals().get(StringRef::new(name.as_str())?)?;
+			let value = Value::GLOBAL.get(StringRef::new(name.as_str())?)?;
 			let expr = format!("global.{}", name);
 			variables.push(self.value_to_variable(name, &value, Some(expr)));
 		}
@@ -670,7 +670,7 @@ impl Pausing {
 				Ok(())
 			}
 
-			Variables::Globals => Value::globals().set(StringRef::new(name).map_err(runtime)?, value).map_err(runtime),
+			Variables::Globals => Value::GLOBAL.set(StringRef::new(name).map_err(runtime)?, value).map_err(runtime),
 			Variables::Builtins => Err("BYOND's constants can't be changed".to_owned()),
 			Variables::ObjectVars(object, _) => object.set(StringRef::new(name).map_err(runtime)?, value).map_err(runtime),
 

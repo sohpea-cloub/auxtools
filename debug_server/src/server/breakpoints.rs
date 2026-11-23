@@ -132,7 +132,7 @@ impl Server {
 
 		match hook_instruction(&proc, instruction.offset) {
 			Ok(()) => {
-				let key = (proc.id(), instruction.offset as u16);
+				let key = (proc.id, instruction.offset as u16);
 				let claims = self.breakpoints.claims.entry(key).or_default();
 				let told = claims.get(&(client, placed)).is_some_and(|old| old.told && old.condition == condition);
 				claims.insert((client, placed), Claim {
@@ -147,7 +147,7 @@ impl Server {
 				let offset = instruction.offset;
 				self.breakpoints
 					.moved
-					.retain(|&(id, from, who), &mut at| id != proc.id() || who != (client, placed) || (at != offset && from != offset));
+					.retain(|&(id, from, who), &mut at| id != proc.id || who != (client, placed) || (at != offset && from != offset));
 
 				instruction.proc = unnamed::proc_ref(&proc);
 				self.answer(Response::BreakpointSet {
@@ -179,13 +179,13 @@ impl Server {
 			Breakpoints::breakpoint_offset(&proc, instruction.offset)
 		};
 		let who = (client, placed);
-		let offset = self.breakpoints.moved.get(&(proc.id(), asked, who)).copied().unwrap_or(asked);
+		let offset = self.breakpoints.moved.get(&(proc.id, asked, who)).copied().unwrap_or(asked);
 
 		self.breakpoints
 			.moved
-			.retain(|(id, _, other), at| *id != proc.id() || *at != offset || *other != who);
+			.retain(|(id, _, other), at| *id != proc.id || *at != offset || *other != who);
 
-		let key = (proc.id(), offset as u16);
+		let key = (proc.id, offset as u16);
 		let claims = self.breakpoints.claims.entry(key).or_default();
 		let had = claims.remove(&who);
 		let skipped = had.as_ref().map_or(0, |claim| claim.skipped);

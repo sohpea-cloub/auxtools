@@ -1,7 +1,7 @@
 pub static mut BYOND_VERSION_MAJOR: u32 = 0;
 pub static mut BYOND_VERSION_MINOR: u32 = 0;
 
-pub(crate) fn init() -> Result<(), String> {
+pub fn init() -> Result<(), String> {
 	let (major, minor) = byond_scan::version().map_err(|err| format!("Couldn't read the BYOND version ({err})"))?;
 
 	unsafe {

@@ -30,7 +30,7 @@ impl Pausing {
 						continue;
 					}
 					let value = StringRef::new(name.as_str())
-						.and_then(|var| Value::globals().get(var))
+						.and_then(|var| Value::GLOBAL.get(var))
 						.map_err(|e| e.message)?;
 					values.push((name, value));
 				}

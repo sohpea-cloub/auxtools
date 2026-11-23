@@ -1,25 +1,10 @@
 //! Hooks procs and reads and changes the game world, from a library that a
 //! BYOND world loads.
 //!
-//! # Threads and worlds
-//!
-//! BYOND's data may be touched only on BYOND's thread while a world is live. A
-//! world is live from `auxtools_init`, or the load that [`init_on_world_load`]
-//! waits for, until `auxtools_shutdown` or [`shut_down_with_world`].
-//!
-//! The safe API keeps to this. [`Value`], [`Proc`], [`StringRef`] and [`List`]
-//! are neither `Send` nor `Sync`, so they stay on the thread that made them.
-//! Each safe function that makes one, or that reaches BYOND without one, first
-//! checks [`world_is_live`]. It returns an error if it returns a `Result`, and
-//! panics otherwise. Null and numbers hold no reference, so any thread can make
-//! them, and no method passes them to BYOND.
-//!
-//! A handle belongs to the world it was made in. Don't keep one after the hook
-//! or call that made it returns. A [`Proc`] from an ended world reads as
-//! missing, but a [`Value`] can't tell. Keep a [`WeakValue`] instead.
-//!
-//! The `unsafe` functions don't check. Their `# Safety` sections say what they
-//! need.
+//! Use BYOND's data on BYOND's thread while a world is live: in hooks, and in
+//! other code that BYOND runs between `auxtools_init` and `auxtools_shutdown`.
+//! The library doesn't check this. Don't keep a [`Value`] after the hook that
+//! made it returns. Keep a [`WeakValue`] instead.
 
 #[doc(hidden)]
 pub mod appearance_tables;
@@ -46,7 +31,6 @@ mod weak_value;
 
 use std::{
 	any::Any,
-	cell::Cell,
 	sync::{
 		atomic::{AtomicBool, AtomicU32, Ordering},
 		Mutex, OnceLock
@@ -73,21 +57,6 @@ pub use weak_value::WeakValue;
 
 #[cfg(windows)]
 extern crate winapi;
-
-#[cfg(doctest)]
-pub struct ValueIsNotSend;
-
-#[cfg(doctest)]
-pub struct ValueIsNotSync;
-
-#[cfg(doctest)]
-pub struct StringRefIsNotSend;
-
-#[cfg(doctest)]
-pub struct ListIsNotSend;
-
-#[cfg(doctest)]
-pub struct ProcIsNotSync;
 
 pub static PIN_DLL: AtomicBool = AtomicBool::new(true);
 
@@ -129,68 +98,6 @@ pub fn panic_message(payload: &(dyn Any + Send)) -> String {
 	message.unwrap_or("no message").to_owned()
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum ThreadRole {
-	Other,
-	ByondAfterShutdown,
-	Live
-}
-
-thread_local!(static ROLE: Cell<ThreadRole> = const { Cell::new(ThreadRole::Other) });
-
-#[inline]
-pub fn world_is_live() -> bool {
-	ROLE.get() == ThreadRole::Live
-}
-
-pub(crate) fn on_byond_thread() -> bool {
-	ROLE.get() != ThreadRole::Other
-}
-
-fn set_live(live: bool) {
-	ROLE.set(if live { ThreadRole::Live } else { ThreadRole::ByondAfterShutdown });
-}
-
-fn not_live_message(operation: &str) -> String {
-	match ROLE.get() {
-		ThreadRole::ByondAfterShutdown => format!("{} needs a live world, but auxtools has shut down", operation),
-		_ => format!(
-			"{} needs BYOND's thread while a world is live, but this is another thread or auxtools hasn't initialised",
-			operation
-		)
-	}
-}
-
-#[cold]
-#[inline(never)]
-#[track_caller]
-fn not_live(operation: &str) -> ! {
-	panic!("{}", not_live_message(operation))
-}
-
-#[inline]
-#[track_caller]
-pub(crate) fn expect_live(operation: &str) {
-	if !world_is_live() {
-		not_live(operation)
-	}
-}
-
-#[inline]
-pub(crate) fn check_live(operation: &str) -> Result<(), Runtime> {
-	if world_is_live() {
-		Ok(())
-	} else {
-		Err(Runtime::new(not_live_message(operation)))
-	}
-}
-
-static WORLD_GENERATION: AtomicU32 = AtomicU32::new(0);
-
-pub(crate) fn world_generation() -> u32 {
-	WORLD_GENERATION.load(Ordering::Relaxed)
-}
-
 static INIT_FAILURE: OnceLock<String> = OnceLock::new();
 
 byond_ffi_fn! { auxtools_init(_input) {
@@ -213,11 +120,7 @@ fn try_init() -> Result<(), String> {
 }
 
 fn try_init_with(prepare: Option<fn() -> Result<(), String>>) -> Result<(), String> {
-	let result = guard(|| init_with(prepare)).unwrap_or_else(|panic| Err(format!("panicked: {}", panic_message(&*panic))));
-	if result.is_err() && world_is_live() {
-		set_live(false);
-	}
-	result
+	guard(|| init_with(prepare)).unwrap_or_else(|panic| Err(format!("panicked: {}", panic_message(&*panic))))
 }
 
 fn init_with(prepare: Option<fn() -> Result<(), String>>) -> Result<(), String> {
@@ -235,7 +138,6 @@ fn init_with(prepare: Option<fn() -> Result<(), String>>) -> Result<(), String> 
 
 	if get_init_level() == InitLevel::Partial {
 		did_partial = true;
-		set_live(true);
 
 		symbols::resolve_partial()?;
 
@@ -289,10 +191,7 @@ static ENDING_WORLD: Mutex<Option<(raw_types::procs::ProcId, runtime_tables::Pro
 
 /// The init finishes on BYOND's thread at the first proc call, before global
 /// init.
-///
-/// # Safety
-/// Call it before the world loads, while no other thread uses auxtools.
-pub unsafe fn init_on_world_load(on_load: &'static WorldLoad) -> Result<(), String> {
+pub fn init_on_world_load(on_load: &'static WorldLoad) -> Result<(), String> {
 	if WORLD_LOAD.set(on_load).is_err() {
 		return Err("already waiting for the world to load".to_owned());
 	}
@@ -308,16 +207,11 @@ pub unsafe fn init_on_world_load(on_load: &'static WorldLoad) -> Result<(), Stri
 }
 
 /// Shuts down, and initialises again when the next world loads. Does nothing
-/// after a shutdown, or without [`init_on_world_load`]. Panics on a thread
-/// other than BYOND's.
+/// after a shutdown, or without [`init_on_world_load`].
 ///
 /// `added` is a proc added after the world loaded. The init waits until its
 /// entry is gone.
 pub fn init_on_next_world_load(added: Option<&Proc>) {
-	if !world_is_live() {
-		assert!(on_byond_thread(), "{}", not_live_message("init_on_next_world_load"));
-		return;
-	}
 	if WORLD_LOAD.get().is_none() || get_init_level() != InitLevel::None {
 		return;
 	}
@@ -326,13 +220,8 @@ pub fn init_on_next_world_load(added: Option<&Proc>) {
 	WORLD_LOAD_PENDING.store(true, Ordering::Relaxed);
 }
 
-/// Does nothing after a shutdown, or without [`init_on_world_load`]. Panics on
-/// a thread other than BYOND's.
+/// Does nothing after a shutdown, or without [`init_on_world_load`].
 pub fn shut_down_with_world() {
-	if !world_is_live() {
-		assert!(on_byond_thread(), "{}", not_live_message("shut_down_with_world"));
-		return;
-	}
 	if WORLD_LOAD.get().is_none() || get_init_level() != InitLevel::None {
 		return;
 	}
@@ -442,9 +331,7 @@ fn shutdown_partial() {
 		raw_types::funcs::VARIABLE_NAME_COUNT = std::ptr::null();
 	}
 
-	WORLD_GENERATION.fetch_add(1, Ordering::Relaxed);
 	set_init_level(InitLevel::Partial);
-	set_live(false);
 }
 
 byond_ffi_fn! { auxtools_full_shutdown(_input) {

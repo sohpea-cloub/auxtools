@@ -14,7 +14,7 @@ fn code_of(proc: &Proc) -> Vec<u32> {
 }
 
 fn entry_of(proc: &Proc) -> u32 {
-	unsafe { runtime_tables::proc_entry(proc.id()) }.unwrap().0[ProcEntryWords::BYTECODE]
+	unsafe { runtime_tables::proc_entry(proc.id) }.unwrap().0[ProcEntryWords::BYTECODE]
 }
 
 #[hook("/proc/auxtest_shared_code")]
@@ -44,7 +44,7 @@ fn test_shared_code() {
 	let q_code = code_of(&q);
 	unsafe {
 		p.set_bytecode(small_code.clone()).map_err(|e| runtime!("test_shared_code: {}", e))?;
-		runtime_tables::set_proc_entry_word(p.id(), ProcEntryWords::BYTECODE, entry_of(&q));
+		runtime_tables::set_proc_entry_word(p.id, ProcEntryWords::BYTECODE, entry_of(&q));
 	}
 	let other_code = code_of(&find("/proc/auxtest_code_s")?);
 	unsafe { p.set_bytecode(other_code.clone()) }.map_err(|e| runtime!("test_shared_code: {}", e))?;
@@ -82,7 +82,7 @@ fn test_entry_users() {
 		v.set_bytecode(r_code.clone()).map_err(fail)?;
 		let entry = entry_of(&v);
 		raw_types::misc::add_ref(&raw_types::misc::MiscId::from_raw(entry));
-		runtime_tables::set_proc_entry_word(w.id(), ProcEntryWords::BYTECODE, entry);
+		runtime_tables::set_proc_entry_word(w.id, ProcEntryWords::BYTECODE, entry);
 		v.set_bytecode(s_code.clone()).map_err(fail)?;
 	}
 	if code_of(&w) != r_code {
@@ -99,7 +99,7 @@ fn test_entry_users() {
 	let (x, locals_user) = (find("/proc/auxtest_code_x")?, find("/proc/auxtest_locals_user")?);
 	let x_code = code_of(&x);
 	let entry = unsafe { runtime_tables::intern_misc(&x_code) }.map_err(fail)?;
-	unsafe { runtime_tables::set_proc_entry_word(x.id(), ProcEntryWords::BYTECODE, entry) };
+	unsafe { runtime_tables::set_proc_entry_word(x.id, ProcEntryWords::BYTECODE, entry) };
 	let locals = unsafe { runtime_tables::intern_misc(&x_code) }.map_err(fail)?;
 	if locals != entry {
 		return Err(runtime!(
@@ -108,11 +108,11 @@ fn test_entry_users() {
 			entry
 		));
 	}
-	let user_locals = unsafe { runtime_tables::proc_entry(locals_user.id()) }.unwrap().0[ProcEntryWords::LOCALS];
+	let user_locals = unsafe { runtime_tables::proc_entry(locals_user.id) }.unwrap().0[ProcEntryWords::LOCALS];
 	unsafe {
-		runtime_tables::set_proc_entry_word(locals_user.id(), ProcEntryWords::LOCALS, locals);
+		runtime_tables::set_proc_entry_word(locals_user.id, ProcEntryWords::LOCALS, locals);
 		let replaced = x.set_bytecode(r_code.clone());
-		runtime_tables::set_proc_entry_word(locals_user.id(), ProcEntryWords::LOCALS, user_locals);
+		runtime_tables::set_proc_entry_word(locals_user.id, ProcEntryWords::LOCALS, user_locals);
 		replaced.map_err(fail)?;
 	}
 	let words = unsafe { runtime_tables::misc_words(entry) };
@@ -130,8 +130,8 @@ fn test_entry_users() {
 	let y_code = code_of(&y);
 	let shared = unsafe { runtime_tables::intern_misc(&y_code) }.map_err(fail)?;
 	unsafe {
-		runtime_tables::set_proc_entry_word(y.id(), ProcEntryWords::BYTECODE, shared);
-		runtime_tables::set_proc_entry_word(z.id(), ProcEntryWords::BYTECODE, shared);
+		runtime_tables::set_proc_entry_word(y.id, ProcEntryWords::BYTECODE, shared);
+		runtime_tables::set_proc_entry_word(z.id, ProcEntryWords::BYTECODE, shared);
 		runtime_tables::intern_misc(&y_code).map_err(fail)?;
 	}
 	let (at, _) = unsafe { y.bytecode_mut_ptr() };
@@ -193,11 +193,11 @@ fn code_before_shutdown() {
 		id: entry_of(&t),
 		words: t_code
 	};
-	unsafe { runtime_tables::set_proc_entry_word(t.id(), ProcEntryWords::BYTECODE, reloaded.id) };
+	unsafe { runtime_tables::set_proc_entry_word(t.id, ProcEntryWords::BYTECODE, reloaded.id) };
 
 	let f = find("/proc/auxtest_code_f")?;
 	let theirs: &'static mut [u32] = Box::leak(code_of(&find("/proc/auxtest_code_s")?).into_boxed_slice());
-	let foreign = (f.id(), theirs.to_vec());
+	let foreign = (f.id, theirs.to_vec());
 	unsafe {
 		let id = (*f.entry()).metadata.bytecode;
 		let (own, len) = raw_types::misc::get_bytecode(id);
@@ -212,9 +212,6 @@ fn code_before_shutdown() {
 }
 
 byond_ffi_fn! { auxtest_code_after_shutdown() {
-	if !world_is_live() {
-		return Some("the code after shutdown was checked without a live world".to_owned());
-	}
 	let Some(saved) = BEFORE_SHUTDOWN.lock().unwrap().take() else {
 		return Some("nothing was saved before shutdown".to_owned());
 	};

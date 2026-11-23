@@ -1,10 +1,6 @@
 use super::{raw_types, string};
 use crate::{list, runtime, runtime::DMResult};
-use std::{
-	ffi::{CStr, CString},
-	fmt,
-	marker::PhantomData
-};
+use std::{ffi::CString, fmt, marker::PhantomData};
 
 /// A value that a DM var can hold. Don't keep it after your hook returns.
 ///
@@ -39,9 +35,6 @@ impl std::hash::Hash for Value {
 
 impl Drop for Value {
 	fn drop(&mut self) {
-		if self.holds_no_reference() {
-			return;
-		}
 		unsafe {
 			raw_types::funcs::dec_ref_count(self.raw);
 		}
@@ -49,6 +42,14 @@ impl Drop for Value {
 }
 
 impl Value {
+	/// DM's `global.vars`.
+	pub const GLOBAL: Self = Self {
+		raw: raw_types::values::Value {
+			tag: raw_types::values::ValueTag::World,
+			data: raw_types::values::ValueData { id: 1 }
+		},
+		phantom: PhantomData {}
+	};
 	pub const NULL: Self = Self {
 		raw: raw_types::values::Value {
 			tag: raw_types::values::ValueTag::Null,
@@ -56,45 +57,32 @@ impl Value {
 		},
 		phantom: PhantomData {}
 	};
-
-	const fn holds_no_reference(&self) -> bool {
-		matches!(
-			self.raw.tag,
-			raw_types::values::ValueTag::Null | raw_types::values::ValueTag::Number | raw_types::values::ValueTag::World
-		)
-	}
-
-	const fn world_value(id: u32) -> Self {
-		Self {
-			raw: raw_types::values::Value {
-				tag: raw_types::values::ValueTag::World,
-				data: raw_types::values::ValueData { id }
-			},
-			phantom: PhantomData {}
-		}
-	}
-
-	#[track_caller]
-	pub fn world() -> Self {
-		crate::expect_live("Value::world");
-		Self::world_value(0)
-	}
-
-	#[track_caller]
-	pub fn globals() -> Self {
-		crate::expect_live("Value::globals");
-		Self::world_value(1)
-	}
+	pub const WORLD: Self = Self {
+		raw: raw_types::values::Value {
+			tag: raw_types::values::ValueTag::World,
+			data: raw_types::values::ValueData { id: 0 }
+		},
+		phantom: PhantomData {}
+	};
 
 	pub unsafe fn new(tag: raw_types::values::ValueTag, data: raw_types::values::ValueData) -> Value {
-		let value = Value {
-			raw: raw_types::values::Value { tag, data },
+		let raw = raw_types::values::Value { tag, data };
+		raw_types::funcs::inc_ref_count(raw);
+
+		Value {
+			raw,
 			phantom: PhantomData {}
-		};
-		if !value.holds_no_reference() {
-			raw_types::funcs::inc_ref_count(value.raw);
 		}
-		value
+	}
+
+	#[deprecated(note = "please use the `GLOBAL` const instead")]
+	pub const fn globals() -> Value {
+		Self::GLOBAL
+	}
+
+	#[deprecated(note = "please use the `WORLD` const instead")]
+	pub const fn world() -> Value {
+		Self::WORLD
 	}
 
 	#[deprecated(note = "please use the `NULL` const instead")]
@@ -113,8 +101,7 @@ impl Value {
 	}
 
 	pub fn turf_by_id(id: u32) -> DMResult {
-		crate::check_live("Value::turf_by_id")?;
-		let world = Self::world();
+		let world = Self::WORLD;
 		let max_x = world.get_number(crate::byond_string!("maxx"))? as u32;
 		let max_y = world.get_number(crate::byond_string!("maxy"))? as u32;
 		let max_z = world.get_number(crate::byond_string!("maxz"))? as u32;
@@ -127,8 +114,7 @@ impl Value {
 
 	/// Coordinates start at 1, as in DM.
 	pub fn turf(x: u32, y: u32, z: u32) -> DMResult {
-		crate::check_live("Value::turf")?;
-		let world = Self::world();
+		let world = Self::WORLD;
 		let max_x = world.get_number(crate::byond_string!("maxx"))? as u32;
 		let max_y = world.get_number(crate::byond_string!("maxy"))? as u32;
 		let max_z = world.get_number(crate::byond_string!("maxz"))? as u32;
@@ -247,7 +233,7 @@ impl Value {
 	pub fn to_dmstring(&self) -> DMResult<string::StringRef> {
 		match self.raw.tag {
 			raw_types::values::ValueTag::Null | raw_types::values::ValueTag::Number | raw_types::values::ValueTag::String => {
-				return string::StringRef::new(format!("{}", self).as_str())
+				return string::StringRef::new(format!("{}", self.raw).as_str())
 			}
 
 			_ => {}
@@ -266,7 +252,7 @@ impl Value {
 	pub fn to_string(&self) -> DMResult<String> {
 		match self.raw.tag {
 			raw_types::values::ValueTag::Null | raw_types::values::ValueTag::Number | raw_types::values::ValueTag::String => {
-				return Ok(format!("{}", self))
+				return Ok(format!("{}", self.raw))
 			}
 
 			_ => {}
@@ -303,11 +289,20 @@ impl Value {
 	}
 
 	pub fn from_string<S: AsRef<str>>(data: S) -> DMResult {
-		Self::from_string_raw(data.as_ref().as_bytes())
+		let string = CString::new(data.as_ref()).map_err(|_| runtime!("tried to create string containing NUL"))?;
+
+		unsafe {
+			let mut id = raw_types::strings::StringId(0);
+
+			assert_eq!(raw_types::funcs::get_string_id(&mut id, string.as_ptr()), 1);
+
+			Ok(Value::new(raw_types::values::ValueTag::String, raw_types::values::ValueData {
+				string: id
+			}))
+		}
 	}
 
 	pub fn from_string_raw(data: &[u8]) -> DMResult {
-		crate::check_live("Value::from_string")?;
 		let string = CString::new(data).map_err(|_| runtime!("tried to create string containing NUL"))?;
 
 		unsafe {
@@ -347,22 +342,12 @@ impl Clone for Value {
 
 impl fmt::Display for Value {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-		match self.raw.tag {
-			raw_types::values::ValueTag::String => unsafe {
-				let mut entry: *mut raw_types::strings::StringEntry = std::ptr::null_mut();
-				assert_eq!(raw_types::funcs::get_string_table_entry(&mut entry, self.raw.data.string), 1);
-				write!(f, "{:?}", string::text_of(CStr::from_ptr((*entry).data).to_bytes()))
-			},
-			_ => write!(f, "{}", self.raw)
-		}
+		write!(f, "{}", self.raw)
 	}
 }
 
 impl fmt::Debug for Value {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-		match self.raw.tag {
-			raw_types::values::ValueTag::String => fmt::Display::fmt(self, f),
-			_ => write!(f, "{:?}", self.raw)
-		}
+		write!(f, "{:?}", self.raw)
 	}
 }

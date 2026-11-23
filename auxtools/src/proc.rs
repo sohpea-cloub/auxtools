@@ -16,19 +16,10 @@ use crate::*;
 /// fn assert_send<T: Send>() {}
 /// assert_send::<auxtools::Proc>();
 /// ```
-///
-/// Its ID can't be changed, so it always names an entry of its world.
-///
-/// ```compile_fail,E0616
-/// fn renumber(proc: &mut auxtools::Proc) {
-///     proc.id = auxtools::raw_types::procs::ProcId(u32::MAX);
-/// }
-/// ```
 #[derive(Clone)]
 pub struct Proc {
-	pub(crate) id: raw_types::procs::ProcId,
+	pub id: raw_types::procs::ProcId,
 	pub path: String,
-	world: u32,
 	not_send: PhantomData<*mut ()>
 }
 
@@ -44,9 +35,7 @@ impl Proc {
 	/// The override id of a proc set apart by [`Proc::set_apart`].
 	pub const APART: u32 = u32::MAX;
 
-	#[track_caller]
 	pub fn overrides<S: Into<String>>(path: S) -> Vec<Self> {
-		crate::expect_live("Proc::overrides");
 		let path = strip_path(path.into());
 		PROCS_BY_NAME.with(|h| h.borrow().get(&path).cloned().unwrap_or_default())
 	}
@@ -63,37 +52,24 @@ impl Proc {
 		PROCS_BY_NAME.with(|h| h.borrow_mut().insert(path, procs));
 	}
 
-	pub const fn id(&self) -> raw_types::procs::ProcId {
-		self.id
-	}
-
-	/// Null once the proc's world has ended. Valid only until DM code runs
-	/// again. BYOND moves the table when it grows.
+	/// Valid only until DM code runs again. BYOND moves the table when it
+	/// grows.
 	pub fn entry(&self) -> *mut raw_types::procs::ProcEntry {
-		if self.world != crate::world_generation() {
-			return std::ptr::null_mut();
-		}
 		entry_by_id(self.id)
 	}
 
 	/// Finds the first definition of `path`. [`Proc::find_override`] finds the
 	/// others.
-	#[track_caller]
 	pub fn find<S: Into<String>>(path: S) -> Option<Self> {
-		crate::expect_live("Proc::find");
 		get_proc(path)
 	}
 
 	/// With [`Proc::APART`], finds the proc set apart for `path`.
-	#[track_caller]
 	pub fn find_override<S: Into<String>>(path: S, override_id: u32) -> Option<Self> {
-		crate::expect_live("Proc::find_override");
 		get_proc_override(path, override_id)
 	}
 
-	#[track_caller]
 	pub fn from_id(id: raw_types::procs::ProcId) -> Option<Self> {
-		crate::expect_live("Proc::from_id");
 		let proc_entry = entry_by_id(id);
 		if proc_entry.is_null() {
 			return None;
@@ -102,7 +78,6 @@ impl Proc {
 		Some(Proc {
 			id,
 			path,
-			world: crate::world_generation(),
 			not_send: PhantomData
 		})
 	}
@@ -121,25 +96,16 @@ impl Proc {
 		Some(StringRef::from_id(file_id))
 	}
 
-	/// Empty once the proc's world has ended.
 	pub fn parameter_names(&self) -> Vec<StringRef> {
-		let entry = self.entry();
-		if entry.is_null() {
-			return vec![];
-		}
 		unsafe {
-			let (data, count) = raw_types::misc::get_parameters((*entry).metadata.parameters);
+			let (data, count) = raw_types::misc::get_parameters((*self.entry()).metadata.parameters);
 			(0..count).map(|i| StringRef::from_variable_id((*data.add(i)).name)).collect()
 		}
 	}
 
 	pub fn local_names(&self) -> Vec<StringRef> {
-		let entry = self.entry();
-		if entry.is_null() {
-			return vec![];
-		}
 		unsafe {
-			let (names, count) = raw_types::misc::get_locals((*entry).metadata.locals);
+			let (names, count) = raw_types::misc::get_locals((*self.entry()).metadata.locals);
 			(0..count).map(|i| StringRef::from_variable_id(*names.add(i))).collect()
 		}
 	}
@@ -154,9 +120,7 @@ impl Proc {
 		crate::bytecode_manager::set_bytecode(self, bytecode)
 	}
 
-	#[track_caller]
 	pub fn add_to_table(first: raw_types::procs::ProcId) {
-		crate::expect_live("Proc::add_to_table");
 		let mut id = first.0;
 		while let Some(proc) = Proc::from_id(raw_types::procs::ProcId(id)) {
 			register_proc(proc);
@@ -165,11 +129,7 @@ impl Proc {
 	}
 
 	pub fn locals_count(&self) -> usize {
-		let entry = self.entry();
-		if entry.is_null() {
-			return 0;
-		}
-		unsafe { raw_types::misc::get_locals((*entry).metadata.locals).1 }
+		unsafe { raw_types::misc::get_locals((*self.entry()).metadata.locals).1 }
 	}
 
 	pub unsafe fn bytecode_mut_ptr(&self) -> (*mut u32, u16) {
@@ -181,12 +141,8 @@ impl Proc {
 		std::slice::from_raw_parts(ptr, count as usize)
 	}
 
-	/// Calls the proc with a null `src` and `usr`. Fails once the proc's world
-	/// has ended.
+	/// Calls the proc with a null `src` and `usr`.
 	pub fn call(&self, args: &[&Value]) -> runtime::DMResult {
-		if self.world != crate::world_generation() {
-			return Err(runtime!("{} can't be called, because its world has ended", self.path));
-		}
 		let mut ret = raw_types::values::Value {
 			tag: raw_types::values::ValueTag::Null,
 			data: raw_types::values::ValueData { id: 0 }
@@ -237,11 +193,8 @@ impl Proc {
 
 impl fmt::Debug for Proc {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-		let entry = self.entry();
-		if entry.is_null() {
-			return write!(f, "Proc({}, ended)", self.id.0);
-		}
-		write!(f, "Proc({:?})", unsafe { StringRef::from_id((*entry).path) })
+		let path = unsafe { (*self.entry()).path };
+		write!(f, "Proc({:?})", unsafe { StringRef::from_id(path) })
 	}
 }
 

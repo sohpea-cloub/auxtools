@@ -14,7 +14,7 @@ pub fn proc_ref(proc: &Proc) -> ProcRef {
 			override_id: proc.override_id()
 		};
 	}
-	if let Some(now) = Proc::from_id(proc.id()).filter(|now| !now.path.is_empty()) {
+	if let Some(now) = Proc::from_id(proc.id).filter(|now| !now.path.is_empty()) {
 		return ProcRef {
 			path: now.path,
 			override_id: 0
@@ -63,7 +63,7 @@ impl UnnamedProcKinds {
 		let in_lists = unsafe { runtime_tables::in_list_procs() }?;
 		let global_init = Proc::overrides("")
 			.iter()
-			.map(|proc| proc.id())
+			.map(|proc| proc.id)
 			.filter(|&id| {
 				Proc::from_id(id).is_some_and(|now| now.path.is_empty())
 					&& !in_lists.contains(&id.0)
@@ -75,7 +75,7 @@ impl UnnamedProcKinds {
 	}
 
 	fn name(&self, proc: &Proc) -> Option<ProcRef> {
-		let id = proc.id().0;
+		let id = proc.id.0;
 		let (path, override_id) = if self.global_init == Some(id) {
 			(GLOBAL_INIT, 0)
 		} else {
