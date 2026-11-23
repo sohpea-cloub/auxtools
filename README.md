@@ -127,6 +127,8 @@ Hot reload supports changes to:
 - parent types
 
 A change to a proc declaration needs a rebuild. Changing a proc into a verb is an example.
+A change that reorders a proc's definitions needs one too. Declaring a new proc above an override
+that comes before its own declaration is an example.
 
 Some reloads are partly applied: some of their steps changed the world, and then a later step
 failed. The world then runs a mix of old and new code. The launcher reports this and lists each

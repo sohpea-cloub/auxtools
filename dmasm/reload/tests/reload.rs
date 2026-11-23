@@ -1378,6 +1378,38 @@ fn an_override_added_before_an_edited_declaration_is_the_new_proc() {
 }
 
 #[test]
+fn a_declaration_placed_past_an_override_is_refused() {
+    let before = "/datum/p/f()\n\treturn 1\n/datum/p/proc/f()\n\treturn 2\n";
+    let why = "/datum/p/f: the order of its definitions changed";
+    for (name, after) in [
+        ("declaration-before", format!("/datum/p/proc/g()\n{before}")),
+        (
+            "declaration-and-override-before",
+            format!("/datum/p/proc/g()\n{before}/datum/p/f()\n\treturn 3\n"),
+        ),
+    ] {
+        let refused = refusal(name, before, &after);
+        assert!(refused.contains(why), "{}: {}", name, refused);
+    }
+
+    let before = format!("{before}/datum/p/proc/g()\n");
+    let after = format!(
+        "/datum/p/proc/g()\n{}",
+        before.replace("/datum/p/proc/g()\n", "")
+    );
+    let world = World::new("declaration-moved", &before);
+    let mut old = world.parse();
+    world.write(&after);
+    match old.reload_file(&world.dir, std::path::Path::new("code/code.dm")) {
+        Ok(_) => panic!("reloaded on its own"),
+        Err(e) => assert!(e.contains(why), "{}", e),
+    }
+    let edited: HashSet<PathBuf> = vec![PathBuf::from("code/code.dm")].into_iter().collect();
+    let refused = shown(&diff(&old, &world.parse(), Some(&edited)).refused).join("\n");
+    assert!(refused.contains(why), "{}", refused);
+}
+
+#[test]
 fn in_lists_are_the_words_dreammaker_writes() {
     let cases = [
         ("mob/a in view()", Some(0x7D01)),

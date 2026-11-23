@@ -65,6 +65,7 @@ pub enum Id {
     ConstInitializerRequired,
     ConstValueFailed,
     ProcDeclarationChanged,
+    DefinitionOrderChanged,
     DuplicateDefinition,
     ValueWithoutDeclaration,
     SettingChanged,

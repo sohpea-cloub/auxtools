@@ -897,6 +897,26 @@ impl Snapshot {
         if new.procs.len() != old.procs.len() {
             return Err("proc definitions were added".to_owned());
         }
+        let relocated: BTreeMap<dreammaker::Location, dreammaker::Location> = pairs
+            .iter()
+            .filter_map(|(key, _, new_value)| {
+                let (ty, name, index) = self.procs.get(key)?;
+                let built = self.find_type(ty)?.get().procs.get(name.as_str())?;
+                Some((built.value.get(*index)?.location, new_value.location))
+            })
+            .collect();
+        for (ty, name) in old.procs.keys() {
+            let Some(ty) = self.find_type(ty) else {
+                continue;
+            };
+            let moved = definition_order_at(ty, name, |l| relocated.get(&l).copied().unwrap_or(l));
+            if moved != definition_order(ty, name) {
+                return Err(format!(
+                    "{}: the order of its definitions changed",
+                    proc_path(ty, name)
+                ));
+            }
+        }
 
         Ok(Reparsed {
             file: id,
@@ -2516,6 +2536,14 @@ const STDDEF_PROC_BLOCKS: &[&str] = &[
 ];
 
 fn definition_order(ty: TypeRef, name: &str) -> Vec<usize> {
+    definition_order_at(ty, name, |location| location)
+}
+
+fn definition_order_at(
+    ty: TypeRef,
+    name: &str,
+    at: impl Fn(dreammaker::Location) -> dreammaker::Location,
+) -> Vec<usize> {
     let Some(proc) = ty.get().procs.get(name) else {
         return vec![];
     };
@@ -2535,10 +2563,10 @@ fn definition_order(ty: TypeRef, name: &str) -> Vec<usize> {
                 .values()
                 .filter_map(|p| p.declaration.as_ref())
                 .filter(|other| other.kind == d.kind && other.location.file != FileId::BUILTINS)
-                .map(|other| other.location)
+                .map(|other| at(other.location))
                 .min()
         }
-        _ => Some(v.location),
+        _ => Some(at(v.location)),
     };
     let mut order: Vec<usize> = (0..proc.value.len())
         .filter(|&i| proc.value[i].location.file != FileId::BUILTINS)
@@ -2989,11 +3017,28 @@ fn compare_types(
             let verb = n
                 .get_proc_declaration(name.as_str())
                 .is_some_and(|d| d.kind == dreammaker::ast::ProcDeclKind::Verb);
+            let map = match o {
+                Some(o) => pair(old, new, (o, &old_values), (n, &new_values), name.as_str()),
+                None => vec![None; new_count],
+            };
+            if !map.iter().flatten().is_sorted() {
+                let at = proc
+                    .declaration
+                    .as_ref()
+                    .map(|d| d.location)
+                    .filter(|l| new.source_line(*l).is_some())
+                    .unwrap_or_else(|| new.type_location(n));
+                changes.refused.push(
+                    Refusal::new(
+                        Id::DefinitionOrderChanged,
+                        path.clone(),
+                        "the order of its definitions changed: DreamMaker puts a declaration at the type's first declaration",
+                    )
+                    .at(new, at),
+                );
+                continue;
+            }
             if new_count != old_count {
-                let map = match o {
-                    Some(o) => pair(old, new, (o, &old_values), (n, &new_values), name.as_str()),
-                    None => vec![None; new_count],
-                };
                 for override_id in (0..old_count).filter(|i| !map.contains(&Some(*i))) {
                     if n.is_root() {
                         changes.warnings.push(definition_retained(&path));
