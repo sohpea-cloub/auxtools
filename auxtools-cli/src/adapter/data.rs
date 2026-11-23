@@ -23,7 +23,7 @@ impl DataBreakpoint {
 	fn shown(&self) -> Breakpoint {
 		Breakpoint {
 			id: Some(self.id),
-			verified: self.watch.is_some(),
+			verified: self.watch.is_some() && self.message.is_none(),
 			message: self.message.clone(),
 			..Default::default()
 		}
@@ -97,7 +97,11 @@ impl Adapter {
 		for wanted in args.breakpoints {
 			let same = |b: &DataBreakpoint| b.data_id == wanted.data_id && b.condition == wanted.condition && b.hit == wanted.hit_condition;
 			if let Some(at) = had.iter().position(same) {
-				set.push(had.remove(at));
+				let mut breakpoint = had.remove(at);
+				if breakpoint.watch.is_some() {
+					breakpoint.message = None;
+				}
+				set.push(breakpoint);
 				continue;
 			}
 			let live = |b: &DataBreakpoint| b.watch.filter(|_| b.data_id == wanted.data_id);

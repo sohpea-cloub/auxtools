@@ -269,6 +269,29 @@ pub fn run() {
 	assert_eq!(changed(&mut world), (steps, false, "watched proc returned".to_owned()));
 	ok("local watch condition edited at its stop");
 
+	world.eval_global("watched_number = 1");
+	let number = id(&watch(&mut world, &[(&anywhere["dataId"], "", "")])[0]);
+	let refused = watch(&mut world, &[(&anywhere["dataId"], "", "every other")]);
+	assert_eq!(
+		(&refused[0]["id"], &refused[0]["verified"]),
+		(&json!(number), &json!(false)),
+		"{}",
+		refused[0]
+	);
+	assert!(
+		refused[0]["message"].as_str().is_some_and(|why| why.starts_with("invalid hit count")),
+		"{}",
+		refused[0]
+	);
+	let restored = watch(&mut world, &[(&anywhere["dataId"], "", "")]);
+	assert_eq!((id(&restored[0]), &restored[0]["message"]), (number, &Value::Null), "{}", restored[0]);
+	world.run("watch");
+	let stop_now = world.stop();
+	assert_eq!((stop_now.reason.as_str(), &stop_now.hit), ("data breakpoint", &vec![number]));
+	watch(&mut world, &[]);
+	world.resume_through("watch");
+	ok("refused watch edit keeps the watch as it was");
+
 	world.run_to("watch_long", "/sc_watch_long", "watch_long_start");
 	let patient = info(&mut world, None, "patient");
 	let set = watch(&mut world, &[(&patient["dataId"], "", "")]);
