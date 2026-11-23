@@ -141,7 +141,7 @@ impl fmt::Debug for StringRef {
 					Some(43) => b"\\icon[]",
 					Some(44) => b"\\roman[]",
 					Some(45) => b"\\Roman[]",
-					Some(_) => b"[UNKNONWN FORMAT SPECIFIER]"
+					Some(_) => b"[UNKNOWN FORMAT SPECIFIER]"
 				});
 				continue;
 			}
