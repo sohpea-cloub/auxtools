@@ -16,9 +16,9 @@ pub struct Page {
 
 const STEP_SECTIONS: &str = "Behavior:
   Requires a paused world. The command resumes execution and waits until the
-  world pauses again or the step completes. The world stays paused after the
-  command exits. A step can complete with the world running when no frame is
-  left to pause in.
+  world pauses again or the step completes. If the step pauses the world, it
+  stays paused after the command exits. If the last frame returns, the world
+  keeps running.
   On timeout, the command stops waiting and exits with code 2. A timeout does
   not mean that the step completed. The timeout does not pause or resume the
   world.
@@ -140,8 +140,9 @@ Exit codes:
 		arguments: "",
 		sections: "Behavior:
   Calls world.Reboot() to load the DMB again. Debugger connections close.
-  In a world launched with hot reload, the launcher applies the hot reload
-  changes again before the world runs any code. The command returns when the
+  In a world launched with hot reload, the launcher restores reloads at
+  startup. Reloads that need a resource missing from the build wait until
+  world/New, along with later queued reloads. The command returns when the
   new world starts running. To wait for a reboot without starting one, use
   wait reboot.
 
@@ -554,8 +555,9 @@ Exit codes:
   output includes them.
 
 Output:
-  One FILE:LINE: PROC: TEXT line for each issue, then the number of issues and
-  of checked procs. Paths are relative to the project directory.
+  Each issue shows its file, proc, and message. The line number appears when
+  available. The last line gives the number of issues and of checked procs.
+  Paths are relative to the project directory.
   JSON contains byond, procs, found, not_checked, and parse_errors.
   procs is the number of procs checked.
   Each entry of found has id, file, line, proc, override, and text. The id

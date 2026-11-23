@@ -187,10 +187,11 @@ auxtools check tgstation.dme -DCIBUILDING --byond-version 516.1689
 ```
 
 Pass the build's defines with `-D`, and its BYOND version with `--byond-version`. Each finding
-is printed as `FILE:LINE: PROC: diagnostic`. The exit code is 5 if the check found bugs, 0 if
-it found none and 1 if it could not read the project. Procs that dmasm can't compile, and parse
-errors, are reported as unchecked. They don't change the exit code. The check can't find bugs
-that show only at runtime, such as errors lost inside operator overloads.
+is printed as `FILE:LINE: PROC: diagnostic`, or as `FILE: PROC: diagnostic` when the line is not
+known. The exit code is 5 if the check found bugs, 0 if it found none and 1 if it could not read
+the project. Procs that dmasm can't compile, and parse errors, are reported as unchecked. They
+don't change the exit code. The check can't find bugs that show only at runtime, such as errors
+lost inside operator overloads.
 
 ## The auxtools library
 
