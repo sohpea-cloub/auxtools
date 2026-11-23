@@ -66,7 +66,12 @@ struct Entry {
 	words: Vec<u32>
 }
 
-static BEFORE_SHUTDOWN: Mutex<Vec<Entry>> = Mutex::new(vec![]);
+struct BeforeShutdown {
+	replaced: Entry,
+	reloaded: Entry
+}
+
+static BEFORE_SHUTDOWN: Mutex<Option<BeforeShutdown>> = Mutex::new(None);
 
 #[hook("/proc/auxtest_code_before_shutdown")]
 fn code_before_shutdown() {
@@ -84,13 +89,15 @@ fn code_before_shutdown() {
 			.map_err(|e| runtime!("code_before_shutdown: {}", e))?;
 		runtime_tables::set_proc_entry_word(t.id, ProcEntryWords::BYTECODE, reloaded.id);
 	}
-	*BEFORE_SHUTDOWN.lock().unwrap() = vec![replaced, reloaded];
+	*BEFORE_SHUTDOWN.lock().unwrap() = Some(BeforeShutdown { replaced, reloaded });
 	Ok(Value::from(true))
 }
 
 byond_ffi_fn! { auxtest_code_after_shutdown() {
-	let entries = std::mem::take(&mut *BEFORE_SHUTDOWN.lock().unwrap());
-	let changed: Vec<String> = entries
+	let Some(saved) = BEFORE_SHUTDOWN.lock().unwrap().take() else {
+		return Some("nothing was saved before shutdown".to_owned());
+	};
+	let changed: Vec<String> = [saved.replaced, saved.reloaded]
 		.iter()
 		.filter_map(|entry| {
 			let words = unsafe { runtime_tables::misc_words(entry.id) };
@@ -98,7 +105,7 @@ byond_ffi_fn! { auxtest_code_after_shutdown() {
 		})
 		.collect();
 	if changed.is_empty() {
-		Some(String::new())
+		Some("SUCCESS".to_owned())
 	} else {
 		Some(format!("shutdown didn't give back the code it replaced: {}", changed.join(", ")))
 	}
