@@ -89,6 +89,12 @@ pub fn panic_message(payload: &(dyn Any + Send)) -> String {
 	message.unwrap_or("no message").to_owned()
 }
 
+static BYOND_THREAD: OnceLock<std::thread::ThreadId> = OnceLock::new();
+
+pub(crate) fn on_byond_thread() -> bool {
+	BYOND_THREAD.get() == Some(&std::thread::current().id())
+}
+
 static INIT_FAILURE: OnceLock<String> = OnceLock::new();
 
 byond_ffi_fn! { auxtools_init(_input) {
@@ -129,6 +135,7 @@ fn init_with(prepare: Option<fn() -> Result<(), String>>) -> Result<(), String> 
 
 	if get_init_level() == InitLevel::Partial {
 		did_partial = true;
+		BYOND_THREAD.get_or_init(|| std::thread::current().id());
 
 		symbols::resolve_partial()?;
 

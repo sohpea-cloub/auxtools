@@ -7,8 +7,8 @@ fn get_next_id() -> f32 {
 	id as f32
 }
 
-/// A weak reference to a datum, which can be stored globally or sent to other
-/// threads. Upgrade it only on the main thread. Every datum needs a
+/// A weak reference to a datum. It can be stored globally or sent to other
+/// threads. Upgrade it only on BYOND's thread. Every datum needs a
 /// `__auxtools_weakref_id` var.
 #[derive(Copy, Clone)]
 pub struct WeakValue {
@@ -27,8 +27,10 @@ impl WeakValue {
 		Ok(Self { inner: val.raw, id })
 	}
 
-	/// `None` if the datum has been deleted.
+	/// Returns `None` if the datum has been deleted. Panics on any thread but
+	/// BYOND's.
 	pub fn upgrade(&self) -> Option<Value> {
+		assert!(crate::on_byond_thread(), "WeakValue::upgrade must run on BYOND's thread");
 		let real_val = unsafe { Value::from_raw(self.inner) };
 		let id = real_val.get_number(byond_string!("__auxtools_weakref_id")).ok()?;
 

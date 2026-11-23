@@ -8,6 +8,10 @@ fn test_weak_values(someval: Value) {
 		return Err(runtime!("test_weak_values: Failed to upgrade weak reference to existing value"));
 	}
 
+	if std::thread::spawn(move || weak.upgrade().is_some()).join().is_ok() {
+		return Err(runtime!("test_weak_values: a weak reference was upgraded on another thread"));
+	}
+
 	Proc::find("/proc/del_value")
 		.ok_or_else(|| runtime!("test_weak_values: /proc/del_value not defined"))?
 		.call(&[someval])?;
