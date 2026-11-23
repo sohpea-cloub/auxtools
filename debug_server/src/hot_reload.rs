@@ -206,26 +206,23 @@ struct PendingProc {
 
 impl Pending {
 	fn proc_named(&self, path: &str) -> Option<u32> {
-		if path.contains("/proc/") || path.contains("/verb/") {
-			return self.procs.iter().find(|new| new.path == path).map(|new| new.id);
-		}
 		let stripped = strip_path(path);
 		let mut added: Vec<&PendingProc> = self.procs.iter().filter(|new| strip_path(&new.path) == stripped).collect();
-		if added.iter().all(|new| new.path != path) {
+		if added.is_empty() && !self.removed.iter().any(|(removed, _)| *removed == stripped) {
 			return None;
 		}
 		added.sort_by_key(|new| new.override_id);
-		let mut order: Vec<(bool, Option<u32>)> = Proc::overrides(path)
+		let mut order: Vec<(String, u32)> = Proc::overrides(path)
 			.iter()
 			.enumerate()
 			.filter(|(at, _)| !self.removed.contains(&(stripped.clone(), *at as u32)))
-			.map(|(_, proc)| (crate::assemble_env::own_path(proc) == path, None))
+			.map(|(_, proc)| (crate::assemble_env::own_path(proc), proc.id.0))
 			.collect();
 		for new in added {
 			let at = (new.override_id as usize).min(order.len());
-			order.insert(at, (new.path == path, Some(new.id)));
+			order.insert(at, (new.path.clone(), new.id));
 		}
-		order.into_iter().find(|(exact, _)| *exact).and_then(|(_, id)| id)
+		order.into_iter().find(|(own, _)| own == path).map(|(_, id)| id)
 	}
 }
 

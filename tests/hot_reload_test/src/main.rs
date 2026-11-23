@@ -2094,6 +2094,17 @@ fn definitions(built: Built) {
 	assert_eq!(eval(&mut client, "calls_added_twice()"), "\"declared\"");
 	assert_eq!(eval(&mut client, "calls_added_thrice()"), "\"first override\"");
 	println!("ok: new code names the definitions added with it");
+
+	let changes = source.edit_many("reload.dm", &[
+		("/datum/twice/speak()\n\treturn \"first override\"\n", ""),
+		(
+			"/proc/first_def()\n",
+			"/proc/calls_twice()\n\treturn call(new /datum/twice, /datum/twice/speak)()\n\n/proc/first_def()\n"
+		)
+	]);
+	reload(&mut watcher, &changes);
+	assert_eq!(eval(&mut client, "calls_twice()"), "\"second override\"");
+	println!("ok: new code names the first override left after a removal");
 }
 
 fn types(built: Built) {
