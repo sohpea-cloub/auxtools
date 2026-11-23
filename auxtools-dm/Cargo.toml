@@ -1,0 +1,16 @@
+[package]
+name = "auxtools-dm"
+description = "Reads DM tokens and .dmb files for the debug server and the launcher"
+version.workspace = true
+publish = false
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+license = "GPL-3.0"
+
+[dependencies]
+dreammaker = { workspace = true }
+
+[lints]
+workspace = true

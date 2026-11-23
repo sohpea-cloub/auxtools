@@ -134,7 +134,7 @@ jobs:
         run: cargo build --release --locked --target "$TARGET" -p dmasm-compiler --example compare_dreammaker
 
       - name: Unit tests
-        run: cargo test --release --locked --target "$TARGET" -p auxtools-cli -p auxtools -p auxtools-protocol -p debug_server -p dmasm -p dmasm-bytecode -p dmasm-compiler -p dmasm-reload -p test_support
+        run: cargo test --release --locked --target "$TARGET" -p auxtools-cli -p auxtools -p auxtools-protocol -p auxtools-dm -p debug_server -p dmasm -p dmasm-bytecode -p dmasm-compiler -p dmasm-reload -p test_support
 
       - name: The extension's tests
         run: |
@@ -259,7 +259,7 @@ jobs:
       - name: Build the unit tests
         run: |
           . ci/msvc/env.sh
-          ci/unit-tests.sh "target/$TARGET/release/unit" --release --locked --target "$TARGET" -p auxtools-cli -p auxtools -p auxtools-protocol -p debug_server -p dmasm -p dmasm-bytecode -p dmasm-compiler -p dmasm-reload -p test_support
+          ci/unit-tests.sh "target/$TARGET/release/unit" --release --locked --target "$TARGET" -p auxtools-cli -p auxtools -p auxtools-protocol -p auxtools-dm -p debug_server -p dmasm -p dmasm-bytecode -p dmasm-compiler -p dmasm-reload -p test_support
 
       - name: Check and pack
         run: |

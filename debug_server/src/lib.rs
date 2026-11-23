@@ -3,7 +3,6 @@ mod client_script;
 mod code_index;
 mod connection;
 mod console;
-mod dmb_tables;
 mod hot_reload;
 mod instruction_hooking;
 mod journal;

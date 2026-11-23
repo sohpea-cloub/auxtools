@@ -30,7 +30,7 @@ pub fn is_loaded() -> bool {
 }
 
 pub fn built_id(path: &Path) -> Option<u32> {
-	let crc = crate::dmb_tables::byond_crc(&std::fs::read(path).ok()?);
+	let crc = auxtools_dm::dmb_tables::byond_crc(&std::fs::read(path).ok()?);
 	let mut built = BUILT_CRCS.lock().unwrap();
 	let crcs = built.get_or_insert_with(read_built).as_ref()?;
 	crcs.iter().position(|&built| built == crc).map(|id| id as u32)
@@ -43,7 +43,7 @@ pub fn built_count() -> Option<usize> {
 
 fn read_built() -> Option<Vec<u32>> {
 	let dmb = world_dmb()?;
-	crate::dmb_tables::resource_crcs(&std::fs::read(&dmb).ok()?).ok()
+	auxtools_dm::dmb_tables::resource_crcs(&std::fs::read(&dmb).ok()?).ok()
 }
 
 static BUILT_NAMES: Mutex<Option<Vec<String>>> = Mutex::new(None);

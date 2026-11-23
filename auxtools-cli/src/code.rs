@@ -1201,7 +1201,7 @@ fn source_macros(history: &dreammaker::preprocessor::DefineHistory) -> Vec<Macro
 				last.push_str("...");
 			}
 		}
-		let text = auxtools_cli::macros::text_of(&define.subst);
+		let text = auxtools_dm::text_of(&define.subst);
 		defined.insert(
 			name.to_string(),
 			(range.end.column, Macro {

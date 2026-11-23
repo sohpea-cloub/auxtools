@@ -3,7 +3,7 @@ use std::{
 	path::{Path, PathBuf}
 };
 
-use auxtools_cli::dmb_tables::{self, byond_crc};
+use auxtools_dm::dmb_tables::{self, byond_crc};
 
 #[derive(Debug, Clone, Default)]
 pub struct File {

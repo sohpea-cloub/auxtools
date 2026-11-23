@@ -81,6 +81,7 @@ dependencies = [
 name = "auxtools-cli"
 version = "3.1.2-dev"
 dependencies = [
+ "auxtools-dm",
  "auxtools-protocol",
  "clap",
  "dap-types",
@@ -92,6 +93,13 @@ dependencies = [
  "serde_json",
  "test_support",
  "winapi",
+]
+
+[[package]]
+name = "auxtools-dm"
+version = "3.1.2-dev"
+dependencies = [
+ "dreammaker",
 ]
 
 [[package]]
@@ -293,6 +301,7 @@ name = "debug_server"
 version = "3.1.2-dev"
 dependencies = [
  "auxtools",
+ "auxtools-dm",
  "auxtools-protocol",
  "dmasm",
  "dreammaker",

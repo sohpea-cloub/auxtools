@@ -4,12 +4,12 @@ use std::{
 	sync::Mutex
 };
 
+use auxtools_dm::text_of;
+use auxtools_protocol::Macro;
 use dreammaker::{
 	lexer::{Punctuation, Token},
 	Context, FileId, Location
 };
-
-use auxtools_protocol::Macro;
 
 static MACROS: Mutex<Option<Macros>> = Mutex::new(None);
 
@@ -248,22 +248,6 @@ fn define_line(define: &Macro) -> String {
 	line += &define.text;
 	line.push('\n');
 	line
-}
-
-pub fn text_of<'a>(tokens: impl IntoIterator<Item = &'a Token>) -> String {
-	let mut text = String::new();
-	let mut previous: Option<&Token> = None;
-	for token in tokens {
-		if matches!(token, Token::Punct(Punctuation::Newline) | Token::DocComment(_)) {
-			continue;
-		}
-		if previous.is_some_and(|previous| token.separate_from(previous)) {
-			text.push(' ');
-		}
-		text += &token.to_string();
-		previous = Some(token);
-	}
-	text
 }
 
 #[cfg(test)]
