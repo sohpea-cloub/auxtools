@@ -38,7 +38,11 @@ impl<'a> Reader<'a> {
 	}
 
 	fn words(&mut self, n: usize) -> Result<(), Error> {
-		self.take(n * if self.large { 4 } else { 2 }).map(|_| ())
+		let width = if self.large { 4 } else { 2 };
+		let Some(bytes) = n.checked_mul(width) else {
+			return Err(format!("table of {} ids at byte {} is too large to read", n, self.at));
+		};
+		self.take(bytes).map(|_| ())
 	}
 }
 
@@ -140,7 +144,9 @@ pub fn resource_crcs(data: &[u8]) -> Result<Vec<u32>, Error> {
 		loop {
 			let at = r.at - start;
 			let part = r.u16()? ^ (at as u16);
-			length += usize::from(part);
+			length = length
+				.checked_add(usize::from(part))
+				.ok_or_else(|| format!("string length at byte {} is too large to read", at))?;
 			if part != 0xFFFF {
 				break;
 			}
@@ -256,29 +262,70 @@ pub fn byond_crc(data: &[u8]) -> u32 {
 mod tests {
 	use super::*;
 
-	fn world(resources: &[(u32, u8)]) -> Vec<u8> {
-		let mut dmb = b"world bin v516\nmin compatibility v514 468\n".to_vec();
-		dmb.extend(0u32.to_le_bytes());
-		dmb.extend([0; 6]);
-		dmb.extend(0u32.to_le_bytes());
-		dmb.extend([0; 4]);
-		dmb.extend([0; 2]);
-		dmb.extend(0xFFFF_FFFFu32.to_le_bytes());
-		dmb.extend([0; 6]);
-		dmb.extend(0u32.to_le_bytes());
-		dmb.extend([0; 4]);
-		dmb.extend(0u32.to_le_bytes());
-		dmb.extend([0; 14]);
-		dmb.extend(100u32.to_le_bytes());
-		dmb.extend([0; 4 + 5 + 2]);
-		dmb.extend([0; 2]);
-		dmb.extend([0; 2 + 4 + 8 + 2 + 10 + 6]);
-		dmb.extend((resources.len() as u16).to_le_bytes());
-		for (crc, kind) in resources {
-			dmb.extend(crc.to_le_bytes());
-			dmb.push(*kind);
+	#[derive(Default)]
+	struct World {
+		large: bool,
+		string_length: Vec<u16>,
+		init_procs: u32,
+		resources: Vec<(u32, u8)>
+	}
+
+	impl World {
+		fn dmb(&self) -> Vec<u8> {
+			let mut dmb = b"world bin v516\nmin compatibility v514 468\n".to_vec();
+			let word = |dmb: &mut Vec<u8>, n: u32| {
+				if self.large {
+					dmb.extend(n.to_le_bytes());
+				} else {
+					dmb.extend((n as u16).to_le_bytes());
+				}
+			};
+			let words = |dmb: &mut Vec<u8>, n: usize| (0..n).for_each(|_| word(dmb, 0));
+			dmb.extend((if self.large { 0x4000_0000u32 } else { 0 }).to_le_bytes());
+			dmb.extend([0; 6]);
+			dmb.extend(0u32.to_le_bytes());
+			words(&mut dmb, 2);
+			if !self.string_length.is_empty() {
+				word(&mut dmb, 1);
+				for part in &self.string_length {
+					let at = dmb.len() as u16;
+					dmb.extend((part ^ at).to_le_bytes());
+				}
+				return dmb;
+			}
+			word(&mut dmb, 0);
+			dmb.extend(0xFFFF_FFFFu32.to_le_bytes());
+			words(&mut dmb, 3);
+			dmb.extend(0u32.to_le_bytes());
+			word(&mut dmb, self.init_procs);
+			word(&mut dmb, 0);
+			dmb.extend(0u32.to_le_bytes());
+			words(&mut dmb, 7);
+			dmb.extend(100u32.to_le_bytes());
+			words(&mut dmb, 2);
+			dmb.extend([0; 4 + 1]);
+			words(&mut dmb, 1);
+			dmb.extend([0; 2]);
+			dmb.extend([0; 2]);
+			words(&mut dmb, 2);
+			dmb.extend([0; 8 + 2]);
+			words(&mut dmb, 5);
+			dmb.extend([0; 6]);
+			word(&mut dmb, self.resources.len() as u32);
+			for (crc, kind) in &self.resources {
+				dmb.extend(crc.to_le_bytes());
+				dmb.push(*kind);
+			}
+			dmb
 		}
-		dmb
+	}
+
+	fn world(resources: &[(u32, u8)]) -> Vec<u8> {
+		World {
+			resources: resources.to_vec(),
+			..World::default()
+		}
+		.dmb()
 	}
 
 	#[test]
@@ -295,6 +342,47 @@ mod tests {
 		let mut dmb = world(&[(0x3B83BAEA, 3)]);
 		dmb.pop();
 		assert!(resource_crcs(&dmb).is_err());
+	}
+
+	#[test]
+	fn a_world_with_large_ids_is_read() {
+		let dmb = World {
+			large: true,
+			resources: vec![(0x3B83BAEA, 3)],
+			..World::default()
+		};
+		assert_eq!(resource_crcs(&dmb.dmb()), Ok(vec![0x3B83BAEA]));
+	}
+
+	#[test]
+	fn a_count_too_large_for_the_address_space_is_an_error() {
+		let dmb = World {
+			large: true,
+			init_procs: 0x4000_0000,
+			..World::default()
+		};
+		let error = resource_crcs(&dmb.dmb()).unwrap_err();
+		let expected = if cfg!(target_pointer_width = "32") {
+			"table of 1073741824 ids at byte"
+		} else {
+			"unexpected end of table"
+		};
+		assert!(error.contains(expected), "{}", error);
+	}
+
+	#[test]
+	fn a_string_length_too_large_for_the_address_space_is_an_error() {
+		let dmb = World {
+			string_length: vec![0xFFFF; 65538],
+			..World::default()
+		};
+		let error = resource_crcs(&dmb.dmb()).unwrap_err();
+		let expected = if cfg!(target_pointer_width = "32") {
+			"string length at byte"
+		} else {
+			"unexpected end of table"
+		};
+		assert!(error.contains(expected), "{}", error);
 	}
 
 	#[test]
