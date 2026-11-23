@@ -2545,7 +2545,7 @@ fn append_entries(prepared: &Prepared, added: &mut Added) -> Result<Vec<u32>, St
 		let id = failing(FailAt::Append)
 			.and_then(|()| runtime_tables::append_proc(&new.entry))
 			.map_err(|e| format!("couldn't add a proc: {}", e))?;
-		std::mem::forget(new.path.clone());
+		PROC_STRINGS.lock().unwrap().insert((id.0, ProcEntryWords::PATH), new.path.get_id().0);
 		std::mem::forget(new.basename.clone());
 		for setting in &new.settings {
 			hold_setting(id.0, setting.clone());
@@ -2672,8 +2672,11 @@ pub fn apply<K: Claimant, T>(
 				runtime_tables::set_proc_entry_word(raw_types::procs::ProcId(proc), ProcEntryWords::NEXT_OVERRIDE, id);
 			}
 			for (proc, path) in &on_type.paths {
-				runtime_tables::set_proc_entry_word(raw_types::procs::ProcId(*proc), ProcEntryWords::PATH, path.get_id().0);
-				std::mem::forget(path.clone());
+				set_setting(*proc, SettingWord {
+					word: ProcEntryWords::PATH,
+					value: path.get_id().0,
+					made: Some(path.clone())
+				});
 			}
 		}
 

@@ -2692,6 +2692,9 @@ fn declarations(built: Built) {
 	);
 	reload(&mut watcher, &changes);
 	eval(&mut client, "mv_keep()");
+	let upd_paths =
+		|client: &mut Client| ["/datum/mv_hud/human/proc/upd", "/datum/mv_hud/human/upd"].map(|path| eval(client, &format!("#string-refs {}", path)));
+	assert_eq!(upd_paths(&mut client), ["1", "0"], "references to the new proc's path");
 	let changes = source.edit_many("reload.dm", &[
 		(
 			"/datum/mv_hud\n\n",
@@ -2723,6 +2726,11 @@ fn declarations(built: Built) {
 			.any(|w| w.contains("subtypes keep their declarations, values and var IDs")),
 		"{:?}",
 		result.warnings
+	);
+	assert_eq!(
+		upd_paths(&mut client),
+		["0", "1"],
+		"references to the proc's paths after its parent declared it"
 	);
 	let report = "\"[(new /datum/mv_hud).sue] [(new /datum/mv_hud/human).sue] [(new /datum/mv_hud/human/sub).sue] [(new /datum/mv_hud/robot).sue] \
 	              [(new /datum/mv_hud/plain).sue]\"";
