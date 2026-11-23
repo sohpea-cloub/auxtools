@@ -2416,9 +2416,9 @@ fn declarations(built: Built) {
 		"reload.dm",
 		"/proc/first_def()\n",
 		"/datum/hr_a\n\tvar/x = 1\n\n/datum/hr_a/proc/f()\n\treturn \"a\"\n\n/datum/hr_b\n\tvar/x = 2\n\tvar/y = 3\n\n/datum/hr_b/New()\n\ty = \
-		 4\n\n/datum/hr_b/proc/f()\n\treturn \"b\"\n\n/datum/hr_t\n\tparent_type = /datum/hr_a\n\n/datum/hr_t/f()\n\treturn \"t\" + \
-		 ..()\n\n/datum/hr_t/sub\n\n/obj/hr_oa\n\ticon_state = \"a\"\n\tlayer = 7\n\n/obj/hr_ob\n\tpixel_x = 2\n\tbound_width = 16\n\tbound_height \
-		 = 48\n\n/obj/hr_ot\n\tparent_type = /obj/hr_oa\n\tbound_width = 8\n\tstep_x = \
+		 4\n\n/datum/hr_b/proc/f()\n\treturn \"b\"\n\n/datum/hr_t\n\tparent_type = /datum/hr_a\n\tvar/hr_own = 1\n\n/datum/hr_t/f()\n\treturn \"t\" \
+		 + ..()\n\n/datum/hr_t/sub\n\n/obj/hr_oa\n\ticon_state = \"a\"\n\tlayer = 7\n\n/obj/hr_ob\n\tpixel_x = 2\n\tbound_width = \
+		 16\n\tbound_height = 48\n\n/obj/hr_ot\n\tparent_type = /obj/hr_oa\n\tbound_width = 8\n\tstep_x = \
 		 2\n\nvar/datum/hr_t/sub/hr_kept\n\n/proc/hr_keep()\n\thr_kept = new\n\n/proc/first_def()\n"
 	);
 	reload(&mut watcher, &changes);
@@ -2429,7 +2429,10 @@ fn declarations(built: Built) {
 		("\tparent_type = /obj/hr_oa\n", "\tparent_type = /obj/hr_ob\n")
 	]);
 	assert_eq!(changes.plan.reparented.len(), 2, "{:?}", changes.plan.reparented);
+	let names = |client: &mut Client| ["hr_own", "step_x"].map(|name| eval(client, &format!("#string-refs {}", name)));
+	let before = names(&mut client);
 	reload(&mut watcher, &changes);
+	let after_one = names(&mut client);
 	assert_eq!(eval(&mut client, "(new /datum/hr_t/sub).f()"), "\"tb\"");
 	assert_eq!(eval(&mut client, "istype(new /datum/hr_t/sub, /datum/hr_b)"), "1");
 	assert_eq!(eval(&mut client, "istype(new /datum/hr_t/sub, /datum/hr_a)"), "0");
@@ -2458,9 +2461,16 @@ fn declarations(built: Built) {
 	);
 	let changes = source.edit("reload.dm", "\tparent_type = /datum/hr_b\n", "\tparent_type = /datum/hr_a\n");
 	reload(&mut watcher, &changes);
+	let [own_after, _] = names(&mut client);
+	assert_eq!(
+		[own_after, after_one[1].clone()],
+		before,
+		"the references to the names of a var and a built-in after their types changed parents"
+	);
 	assert_eq!(eval(&mut client, "(new /datum/hr_t/sub).f()"), "\"ta\"");
 	assert_eq!(eval(&mut client, "length(typesof(/datum/hr_a))"), "3");
 	assert_eq!(eval(&mut client, "(new /datum/hr_t).x"), "1");
+	assert_eq!(eval(&mut client, "(new /datum/hr_t).hr_own"), "1");
 	println!("ok: parent type change");
 
 	let changes = source.edit(

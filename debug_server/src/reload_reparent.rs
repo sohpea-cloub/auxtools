@@ -7,7 +7,8 @@ pub(super) struct PreparedReparents {
 	name_maps: Vec<(u32, Vec<(u32, Vec<u32>, u8)>)>,
 	map_plans: Vec<runtime_tables::NameMapPlan>,
 	relinks: Vec<(u32, u32)>,
-	builtins: Vec<InheritedBuiltins>
+	builtins: Vec<InheritedBuiltins>,
+	names: Vec<StringRef>
 }
 
 struct InheritedBuiltins {
@@ -28,8 +29,11 @@ pub(super) fn parent_of(type_id: u32) -> Result<u32, String> {
 	runtime_tables::type_field(type_id, type_fields::PARENT)
 }
 
-fn string_id(text: &str) -> Result<u32, String> {
-	leaked_string(text)
+fn string_id(text: &str, names: &mut Vec<StringRef>) -> Result<u32, String> {
+	let name = StringRef::new(text).map_err(|_| format!("couldn't make the string {}", text))?;
+	let id = name.get_id().0;
+	names.push(name);
+	Ok(id)
 }
 
 pub(super) fn prepare(
@@ -142,10 +146,17 @@ fn prepare_one(
 		};
 		let up = parent_of(t)?;
 
-		let declares: HashSet<u32> = own.declares.iter().map(|n| string_id(n)).collect::<Result<_, _>>()?;
-		let sets: HashSet<u32> = own.sets.iter().chain(&own.declares).map(|n| string_id(n)).collect::<Result<_, _>>()?;
+		let names = &mut prepared.reparent.names;
+		let declares: HashSet<u32> = own.declares.iter().map(|n| string_id(n, names)).collect::<Result<_, _>>()?;
+		let sets: HashSet<u32> = own
+			.sets
+			.iter()
+			.chain(&own.declares)
+			.map(|n| string_id(n, names))
+			.collect::<Result<_, _>>()?;
+		let builtins: HashSet<u32> = own.builtins.iter().map(|n| string_id(n, names)).collect::<Result<_, _>>()?;
 		let own_builtins: HashSet<u32> = if inherit::builtin_in_table(t, "") {
-			own.builtins.iter().map(|n| string_id(n)).collect::<Result<_, _>>()?
+			builtins.clone()
 		} else {
 			HashSet::new()
 		};
@@ -219,7 +230,7 @@ fn prepare_one(
 		prepared.reparent.builtins.push(InheritedBuiltins {
 			type_id: t,
 			parent: up,
-			own: own.builtins.iter().map(|n| string_id(n)).collect::<Result<_, _>>()?,
+			own: builtins,
 			own_names: own.builtins.iter().cloned().collect(),
 			name: match &own.name {
 				ConstValue::String(name) => made_string(name)?,
