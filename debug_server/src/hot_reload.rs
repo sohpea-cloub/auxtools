@@ -49,7 +49,8 @@ pub struct Prepared {
 	in_lists: Vec<(u32, ProcEntryWords)>,
 	instances: Vec<(u32, runtime_tables::Instance, ProcEntryWords)>,
 	builtin_inherits: Vec<(u32, String)>,
-	reparent: reparent::PreparedReparents
+	reparent: reparent::PreparedReparents,
+	new_types: Vec<String>
 }
 
 struct PreparedNewVar {
@@ -343,7 +344,7 @@ pub fn prepare(request: &HotReloadRequest, warnings: &mut Vec<String>, skipped: 
 		global_init
 	} = request;
 	let Plan {
-		new_types: _,
+		new_types,
 		reloads,
 		settings,
 		new_procs,
@@ -374,7 +375,10 @@ pub fn prepare(request: &HotReloadRequest, warnings: &mut Vec<String>, skipped: 
 		});
 	}
 
-	let mut prepared = Prepared::default();
+	let mut prepared = Prepared {
+		new_types: new_types.iter().map(|new| new.path.clone()).collect(),
+		..Default::default()
+	};
 	let mut errors = vec![];
 	let mut world_globals = WorldGlobals::default();
 
@@ -1564,16 +1568,37 @@ pub fn add_types(new_types: &[NewType]) -> Result<usize, Vec<String>> {
 	runtime_tables::types_available().map_err(|e| vec![format!("adding types isn't available on this build of BYOND: {}", e)])?;
 	code_changed();
 
+	let differ: Vec<String> = {
+		let unsettled = UNSETTLED_TYPES.lock().unwrap();
+		new_types
+			.iter()
+			.filter(|new| unsettled.get(&new.path).is_some_and(|added| added != *new))
+			.map(|new| {
+				format!(
+					"{}: a reload that failed added this type with another parent or other built-in values. Undo the change to them, or rebuild the \
+					 .dmb and restart the world",
+					new.path
+				)
+			})
+			.collect()
+	};
+	if !differ.is_empty() {
+		return Err(differ);
+	}
+
 	let mut added = 0;
 	for new in new_types {
 		if find_type(&new.path).is_ok() {
 			continue;
 		}
 		add_type(new).map_err(|e| vec![format!("{}: {}", new.path, e)])?;
+		UNSETTLED_TYPES.lock().unwrap().insert(new.path.clone(), new.clone());
 		added += 1;
 	}
 	Ok(added)
 }
+
+static UNSETTLED_TYPES: Mutex<BTreeMap<String, NewType>> = Mutex::new(BTreeMap::new());
 
 fn add_type(new: &NewType) -> Result<(), String> {
 	let parent = find_type(&new.parent)?;
@@ -2229,6 +2254,11 @@ pub fn apply<K: Ord + std::hash::Hash + Copy, T>(
 		added: _
 	} = appended;
 	code_changed();
+	let mut unsettled = UNSETTLED_TYPES.lock().unwrap();
+	for path in &prepared.new_types {
+		unsettled.remove(path);
+	}
+	drop(unsettled);
 	reparent::apply_tree(&mut prepared.reparent);
 	ADDED_GLOBALS
 		.lock()
@@ -2744,6 +2774,7 @@ fn world_has_debug_info() -> bool {
 fn forget_world() {
 	ADDED_GLOBALS.lock().unwrap().clear();
 	TYPE_STRINGS.lock().unwrap().clear();
+	UNSETTLED_TYPES.lock().unwrap().clear();
 	RELOADED.lock().unwrap().clear();
 	*WORLD_HAS_DEBUG_INFO.lock().unwrap() = None;
 	WAITING_WORLD_EDITS.lock().unwrap().clear();

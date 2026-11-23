@@ -1672,6 +1672,28 @@ fn types(built: Built) {
 	);
 	println!("ok: a failed reload holds no reference to the strings it didn't write");
 
+	assert_eq!(eval(&mut client, "#fail-reload append"), "the next reload fails at Append");
+	let changes = source.edit(
+		"reload.dm",
+		"/proc/first_def()\n",
+		"/obj/crate/retried\n\tdesc = \"first try\"\n\n/proc/retried_maker()\n\treturn new /obj/crate/retried\n\n/proc/first_def()\n"
+	);
+	let result = expect_reload_result(watcher.request(reload_request(&changes)));
+	assert!(!result.applied, "a reload whose proc wasn't added was applied: {:?}", result);
+	source.snapshot = Some(changes.before);
+	let changes = source.edit("reload.dm", "\"first try\"", "\"second try\"");
+	assert_eq!(changes.plan.new_types.len(), 1, "{:?}", changes.plan);
+	let result = expect_reload_result(watcher.request(reload_request(&changes)));
+	assert!(!result.applied, "a reload that kept a failed reload's desc was applied: {:?}", result);
+	assert_eq!(result.errors, ["/obj/crate/retried: a reload that failed added this type with another \
+	                            parent or other built-in values. Undo the change to them, or rebuild \
+	                            the .dmb and restart the world"]);
+	source.snapshot = Some(changes.before);
+	let changes = source.edit("reload.dm", "\"second try\"", "\"first try\"");
+	reload(&mut watcher, &changes);
+	assert_eq!(eval(&mut client, "retried_maker().desc"), "\"first try\"");
+	println!("ok: a retried reload refuses other values for a type that a failed reload added");
+
 	let changes = source.edit(
 		"reload.dm",
 		"/proc/first_def()\n\treturn \"first\"\n",
