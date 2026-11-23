@@ -106,10 +106,10 @@ impl Cli {
 
 pub struct Background {
 	child: Child,
-	lines: mpsc::Receiver<String>,
-	errors: mpsc::Receiver<String>,
+	stdout_lines: mpsc::Receiver<String>,
+	stderr_lines: mpsc::Receiver<String>,
 	pub printed: String,
-	said: String
+	printed_on_stderr: String
 }
 
 fn lines_of(stream: impl Read + Send + 'static) -> mpsc::Receiver<String> {
@@ -139,11 +139,11 @@ impl Background {
 	pub fn spawn(mut command: Command) -> Self {
 		let mut child = command.stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().unwrap();
 		Self {
-			lines: lines_of(child.stdout.take().unwrap()),
-			errors: lines_of(child.stderr.take().unwrap()),
+			stdout_lines: lines_of(child.stdout.take().unwrap()),
+			stderr_lines: lines_of(child.stderr.take().unwrap()),
 			child,
 			printed: String::new(),
-			said: String::new()
+			printed_on_stderr: String::new()
 		}
 	}
 
@@ -151,12 +151,12 @@ impl Background {
 	pub fn line_with(&mut self, text: &str) -> String {
 		let deadline = Instant::now() + TIMEOUT;
 		loop {
-			match next_line(&self.lines, &mut self.printed, deadline) {
+			match next_line(&self.stdout_lines, &mut self.printed, deadline) {
 				Some(line) if line.contains(text) => return line,
 				Some(_) => {}
 				None => {
 					self.read_errors();
-					panic!("no line with {:?} came; it printed {}{}", text, self.printed, self.said)
+					panic!("no line with {:?} came; it printed {}{}", text, self.printed, self.printed_on_stderr)
 				}
 			}
 		}
@@ -166,16 +166,19 @@ impl Background {
 	pub fn error_with(&mut self, text: &str) -> String {
 		let deadline = Instant::now() + TIMEOUT;
 		loop {
-			match next_line(&self.errors, &mut self.said, deadline) {
+			match next_line(&self.stderr_lines, &mut self.printed_on_stderr, deadline) {
 				Some(line) if line.contains(text) => return line,
 				Some(_) => {}
-				None => panic!("no line with {:?} came on stderr; it printed {}{}", text, self.printed, self.said)
+				None => panic!(
+					"no line with {:?} came on stderr; it printed {}{}",
+					text, self.printed, self.printed_on_stderr
+				)
 			}
 		}
 	}
 
 	fn read_errors(&mut self) {
-		while next_line(&self.errors, &mut self.said, Instant::now()).is_some() {}
+		while next_line(&self.stderr_lines, &mut self.printed_on_stderr, Instant::now()).is_some() {}
 	}
 
 	#[track_caller]
@@ -193,13 +196,13 @@ impl Background {
 			}
 			if Instant::now() >= deadline {
 				self.read_errors();
-				panic!("timed out waiting for process exit; output: {}{}", self.printed, self.said);
+				panic!("timed out waiting for process exit; output: {}{}", self.printed, self.printed_on_stderr);
 			}
 			std::thread::sleep(Duration::from_millis(50));
 		};
-		while next_line(&self.lines, &mut self.printed, deadline).is_some() {}
-		while next_line(&self.errors, &mut self.said, deadline).is_some() {}
-		(code, self.printed, self.said)
+		while next_line(&self.stdout_lines, &mut self.printed, deadline).is_some() {}
+		while next_line(&self.stderr_lines, &mut self.printed_on_stderr, deadline).is_some() {}
+		(code, self.printed, self.printed_on_stderr)
 	}
 
 	#[cfg(unix)]
@@ -276,9 +279,9 @@ mod tests {
 	#[test]
 	fn lines_are_taken_from_each_stream_in_its_order() {
 		let mut running = Background::spawn(printing(&[("first", false), ("ready", true), ("second", false), ("last", true)], 0));
-		assert_eq!(running.error_with("rea"), "ready");
+		assert_eq!(running.error_with("rea"), "ready", "a line of stderr is found whatever stdout has");
 		assert_eq!(running.line_with("second"), "second");
-		assert_eq!(running.printed, "first\nsecond\n");
+		assert_eq!(running.printed, "first\nsecond\n", "the lines passed over stay in what it printed");
 		assert_eq!(running.finish_apart(), (0, "first\nsecond\n".to_owned(), "ready\nlast\n".to_owned()));
 	}
 }
