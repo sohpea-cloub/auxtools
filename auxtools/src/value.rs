@@ -195,23 +195,22 @@ impl Value {
 			data: raw_types::values::ValueData { id: 0 }
 		};
 
+		let name_ref = string::StringRef::new(&procname.as_ref().replace("_", " "))?;
+		let mut raw_args: Vec<_> = args.iter().map(|e| e.raw).collect();
+
 		unsafe {
 			for v in args {
 				raw_types::funcs::inc_ref_count(v.raw);
 			}
 
-			let procname = String::from(procname.as_ref()).replace("_", " ");
-			let mut args: Vec<_> = args.iter().map(|e| e.raw).collect();
-			let name_ref = string::StringRef::new(&procname)?;
-
 			if raw_types::funcs::call_datum_proc_by_name(
 				&mut ret,
 				Value::NULL.raw,
 				2,
-				name_ref.value.raw.data.string,
+				name_ref.get_id(),
 				self.raw,
-				args.as_mut_ptr(),
-				args.len(),
+				raw_args.as_mut_ptr(),
+				raw_args.len(),
 				0,
 				0
 			) == 1

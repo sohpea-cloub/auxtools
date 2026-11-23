@@ -57,5 +57,21 @@ fn test_hooks() {
 		return Err(runtime!("test_hooks: calling a hooked datum proc from Rust did not reach the hook"));
 	}
 
+	unsafe {
+		let mut entry: *mut strings::StringEntry = std::ptr::null_mut();
+		assert_eq!(funcs::get_string_table_entry(&mut entry, held.get_id()), 1);
+		let before = (*entry).ref_count;
+		if datum.call("hooked\0method", &[&Value::from(&held)]).is_ok() {
+			return Err(runtime!("test_hooks: a call to a proc name with a NUL succeeded"));
+		}
+		if (*entry).ref_count != before {
+			return Err(runtime!(
+				"test_hooks: a call with a bad name leaked a reference to its argument: {} references, expected {}",
+				(*entry).ref_count,
+				before
+			));
+		}
+	}
+
 	Ok(Value::from(true))
 }
