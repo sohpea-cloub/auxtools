@@ -81,7 +81,7 @@ async function pickWorldFile(folder) {
 	}
 	const found = await findFiles(".dmb", folder);
 	if (found.length === 0) {
-		vscode.window.showErrorMessage("No .dmb found in the workspace. Build the world first (Tasks: Run Build Task).");
+		vscode.window.showErrorMessage("No .dmb found in the workspace. Build the world first with Tasks: Run Build Task.");
 		return undefined;
 	}
 	if (found.length === 1) {
@@ -121,7 +121,7 @@ async function pickWorld(context) {
 		return undefined;
 	}
 	if (worlds.length === 0) {
-		vscode.window.showErrorMessage("No debugger-enabled worlds found. Start a world with the auxtools launcher.");
+		vscode.window.showErrorMessage("No worlds with the auxtools debugger found. Start a world with the auxtools launcher.");
 		return undefined;
 	}
 	const items = worlds.map((world) => ({
@@ -465,12 +465,12 @@ const STATES = {
 	reloaded: { text: "$(check) Hot reload", tooltip: "Last reload: " },
 	refused: {
 		text: "$(warning) Rebuild needed",
-		tooltip: "Rebuild required. See the Problems panel, then rebuild and restart.",
+		tooltip: "Open Problems to see which edits need a rebuild. Rebuild and restart to apply them.",
 		background: "statusBarItem.warningBackground",
 	},
 	held: {
 		text: "$(debug-restart) Reboot needed",
-		tooltip: "Reboot required. See the Problems panel, then reboot.",
+		tooltip: "Open Problems to see which edits need a reboot. Reboot to apply them.",
 		background: "statusBarItem.warningBackground",
 	},
 	failed: { text: "$(error) Hot reload failed", tooltip: "The last hot reload failed: ", background: "statusBarItem.errorBackground" },
@@ -552,7 +552,7 @@ class ReloadStatus {
 			return;
 		}
 		known.said = said;
-		const more = problems.length > 1 ? ` (and ${problems.length - 1} more)` : "";
+		const more = problems.length > 1 ? `, and ${problems.length - 1} more` : "";
 		const shown = (message, button) =>
 			vscode.window.showWarningMessage(message, button, "Show Problems").then((action) => {
 				if (action === "Reboot") {
