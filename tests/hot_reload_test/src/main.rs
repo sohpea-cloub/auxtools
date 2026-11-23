@@ -1194,11 +1194,11 @@ fn debugger(built: Built) {
 	let changes = source.edit(
 		"reload.dm",
 		"/proc/first_def()\n",
-		"var/exact_step = 0\nvar/exact_value = 0\n\n/proc/exact_target()\n\texact_step += 1\n\texact_value = exact_step; \
+		"var/exact_step = 0\nvar/exact_value = 0\n\n/proc/exact_target()\n\texact_step += 1\n\texact_value = exact_step && exact_step; \
 		 twin_runs++\n\n/proc/first_def()\n"
 	);
 	reload(&mut watcher, &changes);
-	let line = source.line_of("reload.dm", "\texact_value = exact_step;");
+	let line = source.line_of("reload.dm", "\texact_value = exact_step &&");
 	let after_assignment = |client: &mut Client| {
 		let on_line = line_instructions(client, "/exact_target", line);
 		(on_line.iter().find(|(_, text)| text.contains("twin_runs")))
@@ -1242,7 +1242,7 @@ fn debugger(built: Built) {
 	wait_for(&mut client, "twin_runs", &(runs + 1).to_string());
 	twin_breakpoint(&mut client, "exact_target", before, false);
 	twin_run(&mut client, "exact_target", line, 1, false);
-	println!("ok: an instruction breakpoint on a line a reload keeps stays on its instruction");
+	println!("ok: an instruction breakpoint after a short-circuit on a line a reload keeps stays on its instruction");
 
 	let changes = source.edit(
 		"reload.dm",

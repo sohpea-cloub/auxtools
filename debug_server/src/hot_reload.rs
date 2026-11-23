@@ -2721,7 +2721,15 @@ fn restore_breakpoints<K: Ord + std::hash::Hash + Copy, T>(
 
 fn same_place(old_code: &crate::code_index::Code, old: &[u32], old_start: u32, old_offset: u32, new: &[u32], new_start: u32) -> Option<u32> {
 	let length = (old_offset.checked_sub(old_start)? as usize) + old_code.instruction_length(old_offset)?;
-	let span = |code: &[u32], start: u32| code.get(start as usize..start as usize + length).map(<[u32]>::to_vec);
+	let span = |code: &[u32], start: u32| {
+		let mut words = code.get(start as usize..start as usize + length)?.to_vec();
+		for label in dmasm::scan(code).map(|scanned| scanned.label_operands).unwrap_or_default() {
+			if let Some(word) = (label.word_offset.checked_sub(start)).and_then(|at| words.get_mut(at as usize)) {
+				*word = label.target.wrapping_sub(start);
+			}
+		}
+		Some(words)
+	};
 	(span(old, old_start)? == span(new, new_start)?).then_some(new_start + (old_offset - old_start))
 }
 
