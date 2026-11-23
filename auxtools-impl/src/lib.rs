@@ -100,10 +100,10 @@ pub fn full_shutdown(_: TokenStream, item: TokenStream) -> TokenStream {
 	code.into()
 }
 
-/// Sets whether auxtools pins its DLL on Windows, which keeps it loaded until
-/// the process ends and its file locked while Dream Daemon runs. A library that
-/// unpins it must have no spawned threads running when DM calls
-/// `auxtools_full_shutdown`, or Dream Daemon crashes.
+/// Sets whether auxtools pins its DLL on Windows. A pinned DLL stays loaded
+/// until the process ends, and its file stays locked while Dream Daemon runs.
+/// A library that unpins the DLL must stop its spawned threads before DM calls
+/// `auxtools_full_shutdown`. Otherwise Dream Daemon crashes.
 #[proc_macro]
 pub fn pin_dll(attr: TokenStream) -> TokenStream {
 	let flag = syn::parse_macro_input!(attr as syn::LitBool);
@@ -129,9 +129,9 @@ fn is_value(path: &syn::TypePath) -> bool {
 			.is_some_and(|last| last.ident == "Value" && last.arguments.is_none())
 }
 
-/// Defines a proc hook. Given a proc path, the hook is installed at init.
-/// Each argument is a `Value` or a `&Value`, in the proc's order. Use `_` for
-/// an argument the hook doesn't use.
+/// Defines a proc hook. With a proc path, the hook is installed at init. Each
+/// argument is a `Value` or a `&Value`, in the proc's order. Use `_` for an
+/// argument the hook doesn't use.
 ///
 /// ```ignore
 /// #[hook("/mob/proc/on_honked")]
