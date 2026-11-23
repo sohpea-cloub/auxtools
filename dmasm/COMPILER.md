@@ -6,7 +6,7 @@ running world's BYOND build so the result can replace a proc through hot reload.
 
 ## Validation
 
-The comparison harness compiles every proc in a codebase, assembles it against
+A comparison harness compiles every proc in a codebase, assembles it against
 DreamMaker's `.dmb`, and compares the resulting disassembly. Results from 2026-11-10:
 
 | Codebase commit | BYOND | Procs | Identical | Equivalent | Known differences |
@@ -25,7 +25,11 @@ known differences described here.
 The harness also replaces proc bytecode in the `.dmb` and runs codebase unit tests:
 150 for cmss13, 486 for tgstation and 22 for goonstation, with the same results as
 DreamMaker builds. Differential fuzzing compared 1,536 worlds of 80 generated procs.
-The offline `.dmb` tooling is not included in this repository.
+
+The codebase harness, its bytecode replacement and the fuzzer are not in this
+repository. The `compare_dreammaker` example is in it. It compares procs in the same
+way, for the small worlds in `compiler/tests/dreammaker/`. See
+[Comparing with DreamMaker](README.md#comparing-with-dreammaker) to run it.
 
 ## Target BYOND build
 
