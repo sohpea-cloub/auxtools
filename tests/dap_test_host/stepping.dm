@@ -262,3 +262,9 @@ var/lone_held = FALSE
 	n += 2 // @swap_add
 	n *= 3 // @swap_mul
 	return n
+
+/proc/sc_noted()
+	var/n = 1
+	// A comment above a statement
+	n += 1 // @noted_add
+	return n

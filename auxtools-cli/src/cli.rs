@@ -325,7 +325,8 @@ pub struct World {
 	json: Option<u32>,
 	waited: Map<String, Value>,
 	patience: Duration,
-	unavailable: Option<String>
+	unavailable: Option<String>,
+	breakpoints_set: u32
 }
 
 impl World {
@@ -342,7 +343,8 @@ impl World {
 			json: None,
 			waited: Map::new(),
 			patience: args::DEFAULT_RESPONSE_TIMEOUT,
-			unavailable: None
+			unavailable: None,
+			breakpoints_set: 0
 		})
 	}
 
@@ -1263,10 +1265,12 @@ impl World {
 		let trigger = Trigger { condition, hit: None };
 		let mut bound = vec![];
 		for instruction in instructions {
-			match self.place_breakpoint(&instruction, &trigger, log.clone(), false)? {
+			self.breakpoints_set += 1;
+			let id = self.breakpoints_set;
+			match self.place_breakpoint(id, &instruction, &trigger, log.clone(), false)? {
 				Placed::Set { at, file, line } => bound.push(Bound {
 					place: place.to_owned(),
-					asked: instruction,
+					id,
 					at,
 					file,
 					line,
@@ -1280,7 +1284,7 @@ impl World {
 	}
 
 	fn unset_breakpoint(&mut self, bound: &Bound) -> Result<u32> {
-		self.remove_breakpoint(&bound.asked, false)
+		self.remove_breakpoint(bound.id)
 	}
 
 	fn nowhere(&mut self, file: &str, line: u32) -> Result<Failure> {
@@ -1319,7 +1323,7 @@ impl Asks for World {
 
 struct Bound {
 	place: String,
-	asked: InstructionRef,
+	id: u32,
 	at: InstructionRef,
 	file: Option<String>,
 	line: Option<u32>,

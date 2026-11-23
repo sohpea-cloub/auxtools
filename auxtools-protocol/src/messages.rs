@@ -21,11 +21,11 @@ pub enum Request {
 		condition: Option<String>,
 		hit: Option<HitCondition>,
 		log: Option<Vec<LogPart>>,
-		exact: bool
+		exact: bool,
+		id: u32
 	},
 	BreakpointUnset {
-		instruction: InstructionRef,
-		exact: bool
+		id: u32
 	},
 	CatchRuntimes {
 		uncaught: Option<RuntimeFilter>,
@@ -140,7 +140,8 @@ pub enum Request {
 		id: u32,
 		condition: Option<String>,
 		hit: Option<HitCondition>
-	}
+	},
+	Breakpoints
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
@@ -258,7 +259,16 @@ pub enum Response {
 	Profile(Result<ProfileReply, String>),
 	Unavailable {
 		reason: String
-	}
+	},
+	Breakpoints(Vec<PlacedBreakpoint>)
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct PlacedBreakpoint {
+	pub id: u32,
+	pub at: InstructionRef,
+	pub file: Option<String>,
+	pub line: Option<u32>
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
@@ -700,14 +710,7 @@ pub struct Stop {
 	pub thread: u32,
 	pub at: InstructionRef,
 	#[serde(default)]
-	pub paused_by: Vec<BreakpointKind>
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum BreakpointKind {
-	Line,
-	Proc,
-	Instruction
+	pub paused_by: Vec<u32>
 }
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]
@@ -800,7 +803,5 @@ pub struct HotReloadResult {
 	pub failures: Vec<String>,
 	pub skipped: Vec<String>,
 	#[serde(default)]
-	pub resources: Vec<ReloadedResource>,
-	#[serde(default)]
-	pub moved: Vec<(InstructionRef, InstructionRef)>
+	pub resources: Vec<ReloadedResource>
 }

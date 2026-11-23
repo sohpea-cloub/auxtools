@@ -1,4 +1,6 @@
-use auxtools_protocol::{BreakpointSetResult, HitCondition, InstructionRef, LogPart, Request, Response, Watch, WatchPlace, HELPER_FILE};
+use auxtools_protocol::{
+	BreakpointSetResult, HitCondition, InstructionRef, LogPart, PlacedBreakpoint, Request, Response, Watch, WatchPlace, HELPER_FILE
+};
 
 pub trait Asks {
 	type Error;
@@ -57,6 +59,7 @@ pub trait Operations: Asks {
 
 	fn place_breakpoint(
 		&mut self,
+		id: u32,
 		instruction: &InstructionRef,
 		trigger: &Trigger,
 		log: Option<Vec<LogPart>>,
@@ -67,7 +70,8 @@ pub trait Operations: Asks {
 			condition: trigger.condition.clone(),
 			hit: trigger.hit,
 			log,
-			exact
+			exact,
+			id
 		};
 		match self.ask(&set)? {
 			Response::BreakpointSet { result } => Ok(match result {
@@ -79,13 +83,16 @@ pub trait Operations: Asks {
 		}
 	}
 
-	fn remove_breakpoint(&mut self, instruction: &InstructionRef, exact: bool) -> Result<u32, Self::Error> {
-		let unset = Request::BreakpointUnset {
-			instruction: instruction.clone(),
-			exact
-		};
-		match self.ask(&unset)? {
+	fn remove_breakpoint(&mut self, id: u32) -> Result<u32, Self::Error> {
+		match self.ask(&Request::BreakpointUnset { id })? {
 			Response::BreakpointUnset { skipped, .. } => Ok(skipped),
+			other => Err(Self::unexpected(&other))
+		}
+	}
+
+	fn placed_breakpoints(&mut self) -> Result<Vec<PlacedBreakpoint>, Self::Error> {
+		match self.ask(&Request::Breakpoints)? {
+			Response::Breakpoints(placed) => Ok(placed),
 			other => Err(Self::unexpected(&other))
 		}
 	}
@@ -179,15 +186,15 @@ mod tests {
 			condition: Some("x > 1".to_owned()),
 			hit: Some(HitCondition::parse(">= 3").unwrap())
 		};
-		let placed = world.place_breakpoint(&here, &trigger, None, true).unwrap();
+		let placed = world.place_breakpoint(5, &here, &trigger, None, true).unwrap();
 		assert!(matches!(placed, Placed::Set { at: set, file: Some(file), line: Some(7) } if set.offset == 2 && file == "main.dm"));
 		assert!(matches!(
 			&world.asked[0],
-			Request::BreakpointSet { instruction, condition: Some(condition), hit: Some(_), log: None, exact: true }
+			Request::BreakpointSet { instruction, condition: Some(condition), hit: Some(_), log: None, exact: true, id: 5 }
 				if *instruction == here && condition == "x > 1"
 		));
 		assert!(matches!(
-			world.place_breakpoint(&here, &Trigger::default(), None, false),
+			world.place_breakpoint(6, &here, &Trigger::default(), None, false),
 			Ok(Placed::Nowhere)
 		));
 		assert!(matches!(&world.asked[1], Request::BreakpointSet {
@@ -195,19 +202,19 @@ mod tests {
 			hit: None,
 			log: None,
 			exact: false,
+			id: 6,
 			..
 		}));
-		assert!(matches!(world.place_breakpoint(&here, &trigger, None, false), Ok(Placed::Refused(why)) if why == "no such var"));
-		assert_eq!(world.place_breakpoint(&here, &trigger, None, false).err().unwrap(), "unexpected: Ack");
-		assert_eq!(world.remove_breakpoint(&here, true).err().unwrap(), "no answer");
+		assert!(matches!(world.place_breakpoint(5, &here, &trigger, None, false), Ok(Placed::Refused(why)) if why == "no such var"));
+		assert_eq!(world.place_breakpoint(7, &here, &trigger, None, false).err().unwrap(), "unexpected: Ack");
+		assert_eq!(world.remove_breakpoint(5).err().unwrap(), "no answer");
 	}
 
 	#[test]
 	fn a_removed_breakpoint_says_what_it_skipped() {
-		let here = at("/proc/main", 4);
 		let mut world = Scripted::new(vec![Response::BreakpointUnset { success: true, skipped: 3 }]);
-		assert_eq!(world.remove_breakpoint(&here, false), Ok(3));
-		assert!(matches!(&world.asked[0], Request::BreakpointUnset { instruction, exact: false } if *instruction == here));
+		assert_eq!(world.remove_breakpoint(4), Ok(3));
+		assert!(matches!(&world.asked[0], Request::BreakpointUnset { id: 4 }));
 	}
 
 	#[test]

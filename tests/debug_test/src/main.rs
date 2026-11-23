@@ -8,7 +8,7 @@ use auxtools_protocol::{
 	ProfileRequest, ProfileTotals, ProfiledCode, Request, Response, RuntimeFilter, VariablesRef, WatchPlace
 };
 use test_support::{
-	debug::{Client, World},
+	debug::{breakpoint_id, Client, World},
 	paths
 };
 
@@ -40,6 +40,7 @@ fn start_of(proc: &str) -> InstructionRef {
 
 fn set_breakpoint(client: &mut Client, proc: &str, condition: Option<&str>) {
 	let response = client.request(Request::BreakpointSet {
+		id: breakpoint_id(&start_of(proc), false),
 		instruction: start_of(proc),
 		condition: condition.map(str::to_owned),
 		hit: None,
@@ -309,6 +310,7 @@ fn protocol(world: &World, mut client: Client) -> Client {
 		response
 	);
 	let response = client.request(Request::BreakpointSet {
+		id: breakpoint_id(&start_of(BREAKPOINT_TARGET), false),
 		instruction: start_of(BREAKPOINT_TARGET),
 		condition: Some("1 +".to_owned()),
 		hit: None,
@@ -325,6 +327,7 @@ fn protocol(world: &World, mut client: Client) -> Client {
 	pause(&mut client);
 	let set = |client: &mut Client, instruction: &InstructionRef| {
 		client.request(Request::BreakpointSet {
+			id: breakpoint_id(instruction, false),
 			instruction: instruction.clone(),
 			condition: None,
 			hit: None,
@@ -351,11 +354,11 @@ fn protocol(world: &World, mut client: Client) -> Client {
 		response
 	);
 	let response = client.request(Request::BreakpointUnset {
-		instruction: start_of(BREAKPOINT_TARGET),
-		exact: false
+		id: breakpoint_id(&start_of(BREAKPOINT_TARGET), false)
 	});
 	assert!(matches!(response, Response::BreakpointUnset { success: true, .. }), "{:?}", response);
 	let response = client.request(Request::BreakpointSet {
+		id: breakpoint_id(&inside, true),
 		instruction: inside,
 		condition: None,
 		hit: None,
@@ -375,8 +378,7 @@ fn protocol(world: &World, mut client: Client) -> Client {
 	set_breakpoint(&mut client, BREAKPOINT_TARGET, None);
 	expect_breakpoint_in(&mut client, BREAKPOINT_TARGET);
 	let response = client.request(Request::BreakpointUnset {
-		instruction: start_of(BREAKPOINT_TARGET),
-		exact: false
+		id: breakpoint_id(&start_of(BREAKPOINT_TARGET), false)
 	});
 	assert!(matches!(response, Response::BreakpointUnset { success: true, .. }), "{:?}", response);
 	let response = client.request(Request::Continue {
@@ -401,6 +403,7 @@ fn protocol(world: &World, mut client: Client) -> Client {
 		offset: frames[0].instruction.offset
 	};
 	let response = client.request(Request::BreakpointSet {
+		id: breakpoint_id(&here(), true),
 		instruction: here(),
 		condition: None,
 		hit: None,
@@ -418,8 +421,7 @@ fn protocol(world: &World, mut client: Client) -> Client {
 	assert_eq!(client.expect_pause(), BreakpointReason::Breakpoint);
 	assert_eq!(paused_in(&mut client), "/main_loop");
 	let response = client.request(Request::BreakpointUnset {
-		instruction: here(),
-		exact: true
+		id: breakpoint_id(&here(), true)
 	});
 	assert!(matches!(response, Response::BreakpointUnset { success: true, .. }), "{:?}", response);
 	client.resume();
@@ -436,8 +438,7 @@ fn protocol(world: &World, mut client: Client) -> Client {
 	assert_eq!(second.expect_pause(), BreakpointReason::Breakpoint);
 	let unset = |client: &mut Client, proc: &str| {
 		let response = client.request(Request::BreakpointUnset {
-			instruction: start_of(proc),
-			exact: false
+			id: breakpoint_id(&start_of(proc), false)
 		});
 		assert!(
 			matches!(response, Response::BreakpointUnset { success: true, .. }),
@@ -745,12 +746,14 @@ fn loop_back_to_the_start() {
 	let back = (disassembly.instructions.iter().rev())
 		.find(|instruction| instruction.text.starts_with("Jmp"))
 		.unwrap_or_else(|| panic!("no jump back in {:?}", disassembly.instructions));
+	let back_at = InstructionRef {
+		proc: counted.proc.clone(),
+		offset: back.offset as u32
+	};
 	let break_back = |client: &mut Client, condition: Option<&str>| {
 		let response = client.request(Request::BreakpointSet {
-			instruction: InstructionRef {
-				proc: counted.proc.clone(),
-				offset: back.offset as u32
-			},
+			id: breakpoint_id(&back_at, true),
+			instruction: back_at.clone(),
 			condition: condition.map(str::to_owned),
 			hit: None,
 			log: None,
@@ -831,11 +834,7 @@ fn loop_back_to_the_start() {
 	client.resume();
 	assert_eq!(client.expect_pause(), BreakpointReason::Breakpoint);
 	let response = client.request(Request::BreakpointUnset {
-		instruction: InstructionRef {
-			proc: counted.proc.clone(),
-			offset: back.offset as u32
-		},
-		exact: true
+		id: breakpoint_id(&back_at, true)
 	});
 	assert!(matches!(response, Response::BreakpointUnset { success: true, .. }), "{:?}", response);
 	let response = client.request(Request::WatchSet {
@@ -887,6 +886,7 @@ fn loop_back_to_the_start() {
 
 fn break_exactly(client: &mut Client, at: &InstructionRef, log: Option<&str>) {
 	let response = client.request(Request::BreakpointSet {
+		id: breakpoint_id(at, true),
 		instruction: at.clone(),
 		condition: None,
 		hit: None,
@@ -988,8 +988,7 @@ fn watches_at_the_end() {
 	println!("ok: a frame watch ends when its proc returns through a breakpoint");
 
 	let response = client.request(Request::BreakpointUnset {
-		instruction: end.clone(),
-		exact: true
+		id: breakpoint_id(&end, true)
 	});
 	assert!(matches!(response, Response::BreakpointUnset { success: true, .. }), "{:?}", response);
 	break_exactly(&mut client, &first_change, Some("logged"));
@@ -1009,8 +1008,7 @@ fn watches_at_the_end() {
 
 	pause(&mut client);
 	let response = client.request(Request::BreakpointUnset {
-		instruction: first_change,
-		exact: true
+		id: breakpoint_id(&first_change, true)
 	});
 	assert!(matches!(response, Response::BreakpointUnset { success: true, .. }), "{:?}", response);
 	break_exactly(&mut client, &end, None);
@@ -1037,8 +1035,7 @@ fn watches_at_the_end() {
 
 	pause(&mut client);
 	let response = client.request(Request::BreakpointUnset {
-		instruction: end,
-		exact: true
+		id: breakpoint_id(&end, true)
 	});
 	assert!(matches!(response, Response::BreakpointUnset { success: true, .. }), "{:?}", response);
 	set_breakpoint(&mut client, "/watched_throw", None);
@@ -1092,12 +1089,14 @@ fn false_condition_on_a_caught_throw() {
 	let throw = (disassembly.instructions.iter())
 		.find(|instruction| instruction.text.starts_with("Throw"))
 		.unwrap_or_else(|| panic!("no throw in {:?}", disassembly.instructions));
+	let throw_at = InstructionRef {
+		proc: throw_caught.clone(),
+		offset: throw.offset as u32
+	};
 	let break_throw = |client: &mut Client, condition: Option<&str>, log: Option<&str>| {
 		let response = client.request(Request::BreakpointSet {
-			instruction: InstructionRef {
-				proc: throw_caught.clone(),
-				offset: throw.offset as u32
-			},
+			id: breakpoint_id(&throw_at, true),
+			instruction: throw_at.clone(),
 			condition: condition.map(str::to_owned),
 			hit: None,
 			log: log.map(LogPart::parse),
@@ -1140,21 +1139,19 @@ fn false_condition_on_a_caught_throw() {
 	println!("ok: a logpoint on a caught throw logs when the throw stops");
 
 	let response = client.request(Request::BreakpointUnset {
-		instruction: InstructionRef {
-			proc: throw_caught.clone(),
-			offset: throw.offset as u32
-		},
-		exact: true
+		id: breakpoint_id(&throw_at, true)
 	});
 	assert!(matches!(response, Response::BreakpointUnset { success: true, .. }), "{:?}", response);
 	let before = (disassembly.instructions.iter().rev())
 		.find(|instruction| instruction.offset < throw.offset)
 		.unwrap_or_else(|| panic!("nothing before the throw in {:?}", disassembly.instructions));
+	let before_at = InstructionRef {
+		proc: throw_caught.clone(),
+		offset: before.offset as u32
+	};
 	let response = client.request(Request::BreakpointSet {
-		instruction: InstructionRef {
-			proc: throw_caught.clone(),
-			offset: before.offset as u32
-		},
+		id: breakpoint_id(&before_at, true),
+		instruction: before_at,
 		condition: None,
 		hit: None,
 		log: None,
@@ -1294,8 +1291,7 @@ fn main() {
 	println!("ok: disassembly doesn't show the breakpoint");
 
 	let response = client.request(Request::BreakpointUnset {
-		instruction: start_of("/proc/does_not_exist"),
-		exact: false
+		id: breakpoint_id(&start_of("/proc/does_not_exist"), false)
 	});
 	assert!(
 		matches!(response, Response::BreakpointUnset { success: false, .. }),
@@ -1319,8 +1315,7 @@ fn main() {
 
 	for proc in [BREAKPOINT_TARGET, TICK_MARKER] {
 		let response = client.request(Request::BreakpointUnset {
-			instruction: start_of(proc),
-			exact: false
+			id: breakpoint_id(&start_of(proc), false)
 		});
 		assert!(
 			matches!(response, Response::BreakpointUnset { success: true, .. }),

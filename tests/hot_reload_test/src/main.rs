@@ -8,7 +8,7 @@ use std::{
 use auxtools_protocol::*;
 use dmasm::reload::{diff, Changes, ParseOptions, Snapshot};
 use test_support::{
-	debug::{Client, World},
+	debug::{breakpoint_id, Client, World},
 	paths,
 	temp::TempDir
 };
@@ -444,14 +444,16 @@ fn debugger(built: Built) {
 
 	let line = source.line_of("reload.dm", "\tx += 1");
 	let old_offset = offset_of(&mut client, "/breakpoint_target", line);
-	let response = client.request(Request::BreakpointSet {
-		instruction: InstructionRef {
-			proc: ProcRef {
-				path: "/breakpoint_target".to_owned(),
-				override_id: 0
-			},
-			offset: old_offset
+	let old_at = InstructionRef {
+		proc: ProcRef {
+			path: "/breakpoint_target".to_owned(),
+			override_id: 0
 		},
+		offset: old_offset
+	};
+	let response = client.request(Request::BreakpointSet {
+		id: breakpoint_id(&old_at, false),
+		instruction: old_at.clone(),
 		condition: None,
 		hit: None,
 		log: None,
@@ -503,19 +505,12 @@ fn debugger(built: Built) {
 	println!("ok: breakpoint line remapping");
 
 	let response = client.request(Request::BreakpointUnset {
-		instruction: InstructionRef {
-			proc: ProcRef {
-				path: "/breakpoint_target".to_owned(),
-				override_id: 0
-			},
-			offset: old_offset
-		},
-		exact: false
+		id: breakpoint_id(&old_at, false)
 	});
 	assert!(matches!(response, Response::BreakpointUnset { success: true, .. }), "{:?}", response);
 	eval(&mut client, "arm_breakpoint()");
 	wait_for(&mut client, "breakpoint_armed", "0");
-	println!("ok: remove remapped breakpoint by original offset");
+	println!("ok: remove a remapped breakpoint by its id");
 
 	let line = source.line_of("reload.dm", "\ty += 1");
 	let offset = offset_of(&mut client, "/caught_target", line);
@@ -527,6 +522,7 @@ fn debugger(built: Built) {
 		offset
 	};
 	let response = client.request(Request::BreakpointSet {
+		id: breakpoint_id(&at, false),
 		instruction: at.clone(),
 		condition: None,
 		hit: None,
@@ -544,8 +540,7 @@ fn debugger(built: Built) {
 	let result = reload(&mut watcher, &changes);
 	assert!(result.applied, "{:?}", result);
 	let response = client.request(Request::BreakpointUnset {
-		instruction: at,
-		exact: false
+		id: breakpoint_id(&at, false)
 	});
 	assert!(matches!(response, Response::BreakpointUnset { success: true, .. }), "{:?}", response);
 	client.resume();
@@ -564,6 +559,7 @@ fn debugger(built: Built) {
 		offset
 	};
 	let response = client.request(Request::BreakpointSet {
+		id: breakpoint_id(&at, false),
 		instruction: at.clone(),
 		condition: None,
 		hit: None,
@@ -583,8 +579,7 @@ fn debugger(built: Built) {
 	);
 	client.resume();
 	let response = client.request(Request::BreakpointUnset {
-		instruction: at,
-		exact: false
+		id: breakpoint_id(&at, false)
 	});
 	assert!(matches!(response, Response::BreakpointUnset { success: true, .. }), "{:?}", response);
 	println!("ok: breakpoints move with a proc to another file");
@@ -604,6 +599,7 @@ fn debugger(built: Built) {
 
 	let stops_on = |client: &mut Client, at: &InstructionRef, line: u32| {
 		let response = client.request(Request::BreakpointSet {
+			id: breakpoint_id(at, false),
 			instruction: at.clone(),
 			condition: None,
 			hit: None,
@@ -616,8 +612,7 @@ fn debugger(built: Built) {
 		assert_eq!(paused_line(client), ("/breakpoint_target".to_owned(), Some(line)));
 		client.resume();
 		let response = client.request(Request::BreakpointUnset {
-			instruction: at.clone(),
-			exact: false
+			id: breakpoint_id(at, false)
 		});
 		assert!(matches!(response, Response::BreakpointUnset { success: true, .. }), "{:?}", response);
 	};
@@ -627,6 +622,7 @@ fn debugger(built: Built) {
 	assert_eq!(before.len(), 1, "{:?}", before);
 	stops_on(&mut client, &before[0], line);
 	let response = client.request(Request::BreakpointSet {
+		id: breakpoint_id(&before[0], false),
 		instruction: before[0].clone(),
 		condition: None,
 		hit: None,
@@ -641,8 +637,7 @@ fn debugger(built: Built) {
 	assert_eq!(paused_line(&mut client), ("/breakpoint_target".to_owned(), Some(line + 1)));
 	client.resume();
 	let response = client.request(Request::BreakpointUnset {
-		instruction: before[0].clone(),
-		exact: false
+		id: breakpoint_id(&before[0], false)
 	});
 	assert!(matches!(response, Response::BreakpointUnset { success: true, .. }), "{:?}", response);
 	println!("ok: a breakpoint stays on its statement when a statement is inserted above it");
@@ -696,6 +691,7 @@ fn debugger(built: Built) {
 		};
 		match client.request(if set {
 			Request::BreakpointSet {
+				id: breakpoint_id(&instruction, false),
 				instruction,
 				condition: None,
 				hit: None,
@@ -703,7 +699,9 @@ fn debugger(built: Built) {
 				exact: false
 			}
 		} else {
-			Request::BreakpointUnset { instruction, exact: false }
+			Request::BreakpointUnset {
+				id: breakpoint_id(&instruction, false)
+			}
 		}) {
 			Response::BreakpointSet {
 				result: BreakpointSetResult::Success { .. }
@@ -763,6 +761,7 @@ fn debugger(built: Built) {
 	};
 	let set = |client: &mut Client, offset: u32| {
 		let response = client.request(Request::BreakpointSet {
+			id: breakpoint_id(&last_in_file(offset), false),
 			instruction: last_in_file(offset),
 			condition: None,
 			hit: None,
@@ -809,8 +808,7 @@ fn debugger(built: Built) {
 	client.resume();
 	wait_for(&mut client, "last_calls", "1");
 	match client.request(Request::BreakpointUnset {
-		instruction: last_in_file(old_offset),
-		exact: false
+		id: breakpoint_id(&last_in_file(old_offset), false)
 	}) {
 		Response::BreakpointUnset { success: true, .. } => {}
 		other => panic!("couldn't take away the moved breakpoint: {:?}", other)
@@ -832,6 +830,7 @@ fn debugger(built: Built) {
 		.unwrap_or_else(|| panic!("/last_in_file has no .dme record: {:?}", instructions));
 	let after_dme_line = instructions[dme_at + 2].offset as u32;
 	match client.request(Request::BreakpointSet {
+		id: breakpoint_id(&last_in_file(after_dme_line), true),
 		instruction: last_in_file(after_dme_line),
 		condition: None,
 		hit: None,
@@ -849,8 +848,7 @@ fn debugger(built: Built) {
 	assert!(result.warnings.is_empty(), "{:?}", result.warnings);
 	assert_eq!(lines_with_code(&mut client, "hot_reload_test_host.dme", 1, 10_000), dme_lines);
 	match client.request(Request::BreakpointUnset {
-		instruction: last_in_file(after_dme_line),
-		exact: true
+		id: breakpoint_id(&last_in_file(after_dme_line), true)
 	}) {
 		Response::BreakpointUnset { success: true, .. } => {}
 		other => panic!("the breakpoint after the .dme's line went with the reload: {:?}", other)
@@ -910,6 +908,7 @@ fn debugger(built: Built) {
 		offset: offset_of(&mut client, "/datum/cache_probe/probe", line)
 	};
 	let response = client.request(Request::BreakpointSet {
+		id: breakpoint_id(&instruction, false),
 		instruction,
 		condition: None,
 		hit: None,
@@ -1169,6 +1168,7 @@ fn debugger(built: Built) {
 	let mut other = world.connect();
 	let set = |client: &mut Client, offset: u32, condition: &str| {
 		let response = client.request(Request::BreakpointSet {
+			id: breakpoint_id(&claimed(offset), true),
 			instruction: claimed(offset),
 			condition: Some(condition.to_owned()),
 			hit: None,
@@ -1203,8 +1203,7 @@ fn debugger(built: Built) {
 	}
 	let unset = |client: &mut Client, offset: u32| {
 		let response = client.request(Request::BreakpointUnset {
-			instruction: claimed(offset),
-			exact: true
+			id: breakpoint_id(&claimed(offset), true)
 		});
 		assert!(
 			matches!(response, Response::BreakpointUnset { success: true, .. }),
@@ -1276,6 +1275,7 @@ fn debugger(built: Built) {
 		offset
 	};
 	let response = client.request(Request::BreakpointSet {
+		id: breakpoint_id(&exact(before), true),
 		instruction: exact(before),
 		condition: Some("exact_value == exact_step".to_owned()),
 		hit: None,
@@ -1419,8 +1419,7 @@ fn debugger(built: Built) {
 		let result = reload(&mut watcher, &changes);
 		assert!(result.warnings.is_empty(), "{:?}", result.warnings);
 		twin_run(&mut client, "swap_target", line + 1, 1, true);
-		let after = offset_of(&mut client, "/swap_target", line + 1);
-		twin_breakpoint(&mut client, "swap_target", after, false);
+		twin_breakpoint(&mut client, "swap_target", before, false);
 		twin_run(&mut client, "swap_target", line, 1, false);
 	}
 	println!("ok: breakpoints on two swapped statements move with them");
@@ -1736,6 +1735,7 @@ fn twin_breakpoint(client: &mut Client, twin: &str, offset: u32, set: bool) {
 	};
 	match client.request(if set {
 		Request::BreakpointSet {
+			id: breakpoint_id(&instruction, true),
 			instruction,
 			condition: None,
 			hit: None,
@@ -1743,7 +1743,9 @@ fn twin_breakpoint(client: &mut Client, twin: &str, offset: u32, set: bool) {
 			exact: true
 		}
 	} else {
-		Request::BreakpointUnset { instruction, exact: true }
+		Request::BreakpointUnset {
+			id: breakpoint_id(&instruction, true)
+		}
 	}) {
 		Response::BreakpointSet {
 			result: BreakpointSetResult::Success { .. }

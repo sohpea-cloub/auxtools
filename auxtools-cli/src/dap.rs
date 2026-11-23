@@ -253,12 +253,12 @@ impl Event for InvalidatedEvent {
 }
 
 #[derive(serde::Serialize)]
-pub struct BreakpointEvent {
+pub struct BreakpointEvent<B = Breakpoint> {
 	pub reason: String,
-	pub breakpoint: Breakpoint
+	pub breakpoint: B
 }
 
-impl Event for BreakpointEvent {
+impl<B: serde::Serialize> Event for BreakpointEvent<B> {
 	const EVENT: &'static str = "breakpoint";
 }
 

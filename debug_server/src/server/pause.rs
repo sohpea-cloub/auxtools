@@ -86,7 +86,7 @@ impl State {
 
 pub(super) struct Pausing {
 	pub(super) state: Option<State>,
-	pub(super) paused: Option<(Stop, Vec<(ClientId, BreakpointKind)>)>,
+	pub(super) paused: Option<(Stop, Vec<breakpoints::Claimant>)>,
 	pub(super) ending: Option<Instant>,
 	pub(super) stepper: Option<ClientId>
 }
@@ -274,7 +274,7 @@ impl Server {
 	pub(super) fn stop_for(&self, client: Option<ClientId>) -> Option<Stop> {
 		let (stop, paused_by) = self.pause.paused.as_ref()?;
 		Some(Stop {
-			paused_by: (paused_by.iter()).filter(|(by, _)| Some(*by) == client).map(|(_, kind)| *kind).collect(),
+			paused_by: (paused_by.iter()).filter(|by| Some(by.client) == client).map(|by| by.id).collect(),
 			..stop.clone()
 		})
 	}

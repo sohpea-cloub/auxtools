@@ -183,16 +183,11 @@ impl Adapter {
 			.iter()
 			.filter(|breakpoint| breakpoint.watch.is_some())
 			.map(|breakpoint| SetBreakpoint {
-				asked: InstructionRef {
-					proc: aux::ProcRef {
-						path: String::new(),
-						override_id: 0
-					},
-					offset: 0
-				},
+				id: breakpoint.id,
+				claim: 0,
 				at: None,
-				watch: breakpoint.watch,
-				id: breakpoint.id
+				line: None,
+				watch: breakpoint.watch
 			})
 			.collect();
 		self.set.lock().unwrap().insert(DATA_BREAKPOINTS.to_owned(), records);

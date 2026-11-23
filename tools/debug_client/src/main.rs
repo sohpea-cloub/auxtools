@@ -252,11 +252,12 @@ fn main() {
 		offset
 	};
 	conn.request(Request::BreakpointSet {
-		instruction: instruction.clone(),
+		instruction,
 		condition: options.condition.clone(),
 		hit: None,
 		log: None,
-		exact: false
+		exact: false,
+		id: 1
 	});
 	conn.send(&Request::CatchRuntimes {
 		uncaught: None,
@@ -278,7 +279,7 @@ fn main() {
 	}
 
 	println!("== watches done, continuing");
-	conn.request(Request::BreakpointUnset { instruction, exact: false });
+	conn.request(Request::BreakpointUnset { id: 1 });
 	conn.request(Request::Continue {
 		kind: ContinueKind::Continue
 	});

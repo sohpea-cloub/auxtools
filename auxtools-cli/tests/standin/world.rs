@@ -62,6 +62,7 @@ pub fn answers(dme: &Path) -> Answers {
 			Request::Configured => Response::Ack,
 			Request::Status => Response::Status { paused: None },
 			Request::Stacks { .. } => Response::Stacks { stacks: vec![], sleeping: 0 },
+			Request::Breakpoints => Response::Breakpoints(vec![]),
 			Request::CatchRuntimes { .. } | Request::Defines(_) | Request::JournalAdd(_) | Request::Disconnect => return Answer::Nothing,
 			_ => return Answer::ToTest
 		})
@@ -75,8 +76,7 @@ pub fn applied() -> Response {
 		warnings: vec![],
 		failures: vec![],
 		skipped: vec![],
-		resources: vec![],
-		moved: vec![]
+		resources: vec![]
 	})
 }
 

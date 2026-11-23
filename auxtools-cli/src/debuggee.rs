@@ -13,7 +13,7 @@ use auxtools_cli::{
 	client::{ops::Ending, Client, Heard, Listener, Lost},
 	local::{self, Stream}
 };
-use auxtools_protocol::{BreakpointKind, BreakpointReason, DataChange, InstructionRef, Request, Response, Stop};
+use auxtools_protocol::{BreakpointReason, DataChange, InstructionRef, Request, Response, Stop};
 use dap_types::{ContinuedEvent, StoppedEvent as Reasons};
 
 use crate::{
@@ -37,20 +37,11 @@ pub const fn error_kind(caught: bool) -> &'static str {
 
 #[derive(Clone)]
 pub struct SetBreakpoint {
-	pub asked: InstructionRef,
+	pub id: i64,
+	pub claim: u32,
 	pub at: Option<InstructionRef>,
-	pub watch: Option<u32>,
-	pub id: i64
-}
-
-impl SetBreakpoint {
-	const fn kind(&self, exact: bool) -> BreakpointKind {
-		match self.asked.offset {
-			_ if exact => BreakpointKind::Instruction,
-			0 => BreakpointKind::Proc,
-			_ => BreakpointKind::Line
-		}
-	}
+	pub line: Option<u32>,
+	pub watch: Option<u32>
 }
 
 fn changes_text(changes: &[DataChange]) -> String {
@@ -76,8 +67,7 @@ fn announce_stop(out: &Output, last_error: &Mutex<LastError>, set: &SetBreakpoin
 			let mut by_instruction = true;
 			for (key, breakpoints) in set.lock().unwrap().iter() {
 				let exact = key == INSTRUCTION_BREAKPOINTS;
-				let paused =
-					|breakpoint: &&SetBreakpoint| breakpoint.at.as_ref() == Some(&stop.at) && stop.paused_by.contains(&breakpoint.kind(exact));
+				let paused = |breakpoint: &&SetBreakpoint| breakpoint.at.is_some() && stop.paused_by.contains(&breakpoint.claim);
 				for breakpoint in breakpoints.iter().filter(paused) {
 					hit.push(breakpoint.id);
 					by_instruction &= exact;

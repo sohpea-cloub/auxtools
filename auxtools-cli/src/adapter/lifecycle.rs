@@ -287,6 +287,8 @@ impl Adapter {
 			}
 		}
 		self.set.lock().unwrap().clear();
+		self.removed_by_reload.clear();
+		self.relocated.clear();
 		self.watches_lost();
 
 		let byond = match self.request(&AuxRequest::ByondVersion) {

@@ -77,6 +77,23 @@ pub fn run() {
 	assert_eq!(logged(&mut world, from, 2)[0], "2 }{ 33 {not closed\n");
 	ok("nested and unmatched message braces");
 
+	let (file, line) = at.place("noted_add");
+	let set = world.set_breakpoints(&file, json!([{ "line": line - 1, "logMessage": "n is {n}" }, { "line": line }]));
+	assert_eq!((&set[0]["verified"], &set[1]["verified"]), (&json!(true), &json!(true)), "{:?}", set);
+	let from = world.outputs.len();
+	world.run("noted");
+	let stop = world.stop();
+	assert_eq!((stop.line, &stop.hit), (line, &vec![set[1]["id"].as_u64().unwrap()]));
+	world.resume_through("noted");
+	assert_eq!(logged(&mut world, from, 1), ["n is 1\n"]);
+	let set = world.set_breakpoints(&file, json!([{ "line": line - 1, "logMessage": "n is {n}" }]));
+	assert_eq!(set[0]["verified"], true, "{}", set[0]);
+	let from = world.outputs.len();
+	world.run_through("noted");
+	assert_eq!(logged(&mut world, from, 1), ["n is 1\n"]);
+	world.set_breakpoints(&file, json!([]));
+	ok("logpoint and breakpoint that resolve to one instruction");
+
 	log_on(&mut world, "leaf_1", json!({ "logMessage": "{x} has {x.len} and {nowhere_at_all}" }));
 	let from = world.outputs.len();
 	world.run_through("middle");

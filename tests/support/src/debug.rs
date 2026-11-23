@@ -11,12 +11,19 @@ use auxtools_cli::{
 };
 
 use auxtools_protocol::{
-	BreakpointReason, ClientMessage, ContinueKind, Pending, Request, RequestId, Response, ServerMessage, Sorted, WORLD_SHUTTING_DOWN
+	BreakpointReason, ClientMessage, ContinueKind, InstructionRef, Pending, Request, RequestId, Response, ServerMessage, Sorted, WORLD_SHUTTING_DOWN
 };
 
 const TIMEOUT: Duration = Duration::from_secs(15);
 
 const START_TIMEOUT: Duration = Duration::from_secs(30);
+
+pub fn breakpoint_id(at: &InstructionRef, exact: bool) -> u32 {
+	use std::hash::{DefaultHasher, Hash, Hasher};
+	let mut hasher = DefaultHasher::new();
+	(at, exact).hash(&mut hasher);
+	hasher.finish() as u32
+}
 
 pub struct World {
 	game: Game,

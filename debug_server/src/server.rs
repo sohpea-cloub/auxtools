@@ -119,9 +119,11 @@ impl Server {
 				condition,
 				hit,
 				log,
-				exact
-			} => self.handle_breakpoint_set(instruction, condition, hit, log, exact),
-			Request::BreakpointUnset { instruction, exact } => self.handle_breakpoint_unset(instruction, exact),
+				exact,
+				id
+			} => self.handle_breakpoint_set(instruction, condition, hit, log, exact, id),
+			Request::BreakpointUnset { id } => self.handle_breakpoint_unset(id),
+			Request::Breakpoints => self.handle_breakpoints(),
 			Request::Stacks { sleeping } => self.handle_stacks(sleeping),
 			Request::Scopes { frame_id } => self.handle_scopes(frame_id),
 			Request::Variables { vars, start, count } => self.handle_variables(vars, start, count),

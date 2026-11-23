@@ -377,9 +377,7 @@ enum WorldEdit {
 	}
 }
 
-pub type MovedBreakpoints<K> = HashMap<(raw_types::procs::ProcId, u32, K), u32>;
-
-pub trait Claimant: Ord + std::hash::Hash + Copy {
+pub trait Claimant: Ord {
 	fn on_entry(&self) -> bool;
 }
 
@@ -2640,7 +2638,6 @@ fn append_entries(prepared: &Prepared, added: &mut Added) -> Result<Vec<u32>, St
 pub fn apply<K: Claimant, T>(
 	appended: Appended,
 	breakpoints: &mut HashMap<(raw_types::procs::ProcId, u16), BTreeMap<K, T>>,
-	moved_breakpoints: &mut MovedBreakpoints<K>,
 	warnings: &mut Vec<String>,
 	failures: &mut Vec<String>
 ) {
@@ -2759,7 +2756,7 @@ pub fn apply<K: Claimant, T>(
 		unhooked.extend(apply_code(p, breakpoints, failures));
 	}
 	for code in unhooked {
-		restore_breakpoints(code, breakpoints, moved_breakpoints, warnings);
+		restore_breakpoints(code, breakpoints, warnings);
 	}
 	for r in renames {
 		if let Err(e) = rename(r) {
@@ -2940,7 +2937,6 @@ fn apply_code<K: Claimant, T>(
 fn restore_breakpoints<K: Claimant, T>(
 	unhooked: UnhookedCode<K, T>,
 	breakpoints: &mut HashMap<(raw_types::procs::ProcId, u16), BTreeMap<K, T>>,
-	moved_breakpoints: &mut MovedBreakpoints<K>,
 	warnings: &mut Vec<String>
 ) {
 	let UnhookedCode {
@@ -2959,28 +2955,11 @@ fn restore_breakpoints<K: Claimant, T>(
 		_ => None
 	};
 
-	let old_moves: Vec<((raw_types::procs::ProcId, u32, K), u32)> = moved_breakpoints
-		.iter()
-		.filter(|((proc, ..), at)| *proc == p.proc.id && hooked.iter().any(|(offset, ..)| offset == *at))
-		.map(|(key, at)| (*key, *at))
-		.collect();
-	for (key, _) in &old_moves {
-		moved_breakpoints.remove(key);
-	}
-	let mut new_moves = vec![];
 	let (old_marks, new_marks) = (line_marks(&old_bytecode), line_marks(&p.bytecode));
 
 	let new_entry = new_code.entry_offset();
 
 	for (old_offset, line, other_file, known) in hooked {
-		let mut known_as: Vec<(raw_types::procs::ProcId, u32, K)> =
-			old_moves.iter().filter(|(_, at)| *at == old_offset).map(|(key, _)| *key).collect();
-		for client in known.iter().flat_map(BTreeMap::keys) {
-			if !known_as.iter().any(|(.., other)| other == client) {
-				known_as.push((p.proc.id, old_offset, *client));
-			}
-		}
-		let (on_entry, known_as): (Vec<_>, Vec<_>) = known_as.into_iter().partition(|(.., who)| who.on_entry());
 		let (entry, known) = match known {
 			Some(known) => {
 				let (entry, rest): (BTreeMap<K, T>, BTreeMap<K, T>) = known.into_iter().partition(|(who, _)| who.on_entry());
@@ -2992,10 +2971,7 @@ fn restore_breakpoints<K: Claimant, T>(
 		if entry.is_some() {
 			let place = "at the start of the proc";
 			match hook_instruction(&p.proc, new_entry) {
-				Ok(()) => {
-					keep_claims(entry, breakpoints, (p.proc.id, new_entry as u16), &p.name, place, warnings);
-					new_moves.extend(on_entry.into_iter().filter(|key| key.1 != new_entry).map(|key| (key, new_entry)));
-				}
+				Ok(()) => keep_claims(entry, breakpoints, (p.proc.id, new_entry as u16), &p.name, place, warnings),
 				Err(_) => warnings.push(format!("{}: could not restore breakpoint {}", p.name, place))
 			}
 			if known.is_none() {
@@ -3067,9 +3043,7 @@ fn restore_breakpoints<K: Claimant, T>(
 		}
 
 		keep_claims(known, breakpoints, (p.proc.id, offset as u16), &p.name, &place, warnings);
-		new_moves.extend(known_as.into_iter().filter(|key| key.1 != offset).map(|key| (key, offset)));
 	}
-	moved_breakpoints.extend(new_moves);
 }
 
 fn line_marks(code: &[u32]) -> Vec<u32> {

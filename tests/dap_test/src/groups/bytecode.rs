@@ -1,4 +1,5 @@
 use serde_json::{json, Value};
+use test_support::cli;
 
 use crate::{
 	groups::{
@@ -319,6 +320,14 @@ fn old_code() {
 	edit(&mut world, "stepping.dm", "\ty += extra\n", "\ty += extra\n\textra = 0\n");
 	let moved = find(&listing(&mut world, mul), "Mul");
 	assert_ne!(moved, mul, "the reload didn't move the Mul");
+	let event = world.event("breakpoint");
+	let changed = &event["body"]["breakpoint"];
+	assert_eq!(
+		(changed["id"].as_u64(), address(&changed["instructionReference"])),
+		(Some(id), moved),
+		"{}",
+		event
+	);
 	world.run("middle");
 	let stop = world.stop();
 	assert_eq!(
@@ -334,6 +343,7 @@ fn old_code() {
 	let after = listing(&mut world, moved);
 	let ret = address(&after[after.iter().position(|i| address(&i["address"]) == moved).unwrap() + 1]["address"]);
 	let set = break_at(&mut world, &[mul, ret]);
+	assert_eq!(address(&set[0]["instructionReference"]), moved, "{}", set[0]);
 	assert_eq!(set[1]["verified"], true, "{}", set[1]);
 	let by_ret = set[1]["id"].as_u64().unwrap();
 	world.run("middle");
@@ -349,7 +359,58 @@ fn old_code() {
 	break_at(&mut world, &[]);
 	world.resume_through("middle");
 	ok("moved instruction breakpoint kept when another is added");
+
+	let id = break_at(&mut world, &[moved])[0]["id"].as_u64().unwrap();
+	edit(&mut world, "stepping.dm", "\treturn y * 2 // @leaf_2\n", "");
+	let event = world.event("breakpoint");
+	let removed = &event["body"]["breakpoint"];
+	assert_eq!((removed["id"].as_u64(), &removed["verified"]), (Some(id), &json!(false)), "{}", event);
+	let set = break_at(&mut world, &[moved]);
+	assert_eq!((set[0]["id"].as_u64(), &set[0]["verified"]), (Some(id), &json!(false)), "{}", set[0]);
+	world.run_through("middle");
+	break_at(&mut world, &[]);
+	ok("instruction breakpoint removed by a reload");
 	world.end();
+	moved_by_another();
+}
+
+fn moved_by_another() {
+	let dir = copy_of_the_world("bytecode_another");
+	let mut a = World::launch_in(dir.to_path_buf(), json!({ "hotReload": true }));
+	a.catch_runtimes(false);
+	a.configure();
+	a.wait_output("Hot reload active");
+	a.run_to("middle", "/leaf", "leaf_1");
+	let here = frame_address(&mut a);
+	let mul = find(&listing(&mut a, here), "Mul");
+	a.resume_through("middle");
+
+	let mut b = World::attach_in(dir.to_path_buf(), cli::listed_world("dap_test_host.dmb"));
+	b.catch_runtimes(false);
+	let id = break_at(&mut b, &[mul])[0]["id"].as_u64().unwrap();
+	edit(
+		&mut a,
+		"stepping.dm",
+		"\tvar/y = x + 1 // @leaf_1\n",
+		"\tvar/y = x + 1 // @leaf_1\n\ty += 0\n"
+	);
+	let moved = find(&listing(&mut a, mul), "Mul");
+	assert_ne!(moved, mul, "the reload didn't move the Mul");
+	a.run("middle");
+	for _ in 0..2 {
+		let stop = b.stop();
+		assert_eq!(
+			(stop.reason.as_str(), &stop.hit, frame_address(&mut b)),
+			("instruction breakpoint", &vec![id], moved)
+		);
+		a.stopped("breakpoint");
+		b.resume();
+		a.event("continued");
+	}
+	a.finish("middle");
+	ok("instruction breakpoint moved by another client's reload");
+	b.end();
+	a.end();
 }
 
 fn instruction_steps(world: &mut World) {
