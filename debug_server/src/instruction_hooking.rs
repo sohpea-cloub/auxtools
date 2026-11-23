@@ -604,7 +604,7 @@ impl InstructionHook for Server {
 #[derive(Debug)]
 pub enum InstructionHookError {
 	InvalidOffset,
-	SharedCode
+	NoOwnCode
 }
 
 fn instruction_length(proc: &Proc, offset: u32) -> Option<usize> {
@@ -613,7 +613,7 @@ fn instruction_length(proc: &Proc, offset: u32) -> Option<usize> {
 
 pub fn hook_instruction(proc: &Proc, offset: u32) -> Result<(), InstructionHookError> {
 	let instruction_length = instruction_length(proc, offset).ok_or(InstructionHookError::InvalidOffset)?;
-	auxtools::unshare_code(proc, &original_code(proc)).map_err(|_| InstructionHookError::SharedCode)?;
+	unsafe { auxtools::own_code(proc) }.map_err(|_| InstructionHookError::NoOwnCode)?;
 
 	let bytecode;
 	let opcode;

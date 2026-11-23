@@ -31,7 +31,7 @@ use std::{
 
 pub use auxtools_impl::{full_shutdown, hook, init, pin_dll, runtime_handler, shutdown};
 pub use byond_scan;
-pub use bytecode_manager::{bytecode_at, bytecode_changes, remember_bytecode, unshare_code};
+pub use bytecode_manager::{bytecode_at, bytecode_changes, own_code, remember_bytecode};
 pub use ctor;
 pub use hooks::{CompileTimeHook, HookFailure, ProcHook, RuntimeErrorHook};
 use init::{get_init_level, set_init_level, InitLevel};

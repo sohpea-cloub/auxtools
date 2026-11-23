@@ -1,41 +1,43 @@
 use std::{
 	cell::UnsafeCell,
 	collections::{HashMap, HashSet},
-	convert::TryFrom
+	convert::TryFrom,
+	ffi::c_void,
+	sync::atomic::{AtomicU32, AtomicU64, Ordering}
 };
 
 use crate::{
-	debug, raw_types,
+	debug,
+	raw_types::{
+		self,
+		misc::{MiscId, Misc_V2},
+		procs::ProcId
+	},
 	runtime_tables::{self, ProcEntryWords},
 	*
 };
 
 static mut BYTECODE_ALLOCATIONS: UnsafeCell<Option<State>> = UnsafeCell::new(None);
 
-static CHANGES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static CHANGES: AtomicU64 = AtomicU64::new(0);
+
+static SERIAL: AtomicU32 = AtomicU32::new(u32::MAX);
 
 /// A counter that changes when a proc is repointed, and at world start and
 /// shutdown.
 pub fn bytecode_changes() -> u64 {
-	CHANGES.load(std::sync::atomic::Ordering::Relaxed)
+	CHANGES.load(Ordering::Relaxed)
 }
 
 fn changed() {
-	CHANGES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+	CHANGES.fetch_add(1, Ordering::Relaxed);
 }
 
 struct State {
-	allocations: HashMap<(raw_types::procs::ProcId, Vec<u32>), Box<[u32]>>,
-	original: HashMap<raw_types::misc::BytecodeId, (*mut u32, u16)>,
-	own_entries: HashMap<raw_types::procs::ProcId, OwnEntry>,
+	allocations: HashMap<(ProcId, Vec<u32>), Box<[u32]>>,
+	original: HashMap<u32, (*mut u32, u16)>,
+	made: HashMap<u32, ProcId>,
 	retired_by_address: HashMap<usize, Vec<u32>>
-}
-
-#[derive(PartialEq, Eq)]
-struct OwnEntry {
-	entry: u32,
-	changes: u64,
-	procs: u32
 }
 
 pub fn init() {
@@ -45,7 +47,7 @@ pub fn init() {
 		*ptr = Some(State {
 			allocations: HashMap::new(),
 			original: HashMap::new(),
-			own_entries: HashMap::new(),
+			made: HashMap::new(),
 			retired_by_address: HashMap::new()
 		});
 	}
@@ -73,37 +75,62 @@ fn get_active_bytecode_ptrs() -> HashSet<*mut u32> {
 
 pub fn shutdown() {
 	changed();
-	let active_ptrs = get_active_bytecode_ptrs();
+	let mut kept = get_active_bytecode_ptrs();
 
 	let state = unsafe { (*BYTECODE_ALLOCATIONS.get()).take().unwrap() };
 
-	for (id, (ptr, len)) in state.original {
-		unsafe { raw_types::misc::set_bytecode(id, ptr, len) };
+	for (entry, original) in state.original {
+		unsafe {
+			if references(entry) == Ok(1) {
+				let _ = point_at(entry, original);
+			} else if let Ok((buffer, _)) = code_at(entry) {
+				kept.insert(buffer);
+			}
+		}
 	}
 
 	for mut buffer in state.allocations.into_values() {
-		if active_ptrs.contains(&buffer.as_mut_ptr()) {
+		if kept.contains(&buffer.as_mut_ptr()) {
 			std::mem::forget(buffer);
 		}
 	}
 }
 
-fn state() -> &'static mut State {
+unsafe fn state() -> &'static mut State {
 	unsafe { (*BYTECODE_ALLOCATIONS.get()).as_mut().unwrap() }
 }
 
-fn remember_original(state: &mut State, proc: &Proc) {
-	let id = unsafe { (*proc.entry()).metadata.bytecode };
-	state.original.entry(id).or_insert_with(|| unsafe { proc.bytecode_mut_ptr() });
+unsafe fn misc_entry(entry: u32) -> Result<*mut Misc_V2, String> {
+	let mut misc: *mut c_void = std::ptr::null_mut();
+	if raw_types::funcs::get_misc_by_id(&mut misc, MiscId::from_raw(entry)) != 1 || misc.is_null() {
+		return Err(format!("there's no misc entry {}", entry));
+	}
+	Ok(misc as *mut Misc_V2)
+}
+
+unsafe fn code_at(entry: u32) -> Result<(*mut u32, u16), String> {
+	let misc = misc_entry(entry)?;
+	Ok(((*misc).bytecode.bytecode, (*misc).bytecode.count))
+}
+
+unsafe fn point_at(entry: u32, (code, len): (*mut u32, u16)) -> Result<(), String> {
+	let misc = misc_entry(entry)?;
+	(*misc).bytecode.bytecode = code;
+	(*misc).bytecode.count = len;
+	Ok(())
+}
+
+unsafe fn references(entry: u32) -> Result<u32, String> {
+	Ok(*((misc_entry(entry)? as *const u8).add(4) as *const u32))
 }
 
 pub fn remember_bytecode(ptr: *const u32, bytecode: &[u32]) {
 	changed();
-	state().retired_by_address.entry(ptr as usize).or_insert_with(|| bytecode.to_vec());
+	unsafe { state() }.retired_by_address.entry(ptr as usize).or_insert_with(|| bytecode.to_vec());
 }
 
 pub fn bytecode_at(ptr: *const u32) -> Option<Vec<u32>> {
-	let state = state();
+	let state = unsafe { state() };
 
 	if let Some(bytecode) = state.retired_by_address.get(&(ptr as usize)) {
 		return Some(bytecode.clone());
@@ -120,98 +147,86 @@ pub fn bytecode_at(ptr: *const u32) -> Option<Vec<u32>> {
 		.map(|buffer| buffer.to_vec())
 }
 
-fn procs_sharing_code(proc: &Proc) -> Vec<Proc> {
-	let Some(entry) = (unsafe { runtime_tables::proc_entry(proc.id) }) else {
-		return vec![];
-	};
-	let code = entry.0[ProcEntryWords::BYTECODE];
-	(0..)
-		.map(raw_types::procs::ProcId)
-		.map_while(|id| unsafe { runtime_tables::proc_entry(id) }.map(|entry| (id, entry)))
-		.filter(|(id, entry)| *id != proc.id && entry.0[ProcEntryWords::BYTECODE] == code)
-		.filter_map(|(id, _)| Proc::from_id(id))
-		.collect()
+fn code_entry(proc: &Proc) -> Result<u32, String> {
+	unsafe { runtime_tables::proc_entry(proc.id) }
+		.map(|entry| entry.0[ProcEntryWords::BYTECODE])
+		.ok_or_else(|| format!("{} has no proc entry", proc.path))
 }
 
-const OWN_ENTRY_MARK: u32 = 0xFFFF_FFFF;
+unsafe fn owned_entry(state: &State, proc: &Proc) -> Option<u32> {
+	let entry = code_entry(proc).ok()?;
+	(state.made.get(&entry) == Some(&proc.id) && references(entry) == Ok(1)).then_some(entry)
+}
 
-fn give_new_code_entry(proc: &Proc, code: &[u32]) -> Result<(), String> {
-	if code.len() >= u16::MAX as usize {
-		return Err(format!("{} words are too many to copy", code.len()));
-	}
+unsafe fn new_entry(code: &[u32]) -> Result<u32, String> {
 	let mut words = code.to_vec();
-	words.push(OWN_ENTRY_MARK);
-	let entry = unsafe { runtime_tables::intern_misc(&words) }?;
-	if unsafe { runtime_tables::misc_words(entry) }.as_deref() != Some(&words[..]) {
-		return Err(format!("BYOND gave {} a code entry that other code already uses", proc.path));
-	}
-
-	let (old, _) = unsafe { proc.bytecode_mut_ptr() };
-	unsafe { runtime_tables::set_proc_entry_word(proc.id, ProcEntryWords::BYTECODE, entry) };
-	unsafe {
-		let id = (*proc.entry()).metadata.bytecode;
-		let (new, _) = raw_types::misc::get_bytecode(id);
-		raw_types::misc::set_bytecode(id, new, u16::try_from(code.len()).unwrap());
-		if debug::has_local_names(proc, old) {
-			debug::set_local_names(proc, new, debug::local_names_for(proc, old));
+	words.push(0);
+	for _ in 0..8 {
+		*words.last_mut().unwrap() = SERIAL.fetch_sub(1, Ordering::Relaxed);
+		let entry = runtime_tables::intern_misc(&words)?;
+		if references(entry)? == 1 && runtime_tables::misc_words(entry).as_ref() == Some(&words) {
+			return Ok(entry);
 		}
 	}
+	Err("BYOND gave out code entries that other code uses".to_owned())
+}
+
+unsafe fn give_own_entry(state: &mut State, proc: &Proc, keep_address: bool) -> Result<u32, String> {
+	let old = code_entry(proc)?;
+	let (code, len) = code_at(old)?;
+	let words = std::slice::from_raw_parts(code, len as usize).to_vec();
+	let new = new_entry(&words)?;
+	let (copy, _) = code_at(new)?;
+
+	if keep_address {
+		point_at(new, (code, len))?;
+		point_at(old, (copy, len))?;
+		if let Some(original) = state.original.remove(&old) {
+			state.original.insert(new, original);
+		}
+		debug::copy_local_names(code, copy, |id| id != proc.id);
+	} else {
+		point_at(new, (copy, len))?;
+		debug::copy_local_names(code, copy, |id| id == proc.id);
+		state.retired_by_address.entry(code as usize).or_insert(words);
+	}
+	runtime_tables::set_proc_entry_word(proc.id, ProcEntryWords::BYTECODE, new);
+	state.made.insert(new, proc.id);
 	changed();
-	Ok(())
+	Ok(new)
 }
 
-pub fn unshare_code(proc: &Proc, code: &[u32]) -> Result<(), String> {
-	for other in procs_sharing_code(proc) {
-		give_new_code_entry(&other, code)?;
-	}
-	Ok(())
-}
-
-fn code_entry(proc: &Proc) -> Option<u32> {
-	unsafe { runtime_tables::proc_entry(proc.id) }.map(|entry| entry.0[ProcEntryWords::BYTECODE])
-}
-
-fn proc_count_is(count: u32) -> bool {
-	count > 0
-		&& unsafe { runtime_tables::proc_entry(raw_types::procs::ProcId(count - 1)) }.is_some()
-		&& unsafe { runtime_tables::proc_entry(raw_types::procs::ProcId(count)) }.is_none()
-}
-
-fn give_own_code_entry(state: &mut State, proc: &Proc) -> Result<(), String> {
-	if let Some(own) = state.own_entries.get(&proc.id) {
-		if code_entry(proc) == Some(own.entry) && own.changes == bytecode_changes() && proc_count_is(own.procs) {
-			return Ok(());
-		}
-	}
-	if !procs_sharing_code(proc).is_empty() {
-		let code = unsafe { proc.bytecode() }.to_vec();
-		give_new_code_entry(proc, &code).map_err(|e| format!("{} shares its code and couldn't get code of its own: {}", proc.path, e))?;
-	}
-	if let Some(entry) = code_entry(proc) {
-		let own = OwnEntry {
-			entry,
-			changes: bytecode_changes(),
-			procs: unsafe { runtime_tables::proc_count() }
-		};
-		state.own_entries.insert(proc.id, own);
+/// Gives `proc` a code entry that nothing else uses, unless it has one. Its
+/// code keeps its address, so its running frames run any patch to it.
+///
+/// # Safety
+/// Call on BYOND's thread while a world is live. No other library has
+/// replaced `proc`'s code: the new entry takes over the code's buffer, and that
+/// library would free the buffer when it shuts down.
+pub unsafe fn own_code(proc: &Proc) -> Result<(), String> {
+	let state = state();
+	if owned_entry(state, proc).is_none() {
+		give_own_entry(state, proc, true).map_err(|e| format!("{} couldn't get code of its own: {}", proc.path, e))?;
 	}
 	Ok(())
 }
 
 pub fn set_bytecode(proc: &Proc, bytecode: Vec<u32>) -> Result<(), String> {
 	let len = u16::try_from(bytecode.len()).map_err(|_| format!("{} words are too many for {}", bytecode.len(), proc.path))?;
-	let state = state();
-	give_own_code_entry(state, proc)?;
-	remember_original(state, proc);
-
-	let ptr = state
-		.allocations
-		.entry((proc.id, bytecode))
-		.or_insert_with_key(|(_, bytecode)| bytecode.clone().into_boxed_slice())
-		.as_mut_ptr();
-
 	unsafe {
-		raw_types::misc::set_bytecode((*proc.entry()).metadata.bytecode, ptr, len);
+		let state = state();
+		let entry = match owned_entry(state, proc) {
+			Some(entry) => entry,
+			None => give_own_entry(state, proc, false).map_err(|e| format!("{} couldn't get code of its own: {}", proc.path, e))?
+		};
+		let current = code_at(entry)?;
+		state.original.entry(entry).or_insert(current);
+
+		let ptr = state
+			.allocations
+			.entry((proc.id, bytecode))
+			.or_insert_with_key(|(_, bytecode)| bytecode.clone().into_boxed_slice())
+			.as_mut_ptr();
+		point_at(entry, (ptr, len))
 	}
-	Ok(())
 }

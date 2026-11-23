@@ -168,10 +168,35 @@ BIG_TWINS(auxtest_big_a, auxtest_big_b)
 /proc/auxtest_code_u()
 	return "u"
 
+/proc/auxtest_code_v()
+	return "v"
+
+/proc/auxtest_code_w()
+	return "w"
+
+/proc/auxtest_code_x()
+	return "x"
+
+/proc/auxtest_code_f()
+	return "f"
+
+/proc/auxtest_code_y()
+	return "y"
+
+/proc/auxtest_code_z()
+	return "z"
+
+/proc/auxtest_locals_user()
+	var/unused = 1
+	return unused
+
 /proc/auxtest_code_before_shutdown()
 	CRASH()
 
 /proc/auxtest_shared_code()
+	CRASH()
+
+/proc/auxtest_entry_users()
 	CRASH()
 
 /proc/do_tests()
@@ -189,6 +214,7 @@ BIG_TWINS(auxtest_big_a, auxtest_big_b)
 	ASSERT(auxtest_value_from() == TRUE)
 	ASSERT(auxtest_code_before_shutdown() == TRUE)
 	ASSERT(auxtest_shared_code() == TRUE)
+	ASSERT(auxtest_entry_users() == TRUE)
 
 	var/datum/weak_test = new
 	ASSERT(auxtest_weak_values(weak_test, weak_kept_datum) == TRUE)

@@ -23,6 +23,18 @@ pub fn local_names_for(proc: &Proc, bytecode: *const u32) -> Vec<String> {
 		.unwrap_or_else(|| proc.local_names().into_iter().map(String::from).collect())
 }
 
+pub(crate) fn copy_local_names(from: *const u32, to: *const u32, procs: impl Fn(procs::ProcId) -> bool) {
+	LOCAL_NAMES.with(|map| {
+		let mut map = map.borrow_mut();
+		let copied: Vec<_> = map
+			.iter()
+			.filter(|((proc, at), _)| *at == from as usize && procs(*proc))
+			.map(|(&(proc, _), names)| ((proc, to as usize), names.clone()))
+			.collect();
+		map.extend(copied);
+	});
+}
+
 pub(crate) fn clear_local_names() {
 	LOCAL_NAMES.with(|map| map.borrow_mut().clear());
 }

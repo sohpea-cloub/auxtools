@@ -38,8 +38,10 @@
 - The functions in `runtime_tables`, `appearance_tables` and `raw_types::misc`, and
   `Proc::set_bytecode`, are now `unsafe`. Call them on BYOND's thread while a world is live.
   Their `# Safety` sections say what else they need. `NameMapPlan::write` returns a `Result`.
-- `Proc::set_bytecode` returns a `Result`. It fails and changes nothing when other procs share
-  the proc's code and the proc can't get code of its own.
+- `Proc::set_bytecode` returns a `Result`. It gives the proc a code entry of its own first, unless
+  the proc already has one, so other procs and tables that share the entry keep their code. It
+  fails and changes nothing when the proc can't get an entry of its own, as for a proc of 65,535
+  words.
 - `WeakValue::upgrade` returns `None` for a handle made before a shutdown.
 - Weak reference ids now include a namespace for each library. A datum that an older version
   tagged gets a new id, and the older version's handles to it no longer upgrade.
