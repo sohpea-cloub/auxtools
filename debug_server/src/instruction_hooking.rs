@@ -295,6 +295,7 @@ fn handle_runtime(error: &str) {
 
 		if let Some(server) = &mut *DEBUG_SERVER.get() {
 			server.spawn_runtime(error, ctx);
+			server.note_unwinding(ctx);
 		}
 
 		let reason = BreakpointReason::Runtime {
@@ -434,6 +435,7 @@ impl InstructionHook for Server {
 		let mut did_breakpoint = false;
 
 		if !in_eval && server.has_watches() {
+			server.end_unwound_watches(ctx);
 			if let Some(changes) = server.watched_changes(ctx) {
 				unsafe {
 					if let Some(action) = handle_breakpoint(ctx, BreakpointReason::Data { changes }) {
@@ -563,6 +565,7 @@ impl InstructionHook for Server {
 		}
 
 		if original_opcode(opcode_ptr) == OPCODE_THROW && !in_eval {
+			server.note_unwinding(ctx);
 			unsafe {
 				let (message, caught) = (thrown(ctx), in_try(ctx));
 				if did_breakpoint {

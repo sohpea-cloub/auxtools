@@ -53,16 +53,31 @@ unsafe fn read_slot(ctx: *mut raw_types::procs::ExecutionContext, slot: Slot) ->
 		}
 	}
 }
+
+unsafe fn frames_from(mut ctx: *mut raw_types::procs::ExecutionContext) -> Vec<(u32, raw_types::procs::ProcId)> {
+	let mut frames = vec![];
+	unsafe {
+		while !ctx.is_null() {
+			let instance = *(*ctx).proc_instance();
+			frames.push((instance_id(instance), (*instance).proc));
+			ctx = *(*ctx).parent_context();
+		}
+	}
+	frames
+}
+
 pub(super) struct Watches {
 	pub(super) watched: Vec<Watched>,
-	pub(super) next_watch: u32
+	pub(super) next_watch: u32,
+	unwinding: Vec<(u32, raw_types::procs::ProcId)>
 }
 
 impl Watches {
 	pub(super) fn new() -> Self {
 		Self {
 			watched: vec![],
-			next_watch: 0
+			next_watch: 0,
+			unwinding: vec![]
 		}
 	}
 
@@ -250,6 +265,38 @@ impl Server {
 			}
 		}
 		self.eval.in_eval = was_in_eval;
+	}
+
+	pub fn note_unwinding(&mut self, ctx: *mut raw_types::procs::ExecutionContext) {
+		self.watches.unwinding = unsafe { frames_from(ctx) };
+	}
+
+	pub fn end_unwound_watches(&mut self, ctx: *mut raw_types::procs::ExecutionContext) {
+		if self.watches.unwinding.is_empty() {
+			return;
+		}
+		let live = unsafe { frames_from(ctx) };
+		let unwinding = &self.watches.unwinding;
+		if !live.first().is_some_and(|frame| unwinding.contains(frame)) && live.iter().any(|frame| unwinding.contains(frame)) {
+			return;
+		}
+		let unwound = std::mem::take(&mut self.watches.unwinding);
+		let asleep: Vec<_> = (debug::CallStacks::suspended_instances().into_iter())
+			.flat_map(|instance| unsafe { frames_from((*instance).context) })
+			.collect();
+		let ended: Vec<u32> = (self.watches.watched.iter())
+			.filter(|watch| match watch.place {
+				Place::Slot { instance, proc, .. } => {
+					let frame = (instance, proc);
+					unwound.contains(&frame) && !live.contains(&frame) && !asleep.contains(&frame)
+				}
+				Place::Pointer(_) => false
+			})
+			.map(|watch| watch.id)
+			.collect();
+		for id in ended {
+			self.end_watch(id, "watched proc ended");
+		}
 	}
 
 	pub fn end_returning_watches(&mut self, ctx: *mut raw_types::procs::ExecutionContext) {

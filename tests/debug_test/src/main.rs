@@ -1034,6 +1034,47 @@ fn watches_at_the_end() {
 	client.resume();
 	expect_returned(&mut client, watch.id);
 	println!("ok: a frame watch set at its proc's last instruction ends when the proc returns");
+
+	pause(&mut client);
+	let response = client.request(Request::BreakpointUnset {
+		instruction: end,
+		exact: true
+	});
+	assert!(matches!(response, Response::BreakpointUnset { success: true, .. }), "{:?}", response);
+	set_breakpoint(&mut client, "/watched_throw", None);
+	eval(&mut client, None, "spawn()\n\tcatches_watched()");
+	client.resume();
+	expect_breakpoint_in(&mut client, "/watched_throw");
+	let mut watch = |frame_id: u32, expression: &str| {
+		let response = client.request(Request::WatchSet {
+			place: WatchPlace::Expression {
+				frame_id: Some(frame_id),
+				expression: expression.to_owned()
+			},
+			condition: None,
+			hit: None
+		});
+		match response {
+			Response::WatchSet(Ok(watch)) => watch.id,
+			other => panic!("expected a watch on {}, got {:?}", expression, other)
+		}
+	};
+	let (thrown, caught) = (watch(0, "thrown"), watch(1, "caught"));
+	client.resume();
+	assert_eq!(client.expect_pause(), changed(thrown, "thrown", "null", "1"));
+	client.resume();
+	assert_eq!(client.expect_pause(), changed(thrown, "thrown", "1", "2"));
+	client.resume();
+	let ended = client.recv();
+	assert!(
+		matches!(&ended, Response::WatchEnded { id, reason } if *id == thrown && reason == "watched proc ended"),
+		"expected the watch to end when a throw left its proc, got {:?}",
+		ended
+	);
+	assert_eq!(client.expect_pause(), changed(caught, "caught", "0", "1"));
+	client.resume();
+	expect_returned(&mut client, caught);
+	println!("ok: a frame watch ends when a throw leaves its proc, and the catching frame's watch stays");
 }
 
 fn false_condition_on_a_caught_throw() {
