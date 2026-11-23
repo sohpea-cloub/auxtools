@@ -125,32 +125,32 @@
 				"auxtools.byondPath": {
 					"type": "string",
 					"default": "",
-					"markdownDescription": "BYOND installation directory, containing `bin`. Leave empty for automatic discovery."
+					"markdownDescription": "The BYOND installation directory, which contains `bin`. Leave it empty to find BYOND automatically."
 				},
 				"auxtools.launcherPath": {
 					"type": "string",
 					"default": "",
-					"markdownDescription": "Optional launcher override. Leave empty to use the bundled `auxtools` launcher."
+					"markdownDescription": "A launcher to use instead of the bundled `auxtools` launcher. Leave it empty to use the bundled one."
 				},
 				"auxtools.debugLibrary": {
 					"type": "string",
 					"default": "",
-					"markdownDescription": "Optional `debug_server.dll` or `libdebug_server.so` override. Leave empty to use the library bundled with the extension."
+					"markdownDescription": "A debug library to use instead of the bundled one: `debug_server.dll` on Windows or `libdebug_server.so` on Linux. Leave it empty to use the bundled library."
 				},
 				"auxtools.addToTerminalPath": {
 					"type": "boolean",
 					"default": true,
-					"markdownDescription": "Add the launcher directory to VS Code terminals' `PATH` so `auxtools` commands are available."
+					"markdownDescription": "Add the launcher's directory to `PATH` in VS Code terminals, so that `auxtools` commands work there."
 				},
 				"auxtools.autoJoin": {
 					"type": "boolean",
 					"default": true,
-					"markdownDescription": "Join launched worlds with DreamSeeker automatically (Windows). Clients reconnect after reboot."
+					"markdownDescription": "Join launched worlds with DreamSeeker automatically, on Windows. These clients reconnect after a reboot."
 				},
 				"auxtools.closeDreamSeeker": {
 					"type": "boolean",
 					"default": true,
-					"markdownDescription": "Close clients opened by the extension when their world process exits."
+					"markdownDescription": "Close the clients that the extension opened when their world process ends."
 				},
 				"auxtools.notifications": {
 					"type": "object",
@@ -162,11 +162,11 @@
 						},
 						"join": {
 							"type": "boolean",
-							"description": "Offer to join when not joined automatically; offer the address if DreamSeeker is unavailable."
+							"description": "Offer to join a world that the extension didn't join automatically, or to copy its address when DreamSeeker is not available."
 						},
 						"rebuild": {
 							"type": "boolean",
-							"description": "Warn when changes require a reboot or rebuild."
+							"description": "Warn when changes need a reboot or a rebuild."
 						},
 						"outdated": {
 							"type": "boolean",
@@ -195,12 +195,12 @@
 						"properties": {
 							"dmb": {
 								"type": "string",
-								"description": "The world to run",
+								"description": "The compiled world to run.",
 								"default": "${workspaceFolder}/${workspaceFolderBasename}.dmb"
 							},
 							"dme": {
 								"type": "string",
-								"description": "Project .dme path. Defaults to the file beside the .dmb; its directory is the source root."
+								"description": "The project's .dme file. Default: the .dme beside the .dmb. Its directory is the source root."
 							},
 							"server": {
 								"type": "string",
@@ -214,17 +214,17 @@
 									"Console DreamDaemon (dd.exe on Windows), with output in the Debug Console",
 									"Windowed DreamDaemon (Windows), with output in its own window",
 									"Host and join the world in DreamSeeker (Windows)",
-									"Alias for dreamdaemon"
+									"Another name for dreamdaemon"
 								],
 								"default": "dreamdaemon",
-								"description": "BYOND host program. Default: DreamDaemon (dd.exe on Windows)."
+								"description": "The program that runs the world. Default: DreamDaemon (dd.exe on Windows)."
 							},
 							"defines": {
 								"type": "array",
 								"items": {
 									"type": "string"
 								},
-								"description": "Defines matching the build: NAME, NAME=VALUE or DreamMaker -D arguments. SS13 Build Flags adds selected flags for matching build tasks. Older versions use selected flags only when defines is omitted.",
+								"description": "The defines that the world was built with: NAME, NAME=VALUE or DreamMaker -D arguments. The extension adds the flags selected in SS13 Build Flags for matching build tasks. With older versions of SS13 Build Flags, it uses the selected flags only when defines is not set.",
 								"default": []
 							},
 							"hotReload": {
@@ -240,36 +240,36 @@
 							"sleepingThreads": {
 								"type": "integer",
 								"minimum": 0,
-								"description": "Maximum sleeping procs listed in the Call Stack view while paused.",
+								"description": "The most sleeping procs to list in the Call Stack view while the world is paused.",
 								"default": 100
 							},
 							"byondPath": {
 								"type": "string",
-								"description": "BYOND installation path. Overrides auxtools.byondPath and automatic discovery."
+								"description": "The BYOND installation to use, instead of auxtools.byondPath or automatic discovery."
 							},
 							"port": {
 								"type": "integer",
 								"minimum": 1,
 								"maximum": 65535,
-								"description": "Listening port. If omitted, DreamDaemon chooses a free port when the process starts."
+								"description": "The port the world listens on. Without it, DreamDaemon chooses a free port when it starts."
 							},
 							"args": {
 								"type": "array",
 								"items": {
 									"type": "string"
 								},
-								"description": "Arguments after the .dmb, replacing the defaults: -trusted, plus -close for dreamdaemon-gui on Windows."
+								"description": "Arguments to put after the .dmb. They replace the default arguments: -trusted, and also -close for dreamdaemon-gui on Windows."
 							},
 							"env": {
 								"type": "object",
 								"additionalProperties": {
 									"type": "string"
 								},
-								"description": "Environment variables for the world"
+								"description": "Environment variables for the world."
 							},
 							"debugLibrary": {
 								"type": "string",
-								"description": "Override auxtools.debugLibrary for this launch. If neither is set, use the library bundled with the extension."
+								"description": "The debug library for this launch, instead of auxtools.debugLibrary. If neither is set, the extension uses its own library."
 							}
 						}
 					},
@@ -280,30 +280,30 @@
 									"string",
 									"number"
 								],
-								"description": "World process ID. If omitted, select a running debugger-enabled world.",
+								"description": "The world's process ID. Without it, you select a running world that has the debugger loaded.",
 								"default": "${command:auxtools.pickWorld}"
 							},
 							"dme": {
 								"type": "string",
-								"description": "Project .dme path, if different from the file beside the running .dmb."
+								"description": "The project's .dme file, if it is not the one beside the running .dmb."
 							},
 							"defines": {
 								"type": "array",
 								"items": {
 									"type": "string"
 								},
-								"description": "Build defines as NAME, NAME=VALUE or DreamMaker -D arguments. Must match the build. If omitted, uses flags from the SS13 Build Flags extension if present. Use [] to disable automatic flags.",
+								"description": "The defines that the world was built with: NAME, NAME=VALUE or DreamMaker -D arguments. Without them, the extension uses the flags selected in SS13 Build Flags, if it is installed. Set [] to turn this off.",
 								"default": []
 							},
 							"hotReload": {
 								"type": "boolean",
-								"description": "Reload source changes on save. Disabled by default for attach sessions to avoid competing reloads.",
+								"description": "Reload source changes when you save. Off by default when you attach, so that your reloads don't compete with those of the session that launched the world.",
 								"default": false
 							},
 							"sleepingThreads": {
 								"type": "integer",
 								"minimum": 0,
-								"description": "Maximum sleeping procs listed in the Call Stack view while paused.",
+								"description": "The most sleeping procs to list in the Call Stack view while the world is paused.",
 								"default": 100
 							}
 						}
@@ -332,7 +332,7 @@
 					},
 					{
 						"label": "auxtools: Attach to a running world",
-						"description": "Attach to a world started by the auxtools launcher.",
+						"description": "Attach to a world that the auxtools launcher started.",
 						"body": {
 							"type": "auxtools",
 							"request": "attach",
