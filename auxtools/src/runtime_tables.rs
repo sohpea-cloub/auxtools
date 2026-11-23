@@ -960,7 +960,8 @@ pub fn name_map_entries(type_id: u32) -> Result<Vec<(u32, Vec<u32>, u8)>, String
 
 /// A preallocated proc name map. Dropping it unwritten releases its buffers.
 pub struct NameMapPlan {
-	map: *mut ProcNameMap,
+	type_id: u32,
+	world: u32,
 	buckets: *mut ProcNameBucket,
 	count: u16,
 	written: bool
@@ -968,7 +969,7 @@ pub struct NameMapPlan {
 
 pub fn plan_name_map(type_id: u32, entries: &[(u32, Vec<u32>, u8)]) -> Result<NameMapPlan, String> {
 	let functions = functions()?;
-	let map = name_map(type_id)?;
+	name_map(type_id)?;
 	let mut entries: Vec<&(u32, Vec<u32>, u8)> = entries.iter().filter(|(_, ids, _)| !ids.is_empty()).collect();
 	entries.sort_by_key(|(key, ..)| *key);
 	let size = entries.len().max(1) * std::mem::size_of::<ProcNameBucket>();
@@ -978,7 +979,8 @@ pub fn plan_name_map(type_id: u32, entries: &[(u32, Vec<u32>, u8)]) -> Result<Na
 			return Err("out of memory for a proc name map".to_owned());
 		}
 		let mut plan = NameMapPlan {
-			map,
+			type_id,
+			world: crate::world_generation(),
 			buckets,
 			count: 0,
 			written: false
@@ -1002,15 +1004,18 @@ pub fn plan_name_map(type_id: u32, entries: &[(u32, Vec<u32>, u8)]) -> Result<Na
 }
 
 impl NameMapPlan {
-	/// Keeps the old bucket array, as with type matrices.
-	pub fn write(mut self) {
-		let Ok(functions) = functions() else {
-			return;
-		};
+	/// Keeps the old bucket array, as with type matrices. Finds the type's map
+	/// again, because adding a type moves the maps.
+	pub fn write(mut self) -> Result<(), String> {
+		if self.world != crate::world_generation() {
+			return Err("the proc name map was planned for a world that has ended".to_owned());
+		}
+		let functions = functions()?;
+		let map = name_map(self.type_id)?;
 		unsafe {
-			let old_ids: Vec<*mut u32> = buckets(self.map).iter().map(|bucket| bucket.ids).collect();
-			(*self.map).buckets = self.buckets;
-			(*self.map).count = self.count;
+			let old_ids: Vec<*mut u32> = buckets(map).iter().map(|bucket| bucket.ids).collect();
+			(*map).buckets = self.buckets;
+			(*map).count = self.count;
 			for ids in old_ids {
 				if !ids.is_null() {
 					(functions.free_shared)(ids as *mut c_void);
@@ -1018,6 +1023,7 @@ impl NameMapPlan {
 			}
 		}
 		self.written = true;
+		Ok(())
 	}
 }
 

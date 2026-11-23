@@ -7,7 +7,8 @@ pub(super) struct PreparedReparents {
 	name_maps: Vec<(u32, Vec<(u32, Vec<u32>, u8)>)>,
 	map_plans: Vec<runtime_tables::NameMapPlan>,
 	relinks: Vec<(u32, u32)>,
-	builtins: Vec<InheritedBuiltins>
+	builtins: Vec<InheritedBuiltins>,
+	tree_failures: Vec<String>
 }
 
 struct InheritedBuiltins {
@@ -241,7 +242,9 @@ pub(super) fn apply_tree(prepared: &mut PreparedReparents) {
 	};
 	tree.write();
 	for plan in prepared.map_plans.drain(..) {
-		plan.write();
+		if let Err(e) = plan.write() {
+			prepared.tree_failures.push(format!("could not write a proc name map: {}", e));
+		}
 	}
 	for &(proc, next) in &prepared.relinks {
 		runtime_tables::set_proc_entry_word(raw_types::procs::ProcId(proc), ProcEntryWords::NEXT_OVERRIDE, next);
@@ -249,6 +252,7 @@ pub(super) fn apply_tree(prepared: &mut PreparedReparents) {
 }
 
 pub(super) fn apply_builtins(prepared: &PreparedReparents, warnings: &mut Vec<String>, failures: &mut Vec<String>) {
+	failures.extend(prepared.tree_failures.iter().cloned());
 	for inherited in &prepared.builtins {
 		match inherit_builtins(inherited) {
 			Ok(None) => {}

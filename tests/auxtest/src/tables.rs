@@ -14,6 +14,7 @@ fn test_tables() {
 
 	#[cfg(target_os = "linux")]
 	dropped_name_map_plans_free_their_memory()?;
+	name_map_plans_survive_new_types()?;
 
 	Ok(Value::from(true))
 }
@@ -56,6 +57,40 @@ fn dropped_name_map_plans_free_their_memory() -> DMResult<()> {
 			"test_tables: dropping {} proc name map plans left {} bytes allocated",
 			PLANS,
 			grown
+		));
+	}
+	Ok(())
+}
+
+fn name_map_plans_survive_new_types() -> DMResult<()> {
+	use runtime_tables::{add_type, name_map_entries, plan_name_map, type_count, type_field, type_fields};
+
+	let failed = |what: &str, e: String| runtime!("test_tables: couldn't {}: {}", what, e);
+	let original = name_map_entries(0).map_err(|e| failed("read a proc name map", e))?;
+	let key = StringRef::new("auxtest_planned_name")?;
+	let planned = vec![(key.get_id().0, vec![0], 0)];
+	let plan = plan_name_map(0, &planned).map_err(|e| failed("plan a proc name map", e))?;
+
+	let datum = StringRef::new("/datum")?.get_id().0;
+	let parent = (0..type_count().map_err(|e| failed("count the types", e))?)
+		.find(|&id| type_field(id, type_fields::PATH) == Ok(datum))
+		.ok_or_else(|| runtime!("test_tables: there's no /datum type"))?;
+	for i in 0..64 {
+		let path = StringRef::new(&format!("/datum/auxtest_added_{}", i))?;
+		add_type(parent, path.get_id().0).map_err(|e| failed("add a type", e))?;
+		std::mem::forget(path);
+	}
+
+	plan.write().map_err(|e| failed("write a proc name map", e))?;
+	let written = name_map_entries(0).map_err(|e| failed("read a proc name map", e))?;
+	plan_name_map(0, &original)
+		.and_then(|plan| plan.write())
+		.map_err(|e| failed("restore a proc name map", e))?;
+	if written != planned {
+		return Err(runtime!(
+			"test_tables: a proc name map planned before 64 new types reads {:?} after it was written, expected {:?}",
+			written,
+			planned
 		));
 	}
 	Ok(())
