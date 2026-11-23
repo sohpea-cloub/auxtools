@@ -76,11 +76,16 @@ impl Client {
 
 	fn next(&mut self, until: Option<Instant>) -> Result<Option<Read>, Lost> {
 		match until {
-			Some(until) => match self.read.recv_timeout(until.saturating_duration_since(Instant::now())) {
-				Ok(read) => Ok(Some(read)),
-				Err(RecvTimeoutError::Timeout) => Ok(None),
-				Err(RecvTimeoutError::Disconnected) => Err(Lost::Closed)
-			},
+			Some(until) => {
+				let Some(left) = until.checked_duration_since(Instant::now()).filter(|left| !left.is_zero()) else {
+					return Ok(None);
+				};
+				match self.read.recv_timeout(left) {
+					Ok(read) => Ok(Some(read)),
+					Err(RecvTimeoutError::Timeout) => Ok(None),
+					Err(RecvTimeoutError::Disconnected) => Err(Lost::Closed)
+				}
+			}
 			None => self.read.recv().map(Some).map_err(|_| Lost::Closed)
 		}
 	}
@@ -244,7 +249,7 @@ mod tests {
 	use auxtools_protocol::{ClientMessage, EvalError, Hello, Request, Response, ServerMessage, PROTOCOL_VERSION};
 	use interprocess::local_socket::{prelude::*, GenericNamespaced, ListenerOptions};
 
-	use super::{when_listening, Client, Heard, Listener, Lost, NotListening};
+	use super::{when_listening, Client, Heard, Listener, Lost, NotListening, Read};
 	use crate::local::Stream;
 
 	fn connection(name: &str) -> (Stream, Stream) {
@@ -339,6 +344,19 @@ mod tests {
 		drop(world);
 		assert!(matches!(client.hear(soon()), Err(Lost::Closed)));
 		assert!(matches!(client.ask(&Request::Status, soon()), Err(Lost::Unsent(_))));
+	}
+
+	#[test]
+	fn a_queued_event_is_not_read_after_the_deadline() {
+		let (client, _world) = connection("deadline");
+		let mut client = Client::on(client).unwrap();
+		let (queue, read) = mpsc::channel();
+		client.read = read;
+		client.greeted = true;
+		let message = ServerMessage::event(Response::Resumed);
+		queue.send(Read::Message { message, events_read: 1 }).unwrap();
+		assert!(matches!(client.hear(Some(Instant::now())), Ok(None)));
+		assert!(matches!(client.hear(soon()), Ok(Some(Heard::Event(Response::Resumed)))));
 	}
 
 	struct Passes(mpsc::Sender<Result<(u64, Response), bool>>);

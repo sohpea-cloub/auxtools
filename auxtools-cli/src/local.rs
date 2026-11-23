@@ -417,22 +417,26 @@ mod tests {
 		io::{self, Read},
 		sync::{
 			atomic::{AtomicUsize, Ordering},
-			Arc
+			Arc, Mutex
 		},
 		time::{Duration, Instant}
 	};
 
+	use auxtools_protocol::{ClientMessage, Hello, Request, Response, ServerMessage};
 	use interprocess::local_socket::{prelude::*, GenericNamespaced, ListenerOptions, Stream};
 
 	use super::{connect, world_name, worlds_among};
 
+	static PROBES: Mutex<()> = Mutex::new(());
+
 	#[derive(Default)]
 	struct Connections {
 		accepted: AtomicUsize,
-		open: AtomicUsize
+		open: AtomicUsize,
+		asked_for_info: AtomicUsize
 	}
 
-	fn silent_world(pid: u32) -> Arc<Connections> {
+	fn world(pid: u32, serve: fn(&mut Stream, &Connections)) -> Arc<Connections> {
 		let listener = ListenerOptions::new()
 			.name(world_name(pid).to_ns_name::<GenericNamespaced>().unwrap())
 			.create_sync()
@@ -446,13 +450,32 @@ mod tests {
 				let counted = counted.clone();
 				std::thread::spawn(move || {
 					let mut stream: Stream = stream;
-					let mut buffer = [0; 256];
-					while matches!(stream.read(&mut buffer), Ok(n) if n > 0) {}
+					serve(&mut stream, &counted);
 					counted.open.fetch_sub(1, Ordering::SeqCst);
 				});
 			}
 		});
 		connections
+	}
+
+	fn silent(stream: &mut Stream, _: &Connections) {
+		let mut buffer = [0; 256];
+		while matches!(stream.read(&mut buffer), Ok(n) if n > 0) {}
+	}
+
+	fn chatty(stream: &mut Stream, connections: &Connections) {
+		if auxtools_protocol::write(stream, &Hello::new("4.0.0")).is_err() {
+			return;
+		}
+		let Ok(asked) = auxtools_protocol::read::<ClientMessage>(stream) else {
+			return;
+		};
+		if matches!(asked.request, Request::WorldInfo) {
+			connections.asked_for_info.fetch_add(1, Ordering::SeqCst);
+		}
+		while auxtools_protocol::write(stream, &ServerMessage::event(Response::Resumed)).is_ok() {
+			std::thread::sleep(Duration::from_millis(1));
+		}
 	}
 
 	fn unused_pid(offset: u32) -> u32 {
@@ -470,36 +493,58 @@ mod tests {
 	}
 
 	#[track_caller]
-	fn released(connections: &Connections, accepted: usize, thread: &str) {
+	fn released(connections: &Connections, accepted: usize, threads: &[&str]) {
 		let deadline = Instant::now() + Duration::from_secs(5);
-		let left = || (connections.open.load(Ordering::SeqCst), threads_named(thread));
+		let left = || {
+			let running = threads.iter().map(|name| threads_named(name)).sum::<usize>();
+			(connections.open.load(Ordering::SeqCst), running)
+		};
 		while left() != (0, 0) && Instant::now() < deadline {
 			std::thread::sleep(Duration::from_millis(10));
 		}
 		assert_eq!(connections.accepted.load(Ordering::SeqCst), accepted, "connections opened");
-		assert_eq!(left(), (0, 0), "connections still open and {} threads left", thread);
+		assert_eq!(left(), (0, 0), "connections still open and {:?} threads left", threads);
 	}
 
 	#[test]
 	fn a_connection_without_a_hello_is_released() {
 		let pid = unused_pid(1);
-		let connections = silent_world(pid);
+		let connections = world(pid, silent);
 		for attempt in 1..=2 {
 			let error = connect(pid).expect_err("a world that said nothing was connected to");
 			assert_eq!(error.kind(), io::ErrorKind::TimedOut, "{}", error);
-			released(&connections, attempt, "world hello");
+			released(&connections, attempt, &["world hello"]);
 		}
 	}
 
 	#[test]
 	fn a_probe_without_an_answer_is_released() {
+		let _probing = PROBES.lock().unwrap_or_else(|e| e.into_inner());
 		let pid = unused_pid(2);
-		let connections = silent_world(pid);
+		let connections = world(pid, silent);
 		for attempt in 1..=2 {
 			let worlds = worlds_among(vec![(pid, "DreamDaemon".to_owned())]);
 			let responsive: Vec<_> = worlds.iter().map(|world| (world.pid, world.responsive)).collect();
 			assert_eq!(responsive, [(pid, Some(false))]);
-			released(&connections, attempt, "world probe");
+			released(&connections, attempt, &["world probe"]);
 		}
+	}
+
+	#[test]
+	fn a_probe_of_a_world_that_sends_only_events_ends_at_the_deadline() {
+		let _probing = PROBES.lock().unwrap_or_else(|e| e.into_inner());
+		let pid = unused_pid(3);
+		let connections = world(pid, chatty);
+		let started = Instant::now();
+		let worlds = worlds_among(vec![(pid, "DreamDaemon".to_owned())]);
+		let responsive: Vec<_> = worlds.iter().map(|world| (world.pid, world.responsive)).collect();
+		assert_eq!(responsive, [(pid, Some(false))]);
+		assert!(
+			started.elapsed() < super::PROBE_PATIENCE + Duration::from_secs(2),
+			"the probe took {:?}",
+			started.elapsed()
+		);
+		assert_eq!(connections.asked_for_info.load(Ordering::SeqCst), 1, "WorldInfo requests");
+		released(&connections, 1, &["world probe", "world reader"]);
 	}
 }
