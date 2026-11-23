@@ -25,24 +25,29 @@ fn id_of(val: &Value) -> Option<u64> {
 #[derive(Copy, Clone)]
 pub struct WeakValue {
 	inner: raw_types::values::Value,
-	id: u64
+	id: u64,
+	world: u32
 }
 
 impl WeakValue {
 	pub(crate) fn new(val: &Value) -> DMResult<Self> {
+		let world = crate::world_generation();
 		if let Some(id) = id_of(val) {
-			return Ok(Self { inner: val.raw, id });
+			return Ok(Self { inner: val.raw, id, world });
 		}
 
 		let id = next_id();
 		val.set(byond_string!("__auxtools_weakref_id"), Value::from_string(id_text(id))?)?;
-		Ok(Self { inner: val.raw, id })
+		Ok(Self { inner: val.raw, id, world })
 	}
 
-	/// Returns `None` if the datum was deleted. Panics on any thread other than
-	/// BYOND's.
+	/// Returns `None` if the datum was deleted or auxtools has shut down since
+	/// the handle was made. Panics on any thread other than BYOND's.
 	pub fn upgrade(&self) -> Option<Value> {
 		assert!(crate::on_byond_thread(), "WeakValue::upgrade must run on BYOND's thread");
+		if self.world != crate::world_generation() {
+			return None;
+		}
 		let real_val = unsafe { Value::from_raw(self.inner) };
 
 		if id_of(&real_val) != Some(self.id) {

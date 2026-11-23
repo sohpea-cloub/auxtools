@@ -96,6 +96,12 @@ pub(crate) fn on_byond_thread() -> bool {
 	BYOND_THREAD.get() == Some(&std::thread::current().id())
 }
 
+static WORLD_GENERATION: AtomicU32 = AtomicU32::new(0);
+
+pub(crate) fn world_generation() -> u32 {
+	WORLD_GENERATION.load(Ordering::Relaxed)
+}
+
 static INIT_FAILURE: OnceLock<String> = OnceLock::new();
 
 byond_ffi_fn! { auxtools_init(_input) {
@@ -326,6 +332,7 @@ fn shutdown_partial() {
 		raw_types::funcs::VARIABLE_NAME_COUNT = std::ptr::null();
 	}
 
+	WORLD_GENERATION.fetch_add(1, Ordering::Relaxed);
 	set_init_level(InitLevel::Partial);
 }
 

@@ -37,6 +37,8 @@
 /proc/del_value(v)
 	del v
 
+var/datum/weak_kept_datum = new
+
 var/datum/weak_test_datum
 /proc/create_datum_for_weak()
 	weak_test_datum = new
@@ -151,12 +153,15 @@ var/datum/weak_test_datum
 	ASSERT(auxtest_value_from() == TRUE)
 
 	var/datum/weak_test = new
-	ASSERT(auxtest_weak_values(weak_test) == TRUE)
+	ASSERT(auxtest_weak_values(weak_test, weak_kept_datum) == TRUE)
 	ASSERT(weak_test == null)
 
 	if (auxtest_inc_counter() == 8)
 		auxtest_fail_next_init()
 		call_ext(auxtest_dll, "auxtools_shutdown")()
+		var/upgraded = call_ext(auxtest_dll, "auxtest_upgrade_kept_weak")()
+		if (upgraded != "none")
+			auxtest_out("FAILED: a weak reference upgraded after shutdown gave [upgraded ? upgraded : "an empty string"], expected none")
 		auxtest_failed_init(auxtest_dll)
 
 		auxtest_out("SUCCESS: Finished")
