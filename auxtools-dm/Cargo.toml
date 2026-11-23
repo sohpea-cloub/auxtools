@@ -1,6 +1,6 @@
 [package]
 name = "auxtools-dm"
-description = "Reads DM tokens and .dmb files for the debug server and the launcher"
+description = "Formats DM tokens as source text and reads resource checksums from .dmb files"
 version.workspace = true
 publish = false
 authors.workspace = true

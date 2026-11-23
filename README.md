@@ -27,7 +27,8 @@ it. Without it, line breakpoints stay unverified, but breakpoints on procs still
 
 The debugger has these features:
 
-- line, function, instruction and data breakpoints, with conditions, hit counts and logpoints
+- line, function, instruction and data breakpoints with conditions and hit counts
+- logpoints on source lines
 - pausing on runtime errors
 - stepping by line or by instruction
 - call stacks of sleeping procs
@@ -420,8 +421,9 @@ registries. [release.yml](.github/workflows/release.yml) describes the setup.
 Auxtools is licensed under the [MIT license](https://en.wikipedia.org/wiki/MIT_License).
 See [LICENSE](./LICENSE) for details.
 
-The debug server, its protocol, its instruction hook interface, the launcher and dmasm are
-licensed under GPL-3.0. See [debug_server/LICENSE](./debug_server/LICENSE),
+The debug server, its protocol, its instruction hook interface, the launcher, `auxtools-dm` and
+dmasm are licensed under GPL-3.0. See [debug_server/LICENSE](./debug_server/LICENSE),
 [auxtools-protocol/LICENSE](./auxtools-protocol/LICENSE),
 [instruction_hooking/LICENSE](./instruction_hooking/LICENSE),
-[auxtools-cli/LICENSE](./auxtools-cli/LICENSE) and [dmasm/LICENSE](./dmasm/LICENSE).
+[auxtools-cli/LICENSE](./auxtools-cli/LICENSE), [auxtools-dm/LICENSE](./auxtools-dm/LICENSE)
+and [dmasm/LICENSE](./dmasm/LICENSE).
