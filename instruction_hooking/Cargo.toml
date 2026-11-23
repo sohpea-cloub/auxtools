@@ -10,7 +10,7 @@ license = "GPL-3.0"
 
 [dependencies]
 auxtools = { path = "../auxtools" }
-dmasm = { workspace = true }
+dmasm-bytecode = { path = "../dmasm/bytecode" }
 
 [lints]
 workspace = true

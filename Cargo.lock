@@ -528,7 +528,7 @@ name = "instruction_hooking"
 version = "1.0.0"
 dependencies = [
  "auxtools",
- "dmasm",
+ "dmasm-bytecode",
 ]
 
 [[package]]

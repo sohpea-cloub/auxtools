@@ -1,9 +1,8 @@
 use auxtools::*;
-use dmasm;
 
 pub struct DisassembleEnv;
 
-impl dmasm::disassembler::DisassembleEnv for DisassembleEnv {
+impl dmasm_bytecode::disassembler::DisassembleEnv for DisassembleEnv {
 	fn get_string_data(&mut self, index: u32) -> Option<Vec<u8>> {
 		unsafe { Some(StringRef::from_id(raw_types::strings::StringId(index)).data().to_vec()) }
 	}
