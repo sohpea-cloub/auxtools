@@ -1247,6 +1247,36 @@ fn debugger(built: Built) {
 	let changes = source.edit(
 		"reload.dm",
 		"/proc/first_def()\n",
+		"/proc/loop_target()\n\tvar/i = 0\n\twhile (i < 1)\n\t\ti++\n\t\ttwin_runs++; continue\n\n/proc/first_def()\n"
+	);
+	reload(&mut watcher, &changes);
+	let line = source.line_of("reload.dm", "\t\ttwin_runs++; continue");
+	let continue_jump = |client: &mut Client| {
+		let on_line = line_instructions(client, "/loop_target", line);
+		(on_line.iter().find(|(_, text)| text.starts_with("Jmp")))
+			.unwrap_or_else(|| panic!("line {} has no jump: {:?}", line, on_line))
+			.0
+	};
+	let before = continue_jump(&mut client);
+	twin_breakpoint(&mut client, "loop_target", before, true);
+	let changes = source.edit("reload.dm", "\t\ti++\n", "\t\ti = i + 1\n");
+	let result = reload(&mut watcher, &changes);
+	assert!(result.warnings.is_empty(), "{:?}", result.warnings);
+	let after = continue_jump(&mut client);
+	assert_ne!(after, before, "the reload didn't move line {}", line);
+	let runs = twin_number(&mut client, "twin_runs");
+	eval(&mut client, "twin_armed = /proc/loop_target");
+	assert_eq!(client.expect_pause(), BreakpointReason::Breakpoint);
+	assert_eq!(paused_offset(&mut client), ("/loop_target".to_owned(), after));
+	client.resume();
+	wait_for(&mut client, "twin_runs", &(runs + 1).to_string());
+	twin_breakpoint(&mut client, "loop_target", before, false);
+	twin_run(&mut client, "loop_target", line, 1, false);
+	println!("ok: an instruction breakpoint on a moved line's jump back to a fixed loop stays on its instruction");
+
+	let changes = source.edit(
+		"reload.dm",
+		"/proc/first_def()\n",
 		"/proc/local_dropper()\n\tvar/dropped = 1\n\ttwin_waiting += 1\n\twhile (twin_hold) sleep(1)\n\ttwin_runs += \
 		 dropped\n\n/proc/lone_local()\n\tvar/gone = 2\n\treturn gone\n\n/proc/first_def()\n"
 	);

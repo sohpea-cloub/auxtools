@@ -2731,21 +2731,31 @@ fn restore_breakpoints<K: Ord + std::hash::Hash + Copy, T>(
 				p.name, old_offset
 			)),
 			Some(old_line) => {
-				let line = match &p.lines {
-					Some(lines) if other_file.is_none() => map_line(old_line, lines),
-					_ => old_line
+				let new_line = |old_line: u32| {
+					let line = match &p.lines {
+						Some(lines) if other_file.is_none() => map_line(old_line, lines),
+						_ => old_line
+					};
+					let moved = firsts
+						.filter(|(old_first, _)| line >= *old_first)
+						.map(|(old_first, new_first)| line - old_first + new_first);
+					moved.unwrap_or(line)
 				};
-				let moved = firsts
-					.filter(|(old_first, _)| line >= *old_first)
-					.map(|(old_first, new_first)| line - old_first + new_first);
 				let in_other_file = |file: &str| Some(file) == other_file.as_deref();
 				let wanted = other_file.is_some().then_some(&in_other_file as &dyn Fn(&str) -> bool);
-				let line = moved.unwrap_or(line);
+				let new_offset = |old_offset: u32| match old_code.line_at(old_offset) {
+					Some(line) => {
+						let (old_start, new_start) = (old_code.offset_of(line, wanted)?, new_code.offset_of(new_line(line), wanted)?);
+						Some(new_start.wrapping_add(old_offset.wrapping_sub(old_start)))
+					}
+					None => Some(old_offset)
+				};
+				let line = new_line(old_line);
 				new_code
 					.offset_of(line, wanted)
 					.map(|start| {
 						let kept = (old_code.offset_of(old_line, wanted))
-							.and_then(|old_start| same_place(&old_code, &old_bytecode, old_start, old_offset, &p.bytecode, start));
+							.and_then(|old_start| same_place(&old_code, &old_bytecode, old_start, old_offset, &p.bytecode, start, new_offset));
 						(kept.unwrap_or(start), format!("on line {}", line))
 					})
 					.ok_or_else(|| format!("{}: removed breakpoint on line {}: no executable code after reload", p.name, line))
@@ -2770,18 +2780,24 @@ fn restore_breakpoints<K: Ord + std::hash::Hash + Copy, T>(
 	moved_breakpoints.extend(new_moves);
 }
 
-fn same_place(old_code: &crate::code_index::Code, old: &[u32], old_start: u32, old_offset: u32, new: &[u32], new_start: u32) -> Option<u32> {
+fn same_place(
+	old_code: &crate::code_index::Code,
+	old: &[u32],
+	old_start: u32,
+	old_offset: u32,
+	new: &[u32],
+	new_start: u32,
+	new_offset: impl Fn(u32) -> Option<u32>
+) -> Option<u32> {
 	let length = (old_offset.checked_sub(old_start)? as usize) + old_code.instruction_length(old_offset)?;
-	let span = |code: &[u32], start: u32| {
-		let mut words = code.get(start as usize..start as usize + length)?.to_vec();
-		for label in dmasm::scan(code).map(|scanned| scanned.label_operands).unwrap_or_default() {
-			if let Some(word) = (label.word_offset.checked_sub(start)).and_then(|at| words.get_mut(at as usize)) {
-				*word = label.target.wrapping_sub(start);
-			}
+	let span = |code: &[u32], start: u32| code.get(start as usize..start as usize + length).map(<[u32]>::to_vec);
+	let mut old_words = span(old, old_start)?;
+	for label in dmasm::scan(old).map(|scanned| scanned.label_operands).unwrap_or_default() {
+		if let Some(word) = (label.word_offset.checked_sub(old_start)).and_then(|at| old_words.get_mut(at as usize)) {
+			*word = new_offset(label.target)?;
 		}
-		Some(words)
-	};
-	(span(old, old_start)? == span(new, new_start)?).then_some(new_start + (old_offset - old_start))
+	}
+	(old_words == span(new, new_start)?).then_some(new_start + (old_offset - old_start))
 }
 
 fn keep_claims<K: Ord, T>(
