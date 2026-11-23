@@ -56,8 +56,9 @@ pub struct Prepared {
 
 struct PreparedNewVar {
 	id: u32,
-	name: u32,
-	value: (u32, u32)
+	name: StringRef,
+	value: (u32, u32),
+	text: Option<StringRef>
 }
 
 struct AddedVars {
@@ -126,14 +127,14 @@ impl AddedVars {
 		if let Some(id) = variable_ids(name.as_bytes()).first().or_else(|| self.param_names.get(name)).copied() {
 			return Ok(id);
 		}
-		let id = self.add(leaked_string(name)?, (0, 0));
+		let id = self.add(new_string(name)?, (0, 0));
 		self.param_names.insert(name.to_owned(), id);
 		Ok(id)
 	}
 
-	fn add(&mut self, name: u32, value: (u32, u32)) -> u32 {
+	fn add(&mut self, name: StringRef, value: (u32, u32)) -> u32 {
 		let id = self.next_id();
-		self.vars.push(PreparedNewVar { id, name, value });
+		self.vars.push(PreparedNewVar { id, name, value, text: None });
 		id
 	}
 }
@@ -1607,7 +1608,7 @@ fn new_statics(
 			(None, Some(_)) => (0, 0),
 			(None, None) => return Err(format!("static local {} has no initial value to start with", local.name))
 		};
-		let id = added.add(leaked_string(&local.name)?, value);
+		let id = added.add(new_string(&local.name)?, value);
 		if let (None, Some(init)) = (&local.value, &local.init) {
 			added.run_once.push((id, format!("static local {}", local.name), (**init).clone()));
 		}
@@ -2105,8 +2106,12 @@ pub fn locals_references(path: &str) -> Result<(u32, u16, u32), String> {
 	}
 }
 
+fn new_string(text: &str) -> Result<StringRef, String> {
+	StringRef::new(text).map_err(|_| format!("couldn't make the string {}", text))
+}
+
 fn leaked_string(text: &str) -> Result<u32, String> {
-	let string = StringRef::new(text).map_err(|_| format!("couldn't make the string {}", text))?;
+	let string = new_string(text)?;
 	let id = string.get_id().0;
 	std::mem::forget(string);
 	Ok(id)
@@ -2124,9 +2129,9 @@ fn prepare_new_var(
 
 	if !new.type_path.is_empty() {
 		let type_id = find_type(&new.type_path).map_err(fail)?;
-		let name = leaked_string(&new.var).map_err(fail)?;
+		let name = new_string(&new.var).map_err(fail)?;
 		let declared = type_vars.declared(type_id).map_err(fail)?.clone();
-		if let Some(pair) = declared.chunks(2).find(|pair| type_vars.name_of(pair[0]) == name) {
+		if let Some(pair) = declared.chunks(2).find(|pair| type_vars.name_of(pair[0]) == name.get_id().0) {
 			if pair[1] != new.flags {
 				return Err(fail(
 					"the running world still has this var with different static, const or tmp flags. Rebuild to change them".to_owned()
@@ -2146,8 +2151,15 @@ fn prepare_new_var(
 	}
 
 	let id = added.next_id();
-	let value = const_value(&new.value, pending).map_err(fail)?;
-	let name = leaked_string(&new.var).map_err(fail)?;
+	let (value, text) = match &new.value {
+		ConstValue::String(text) => {
+			let text = new_string(text).map_err(fail)?;
+			((raw_types::values::ValueTag::String.0 as u32, text.get_id().0), Some(text))
+		}
+		value => (const_value(value, pending).map_err(fail)?, None)
+	};
+	let name_ref = new_string(&new.var).map_err(fail)?;
+	let name = name_ref.get_id().0;
 	type_vars.new_names.insert(id, name);
 	if let Some(init) = &new.init {
 		added.run_once.push((id, format!("{}/var/{}", new.type_path, new.var), (**init).clone()));
@@ -2204,7 +2216,12 @@ fn prepare_new_var(
 			.insert((StaticScope::of_type(&new.type_path), new.var.as_bytes().to_vec()), id);
 	}
 
-	added.vars.push(PreparedNewVar { id, name, value });
+	added.vars.push(PreparedNewVar {
+		id,
+		name: name_ref,
+		value,
+		text
+	});
 	Ok(())
 }
 
@@ -2324,7 +2341,7 @@ fn prepare_var_default(
 			None if inherit::builtin_in_table(type_id, &default.var) => {
 				let id = match variable_ids(default.var.as_bytes()).first() {
 					Some(&id) => id,
-					None => added.add(leaked_string(&default.var).map_err(fail)?, (0, 0))
+					None => added.add(new_string(&default.var).map_err(fail)?, (0, 0))
 				};
 				let at = table.chunks(4).position(|entry| entry[0] > key).unwrap_or(table.len() / 4);
 				table.splice(at * 4..at * 4, [key, id, value.0, value.1]);
@@ -2415,7 +2432,10 @@ pub fn append(prepared: Prepared) -> Result<Appended, Vec<String>> {
 
 fn append_entries(prepared: &Prepared, added: &mut Added) -> Result<Vec<u32>, String> {
 	for new in &prepared.new_vars {
-		let id = runtime_tables::add_variable(new.name, new.value.0 as u8, new.value.1).map_err(|e| format!("couldn't add a var: {}", e))?;
+		let id =
+			runtime_tables::add_variable(new.name.get_id().0, new.value.0 as u8, new.value.1).map_err(|e| format!("couldn't add a var: {}", e))?;
+		std::mem::forget(new.name.clone());
+		std::mem::forget(new.text.clone());
 		added.vars += 1;
 		if id != new.id {
 			return Err(format!("new variable ID mismatch: got {}, expected {}", id, new.id));

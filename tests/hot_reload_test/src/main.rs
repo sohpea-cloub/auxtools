@@ -2292,6 +2292,28 @@ fn types(built: Built) {
 	assert_eq!(eval(&mut client, report), "\" \"");
 	println!("ok: a var's default holds one reference to its string for each type that has it");
 
+	let added = |client: &mut Client| ["added_label", "added_text"].map(|text| eval(client, &format!("#string-refs {}", text)));
+	assert_eq!(added(&mut client), ["0", "0"], "before the var was added");
+	let changes = source.edit(
+		"reload.dm",
+		"/datum/labelled/kid\n",
+		"/datum/labelled/kid\n\tvar/added_label = \"added_text\"\n"
+	);
+	let Request::HotReload(mut refused) = reload_request(&changes) else {
+		unreachable!()
+	};
+	let mut missing = refused.plan.new_vars[0].clone();
+	missing.var = "added_missing".to_owned();
+	missing.value = dmasm::reload::ConstValue::Path("/datum/no_such_type".to_owned());
+	refused.plan.new_vars.push(missing);
+	let result = expect_reload_result(watcher.request(Request::HotReload(refused)));
+	assert!(!result.applied, "a reload with a var of a missing type was applied: {:?}", result);
+	assert_eq!(added(&mut client), ["0", "0"], "after a refused reload");
+	reload(&mut watcher, &changes);
+	assert_eq!(added(&mut client), ["1", "2"], "after the var was added to a type");
+	assert_eq!(eval(&mut client, "(new /datum/labelled/kid).added_label"), "\"added_text\"");
+	println!("ok: a refused new var holds no reference to its name or its string");
+
 	assert_eq!(eval(&mut client, "#fail-reload append"), "the next reload fails at Append");
 	let changes = source.edit(
 		"reload.dm",
