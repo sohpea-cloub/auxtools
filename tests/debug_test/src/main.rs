@@ -111,6 +111,21 @@ fn pause(client: &mut Client) {
 	assert_eq!(client.expect_pause(), BreakpointReason::Pause);
 }
 
+#[track_caller]
+fn expect_carries_on(world: &World) {
+	let mut watcher = world.connect_watcher();
+	let start = Instant::now();
+	while let Some(reason) = status(&mut watcher) {
+		assert!(
+			start.elapsed() < Duration::from_secs(10),
+			"the world is still paused ({:?}) after its last debugging client left",
+			reason
+		);
+		std::thread::sleep(Duration::from_millis(20));
+	}
+	watcher.leave();
+}
+
 fn values_516(client: &mut Client) {
 	let response = client.request(Request::Eval {
 		frame_id: Some(0),
@@ -466,16 +481,16 @@ fn protocol(world: &World, mut client: Client) -> Client {
 
 	second.leave();
 	client.leave();
+	expect_carries_on(world);
 	let mut client = world.connect();
-	assert_eq!(status(&mut client), None);
 	println!("ok: the last client leaves a paused world, which carries on");
 
 	let watcher = world.connect_watcher();
 	pause(&mut client);
 	client.leave();
-	let mut client = world.connect();
-	assert_eq!(status(&mut client), None);
+	expect_carries_on(world);
 	watcher.leave();
+	let mut client = world.connect();
 	println!("ok: a pause doesn't wait for a client that says it isn't debugging");
 
 	pause(&mut client);
@@ -494,8 +509,8 @@ fn protocol(world: &World, mut client: Client) -> Client {
 	let mut client = world.connect();
 	pause(&mut client);
 	client.leave();
+	expect_carries_on(world);
 	let mut client = world.connect();
-	assert_eq!(status(&mut client), None);
 	println!("ok: a hold asked for by a client that left before the pause is forgotten");
 
 	let mut rubbish = world.connect_silent();
