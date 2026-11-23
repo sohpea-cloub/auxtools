@@ -1,10 +1,22 @@
-use crate::{byond_string, raw_types, DMResult, Value};
-use std::sync::atomic::{AtomicU32, Ordering::Relaxed};
+use crate::{byond_string, raw_types, DMResult, StringRef, Value};
+use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
 
-fn get_next_id() -> f32 {
-	static NEXT_WEAKREF_ID: AtomicU32 = AtomicU32::new(1);
-	let id = NEXT_WEAKREF_ID.fetch_add(1, Relaxed);
-	id as f32
+fn next_id() -> u64 {
+	static NEXT_WEAKREF_ID: AtomicU64 = AtomicU64::new(1);
+	NEXT_WEAKREF_ID.fetch_add(1, Relaxed)
+}
+
+fn id_text(id: u64) -> String {
+	id.to_string()
+}
+
+fn parse_id(text: &[u8]) -> Option<u64> {
+	std::str::from_utf8(text).ok()?.parse().ok()
+}
+
+fn id_of(val: &Value) -> Option<u64> {
+	let text = StringRef::from_value(val.get(byond_string!("__auxtools_weakref_id")).ok()?)?;
+	parse_id(text.data())
 }
 
 /// A weak reference to a datum. It can be stored globally or sent to other
@@ -13,17 +25,17 @@ fn get_next_id() -> f32 {
 #[derive(Copy, Clone)]
 pub struct WeakValue {
 	inner: raw_types::values::Value,
-	id: f32
+	id: u64
 }
 
 impl WeakValue {
 	pub(crate) fn new(val: &Value) -> DMResult<Self> {
-		if let Ok(id) = val.get_number(byond_string!("__auxtools_weakref_id")) {
+		if let Some(id) = id_of(val) {
 			return Ok(Self { inner: val.raw, id });
 		}
 
-		let id = get_next_id();
-		val.set(byond_string!("__auxtools_weakref_id"), Value::from(id))?;
+		let id = next_id();
+		val.set(byond_string!("__auxtools_weakref_id"), Value::from_string(id_text(id))?)?;
 		Ok(Self { inner: val.raw, id })
 	}
 
@@ -32,9 +44,8 @@ impl WeakValue {
 	pub fn upgrade(&self) -> Option<Value> {
 		assert!(crate::on_byond_thread(), "WeakValue::upgrade must run on BYOND's thread");
 		let real_val = unsafe { Value::from_raw(self.inner) };
-		let id = real_val.get_number(byond_string!("__auxtools_weakref_id")).ok()?;
 
-		if self.id != id {
+		if id_of(&real_val) != Some(self.id) {
 			return None;
 		}
 
@@ -52,5 +63,25 @@ impl WeakValue {
 impl Value {
 	pub fn as_weak(&self) -> DMResult<WeakValue> {
 		WeakValue::new(self)
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	#[test]
+	fn ids_past_f32_precision_stay_distinct() {
+		let ids = [1 << 24, (1 << 24) + 1, u32::MAX as u64 + 1];
+		for id in ids {
+			assert_eq!(
+				parse_id(id_text(id).as_bytes()),
+				Some(id),
+				"parsing {:?} did not give back id {}",
+				id_text(id),
+				id
+			);
+		}
+		assert_ne!(id_text(ids[0]), id_text(ids[1]));
 	}
 }
