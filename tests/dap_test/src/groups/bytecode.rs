@@ -502,6 +502,21 @@ fn moved_by_another() {
 	);
 	let moved = find(&listing(&mut a, mul), "Mul");
 	assert_ne!(moved, mul, "the reload didn't move the Mul");
+	let event = b.event("breakpoint");
+	let changed = &event["body"]["breakpoint"];
+	assert_eq!(
+		(changed["id"].as_u64(), address(&changed["instructionReference"])),
+		(Some(id), moved),
+		"{}",
+		event
+	);
+	let set = break_at(&mut b, &[mul]);
+	assert_eq!(
+		(set[0]["id"].as_u64(), address(&set[0]["instructionReference"])),
+		(Some(id), moved),
+		"{}",
+		set[0]
+	);
 	a.run("middle");
 	for _ in 0..2 {
 		let stop = b.stop();
