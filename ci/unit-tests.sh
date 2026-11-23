@@ -21,7 +21,10 @@ for line in sys.stdin:
 	if message.get("reason") != "compiler-artifact" or not message["profile"]["test"] or not message.get("executable"):
 		continue
 	package = os.path.relpath(os.path.dirname(message["manifest_path"]), root)
-	name = message["target"]["name"] + os.path.splitext(message["executable"])[1]
+	name = message["target"]["name"]
+	if "bin" in message["target"]["kind"]:
+		name += "-bin"
+	name += os.path.splitext(message["executable"])[1]
 	os.makedirs(os.path.join(dest, package), exist_ok=True)
 	shutil.copy(message["executable"], os.path.join(dest, package, name))
 	print("unit tests:", os.path.join(package, name))
