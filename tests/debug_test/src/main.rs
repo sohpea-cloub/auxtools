@@ -973,14 +973,37 @@ fn watches_at_the_end() {
 	break_exactly(&mut client, &end, None);
 	let steps = watch_steps(&mut client, "steps");
 	assert_eq!(client.expect_pause(), changed(steps, "steps", "null", "1"));
+	let first_change = InstructionRef {
+		offset: paused_at(&mut client).1,
+		..start_of("/watched_steps")
+	};
 	client.resume();
 	assert_eq!(client.expect_pause(), changed(steps, "steps", "1", "2"));
 	client.resume();
 	expect_returned(&mut client, steps);
 	assert_eq!(client.expect_pause(), BreakpointReason::Breakpoint);
 	assert_eq!(paused_at(&mut client), ("/watched_steps".to_owned(), end.offset));
-	client.resume();
 	println!("ok: a frame watch ends when its proc returns through a breakpoint");
+
+	let response = client.request(Request::BreakpointUnset {
+		instruction: end.clone(),
+		exact: true
+	});
+	assert!(matches!(response, Response::BreakpointUnset { success: true, .. }), "{:?}", response);
+	break_exactly(&mut client, &first_change, Some("logged"));
+	let steps = watch_steps(&mut client, "steps");
+	let logged = client.recv();
+	assert!(
+		matches!(&logged, Response::Log { message, .. } if message == "logged"),
+		"expected the logpoint's message, got {:?}",
+		logged
+	);
+	assert_eq!(client.expect_pause(), changed(steps, "steps", "null", "1"));
+	client.resume();
+	assert_eq!(client.expect_pause(), changed(steps, "steps", "1", "2"));
+	client.resume();
+	expect_returned(&mut client, steps);
+	println!("ok: a logpoint where a watch stops logs once, with one stop");
 }
 
 fn false_condition_on_a_caught_throw() {

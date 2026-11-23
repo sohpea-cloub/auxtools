@@ -299,7 +299,7 @@ impl Server {
 				}
 			}
 
-			BreakpointReason::Step | BreakpointReason::Pause | BreakpointReason::Runtime { .. }
+			BreakpointReason::Step | BreakpointReason::Pause | BreakpointReason::Runtime { .. } | BreakpointReason::Data { .. }
 				if crate::instruction_hooking::is_breakpoint(_ctx) =>
 			{
 				self.breakpoint_hit((proc, offset));
