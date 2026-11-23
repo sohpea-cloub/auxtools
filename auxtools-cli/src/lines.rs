@@ -19,11 +19,11 @@ impl LineMap {
 		let matches = matching_lines(old_mid, new_mid);
 		let mut mid = vec![0u32; old_mid.len()];
 		let mut i = 0;
-		let mut run_new = 0;
+		let mut run_new_start = 0;
 		while i < old_mid.len() {
 			if let Some(j) = matches[i] {
 				mid[i] = (prefix + j) as u32;
-				run_new = j + 1;
+				run_new_start = j + 1;
 				i += 1;
 				continue;
 			}
@@ -32,10 +32,10 @@ impl LineMap {
 				i += 1;
 			}
 			let run_new_end = if i < old_mid.len() { matches[i].unwrap() } else { new_mid.len() };
-			let in_place = run_new_end - run_new;
+			let in_place = run_new_end - run_new_start;
 			for (n, line) in mid[run_old..i].iter_mut().enumerate() {
 				let within = if in_place == 0 { 0 } else { n.min(in_place - 1) };
-				*line = (prefix + run_new + within) as u32;
+				*line = (prefix + run_new_start + within) as u32;
 			}
 		}
 

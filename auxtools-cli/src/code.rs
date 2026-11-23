@@ -16,7 +16,7 @@ use dmasm::{
 
 use crate::{adapter::Input, dap::Output, resources::Resources, script::Script, skin::Skin};
 
-const INTERVAL: Duration = Duration::from_millis(500);
+const LOOK_INTERVAL: Duration = Duration::from_millis(500);
 const SETTLE: Duration = Duration::from_millis(200);
 const INTERVAL_VAR: &str = "AUXTOOLS_WATCH_INTERVAL";
 const LOOKING_SHARE: u32 = 5;
@@ -108,9 +108,9 @@ pub fn start(mut options: Options, out: Arc<Output>, inputs: mpsc::Sender<Input>
 				commands: receiver,
 				reconnected: Cell::new(false),
 				world: Cell::new(0),
-				parsed: Cell::new(false),
+				parsed_since_trim: Cell::new(false),
 				parse_started: Cell::new(SystemTime::UNIX_EPOCH),
-				macros: RefCell::new(None),
+				given_macros: RefCell::new(None),
 				resource_dirs: RefCell::new(vec![]),
 				reloaded_resources: RefCell::new(vec![]),
 				named_resources: RefCell::new(vec![]),
@@ -122,6 +122,8 @@ pub fn start(mut options: Options, out: Arc<Output>, inputs: mpsc::Sender<Input>
 		.expect("couldn't start the code's thread");
 	commands
 }
+
+type AdapterConnected = bool;
 
 struct Code {
 	options: Options,
@@ -136,9 +138,9 @@ struct Code {
 	commands: mpsc::Receiver<Command>,
 	reconnected: Cell<bool>,
 	world: Cell<u64>,
-	parsed: Cell<bool>,
+	parsed_since_trim: Cell<bool>,
 	parse_started: Cell<SystemTime>,
-	macros: RefCell<Option<Vec<Macro>>>,
+	given_macros: RefCell<Option<Vec<Macro>>>,
 	resource_dirs: RefCell<Vec<String>>,
 	reloaded_resources: RefCell<Vec<ReloadedResource>>,
 	named_resources: RefCell<Vec<String>>,
@@ -169,7 +171,7 @@ impl Code {
 		self.reconnected.set(true);
 	}
 
-	fn send(&self, event: Event) -> bool {
+	fn send(&self, event: Event) -> AdapterConnected {
 		self.inputs.send(Input::Code { worker: self.worker, event }).is_ok()
 	}
 
@@ -181,7 +183,7 @@ impl Code {
 	fn parse_with(&self, defines: Vec<(String, Option<String>)>) -> Result<Snapshot, String> {
 		#[cfg(test)]
 		tests::count_parse(&self.options.dme);
-		self.parsed.set(true);
+		self.parsed_since_trim.set(true);
 		self.parse_started.set(SystemTime::now());
 		let byond = self.parse_options.borrow().byond;
 		Snapshot::parse(&self.options.dme, &ParseOptions { defines, byond })
@@ -260,7 +262,7 @@ impl Code {
 
 	fn watch(&self, watching: &mut Watching) {
 		loop {
-			let wait = interval(INTERVAL).max(watching.files.took * (LOOKING_SHARE - 1));
+			let wait = interval(LOOK_INTERVAL).max(watching.files.last_poll_took * (LOOKING_SHARE - 1));
 			match self.commands.recv_timeout(wait) {
 				Ok(Command::Connected { world, .. }) => self.connected(world),
 				Ok(Command::Defines(defines)) => self.defines_wanted(defines),
@@ -283,13 +285,13 @@ impl Code {
 					return;
 				}
 			}
-			if self.parsed.take() {
+			if self.parsed_since_trim.take() {
 				give_back_memory();
 			}
 		}
 	}
 
-	fn look(&self, watching: &mut Watching) -> bool {
+	fn look(&self, watching: &mut Watching) -> AdapterConnected {
 		let mut changed = watching.files.changed(&self.root);
 		if changed.is_empty() {
 			return true;
@@ -321,7 +323,7 @@ impl Code {
 		self.reload_skin(watching, false) && self.reload_script(watching, false) && self.send(Event::Looked)
 	}
 
-	fn reload_code(&self, watching: &mut Watching, changed: HashSet<PathBuf>) -> bool {
+	fn reload_code(&self, watching: &mut Watching, changed: HashSet<PathBuf>) -> AdapterConnected {
 		let read = self.read_texts(&changed);
 		let selected = self.selected_defines();
 		let other_defines = selected != *self.running_defines.borrow();
@@ -418,7 +420,7 @@ impl Code {
 		read
 	}
 
-	fn catch_up(&self, watching: &mut Watching) -> bool {
+	fn catch_up(&self, watching: &mut Watching) -> AdapterConnected {
 		let dmb_modified = self.dmb_modified();
 		if dmb_modified != watching.dmb_modified {
 			if !self.ready() {
@@ -509,7 +511,7 @@ impl Code {
 		}
 		let current = match applied.filter(|applied| looked_at && applied_as.as_ref() == Some(&selected) && !applied.has_patches()) {
 			Some(applied) => {
-				self.parsed.set(true);
+				self.parsed_since_trim.set(true);
 				applied
 			}
 			None => match self.parse_with(selected.clone()) {
@@ -551,14 +553,14 @@ impl Code {
 		resources
 	}
 
-	fn restore_resources(&self, watching: &mut Watching, files: &[PathBuf]) -> bool {
+	fn restore_resources(&self, watching: &mut Watching, files: &[PathBuf]) -> AdapterConnected {
 		if files.is_empty() {
 			return true;
 		}
 		self.reload_resources(watching, files)
 	}
 
-	fn reload_resources(&self, watching: &mut Watching, files: &[PathBuf]) -> bool {
+	fn reload_resources(&self, watching: &mut Watching, files: &[PathBuf]) -> AdapterConnected {
 		let changed = watching.resources.changed(&self.root, files);
 		if changed.is_empty() {
 			return true;
@@ -625,7 +627,7 @@ impl Code {
 		}
 	}
 
-	fn warn_of_later_edits(&self, files: &[PathBuf], resources: &Resources, built: Option<SystemTime>) -> bool {
+	fn warn_of_later_edits(&self, files: &[PathBuf], resources: &Resources, built: Option<SystemTime>) -> AdapterConnected {
 		let mut later: Vec<String> = resources
 			.edited_since_built(&self.root)
 			.into_iter()
@@ -647,7 +649,7 @@ impl Code {
 		self.send(Event::Outdated(later))
 	}
 
-	fn ready(&self) -> bool {
+	fn ready(&self) -> AdapterConnected {
 		while let Ok(command) = self.commands.try_recv() {
 			match command {
 				Command::Connected { world, .. } => self.connected(world),
@@ -658,7 +660,7 @@ impl Code {
 		self.reconnected.get() || self.send(Event::Ready)
 	}
 
-	fn give_macros(&self, parsed: Option<&Snapshot>) -> bool {
+	fn give_macros(&self, parsed: Option<&Snapshot>) -> AdapterConnected {
 		let macros = match parsed.and_then(Snapshot::macro_history) {
 			Some(history) => source_macros(history),
 			None => {
@@ -675,14 +677,14 @@ impl Code {
 				}
 			}
 		};
-		if self.macros.borrow().as_ref() == Some(&macros) {
+		if self.given_macros.borrow().as_ref() == Some(&macros) {
 			return true;
 		}
-		*self.macros.borrow_mut() = Some(macros.clone());
+		*self.given_macros.borrow_mut() = Some(macros.clone());
 		self.send(Event::Macros(macros))
 	}
 
-	fn not_reloaded(&self, error: String) -> bool {
+	fn not_reloaded(&self, error: String) -> AdapterConnected {
 		self.send(Event::NotReloaded {
 			summary: "couldn't read the code".to_owned(),
 			errors: vec![error],
@@ -785,7 +787,7 @@ impl Code {
 		Some(applied)
 	}
 
-	fn refused_by(&self, refused: Vec<Refusal>, whole: bool) -> bool {
+	fn refused_by(&self, refused: Vec<Refusal>, whole: bool) -> AdapterConnected {
 		let mut now = if whole { vec![] } else { self.refusals.borrow().clone() };
 		for refusal in refused {
 			if !now.contains(&refusal) {
@@ -796,7 +798,7 @@ impl Code {
 		self.report()
 	}
 
-	fn report(&self) -> bool {
+	fn report(&self) -> AdapterConnected {
 		let now = self.outstanding();
 		if *self.reported.borrow() == now {
 			return true;
@@ -805,7 +807,7 @@ impl Code {
 		self.send(Event::Refusals(now))
 	}
 
-	fn rebuilt(&self) -> bool {
+	fn rebuilt(&self) -> AdapterConnected {
 		self.refusals.borrow_mut().clear();
 		self.report() && self.send(Event::Watching)
 	}
@@ -851,7 +853,7 @@ impl Code {
 		})
 	}
 
-	fn reload_skin(&self, watching: &mut Watching, restored: bool) -> bool {
+	fn reload_skin(&self, watching: &mut Watching, restored: bool) -> AdapterConnected {
 		let Some(change) = watching.skin.change(&self.root) else {
 			return true;
 		};
@@ -880,7 +882,7 @@ impl Code {
 		}
 	}
 
-	fn reload_script(&self, watching: &mut Watching, restored: bool) -> bool {
+	fn reload_script(&self, watching: &mut Watching, restored: bool) -> AdapterConnected {
 		if let Some(why) = watching.script.problem() {
 			self.log(format!("client script: {}; the world keeps the script it has", why));
 		}
@@ -1061,7 +1063,7 @@ fn modified_time(root: &Path, file: &Path) -> Option<SystemTime> {
 struct Watched {
 	dirs: HashMap<PathBuf, HashMap<OsString, Vec<PathBuf>>>,
 	times: HashMap<PathBuf, Option<SystemTime>>,
-	took: Duration
+	last_poll_took: Duration
 }
 
 impl Watched {
@@ -1121,7 +1123,7 @@ impl Watched {
 			self.times.insert(file.clone(), time);
 			changed.insert(file);
 		}
-		self.took = started.elapsed();
+		self.last_poll_took = started.elapsed();
 		changed
 	}
 
@@ -1162,7 +1164,7 @@ fn listed(name: &OsStr) -> OsString {
 	}
 }
 
-const NOT_THE_CODES: [&str; 4] = ["DM_VERSION", "DM_BUILD", "FILE_DIR", "SPACEMAN_DMM"];
+const BUILT_IN_MACROS: [&str; 4] = ["DM_VERSION", "DM_BUILD", "FILE_DIR", "SPACEMAN_DMM"];
 
 fn preprocessed_macros(dme: &Path, options: &ParseOptions) -> Result<Vec<Macro>, String> {
 	let ctx = dreammaker::Context::default();
@@ -1187,7 +1189,7 @@ fn source_macros(history: &dreammaker::preprocessor::DefineHistory) -> Vec<Macro
 	let mut defined: HashMap<String, (u16, Macro)> = HashMap::new();
 	for (range, (name, define)) in history.iter() {
 		let at_end = range.end.file == dreammaker::FileId::UNKNOWN && range.end.line == !0;
-		if !at_end || define.location.file == dreammaker::FileId::BUILTINS || NOT_THE_CODES.contains(&name.as_str()) {
+		if !at_end || define.location.file == dreammaker::FileId::BUILTINS || BUILT_IN_MACROS.contains(&name.as_str()) {
 			continue;
 		}
 		if defined.get(name.as_str()).is_some_and(|(order, _)| *order > range.end.column) {
