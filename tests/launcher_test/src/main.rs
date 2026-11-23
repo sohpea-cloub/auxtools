@@ -947,6 +947,29 @@ fn command_line_more(pid: u64, dir: &Path) {
 	cli.run(&["continue"], 0);
 	println!("ok: CLI wait passes over another client's pause");
 
+	let mut never = Background::start(pid.parse().unwrap(), &[
+		"wait",
+		"pause",
+		"--break",
+		"/proc/value",
+		"--if",
+		"1 == 2",
+		"--timeout",
+		"3"
+	]);
+	never.error_with("breakpoint set at ");
+	let printed = cli.run(&["wait", "pause", "--break", "/proc/value", "--timeout", "15"], 0);
+	assert!(printed.contains("#0 /value"), "the other wait said {}", printed);
+	cli.run(&["continue"], 0);
+	let (exit, printed) = never.finish();
+	assert!(
+		exit == 2 && printed.contains("timed out after 3 seconds"),
+		"the wait whose condition is false gave {}: {}",
+		exit,
+		printed
+	);
+	println!("ok: CLI wait passes over another client's stop at its instruction");
+
 	let printed = cli.run(&["wait", "pause", "--break", "/proc/value", "--no-hold", "--timeout", "15"], 0);
 	assert!(
 		printed.starts_with(&format!("pid {}: paused at a breakpoint\n#0 /value", pid)),
