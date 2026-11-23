@@ -2018,6 +2018,7 @@ fn definitions(built: Built) {
 	println!("ok: new proc references in type defaults");
 
 	assert_eq!(eval(&mut client, "(new /datum/early).speak()"), "\"declaration, then override\"");
+	assert_eq!(eval(&mut client, "\"[/datum/early/proc/speak]\""), "\"/datum/early/proc/speak\"");
 	let changes = source.edit("reload.dm", "\"declaration, then [..()]\"", "\"edited declaration, then [..()]\"");
 	reload(&mut watcher, &changes);
 	assert_eq!(eval(&mut client, "(new /datum/early).speak()"), "\"edited declaration, then override\"");
@@ -2036,9 +2037,11 @@ fn definitions(built: Built) {
 	println!("ok: an override in a file before its declaration's is edited");
 
 	assert_eq!(eval(&mut client, "calls_early_global()"), "\"early declared\"");
+	assert_eq!(eval(&mut client, "early_global()"), "\"early declared\"");
 	let changes = source.edit("reload.dm", "\"early declared\"", "\"edited early declared\"");
 	reload(&mut watcher, &changes);
 	assert_eq!(eval(&mut client, "calls_early_global()"), "\"edited early declared\"");
+	assert_eq!(eval(&mut client, "early_global()"), "\"edited early declared\"");
 	println!("ok: a global declaration after another definition is edited");
 
 	let changes = source.edit(
