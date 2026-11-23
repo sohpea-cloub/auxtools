@@ -178,16 +178,21 @@ pub fn stop<E: From<String>>(ended: &'static str, listed: Option<usize>, mut ask
 	let listed = listed.map_or(report.procs.len(), |listed| listed.min(report.procs.len()));
 	let mut measured = vec![];
 	for at in &report.procs[..listed] {
+		if at.code.code.old == u16::MAX {
+			measured.push(None);
+			continue;
+		}
 		let ProfileReply::Code(instructions) = profile(ProfileRequest::Code { code: at.code.code })?? else {
 			return Err(E::from("unexpected response from the world: no instructions".to_owned()));
 		};
-		measured.push(instructions);
+		measured.push(Some(instructions));
 	}
 	let mut sources = Sources::of(match ask(Request::WorldInfo)? {
 		Response::WorldInfo { args, cwd, .. } => local::world_dmb(&args, &cwd).and_then(|dmb| dmb.parent().map(PathBuf::from)),
 		_ => None
 	});
 	for (at, measured) in measured.iter().enumerate() {
+		let Some(measured) = measured else { continue };
 		let disassembly = match ask(Request::Disassemble {
 			code: report.procs[at].code.code
 		})? {
@@ -318,6 +323,57 @@ mod tests {
 		assert_eq!(sources, [Some("source of 3"), None, Some("source of 4"), None, None]);
 		assert_eq!((rows[4].text.as_str(), rows[4].hits, rows[4].own_ns), ("End", 0, 0));
 		assert_eq!((rows[3].hits, rows[3].own_ns, rows[3].callee_ns), (1, 200, 100));
+	}
+
+	#[test]
+	fn old_code_without_an_id_keeps_its_totals_and_has_no_listing() {
+		let mut numbered = code("/a", 300);
+		numbered.code.old = 3;
+		let mut unnumbered = code("/b", 200);
+		unnumbered.code.old = u16::MAX;
+		let totals = ProfileTotals {
+			seconds: 2.0,
+			running: false,
+			overhead_ns: 12.5,
+			codes: vec![unnumbered, numbered]
+		};
+		let report = stop("time", None, |request| -> Result<Response, String> {
+			Ok(match request {
+				Request::Profile(ProfileRequest::Stop) => Response::Profile(Ok(ProfileReply::Totals(totals.clone()))),
+				Request::Profile(ProfileRequest::Code { code }) if code.old == u16::MAX => {
+					Response::Profile(Err("/b runs old code without an id".to_owned()))
+				}
+				Request::Profile(ProfileRequest::Code { .. }) => Response::Profile(Ok(ProfileReply::Code(vec![ProfiledInstruction {
+					offset: 0,
+					hits: 4,
+					own_ns: 300,
+					callee_ns: 0
+				}]))),
+				Request::Disassemble { code } if code.old == u16::MAX => Response::Disassemble(Err("/b runs old code without an id".to_owned())),
+				Request::Disassemble { .. } => Response::Disassemble(Ok(Disassembly {
+					proc: ProcRef {
+						path: "/a".to_owned(),
+						override_id: 0
+					},
+					file: None,
+					instructions: vec![instruction(0, "End", None)],
+					error: None
+				})),
+				_ => Response::Ack
+			})
+		})
+		.expect("a report with old code that has no id");
+		let listed: Vec<(&str, u64, Option<usize>)> = (report.procs.iter())
+			.map(|listed| {
+				(
+					listed.code.proc.path.as_str(),
+					listed.code.total.own_ns,
+					listed.listing.as_ref().map(Vec::len)
+				)
+			})
+			.collect();
+		assert_eq!(listed, [("/a", 300, Some(1)), ("/b", 200, None)]);
+		assert_eq!(report.own_ns, 500);
 	}
 
 	#[test]
