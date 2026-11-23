@@ -37,7 +37,7 @@
   drops, so replacing its raw value wasn't safe.
 - The functions in `runtime_tables`, `appearance_tables` and `raw_types::misc`, and
   `Proc::set_bytecode`, are now `unsafe`. Call them on BYOND's thread while a world is live.
-  Their `# Safety` sections say what else they need. `NameMapPlan::write` returns a `Result`.
+  Their `# Safety` sections say what else they need.
 - `Proc::set_bytecode` returns a `Result`. It gives the proc a code entry of its own first, unless
   the proc already has one, so other procs and tables that share the entry keep their code. It
   fails and changes nothing when the proc can't get an entry of its own, as for a proc of 65,535
@@ -67,10 +67,6 @@
 - `Proc::id` is now a method. A `Proc` from a world that has ended has no entry:
   `parameter_names` and `local_names` are empty, `locals_count` is 0, and `call` and `hook`
   fail.
-- `ParentPlan::write` returns a `Result`. It fails, and writes nothing, when the world has ended
-  or types were added or moved since the plan was made.
-- `plan_name_map` and `set_named_procs` fail for more than 65,535 names in a map, or more than
-  65,535 procs for one name.
 - `debug::set_local_names` and `debug::has_local_names` take a `&Proc` first. Pass the proc
   whose local names you record or check.
 

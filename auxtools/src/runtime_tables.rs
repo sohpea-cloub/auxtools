@@ -683,19 +683,13 @@ pub unsafe fn set_world_named_procs(key: u32, procs: &[u32]) -> Result<(), Strin
 	set_named_procs_in(functions()?.world_name_map, key, procs)
 }
 
-fn check_name_map_count(what: &str, count: usize) -> Result<u16, String> {
-	u16::try_from(count).map_err(|_| format!("{} {} is more than a proc name map holds ({})", count, what, u16::MAX))
-}
-
 unsafe fn set_named_procs_in(map: *mut ProcNameMap, key: u32, procs: &[u32]) -> Result<(), String> {
 	let functions = functions()?;
-	let proc_count = check_name_map_count("procs for one name", procs.len())?;
 	unsafe {
 		let count = buckets(map).len();
 		let at = match buckets(map).binary_search_by_key(&key, |bucket| bucket.key) {
 			Ok(at) => at,
 			Err(at) => {
-				check_name_map_count("names", count + 1)?;
 				let size = std::mem::size_of::<ProcNameBucket>();
 				let buckets = (functions.crt_realloc)((*map).buckets as *mut c_void, (count + 1) * size) as *mut ProcNameBucket;
 				if buckets.is_null() {
@@ -725,7 +719,7 @@ unsafe fn set_named_procs_in(map: *mut ProcNameMap, key: u32, procs: &[u32]) -> 
 			(functions.free_shared)(bucket.ids as *mut c_void);
 		}
 		bucket.ids = ids;
-		bucket.count = proc_count;
+		bucket.count = procs.len() as u16;
 	}
 	Ok(())
 }
@@ -1015,8 +1009,7 @@ pub unsafe fn name_map_entries(type_id: u32) -> Result<Vec<(u32, Vec<u32>, u8)>,
 
 /// A preallocated proc name map. Dropping it unwritten releases its buffers.
 pub struct NameMapPlan {
-	type_id: u32,
-	world: u32,
+	map: *mut ProcNameMap,
 	buckets: *mut ProcNameBucket,
 	count: u16,
 	written: bool
@@ -1024,13 +1017,9 @@ pub struct NameMapPlan {
 
 pub unsafe fn plan_name_map(type_id: u32, entries: &[(u32, Vec<u32>, u8)]) -> Result<NameMapPlan, String> {
 	let functions = functions()?;
-	name_map(type_id)?;
+	let map = name_map(type_id)?;
 	let mut entries: Vec<&(u32, Vec<u32>, u8)> = entries.iter().filter(|(_, ids, _)| !ids.is_empty()).collect();
 	entries.sort_by_key(|(key, ..)| *key);
-	check_name_map_count("names", entries.len())?;
-	for (_, ids, _) in &entries {
-		check_name_map_count("procs for one name", ids.len())?;
-	}
 	let size = entries.len().max(1) * std::mem::size_of::<ProcNameBucket>();
 	unsafe {
 		let buckets = (functions.crt_realloc)(std::ptr::null_mut(), size) as *mut ProcNameBucket;
@@ -1038,8 +1027,7 @@ pub unsafe fn plan_name_map(type_id: u32, entries: &[(u32, Vec<u32>, u8)]) -> Re
 			return Err("out of memory for a proc name map".to_owned());
 		}
 		let mut plan = NameMapPlan {
-			type_id,
-			world: crate::world_generation(),
+			map,
 			buckets,
 			count: 0,
 			written: false
@@ -1063,21 +1051,18 @@ pub unsafe fn plan_name_map(type_id: u32, entries: &[(u32, Vec<u32>, u8)]) -> Re
 }
 
 impl NameMapPlan {
-	/// Keeps the old bucket array, as with type matrices. Finds the type's map
-	/// again, because adding a type moves the maps.
+	/// Keeps the old bucket array, as with type matrices.
 	///
 	/// # Safety
 	/// Call on BYOND's thread while a world is live.
-	pub unsafe fn write(mut self) -> Result<(), String> {
-		if self.world != crate::world_generation() {
-			return Err("the proc name map was planned for a world that has ended".to_owned());
-		}
-		let functions = functions()?;
-		let map = name_map(self.type_id)?;
+	pub unsafe fn write(mut self) {
+		let Ok(functions) = functions() else {
+			return;
+		};
 		unsafe {
-			let old_ids: Vec<*mut u32> = buckets(map).iter().map(|bucket| bucket.ids).collect();
-			(*map).buckets = self.buckets;
-			(*map).count = self.count;
+			let old_ids: Vec<*mut u32> = buckets(self.map).iter().map(|bucket| bucket.ids).collect();
+			(*self.map).buckets = self.buckets;
+			(*self.map).count = self.count;
 			for ids in old_ids {
 				if !ids.is_null() {
 					(functions.free_shared)(ids as *mut c_void);
@@ -1085,13 +1070,12 @@ impl NameMapPlan {
 			}
 		}
 		self.written = true;
-		Ok(())
 	}
 }
 
 impl Drop for NameMapPlan {
 	fn drop(&mut self) {
-		if self.written || self.world != crate::world_generation() {
+		if self.written {
 			return;
 		}
 		unsafe {
@@ -1106,8 +1090,6 @@ impl Drop for NameMapPlan {
 }
 
 pub struct ParentPlan {
-	world: u32,
-	parents_before: Vec<u32>,
 	changes: Vec<(u32, u32)>,
 	order: Vec<u32>,
 	places: Vec<(u32, u32)>
@@ -1128,8 +1110,7 @@ pub unsafe fn plan_parents(changes: &[(u32, u32)]) -> Result<ParentPlan, String>
 	}
 	unsafe {
 		let word = |id: usize, offset: usize| (*functions.type_table).add(id * functions.type_stride + offset) as *mut u32;
-		let parents_before: Vec<u32> = (0..count).map(|id| *word(id, PARENT)).collect();
-		let mut parents = parents_before.clone();
+		let mut parents: Vec<u32> = (0..count).map(|id| *word(id, PARENT)).collect();
 		for &(type_id, parent) in changes {
 			parents[type_id as usize] = parent;
 		}
@@ -1173,8 +1154,6 @@ pub unsafe fn plan_parents(changes: &[(u32, u32)]) -> Result<ParentPlan, String>
 			));
 		}
 		Ok(ParentPlan {
-			world: crate::world_generation(),
-			parents_before,
 			changes: changes.to_vec(),
 			order,
 			places
@@ -1183,26 +1162,15 @@ pub unsafe fn plan_parents(changes: &[(u32, u32)]) -> Result<ParentPlan, String>
 }
 
 impl ParentPlan {
-	/// Fails, and writes nothing, when the world or its types have changed
-	/// since the plan was made.
-	///
 	/// # Safety
 	/// Call on BYOND's thread while a world is live.
-	pub unsafe fn write(&self) -> Result<(), String> {
+	pub unsafe fn write(&self) {
 		use type_fields::*;
-		if self.world != crate::world_generation() {
-			return Err("the type hierarchy was planned for a world that has ended".to_owned());
-		}
-		let functions = functions()?;
+		let Ok(functions) = functions() else {
+			return;
+		};
 		unsafe {
-			let count = *functions.type_count as usize;
 			let word = |id: usize, offset: usize| (*functions.type_table).add(id * functions.type_stride + offset) as *mut u32;
-			if count != self.parents_before.len() || (0..count).any(|id| *word(id, PARENT) != self.parents_before[id]) {
-				return Err(format!(
-					"the type hierarchy was planned for {} types, and types were added or moved since",
-					self.parents_before.len()
-				));
-			}
 			for &(type_id, parent) in &self.changes {
 				*word(type_id as usize, PARENT) = parent;
 			}
@@ -1213,7 +1181,6 @@ impl ParentPlan {
 				*word(id as usize, PREORDER_END) = self.places[id as usize].1;
 			}
 		}
-		Ok(())
 	}
 }
 
