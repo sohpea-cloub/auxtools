@@ -2071,6 +2071,19 @@ fn definitions(built: Built) {
 	assert_eq!(eval(&mut client, "call(new /datum/twice, /datum/twice/speak)()"), "\"first override\"");
 	assert_eq!(eval(&mut client, "call(new /datum/early, /datum/early/speak)()"), "\"override\"");
 	println!("ok: a proc path without proc names the first override");
+
+	let changes = source.edit(
+		"reload.dm",
+		"/proc/first_def()\n",
+		"/proc/added_twice()\n\treturn \"declared\"\n\n/added_twice()\n\treturn \"unreachable\"\n\n/proc/calls_added_twice()\n\treturn \
+		 added_twice()\n\n/datum/added_thrice/proc/speak()\n\treturn \"declaration\"\n\n/datum/added_thrice/speak()\n\treturn \"first \
+		 override\"\n\n/datum/added_thrice/speak()\n\treturn \"second override\"\n\n/proc/calls_added_thrice()\n\treturn call(new \
+		 /datum/added_thrice, /datum/added_thrice/speak)()\n\n/proc/first_def()\n"
+	);
+	reload(&mut watcher, &changes);
+	assert_eq!(eval(&mut client, "calls_added_twice()"), "\"declared\"");
+	assert_eq!(eval(&mut client, "calls_added_thrice()"), "\"first override\"");
+	println!("ok: new code names the definitions added with it");
 }
 
 fn types(built: Built) {

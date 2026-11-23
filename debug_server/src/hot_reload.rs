@@ -193,8 +193,49 @@ impl StagedProcs {
 
 #[derive(Default)]
 struct Pending {
-	procs: HashMap<String, u32>,
+	procs: Vec<PendingProc>,
+	removed: HashSet<(String, u32)>,
 	globals: HashMap<(StaticScope, Vec<u8>), u32>
+}
+
+struct PendingProc {
+	path: String,
+	override_id: u32,
+	id: u32
+}
+
+impl Pending {
+	fn proc_named(&self, path: &str) -> Option<u32> {
+		if path.contains("/proc/") || path.contains("/verb/") {
+			return self.procs.iter().find(|new| new.path == path).map(|new| new.id);
+		}
+		let stripped = strip_path(path);
+		let mut added: Vec<&PendingProc> = self.procs.iter().filter(|new| strip_path(&new.path) == stripped).collect();
+		if added.iter().all(|new| new.path != path) {
+			return None;
+		}
+		added.sort_by_key(|new| new.override_id);
+		let mut order: Vec<(bool, Option<u32>)> = Proc::overrides(path)
+			.iter()
+			.enumerate()
+			.filter(|(at, _)| !self.removed.contains(&(stripped.clone(), *at as u32)))
+			.map(|(_, proc)| (crate::assemble_env::own_path(proc) == path, None))
+			.collect();
+		for new in added {
+			let at = (new.override_id as usize).min(order.len());
+			order.insert(at, (new.path == path, Some(new.id)));
+		}
+		order.into_iter().find(|(exact, _)| *exact).and_then(|(_, id)| id)
+	}
+}
+
+fn new_proc_path(new: &NewProc) -> String {
+	match (new.type_path.as_str(), new.declared, new.verb) {
+		("", true, _) => format!("/proc/{}", new.name),
+		(ty, true, false) => format!("{}/proc/{}", ty, new.name),
+		(ty, true, true) => format!("{}/verb/{}", ty, new.name),
+		(ty, false, _) => format!("{}/{}", ty, new.name)
+	}
 }
 
 #[derive(Default)]
@@ -412,7 +453,15 @@ pub fn prepare(request: &HotReloadRequest, warnings: &mut Vec<String>, skipped: 
 	pending.procs = new_procs
 		.iter()
 		.zip(&ids)
-		.map(|(new, &id)| (strip_path(&new.code.proc.path), id))
+		.map(|(new, &id)| PendingProc {
+			path: new_proc_path(new),
+			override_id: new.code.proc.override_id,
+			id
+		})
+		.collect();
+	pending.removed = removed_procs
+		.iter()
+		.map(|removed| (strip_path(&removed.proc.path), removed.proc.override_id))
 		.collect();
 	let mut type_vars = TypeVars::default();
 	let mut staged = StagedProcs::default();
@@ -632,7 +681,7 @@ pub fn prepare(request: &HotReloadRequest, warnings: &mut Vec<String>, skipped: 
 			));
 		}
 	}
-	let stub = Proc::find("/proc/auxtools_expr_stub").is_some() || pending.procs.contains_key(&strip_path("/proc/auxtools_expr_stub"));
+	let stub = Proc::find("/proc/auxtools_expr_stub").is_some() || pending.proc_named("/proc/auxtools_expr_stub").is_some();
 	if (prepared.global_init_now.is_some() || !prepared.run_once.is_empty()) && !stub {
 		errors.push("initial values can't be worked out: the world has no /proc/auxtools_expr_stub to run them in".to_owned());
 	}
@@ -1450,12 +1499,7 @@ fn prepare_new_proc(
 
 	let string = |text: &str| StringRef::new(text).map_err(|_| fail(format!("couldn't make the string {}", text)));
 
-	let path = match (new.type_path.as_str(), new.declared, new.verb) {
-		("", true, _) => format!("/proc/{}", new.name),
-		(ty, true, false) => format!("{}/proc/{}", ty, new.name),
-		(ty, true, true) => format!("{}/verb/{}", ty, new.name),
-		(ty, false, _) => format!("{}/{}", ty, new.name)
-	};
+	let path = new_proc_path(new);
 
 	let (path, basename) = (string(&path)?, string(&new.name)?);
 	let mut entry = template;
@@ -2145,15 +2189,15 @@ fn const_value(value: &ConstValue, pending: &Pending) -> Result<(u32, u32), Stri
 		ConstValue::Null => (0, 0),
 		ConstValue::Number(n) => (0x2A, n.to_bits()),
 		ConstValue::String(text) => (0x06, leaked_string(text)?),
-		ConstValue::Path(path) if pending.procs.contains_key(&strip_path(path)) => {
-			(raw_types::values::ValueTag::ProcRef.0 as u32, pending.procs[&strip_path(path)])
-		}
-		ConstValue::Path(path) => {
-			let (tag, data) = AssembleEnv
-				.get_type(path)
-				.ok_or_else(|| format!("there's no type {} in the running world", path))?;
-			(tag as u32, data)
-		}
+		ConstValue::Path(path) => match pending.proc_named(path) {
+			Some(id) => (raw_types::values::ValueTag::ProcRef.0 as u32, id),
+			None => {
+				let (tag, data) = AssembleEnv
+					.get_type(path)
+					.ok_or_else(|| format!("there's no type {} in the running world", path))?;
+				(tag as u32, data)
+			}
+		},
 		ConstValue::Resource(file) => (
 			0x0C,
 			AssembleEnv
@@ -3625,14 +3669,14 @@ impl dmasm::assembler::AssembleEnv for ReloadEnv<'_> {
 	}
 
 	fn get_proc_index(&mut self, path: &str) -> Option<u32> {
-		if let Some(&id) = self.pending.procs.get(&strip_path(path)) {
+		if let Some(id) = self.pending.proc_named(path) {
 			return Some(id);
 		}
 		AssembleEnv.get_proc_index(path)
 	}
 
 	fn get_type(&mut self, path: &str) -> Option<(u8, u32)> {
-		if let Some(&id) = self.pending.procs.get(&strip_path(path)) {
+		if let Some(id) = self.pending.proc_named(path) {
 			return Some((raw_types::values::ValueTag::ProcRef.0, id));
 		}
 		AssembleEnv.get_type(path)
