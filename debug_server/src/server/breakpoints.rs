@@ -28,6 +28,12 @@ impl Placed {
 	}
 }
 
+impl hot_reload::Claimant for (ClientId, Placed) {
+	fn on_entry(&self) -> bool {
+		self.1 == Placed::Proc
+	}
+}
+
 pub(super) struct Breakpoints {
 	pub(super) claims: Claims,
 	pub(super) moved: hot_reload::MovedBreakpoints<(ClientId, Placed)>

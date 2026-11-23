@@ -626,8 +626,26 @@ fn debugger(built: Built) {
 	let before = located(&mut client, "reload.dm", line);
 	assert_eq!(before.len(), 1, "{:?}", before);
 	stops_on(&mut client, &before[0], line);
+	let response = client.request(Request::BreakpointSet {
+		instruction: before[0].clone(),
+		condition: None,
+		hit: None,
+		log: None,
+		exact: false
+	});
+	assert!(matches!(response, Response::BreakpointSet { .. }), "{:?}", response);
 	let changes = source.edit("reload.dm", "\tvar/x = 1\n\tx += 1", "\tvar/x = 1\n\tx *= 3\n\tx += 1");
 	reload(&mut watcher, &changes);
+	eval(&mut client, "arm_breakpoint()");
+	assert_eq!(client.expect_pause(), BreakpointReason::Breakpoint);
+	assert_eq!(paused_line(&mut client), ("/breakpoint_target".to_owned(), Some(line + 1)));
+	client.resume();
+	let response = client.request(Request::BreakpointUnset {
+		instruction: before[0].clone(),
+		exact: false
+	});
+	assert!(matches!(response, Response::BreakpointUnset { success: true, .. }), "{:?}", response);
+	println!("ok: a breakpoint stays on its statement when a statement is inserted above it");
 	assert_eq!(lines_with_code(&mut client, "reload.dm", line - 1, line + 3), [
 		line - 1,
 		line,

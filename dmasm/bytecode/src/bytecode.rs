@@ -17,6 +17,7 @@ pub struct InstructionSpan<'a> {
 pub struct ScannedBytecode<'a> {
     pub instructions: Vec<InstructionSpan<'a>>,
     pub label_operands: Vec<LabelOperand>,
+    pub local_operands: Vec<u32>,
     pub reads_caller: bool,
 }
 
@@ -53,6 +54,7 @@ pub fn scan(bytecode: &[u32]) -> Result<ScannedBytecode<'_>, BytecodeError> {
     Ok(ScannedBytecode {
         instructions,
         label_operands,
+        local_operands: cursor.local_operands,
         reads_caller: cursor.reads_caller,
     })
 }
@@ -68,6 +70,7 @@ pub(crate) struct Cursor<'a> {
     bytecode: &'a [u32],
     offset: usize,
     reads_caller: bool,
+    local_operands: Vec<u32>,
 }
 
 impl<'a> Cursor<'a> {
@@ -76,6 +79,7 @@ impl<'a> Cursor<'a> {
             bytecode,
             offset: 0,
             reads_caller: false,
+            local_operands: Vec::new(),
         }
     }
 
@@ -268,8 +272,12 @@ pub(crate) fn scan_variable(cursor: &mut Cursor<'_>) -> Result<(), BytecodeError
 
         access_modifiers::Caller | access_modifiers::Callee => cursor.reads_caller = true,
 
+        access_modifiers::Local => {
+            cursor.local_operands.push(cursor.offset());
+            cursor.skip(1)?;
+        }
+
         access_modifiers::Arg
-        | access_modifiers::Local
         | access_modifiers::Global
         | access_modifiers::DynamicProc
         | access_modifiers::DynamicVerb
@@ -324,6 +332,22 @@ mod tests {
                 (4, Opcode::Tan2),
             ]
         );
+    }
+
+    #[test]
+    fn finds_the_slots_of_locals() {
+        let bytecode = [
+            Opcode::GetVar.word(),
+            access_modifiers::SetCache,
+            access_modifiers::Local,
+            2,
+            access_modifiers::Local,
+            3,
+            Opcode::SetVar.word(),
+            access_modifiers::Arg,
+            1,
+        ];
+        assert_eq!(scan(&bytecode).unwrap().local_operands, [3, 5]);
     }
 
     #[test]
