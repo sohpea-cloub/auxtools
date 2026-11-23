@@ -1551,18 +1551,37 @@ impl Adapter {
 	}
 
 	fn set_instruction_breakpoints(&mut self, args: InstructionBreakpointsArguments) -> Handled {
-		let mut had: Vec<(i64, InstructionBreakpoint, Option<u64>)> = (self.instruction_breakpoints.iter())
+		type Had = (i64, InstructionBreakpoint, Option<u64>);
+		let had: Vec<Had> = (self.instruction_breakpoints.iter())
 			.map(|(id, breakpoint)| (*id, breakpoint.clone(), self.live_address(*id, breakpoint)))
 			.collect();
+		let asked = |breakpoint: &InstructionBreakpoint, (_, old, _): &Had| match Self::requested_address(breakpoint) {
+			Some(address) => Self::requested_address(old) == Some(address),
+			None => old.instruction_reference == breakpoint.instruction_reference && old.offset == breakpoint.offset
+		};
+		let moved = |breakpoint: &InstructionBreakpoint, (_, _, live): &Had| live.is_some() && *live == Self::requested_address(breakpoint);
+		let pair = |order: [&dyn Fn(&InstructionBreakpoint, &Had) -> bool; 2]| {
+			let mut taken = vec![false; had.len()];
+			let mut pairs: Vec<Option<usize>> = vec![None; args.breakpoints.len()];
+			for same in order {
+				for (breakpoint, pair) in args.breakpoints.iter().zip(&mut pairs) {
+					if pair.is_none() {
+						*pair = (0..had.len()).find(|&i| !taken[i] && same(breakpoint, &had[i]));
+						if let Some(i) = *pair {
+							taken[i] = true;
+						}
+					}
+				}
+			}
+			pairs
+		};
+		let (by_asked, by_moved) = (pair([&asked, &moved]), pair([&moved, &asked]));
+		let count = |pairs: &[Option<usize>]| pairs.iter().flatten().count();
+		let pairs = if count(&by_moved) > count(&by_asked) { by_moved } else { by_asked };
 		let mut wanted = vec![];
-		for breakpoint in args.breakpoints {
-			let address = Self::requested_address(&breakpoint);
-			let same = |(_, old, live): &(i64, InstructionBreakpoint, Option<u64>)| match address {
-				Some(address) => Self::requested_address(old) == Some(address) || *live == Some(address),
-				None => old.instruction_reference == breakpoint.instruction_reference && old.offset == breakpoint.offset
-			};
-			let id = match had.iter().position(same) {
-				Some(at) => had.remove(at).0,
+		for (breakpoint, pair) in args.breakpoints.into_iter().zip(pairs) {
+			let id = match pair {
+				Some(i) => had[i].0,
 				None => self.new_breakpoint_id()
 			};
 			wanted.push((id, breakpoint));

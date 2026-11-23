@@ -380,6 +380,56 @@ fn old_code() {
 	world.resume_through("middle");
 	ok("moved instruction breakpoint kept when another is added");
 
+	let zero = |world: &World| format!("DbgLine {}", world.marks.line_starting("stepping.dm", "\textra = 0"));
+	let after = |listing: &[Value], text: &str| {
+		let line = find(listing, text);
+		address(&listing[listing.iter().position(|i| address(&i["address"]) == line).unwrap() + 1]["address"])
+	};
+	let leaf = listing(&mut world, moved);
+	let (first, second) = (
+		after(&leaf, &zero(&world)),
+		after(&leaf, &format!("DbgLine {}", world.marks.line("leaf_2")))
+	);
+	let breakpoints = [(first, "x == 3"), (second, "x == 18")];
+	let send = |world: &mut World, order: [usize; 2]| {
+		let wanted = order.map(|i| json!({ "instructionReference": hex(breakpoints[i].0), "condition": breakpoints[i].1 }));
+		let set = world.request("setInstructionBreakpoints", json!({ "breakpoints": wanted }));
+		let set = set["breakpoints"].as_array().unwrap().clone();
+		set.iter()
+			.map(|b| (b["id"].as_u64().unwrap(), address(&b["instructionReference"])))
+			.collect::<Vec<_>>()
+	};
+	let ids = send(&mut world, [0, 1]).iter().map(|(id, _)| *id).collect::<Vec<_>>();
+	edit(&mut world, "stepping.dm", "\textra = 0\n", "\textra = 7\n\textra = 0\n");
+	let shift = second - first;
+	assert_eq!(
+		after(&listing(&mut world, moved), &zero(&world)),
+		second,
+		"the reload didn't move extra = 0 to the next statement"
+	);
+	world.drop_events("breakpoint");
+	let now = [second, second + shift];
+	for order in [[1, 0], [0, 1]] {
+		assert_eq!(
+			send(&mut world, order),
+			order.map(|i| (ids[i], now[i])),
+			"the breakpoints sent in the order {:?}",
+			order
+		);
+	}
+	world.run("middle");
+	for (i, x) in [(0, "3"), (1, "18")] {
+		let stop = world.stop();
+		assert_eq!(
+			(&stop.hit, frame_address(&mut world), world.eval("x")),
+			(&vec![ids[i]], now[i], x.to_owned())
+		);
+		world.resume();
+	}
+	world.finish("middle");
+	ok("moved instruction breakpoints sent again in another order");
+	let moved = find(&listing(&mut world, moved), "Mul");
+
 	let id = break_at(&mut world, &[moved])[0]["id"].as_u64().unwrap();
 	edit(&mut world, "stepping.dm", "\treturn y * 2 // @leaf_2\n", "");
 	let event = world.event("breakpoint");
