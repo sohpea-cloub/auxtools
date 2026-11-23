@@ -37,6 +37,7 @@ struct Counter {
 struct Code {
 	proc: u32,
 	bytecode: usize,
+	calls: u64,
 	index: Box<[u32]>,
 	counters: Vec<Counter>,
 	offsets: Vec<u16>
@@ -271,8 +272,13 @@ impl Profiler {
 		}
 
 		let code = self.code(bytecode, unsafe { (*(frame.instance as *mut raw_types::procs::ProcInstance)).proc });
-		self.last_counter = match unsafe { code.as_mut() }.and_then(|code| code.hit(offset)) {
-			Some(at) => At(code, at),
+		self.last_counter = match unsafe { code.as_mut() } {
+			Some(code) => {
+				if offset == 0 && !(frame == self.last && followed) {
+					code.calls += 1;
+				}
+				code.hit(offset).map_or(At::NONE, |at| At(code, at))
+			}
 			None => At::NONE
 		};
 		self.last = frame;
@@ -337,6 +343,7 @@ impl Profiler {
 		Some(Box::new(Code {
 			proc: proc.id.0,
 			bytecode: bytecode as usize,
+			calls: 0,
 			index: vec![0; len].into_boxed_slice(),
 			counters: vec![],
 			offsets: vec![]
@@ -406,9 +413,8 @@ pub fn totals() -> Option<Totals> {
 	let floor = profiler.floor();
 	let mut codes = vec![];
 	for code in profiler.codes.values().flatten() {
-		let first = code.index.first().and_then(|first| code.counters.get((*first as usize).checked_sub(1)?));
 		let mut total = ProfiledTotal {
-			calls: first.map_or(0, |first| first.hits),
+			calls: code.calls,
 			hits: 0,
 			own_ns: 0,
 			callee_ns: 0

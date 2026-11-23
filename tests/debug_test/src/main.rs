@@ -709,6 +709,33 @@ fn profile(world: &World, mut client: Client) -> Client {
 	client
 }
 
+fn loop_back_to_the_start() {
+	let world = World::start(&host_file("debug_test_plain.dmb"), &[]);
+	let mut client = world.connect();
+	pause(&mut client);
+	let only = ProfileRequest::Start {
+		procs: vec![ProcRef {
+			path: "/profiled_countdown".to_owned(),
+			override_id: 0
+		}]
+	};
+	assert_eq!(profile_request(&mut client, only), Ok(ProfileReply::Started));
+	assert_eq!(eval(&mut client, None, "profiled_countdown(5)"), "0");
+	let totals = profile_totals(&mut client, ProfileRequest::Stop);
+	let counted = profiled(&totals, "/profiled_countdown");
+	let Ok(ProfileReply::Code(instructions)) = profile_request(&mut client, ProfileRequest::Code { code: counted.code }) else {
+		panic!("expected the instructions of {:?}", counted);
+	};
+	assert_eq!(
+		instructions.first().map(|first| (first.offset, first.hits)),
+		Some((0, 6)),
+		"{:?}",
+		instructions
+	);
+	assert_eq!(counted.total.calls, 1, "{:?}", counted);
+	println!("ok: a loop back to the first instruction isn't counted as calls");
+}
+
 fn waiting_world_ends() {
 	let world = World::start(&host_file("debug_test_host.dmb"), &[]);
 	let mut client = world.connect_silent();
@@ -756,6 +783,7 @@ fn panics() {
 
 fn main() {
 	paths::compile(&host_file("debug_test_host.dme"));
+	paths::compile(&host_file("debug_test_plain.dme"));
 
 	let world = World::start(&host_file("debug_test_host.dmb"), &[]);
 
@@ -849,6 +877,7 @@ fn main() {
 	println!("ok: the world connects again after a reboot");
 	drop(world);
 
+	loop_back_to_the_start();
 	waiting_world_ends();
 	panics();
 

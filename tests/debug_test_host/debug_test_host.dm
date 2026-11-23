@@ -33,6 +33,11 @@ var/reboot_requested = FALSE
 #define PROFILED_TWINS(first, second) /proc/first(n) { var/s = 0; for (var/i in 1 to n) s += i; return s } /proc/second(n) { var/s = 0; for (var/i in 1 to n) s += i; return s }
 PROFILED_TWINS(profiled_twin_a, profiled_twin_b)
 
+/proc/profiled_countdown(n)
+	while (n > 0)
+		n--
+	return n
+
 /proc/start_runtimes()
 	runtimes_left = 20
 
