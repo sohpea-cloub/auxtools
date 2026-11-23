@@ -698,7 +698,16 @@ pub const DEFAULT_SLEEPING_STACKS: u32 = 100;
 pub struct Stop {
 	pub reason: BreakpointReason,
 	pub thread: u32,
-	pub at: InstructionRef
+	pub at: InstructionRef,
+	#[serde(default)]
+	pub paused_by: Vec<BreakpointKind>
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum BreakpointKind {
+	Line,
+	Proc,
+	Instruction
 }
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]

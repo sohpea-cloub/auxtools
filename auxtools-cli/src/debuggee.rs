@@ -13,7 +13,7 @@ use auxtools_cli::{
 	client::{ops::Ending, Client, Heard, Listener, Lost},
 	local::{self, Stream}
 };
-use auxtools_protocol::{BreakpointReason, DataChange, InstructionRef, Request, Response, Stop};
+use auxtools_protocol::{BreakpointKind, BreakpointReason, DataChange, InstructionRef, Request, Response, Stop};
 use dap_types::{ContinuedEvent, StoppedEvent as Reasons};
 
 use crate::{
@@ -43,6 +43,16 @@ pub struct SetBreakpoint {
 	pub id: i64
 }
 
+impl SetBreakpoint {
+	const fn kind(&self, exact: bool) -> BreakpointKind {
+		match self.asked.offset {
+			_ if exact => BreakpointKind::Instruction,
+			0 => BreakpointKind::Proc,
+			_ => BreakpointKind::Line
+		}
+	}
+}
+
 fn changes_text(changes: &[DataChange]) -> String {
 	changes
 		.iter()
@@ -65,9 +75,12 @@ fn announce_stop(out: &Output, last_error: &Mutex<LastError>, set: &SetBreakpoin
 		BreakpointReason::Breakpoint => {
 			let mut by_instruction = true;
 			for (key, breakpoints) in set.lock().unwrap().iter() {
-				for breakpoint in breakpoints.iter().filter(|breakpoint| breakpoint.at.as_ref() == Some(&stop.at)) {
+				let exact = key == INSTRUCTION_BREAKPOINTS;
+				let paused =
+					|breakpoint: &&SetBreakpoint| breakpoint.at.as_ref() == Some(&stop.at) && stop.paused_by.contains(&breakpoint.kind(exact));
+				for breakpoint in breakpoints.iter().filter(paused) {
 					hit.push(breakpoint.id);
-					by_instruction &= key == INSTRUCTION_BREAKPOINTS;
+					by_instruction &= exact;
 				}
 			}
 			hit.sort_unstable();

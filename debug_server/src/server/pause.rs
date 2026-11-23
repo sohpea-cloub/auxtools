@@ -86,7 +86,7 @@ impl State {
 
 pub(super) struct Pausing {
 	pub(super) state: Option<State>,
-	pub(super) paused: Option<Stop>,
+	pub(super) paused: Option<(Stop, Vec<(ClientId, BreakpointKind)>)>,
 	pub(super) ending: Option<Instant>,
 	pub(super) stepper: Option<ClientId>
 }
@@ -271,6 +271,14 @@ impl Server {
 		);
 	}
 
+	pub(super) fn stop_for(&self, client: Option<ClientId>) -> Option<Stop> {
+		let (stop, paused_by) = self.pause.paused.as_ref()?;
+		Some(Stop {
+			paused_by: (paused_by.iter()).filter(|(by, _)| Some(*by) == client).map(|(_, kind)| *kind).collect(),
+			..stop.clone()
+		})
+	}
+
 	pub fn handle_breakpoint(&mut self, _ctx: *mut raw_types::procs::ExecutionContext, reason: BreakpointReason) -> Option<ContinueKind> {
 		if let BreakpointReason::Runtime { message, caught } = &reason {
 			self.journal_runtime(message, *caught);
@@ -291,13 +299,15 @@ impl Server {
 
 		let proc = unsafe { (*(*(*_ctx).proc_instance())).proc };
 		let offset = unsafe { *(*_ctx).bytecode_offset() };
+		let mut paused_by = vec![];
 		match reason {
-			BreakpointReason::Breakpoint => {
-				if !self.breakpoint_hit((proc, offset)) {
+			BreakpointReason::Breakpoint => match self.breakpoint_hit((proc, offset)) {
+				Some(by) => paused_by = by,
+				None => {
 					self.pause.state = None;
 					return None;
 				}
-			}
+			},
 
 			BreakpointReason::Step | BreakpointReason::Pause | BreakpointReason::Runtime { .. } | BreakpointReason::Data { .. }
 				if crate::instruction_hooking::is_breakpoint(_ctx) =>
@@ -321,10 +331,16 @@ impl Server {
 		let stop = Stop {
 			reason,
 			thread: self.pause.thread_of(self.pause.state.as_ref().unwrap().active()),
-			at
+			at,
+			paused_by: vec![]
 		};
-		self.pause.paused = Some(stop.clone());
-		self.broadcast(Response::BreakpointHit(stop), None);
+		self.pause.paused = Some((stop, paused_by));
+		let clients: Vec<ClientId> = self.sessions.clients.keys().copied().collect();
+		for client in clients {
+			if let Some(stop) = self.stop_for(Some(client)) {
+				self.tell(client, Response::BreakpointHit(stop));
+			}
+		}
 
 		let mut unattended: Option<Instant> = None;
 		loop {

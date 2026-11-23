@@ -176,7 +176,7 @@ impl Server {
 			}
 
 			Request::Status => {
-				let paused = self.pause.paused.clone();
+				let paused = self.stop_for(self.sessions.requester());
 				self.answer(Response::Status { paused });
 			}
 

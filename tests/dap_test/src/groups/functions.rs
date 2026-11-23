@@ -50,7 +50,7 @@ pub fn run() {
 
 	let id = |breakpoint: &serde_json::Value| breakpoint["id"].as_u64().expect("a breakpoint with no id");
 	let on_procs = world.function_breakpoints(&["/proc/middle", "/proc/leaf"]);
-	let on_line = world.try_break_if(&[("leaf_1", "x == 999")]);
+	let on_line = world.try_break_if(&[("leaf_1", "x == 3")]);
 	assert_ne!(id(&on_procs[1]), id(&on_line[0]));
 	world.run("middle");
 	let stop = world.stop();
@@ -58,11 +58,12 @@ pub fn run() {
 	world.resume();
 	let stop = world.stop();
 	assert_eq!((stop.proc.as_str(), &stop.hit), ("/leaf", &vec![id(&on_procs[1]), id(&on_line[0])]));
+	world.resume();
+	let stop = world.stop();
+	assert_eq!((stop.proc.as_str(), &stop.hit), ("/leaf", &vec![id(&on_procs[1])]));
 	ok("function and line breakpoint hit IDs");
 
 	world.break_on(&[]);
-	world.resume();
-	world.stop_on("breakpoint", "/leaf", "leaf_1");
 	world.resume_through("middle");
 	world.break_on(&["leaf_1"]);
 	world.function_breakpoints(&[]);

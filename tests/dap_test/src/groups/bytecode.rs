@@ -1,7 +1,10 @@
 use serde_json::{json, Value};
 
 use crate::{
-	groups::reloading::{copy_of_the_world, edit},
+	groups::{
+		logpoints::logged,
+		reloading::{copy_of_the_world, edit}
+	},
 	ok,
 	world::World
 };
@@ -230,6 +233,20 @@ fn instruction_breakpoints(world: &mut World, leaf: &[Value]) {
 	world.break_on(&[]);
 	world.resume_through("middle");
 	ok("independent line and instruction breakpoints");
+
+	let (file, line) = at.place("leaf_2");
+	world.set_breakpoints(&file, json!([{ "line": line, "logMessage": "y is {y}" }]));
+	let by_address = break_at(world, &[after])[0]["id"].as_u64().unwrap();
+	let from = world.outputs.len();
+	world.run("middle");
+	let stop = world.stop();
+	assert_eq!((stop.reason.as_str(), &stop.hit), ("instruction breakpoint", &vec![by_address]));
+	assert_eq!(logged(world, from, 1), ["y is 4\n"]);
+	break_at(world, &[]);
+	world.resume_through("middle");
+	assert_eq!(logged(world, from, 2), ["y is 4\n", "y is 9\n"]);
+	world.set_breakpoints(&file, json!([]));
+	ok("logpoint on an instruction breakpoint's instruction");
 
 	let set = world.request(
 		"setInstructionBreakpoints",

@@ -9,34 +9,25 @@ pub struct Claim {
 	told: bool
 }
 
-pub type Claims = HashMap<(raw_types::procs::ProcId, u16), BTreeMap<(ClientId, Placed), Claim>>;
+pub type Claims = HashMap<(raw_types::procs::ProcId, u16), BTreeMap<(ClientId, BreakpointKind), Claim>>;
 
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
-pub enum Placed {
-	Line,
-	Proc,
-	Instruction
-}
-
-impl Placed {
-	fn of(offset: u32, exactly: bool) -> Self {
-		match offset {
-			_ if exactly => Self::Instruction,
-			0 => Self::Proc,
-			_ => Self::Line
-		}
+fn kind_of(offset: u32, exactly: bool) -> BreakpointKind {
+	match offset {
+		_ if exactly => BreakpointKind::Instruction,
+		0 => BreakpointKind::Proc,
+		_ => BreakpointKind::Line
 	}
 }
 
-impl hot_reload::Claimant for (ClientId, Placed) {
+impl hot_reload::Claimant for (ClientId, BreakpointKind) {
 	fn on_entry(&self) -> bool {
-		self.1 == Placed::Proc
+		self.1 == BreakpointKind::Proc
 	}
 }
 
 pub(super) struct Breakpoints {
 	pub(super) claims: Claims,
-	pub(super) moved: hot_reload::MovedBreakpoints<(ClientId, Placed)>
+	pub(super) moved: hot_reload::MovedBreakpoints<(ClientId, BreakpointKind)>
 }
 
 impl Breakpoints {
@@ -111,7 +102,7 @@ impl Server {
 			});
 			return;
 		};
-		let placed = Placed::of(instruction.offset, exactly);
+		let kind = kind_of(instruction.offset, exactly);
 		if !exactly {
 			instruction.offset = Breakpoints::breakpoint_offset(&proc, instruction.offset);
 		}
@@ -140,8 +131,8 @@ impl Server {
 			Ok(()) => {
 				let key = (proc.id, instruction.offset as u16);
 				let claims = self.breakpoints.claims.entry(key).or_default();
-				let told = claims.get(&(client, placed)).is_some_and(|old| old.told && old.condition == condition);
-				claims.insert((client, placed), Claim {
+				let told = claims.get(&(client, kind)).is_some_and(|old| old.told && old.condition == condition);
+				claims.insert((client, kind), Claim {
 					condition,
 					hit,
 					hits: 0,
@@ -153,7 +144,7 @@ impl Server {
 				let offset = instruction.offset;
 				self.breakpoints
 					.moved
-					.retain(|&(id, from, who), &mut at| id != proc.id || who != (client, placed) || (at != offset && from != offset));
+					.retain(|&(id, from, who), &mut at| id != proc.id || who != (client, kind) || (at != offset && from != offset));
 
 				instruction.proc = unnamed::proc_ref(&proc);
 				self.answer(Response::BreakpointSet {
@@ -178,13 +169,13 @@ impl Server {
 			return;
 		};
 
-		let placed = Placed::of(instruction.offset, exactly);
+		let kind = kind_of(instruction.offset, exactly);
 		let asked = if exactly {
 			instruction.offset
 		} else {
 			Breakpoints::breakpoint_offset(&proc, instruction.offset)
 		};
-		let who = (client, placed);
+		let who = (client, kind);
 		let offset = self.breakpoints.moved.get(&(proc.id, asked, who)).copied().unwrap_or(asked);
 
 		self.breakpoints
@@ -209,7 +200,7 @@ impl Server {
 			return vec![];
 		};
 		(self.breakpoints.moved.iter())
-			.filter(|((.., who), _)| *who == (client, Placed::Instruction))
+			.filter(|((.., who), _)| *who == (client, BreakpointKind::Instruction))
 			.filter_map(|(&(proc, asked, _), &at)| {
 				let proc = unnamed::proc_ref(&Proc::from_id(proc)?);
 				Some((
@@ -240,16 +231,17 @@ impl Server {
 		message
 	}
 
-	pub(super) fn breakpoint_hit(&mut self, key: (raw_types::procs::ProcId, u16)) -> bool {
+	pub(super) fn breakpoint_hit(&mut self, key: (raw_types::procs::ProcId, u16)) -> Option<Vec<(ClientId, BreakpointKind)>> {
 		let (proc, offset) = key;
-		let clients: Vec<(ClientId, Placed)> = self
+		let clients: Vec<(ClientId, BreakpointKind)> = self
 			.breakpoints
 			.claims
 			.get(&key)
 			.map(|claims| claims.keys().copied().collect())
 			.unwrap_or_default();
 
-		let mut pause = clients.is_empty();
+		let unclaimed = clients.is_empty();
+		let mut paused_by = vec![];
 		for client in clients {
 			let Some(condition) = self
 				.breakpoints
@@ -286,7 +278,7 @@ impl Server {
 			}
 
 			let Some(log) = claim.log.clone() else {
-				pause = true;
+				paused_by.push(client);
 				continue;
 			};
 			let message = self.log_message(&log);
@@ -313,10 +305,16 @@ impl Server {
 				}
 			}
 		}
-		pause
+		(unclaimed || !paused_by.is_empty()).then_some(paused_by)
 	}
 
-	pub(super) fn condition_failed(&mut self, key: (raw_types::procs::ProcId, u16), client: (ClientId, Placed), condition: &str, error: &str) {
+	pub(super) fn condition_failed(
+		&mut self,
+		key: (raw_types::procs::ProcId, u16),
+		client: (ClientId, BreakpointKind),
+		condition: &str,
+		error: &str
+	) {
 		let Some(claim) = self.breakpoints.claims.get_mut(&key).and_then(|claims| claims.get_mut(&client)) else {
 			return;
 		};
