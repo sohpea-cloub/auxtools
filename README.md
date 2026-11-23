@@ -104,21 +104,24 @@ Findings use `FILE:LINE: PROC: diagnostic`. Pass the build's defines with `-D` a
 
 Windows and Linux: 515.1637–515.1647 and 516.1648–516.1689.
 
-Symbol patterns were checked throughout these ranges. Newer builds are attempted but may fail initialization if a pattern no longer matches. Older builds and unsupported major versions are rejected with a version error. If debugger initialization fails, the world keeps running. The launcher, VS Code and CLI report the reason; `auxtools stop` can terminate the world.
+The symbol patterns were checked on every build in these ranges. auxtools also tries newer builds, but initialization fails if a pattern no longer matches. auxtools refuses older builds and other major versions with a version error. If the debugger fails to initialize, the world keeps running. The launcher, VS Code and the command line report the reason. `auxtools stop` ends the world.
 
-The patterns use [byond-scan](https://github.com/Absolucy/byond-scan) and are stored in `auxtools/src/registry/`. To check them against a build without running it, give its `libbyond.so` or `byondcore.dll` to the registry's checker, on either platform:
+The patterns use [byond-scan](https://github.com/Absolucy/byond-scan). They are in `auxtools/src/registry/`. The `check_recipes` example checks them against a BYOND build without running it. Give it the build's `libbyond.so` or `byondcore.dll`. Its first argument, `linux` or `windows`, says which of the two files it reads. Either file can be checked on either system.
+
+Build the checker for your system's 32-bit target. The `auxtools` crate contains 32-bit assembly, so it doesn't build for a 64-bit target. On Linux:
 
 ```sh
-cargo run -p auxtools --example check_recipes -- linux 516.1689 byond/bin/libbyond.so
-cargo run -p auxtools --example check_recipes -- windows 516.1689 byond/bin/byondcore.dll
+cargo run -p auxtools --target i686-unknown-linux-gnu --example check_recipes -- linux 516.1689 byond/bin/libbyond.so
+cargo run -p auxtools --target i686-unknown-linux-gnu --example check_recipes -- windows 516.1689 byond/bin/byondcore.dll
 ```
 
-It lists each pattern as found or not and exits with status 1 if the build lacks something auxtools looks up on it. A new BYOND build that passes needs no change to the patterns. CI runs it on each build it tests, for Linux and for Windows.
+On Windows, use `--target i686-pc-windows-msvc` instead.
 
-CI tests the library, debugger, hot reload and CLI on 515.1637, 515.1647, 516.1659, 516.1685 and 516.1689. The integration suites cover the library's hooks and values, the debug server, source reloads, launcher lifecycle, CLI output and DAP behavior. Linux tests run on Ubuntu 22.04; Windows tests run in `dd.exe` on Windows Server 2022 and under Wine.
+The checker lists each pattern as found or not found. It exits with status 1 if the build lacks something auxtools looks up. A new BYOND build that passes needs no change to the patterns. CI runs the checker on each build it tests, for Linux and for Windows.
 
-The VS Code extension has separate integration coverage on Linux 516.1688 using a harness outside this repository. It has no automated Windows coverage. DreamSeeker and windowed DreamDaemon were checked manually with the first part
-of `launcher_test` before the CLI was added; they are outside these automated runs.
+CI tests the library, debugger, hot reload and CLI on 515.1637, 515.1647, 516.1659, 516.1685 and 516.1689. The integration suites cover the library's hooks and values, the debug server, source reloads, the launcher's lifecycle, CLI output and DAP behavior. Linux tests run on Ubuntu 22.04. Windows tests run in `dd.exe` on Windows Server 2022 and under Wine.
+
+A harness outside this repository tests the VS Code extension on Linux with 516.1688. No automated test covers the extension on Windows. DreamSeeker and windowed DreamDaemon were checked by hand with the first part of `launcher_test`, before the CLI was added. The automated runs don't cover them.
 
 ## Dependencies
 
