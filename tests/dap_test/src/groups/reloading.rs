@@ -152,6 +152,21 @@ fn behind_the_clients_back() {
 	assert_eq!(moved(&mut world), (at.line("leaf_2"), true));
 	world.break_on(&[]);
 
+	world.break_on(&["swap_add"]);
+	edit(
+		&mut world,
+		"stepping.dm",
+		"\tn += 2 // @swap_add\n\tn *= 3 // @swap_mul\n",
+		"\tn *= 3 // @swap_mul\n\tn += 2 // @swap_add\n"
+	);
+	assert_eq!(moved(&mut world), (at.line("swap_add"), true));
+	world.run("swap");
+	world.stop_on("breakpoint", "/sc_swap", "swap_add");
+	assert_eq!(world.local("n"), "3");
+	world.resume_through("swap");
+	world.break_on(&[]);
+	ok("breakpoint on a statement swapped with the next");
+
 	let stepping = at.file("stepping.dm");
 	world.break_on(&["leaf_1", "middle_2"]);
 	let middle_2 = at.line("middle_2");

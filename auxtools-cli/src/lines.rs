@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 pub struct LineMap {
 	to: Vec<u32>,
 	new_len: u32
@@ -36,6 +38,13 @@ impl LineMap {
 			for (n, line) in mid[run_old..i].iter_mut().enumerate() {
 				let within = if in_place == 0 { 0 } else { n.min(in_place - 1) };
 				*line = (prefix + run_new_start + within) as u32;
+			}
+		}
+		let (old_unique, new_unique) = (unique_lines(old), unique_lines(new));
+		for (i, text) in old_mid.iter().enumerate() {
+			let moved = matches[i].is_none() && old_unique.get(text.as_str()) == Some(&Some(prefix + i));
+			if let Some(&Some(now)) = new_unique.get(text.as_str()).filter(|_| moved) {
+				mid[i] = now as u32;
 			}
 		}
 
@@ -93,6 +102,14 @@ fn matching_lines(old: &[String], new: &[String]) -> Vec<Option<usize>> {
 		}
 	}
 	matches
+}
+
+fn unique_lines(lines: &[String]) -> HashMap<&str, Option<usize>> {
+	let mut found = HashMap::new();
+	for (i, line) in lines.iter().enumerate() {
+		found.entry(line.as_str()).and_modify(|at| *at = None).or_insert(Some(i));
+	}
+	found
 }
 
 pub fn read(path: &str) -> Option<Vec<String>> {
@@ -160,6 +177,12 @@ mod tests {
 		let old = "a\nb\nc\nd\ne\n";
 		let new = "a\nd\nb\nc\ne\n";
 		assert_eq!(moved(old, new, &[1, 2, 3, 5]), [1, 3, 4, 5]);
+	}
+
+	#[test]
+	fn lines_moved_past_others_go_with_their_text() {
+		assert_eq!(moved("a\nb\nc\nd\n", "a\nc\nb\nd\n", &[2, 3]), [3, 2]);
+		assert_eq!(moved("a\nb\nc\nd\ne\n", "a\nd\nb\nc\ne\n", &[4]), [2]);
 	}
 
 	#[test]
