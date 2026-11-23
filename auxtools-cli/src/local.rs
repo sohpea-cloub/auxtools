@@ -470,9 +470,17 @@ mod tests {
 		if matches!(asked.request, Request::WorldInfo) {
 			connections.asked_for_info.fetch_add(1, Ordering::SeqCst);
 		}
-		while auxtools_protocol::write(stream, &ServerMessage::event(Response::Resumed)).is_ok() {
-			std::thread::sleep(Duration::from_millis(1));
-		}
+		let mut writer = &*stream;
+		std::thread::scope(|scope| {
+			scope.spawn(move || {
+				let mut reader = writer;
+				let mut buffer = [0; 256];
+				while matches!(reader.read(&mut buffer), Ok(n) if n > 0) {}
+			});
+			while auxtools_protocol::write(&mut writer, &ServerMessage::event(Response::Resumed)).is_ok() {
+				std::thread::sleep(Duration::from_millis(1));
+			}
+		});
 	}
 
 	fn unused_pid(offset: u32) -> u32 {
