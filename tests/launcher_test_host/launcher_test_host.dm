@@ -1,5 +1,5 @@
 // Started by auxtools' launcher, which loads the debugger into it. It has
-// nothing of auxtools' own: no auxtools_init, no enable_debugging.
+// no auxtools code: no auxtools_init and no enable_debugging.
 
 /world/New()
 	..()
@@ -10,7 +10,7 @@
 /proc/run_test()
 	world.log << "launcher test: [target(21)]"
 	second_target()
-	// A runtime error ends the proc it's in and its callers
+	// A runtime error ends the proc it is in and its callers
 	spawn(0)
 		fail()
 	sleep(2)
