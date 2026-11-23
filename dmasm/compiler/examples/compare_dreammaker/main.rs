@@ -22,7 +22,6 @@ struct Known {
     builds: Option<Builds>,
     on_rounding_glibc: bool,
     path: String,
-    why: String,
 }
 
 fn usage() -> ExitCode {
@@ -117,7 +116,14 @@ fn main() -> ExitCode {
                     .known
                     .iter()
                     .filter(|k| on(k.builds) && (rounds_radians || !k.on_rounding_glibc))
-                    .map(|k| (k.path.clone(), k.why.clone()))
+                    .map(|k| {
+                        let allowed = if k.on_rounding_glibc {
+                            compare::Allowed::RoundedAngles
+                        } else {
+                            compare::Allowed::Anything
+                        };
+                        (k.path.clone(), allowed)
+                    })
                     .collect();
                 let outcome = run_case(case, &known, &dreammaker, &out, byond, show);
                 results.lock().unwrap().push((i, outcome));
@@ -262,7 +268,7 @@ fn read_corpus(dir: &Path) -> Result<Vec<Case>, String> {
                     "" => None,
                     range => Some(parse_builds(range).ok_or_else(bad)?),
                 };
-                let (path, why) = rest
+                let (path, _why) = rest
                     .trim()
                     .split_once(char::is_whitespace)
                     .ok_or_else(bad)?;
@@ -270,7 +276,6 @@ fn read_corpus(dir: &Path) -> Result<Vec<Case>, String> {
                     builds,
                     on_rounding_glibc,
                     path: path.to_owned(),
-                    why: why.trim().to_owned(),
                 });
             }
         }
@@ -320,7 +325,7 @@ fn rounds_radians(dreammaker: &Path, out: &Path) -> Result<bool, String> {
 
 fn run_case(
     case: &Case,
-    known: &HashMap<String, String>,
+    known: &HashMap<String, compare::Allowed>,
     dreammaker: &Path,
     out: &Path,
     byond: dmasm_compiler::ByondVersion,

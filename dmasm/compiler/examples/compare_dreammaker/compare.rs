@@ -1,8 +1,9 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use dmasm_bytecode::{Instruction, Label, Node, Variable};
+use dmasm_bytecode::{Instruction, Label, Node, Value, Variable};
 use dmasm_compiler::compiler::{compile_proc, ProcSource};
+use dmasm_compiler::diagnostic::Id;
 use dreammaker::objtree::{ProcValue, TypeRef};
 use dreammaker::FileId;
 
@@ -20,11 +21,17 @@ pub struct Outcome {
     pub findings: Vec<String>,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Allowed {
+    Anything,
+    RoundedAngles,
+}
+
 pub fn compare(
     dme: &Path,
     dmb: &Dmb,
     byond: dmasm_compiler::ByondVersion,
-    known: &HashMap<String, String>,
+    known: &HashMap<String, Allowed>,
     show: bool,
 ) -> Outcome {
     let mut out = Outcome::default();
@@ -103,27 +110,33 @@ pub fn compare(
                     byond,
                     file_names: Some(&file_name),
                 };
+                let allowed = known.get(&path).copied();
                 let verdict = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                     compile_proc(&source)
                 })) {
                     Ok(Ok(compiled)) => {
+                        let rounded_angles = allowed == Some(Allowed::RoundedAngles)
+                            && compiled.warnings.iter().any(|w| w.id == Id::FoldedAngle);
                         asm.set_proc_globals(theirs);
                         match dmasm_bytecode::assembler::assemble(&compiled.nodes, &mut asm) {
-                            Ok(ours) => judge(dmb, &ours, theirs, &call_names, show),
+                            Ok(ours) => {
+                                judge(dmb, &ours, theirs, &call_names, rounded_angles, show)
+                            }
                             Err(e) => Err(format!("assemble error: {e:?}")),
                         }
                     }
                     Ok(Err(e)) => Err(format!("compile error: {e}")),
                     Err(_) => Err("the compiler panicked".to_owned()),
                 };
-                match verdict {
-                    Ok(_) if known.contains_key(&path) => out.findings.push(format!(
+                match (verdict, allowed) {
+                    (Ok(Verdict::RoundedAngles), _) => out.known += 1,
+                    (Ok(_), Some(_)) => out.findings.push(format!(
                         "{path}: is listed as a known difference, but its code is DreamMaker's"
                     )),
-                    Ok(Verdict::Exact) => out.exact += 1,
-                    Ok(Verdict::Equivalent) => out.equivalent += 1,
-                    Err(_) if known.contains_key(&path) => out.known += 1,
-                    Err(why) => out.findings.push(format!("{path}: {why}")),
+                    (Ok(Verdict::Exact), None) => out.exact += 1,
+                    (Ok(_), None) => out.equivalent += 1,
+                    (Err(_), Some(Allowed::Anything)) => out.known += 1,
+                    (Err(why), _) => out.findings.push(format!("{path}: {why}")),
                 }
             }
         }
@@ -141,6 +154,7 @@ pub fn compare(
 pub enum Verdict {
     Exact,
     Equivalent,
+    RoundedAngles,
 }
 
 fn judge(
@@ -148,6 +162,7 @@ fn judge(
     ours: &[u32],
     theirs: &[u32],
     names: &HashMap<String, Vec<u8>>,
+    rounded_angles: bool,
     show: bool,
 ) -> Result<Verdict, String> {
     if ours == theirs {
@@ -157,6 +172,11 @@ fn judge(
     let mut their_nodes = disassemble(dmb, theirs);
     let ours_reused = normalize(&mut our_nodes, names);
     let theirs_reused = normalize(&mut their_nodes, names);
+    let taken = if rounded_angles {
+        take_rounded_numbers(&mut our_nodes, &their_nodes)
+    } else {
+        0
+    };
     let both = |what: &str| {
         let mut s = what.to_owned();
         if show {
@@ -183,12 +203,52 @@ fn judge(
                 "ours reloads a chain through fields where DreamMaker reuses it, at node {at}"
             )));
         }
-        return Ok(Verdict::Equivalent);
+        return Ok(if taken > 0 {
+            Verdict::RoundedAngles
+        } else {
+            Verdict::Equivalent
+        });
     }
     if without_labels(&our_nodes) == without_labels(&their_nodes) {
         return Err(both("differs only in jump targets"));
     }
     Err(both(&first_difference(&our_nodes, &their_nodes)))
+}
+
+fn take_rounded_numbers(ours: &mut Nodes, theirs: &Nodes) -> usize {
+    fn pushed(node: &Node) -> Option<f32> {
+        match node {
+            Node::Instruction(Instruction::PushVal(Value::Number(n)), _) => Some(*n),
+            Node::Instruction(Instruction::PushInt(n), _) => Some(*n as f32),
+            _ => None,
+        }
+    }
+    let instruction = |n: &&mut Node| matches!(n, Node::Instruction(..));
+    let mut our_code: Vec<&mut Node> = ours.iter_mut().filter(instruction).collect();
+    let their_code: Vec<&Node> = theirs
+        .iter()
+        .filter(|n| matches!(n, Node::Instruction(..)))
+        .collect();
+    if our_code.len() != their_code.len() {
+        return 0;
+    }
+    let mut taken = 0;
+    for (o, t) in our_code.iter_mut().zip(their_code) {
+        if let (Some(a), Some(b)) = (pushed(o), pushed(t)) {
+            if one_step_apart(a, b) {
+                **o = t.clone();
+                taken += 1;
+            }
+        }
+    }
+    taken
+}
+
+fn one_step_apart(a: f32, b: f32) -> bool {
+    a.is_finite()
+        && b.is_finite()
+        && a.is_sign_negative() == b.is_sign_negative()
+        && a.to_bits().abs_diff(b.to_bits()) == 1
 }
 
 fn dmb_path(ty: TypeRef, name: &str, index: usize) -> String {

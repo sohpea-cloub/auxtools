@@ -61,6 +61,7 @@ next `// Guards:` line. These comments can follow:
   can also mark a bug that is not fixed yet. WHY then says so.
 - `// Known [A-B] on glibc 2.41: PATH  WHY` marks a proc that differs only when DreamMaker rounds
   the radians of inverse trigonometric functions to f32. Linux DreamMaker does this with glibc
-  2.41 or later. The comparison builds `arctan(2)` first to find out.
+  2.41 or later. The comparison builds `arctan(2)` first to find out. dmasm must compile and
+  assemble the proc, and only the angles that dmasm folds may differ, each by one f32 step.
 
 The comparison skips the debug line records and the global init proc.
