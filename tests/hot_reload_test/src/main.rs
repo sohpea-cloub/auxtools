@@ -1599,6 +1599,27 @@ fn types(built: Built) {
 	assert_eq!(eval(&mut client, "isnull((new /mob/helper/small).key)"), "1");
 	println!("ok: a mob key default gives each type a reference");
 
+	assert_eq!(eval(&mut client, "#fail-reload append"), "the next reload fails at Append");
+	let changes = source.edit(
+		"reload.dm",
+		"\tkey = null\n",
+		"\tkey = null\n\tdesc = \"unwritten_desc\"\n\n/proc/unappended()\n\treturn 1\n"
+	);
+	let result = expect_reload_result(watcher.request(reload_request(&changes)));
+	assert!(!result.applied, "a reload whose proc wasn't added was applied: {:?}", result);
+	assert_eq!(
+		eval(&mut client, "#string-refs unwritten_desc"),
+		"0",
+		"the references to a desc that a failed reload didn't write"
+	);
+	reload(&mut watcher, &changes);
+	assert_eq!(
+		eval(&mut client, "#string-refs unwritten_desc"),
+		"3",
+		"the references to a desc that three mob types got"
+	);
+	println!("ok: a failed reload holds no reference to the strings it didn't write");
+
 	let changes = source.edit(
 		"reload.dm",
 		"/proc/first_def()\n\treturn \"first\"\n",

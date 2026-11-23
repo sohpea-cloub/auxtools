@@ -530,14 +530,9 @@ pub fn prepare(request: &HotReloadRequest, warnings: &mut Vec<String>, skipped: 
 		let writes = builtin_writes(&default.var, &default.value).map_err(|e| format!("{}: {}", default.var, e));
 		match writes {
 			Ok(writes) => {
-				let mut given = false;
 				for path in &default.types {
 					match find_type(path) {
 						Ok(type_id) => {
-							if given {
-								writes.iter().filter_map(BuiltinWrite::string).for_each(keep_string);
-							}
-							given = true;
 							prepared.builtin_writes.push((type_id, writes.clone()));
 							prepared.appearances.insert(type_id);
 						}
@@ -1587,28 +1582,19 @@ fn add_type(new: &NewType) -> Result<(), String> {
 		writes.extend(builtin_writes(field, value).map_err(|e| format!("{}: {}", field, e))?);
 	}
 	let id = runtime_tables::add_type(parent, leaked_string(&new.path)?)?;
-	write_builtins(id, &writes)
+	write_builtins(id, writes)
 }
 
 #[derive(Clone, Debug)]
 enum BuiltinWrite {
 	Word(usize, u32),
+	Text(usize, Option<StringRef>),
 	Half(usize, u16),
 	Byte(usize, u8),
 	Bits(usize, u32, u32),
 	Listed(u32, Vec<u32>),
-	Mob(&'static str, u32)
-}
-
-impl BuiltinWrite {
-	fn string(&self) -> Option<u32> {
-		match *self {
-			BuiltinWrite::Word(offset, id) if offset != type_fields::ICON && offset != type_fields::LAYER => Some(id),
-			BuiltinWrite::Mob("key", id) => Some(id),
-			_ => None
-		}
-		.filter(|&id| id != NONE)
-	}
+	Mob(&'static str, u32),
+	Key(Option<StringRef>)
 }
 
 fn builtin_writes(var: &str, value: &ConstValue) -> Result<Vec<BuiltinWrite>, String> {
@@ -1619,18 +1605,18 @@ fn builtin_writes(var: &str, value: &ConstValue) -> Result<Vec<BuiltinWrite>, St
 		_ => Err("expected a number".to_owned())
 	};
 	let string = || match value {
-		ConstValue::Null => Ok(NONE),
-		ConstValue::String(text) => leaked_string(text),
+		ConstValue::Null => Ok(None),
+		ConstValue::String(text) => StringRef::new(text).map(Some).map_err(|_| format!("couldn't make the string {}", text)),
 		_ => Err("expected text".to_owned())
 	};
 	let bits = |offset: usize, mask: u32, on: bool| Bits(offset, mask, if on { mask } else { 0 });
 	Ok(match var {
-		"name" => vec![Word(type_fields::NAME, string()?)],
-		"desc" => vec![Word(type_fields::DESC, string()?)],
-		"icon_state" => vec![Word(type_fields::ICON_STATE, string()?)],
-		"text" => vec![Word(type_fields::TEXT, string()?)],
-		"suffix" => vec![Word(type_fields::SUFFIX, string()?)],
-		"maptext" => vec![Word(type_fields::MAPTEXT, string()?)],
+		"name" => vec![Text(type_fields::NAME, string()?)],
+		"desc" => vec![Text(type_fields::DESC, string()?)],
+		"icon_state" => vec![Text(type_fields::ICON_STATE, string()?)],
+		"text" => vec![Text(type_fields::TEXT, string()?)],
+		"suffix" => vec![Text(type_fields::SUFFIX, string()?)],
+		"maptext" => vec![Text(type_fields::MAPTEXT, string()?)],
 		"icon" => vec![Word(type_fields::ICON, match value {
 			ConstValue::Null => NONE,
 			ConstValue::Resource(file) => AssembleEnv
@@ -1723,7 +1709,7 @@ fn builtin_writes(var: &str, value: &ConstValue) -> Result<Vec<BuiltinWrite>, St
 			};
 			vec![Listed(leaked_string(var)?, words)]
 		}
-		"key" => vec![Mob("key", string()?)],
+		"key" => vec![Key(string()?)],
 		"sight" => vec![Mob("sight", number()? as u32)],
 		"see_in_dark" => vec![Mob("see_in_dark", number()? as u32)],
 		"see_invisible" => vec![Mob("see_invisible", number()? as u32)],
@@ -1731,16 +1717,21 @@ fn builtin_writes(var: &str, value: &ConstValue) -> Result<Vec<BuiltinWrite>, St
 	})
 }
 
-fn write_builtins(type_id: u32, writes: &[BuiltinWrite]) -> Result<(), String> {
+fn write_builtins(type_id: u32, writes: Vec<BuiltinWrite>) -> Result<(), String> {
 	use runtime_tables::{set_type_byte, set_type_field, set_type_half, type_field};
+	let id_of = |text: &Option<StringRef>| text.as_ref().map_or(NONE, |text| text.get_id().0);
 	for write in writes {
 		match write {
-			BuiltinWrite::Word(offset, word) => set_type_field(type_id, *offset, *word)?,
-			BuiltinWrite::Half(offset, half) => set_type_half(type_id, *offset, *half)?,
-			BuiltinWrite::Byte(offset, byte) => set_type_byte(type_id, *offset, *byte)?,
+			BuiltinWrite::Word(offset, word) => set_type_field(type_id, offset, word)?,
+			BuiltinWrite::Text(offset, text) => {
+				set_type_field(type_id, offset, id_of(&text))?;
+				std::mem::forget(text);
+			}
+			BuiltinWrite::Half(offset, half) => set_type_half(type_id, offset, half)?,
+			BuiltinWrite::Byte(offset, byte) => set_type_byte(type_id, offset, byte)?,
 			BuiltinWrite::Bits(offset, mask, bits) => {
-				let word = type_field(type_id, *offset)?;
-				set_type_field(type_id, *offset, (word & !mask) | bits)?;
+				let word = type_field(type_id, offset)?;
+				set_type_field(type_id, offset, (word & !mask) | bits)?;
 			}
 			BuiltinWrite::Listed(name, value) => {
 				let list = runtime_tables::misc_words(type_field(type_id, type_fields::BUILTIN_VALUES)?).unwrap_or_default();
@@ -1749,21 +1740,24 @@ fn write_builtins(type_id: u32, writes: &[BuiltinWrite]) -> Result<(), String> {
 				while at < list.len() {
 					let len = if list.get(at + 1).is_some_and(|tag| tag & 0xFF == 0x2A) { 4 } else { 3 };
 					let entry = &list[at..(at + len).min(list.len())];
-					if entry[0] != *name {
+					if entry[0] != name {
 						words.extend_from_slice(entry);
 					}
 					at += len;
 				}
-				words.push(*name);
-				words.extend_from_slice(value);
+				words.push(name);
+				words.extend_from_slice(&value);
 				set_type_field(type_id, type_fields::BUILTIN_VALUES, runtime_tables::intern_misc(&words)?)?;
 			}
-			BuiltinWrite::Mob(var, value) => runtime_tables::set_mob_type(type_id, |mob| match *var {
-				"key" => mob.key = *value,
-				"sight" => mob.sight = *value,
-				"see_in_dark" => mob.see_in_dark = *value as u8,
-				_ => mob.see_invisible = *value as u8
-			})?
+			BuiltinWrite::Mob(var, value) => runtime_tables::set_mob_type(type_id, |mob| match var {
+				"sight" => mob.sight = value,
+				"see_in_dark" => mob.see_in_dark = value as u8,
+				_ => mob.see_invisible = value as u8
+			})?,
+			BuiltinWrite::Key(key) => {
+				runtime_tables::set_mob_type(type_id, |mob| mob.key = id_of(&key))?;
+				std::mem::forget(key);
+			}
 		}
 	}
 	Ok(())
@@ -2288,8 +2282,8 @@ pub fn apply<K: Ord + std::hash::Hash + Copy, T>(
 		let _ = runtime_tables::set_type_field(type_id, field, words);
 	}
 	reparent::apply_builtins(&prepared.reparent, warnings, failures);
-	for (type_id, writes) in &prepared.builtin_writes {
-		if let Err(e) = failing(FailAt::Change).and_then(|()| write_builtins(*type_id, writes)) {
+	for (type_id, writes) in std::mem::take(&mut prepared.builtin_writes) {
+		if let Err(e) = failing(FailAt::Change).and_then(|()| write_builtins(type_id, writes)) {
 			failures.push(format!("couldn't set a built-in var: {}", e));
 		}
 	}

@@ -70,11 +70,10 @@ pub(super) fn copy_builtin(type_id: u32, from: u32, var: &str) -> Result<(), Str
 	}
 	for place in places(var)? {
 		match place {
-			Word(offset, _) => {
+			Word(offset, _) => set_type_field(type_id, offset, type_field(from, offset)?)?,
+			Text(offset, _) => {
 				let word = type_field(from, offset)?;
-				if offset != type_fields::ICON && offset != type_fields::LAYER {
-					keep_string(word);
-				}
+				keep_string(word);
 				set_type_field(type_id, offset, word)?
 			}
 			Half(offset, _) => {
@@ -98,15 +97,19 @@ pub(super) fn copy_builtin(type_id: u32, from: u32, var: &str) -> Result<(), Str
 					set_type_field(type_id, offset, (word & !mask) | (type_field(from, offset)? & mask))?;
 				}
 			}
-			Mob(var, _) => {
+			Mob(..) | Key(_) => {
 				let mut parent = None;
 				if runtime_tables::set_mob_type(from, |mob| parent = Some(*mob)).is_err() {
 					continue;
 				}
 				let parent = parent.unwrap();
-				if var == "key" {
-					keep_string(parent.key);
-				}
+				let var = match place {
+					Mob(var, _) => var,
+					_ => {
+						keep_string(parent.key);
+						"key"
+					}
+				};
 				runtime_tables::set_mob_type(type_id, |mob| match var {
 					"key" => mob.key = parent.key,
 					"sight" => mob.sight = parent.sight,
