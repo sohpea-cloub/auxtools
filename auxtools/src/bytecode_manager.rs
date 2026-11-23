@@ -199,6 +199,7 @@ unsafe fn give_own_entry(state: &mut State, proc: &Proc, keep_address: bool) -> 
 			state.original.insert(new, original);
 		}
 		debug::copy_local_names(code, copy, |id| id != proc.id);
+		state.retired_by_address.entry(code as usize).or_insert(words);
 	} else {
 		point_at(new, (copy, len))?;
 		debug::copy_local_names(code, copy, |id| id == proc.id);

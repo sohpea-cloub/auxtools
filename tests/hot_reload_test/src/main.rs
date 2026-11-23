@@ -1382,6 +1382,33 @@ fn debugger(built: Built) {
 	);
 	println!("ok: a reload back to earlier code checks the copy for new local names first");
 
+	let changes = source.edit(
+		"reload.dm",
+		"/proc/first_def()\n",
+		"#define SPLIT_TWINS(g_step, h_step) /proc/twin_g() { twin_waiting += 1; while (twin_hold) sleep(1); twin_runs += g_step; } /proc/twin_h() \
+		 { twin_waiting += 1; while (twin_hold) sleep(1); twin_runs += h_step; }\nSPLIT_TWINS(1, 1)\n\n/proc/first_def()\n"
+	);
+	reload(&mut watcher, &changes);
+	let line = source.line_of("reload.dm", "SPLIT_TWINS(1, 1)");
+	let waiting = twin_number(&mut client, "twin_waiting");
+	eval(&mut client, "twin_hold = TRUE");
+	eval(&mut client, "twin_armed = /proc/twin_h");
+	wait_for(&mut client, "twin_waiting", &(waiting + 1).to_string());
+	let offset = offset_of(&mut client, "/twin_g", line);
+	twin_breakpoint(&mut client, "twin_g", offset, true);
+	let changes = source.edit("reload.dm", "SPLIT_TWINS(1, 1)", "SPLIT_TWINS(1, 3)");
+	assert_eq!(changes.plan.reloads.len(), 1, "{:?}", changes.plan);
+	reload(&mut watcher, &changes);
+	let (old_code, sleeping) = sleeping_listing(&mut client, "/twin_h");
+	let twin_g = proc_listing(&mut client, "/twin_g");
+	twin_breakpoint(&mut client, "twin_g", offset, false);
+	let runs = twin_number(&mut client, "twin_runs");
+	eval(&mut client, "twin_hold = FALSE");
+	wait_for(&mut client, "twin_runs", &(runs + 1).to_string());
+	assert!(old_code, "the call of twin_h from before the reload doesn't run old code");
+	assert_eq!(sleeping, twin_g, "the code of a call of twin_h from before the reload");
+	println!("ok: a call that shared its code shows that code after a breakpoint split it and a reload");
+
 	let mut move_big = |from: &str, to: &str, code: bool| {
 		let changes = source.edit("reload.dm", from, to);
 		assert_eq!(changes.plan.reloads.len(), code as usize, "{:?}", changes.plan);
@@ -1500,6 +1527,50 @@ fn frame_names(client: &mut Client, procs: &[&str], arguments: bool) -> Vec<Vec<
 	}
 	client.resume();
 	found
+}
+
+fn listing(client: &mut Client, code: CodeRef) -> Vec<String> {
+	match client.request(Request::Disassemble { code }) {
+		Response::Disassemble(Ok(disassembly)) => disassembly.instructions.into_iter().map(|at| at.text).collect(),
+		other => panic!("expected the disassembly of {:?}, got {:?}", code, other)
+	}
+}
+
+fn proc_listing(client: &mut Client, proc: &str) -> Vec<String> {
+	let code = match client.request(Request::ProcInfo {
+		proc: ProcRef {
+			path: proc.to_owned(),
+			override_id: 0
+		}
+	}) {
+		Response::ProcInfo(Ok(info)) => info.code,
+		other => panic!("expected ProcInfo for {}, got {:?}", proc, other)
+	};
+	listing(client, code)
+}
+
+fn sleeping_listing(client: &mut Client, proc: &str) -> (bool, Vec<String>) {
+	let response = client.request(Request::Pause);
+	assert!(matches!(response, Response::Ack), "expected Ack for Pause, got {:?}", response);
+	assert_eq!(client.expect_pause(), BreakpointReason::Pause);
+	let Response::Stacks { stacks, .. } = client.request(Request::Stacks { sleeping: Some(1000) }) else {
+		panic!("expected Stacks");
+	};
+	let mut found = None;
+	for stack in &stacks {
+		let Response::StackFrames { frames, .. } = client.request(Request::StackFrames {
+			stack_id: stack.id,
+			start_frame: None,
+			count: None
+		}) else {
+			panic!("expected StackFrames");
+		};
+		found = found.or(frames.into_iter().find(|frame| frame.instruction.proc.path == proc));
+	}
+	let frame = found.unwrap_or_else(|| panic!("no sleeping call of {}", proc));
+	let code = listing(client, frame.code);
+	client.resume();
+	(frame.old_code, code)
 }
 
 fn twin_breakpoints(client: &mut Client, source: &Source, step: u32) {
