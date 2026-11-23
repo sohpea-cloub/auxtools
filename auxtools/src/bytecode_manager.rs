@@ -115,13 +115,13 @@ pub fn bytecode_at(ptr: *const u32) -> Option<Vec<u32>> {
 }
 
 fn procs_sharing_code(proc: &Proc) -> Vec<Proc> {
-	let Some(entry) = runtime_tables::proc_entry(proc.id) else {
+	let Some(entry) = (unsafe { runtime_tables::proc_entry(proc.id) }) else {
 		return vec![];
 	};
 	let code = entry.0[ProcEntryWords::BYTECODE];
 	(0..)
 		.map(raw_types::procs::ProcId)
-		.map_while(|id| runtime_tables::proc_entry(id).map(|entry| (id, entry)))
+		.map_while(|id| unsafe { runtime_tables::proc_entry(id) }.map(|entry| (id, entry)))
 		.filter(|(id, entry)| *id != proc.id && entry.0[ProcEntryWords::BYTECODE] == code)
 		.filter_map(|(id, _)| Proc::from_id(id))
 		.collect()
@@ -132,13 +132,13 @@ const OWN_ENTRY_MARK: u32 = 0xFFFF_FFFF;
 fn give_new_code_entry(proc: &Proc, code: &[u32]) -> Result<(), String> {
 	let mut words = code.to_vec();
 	words.push(OWN_ENTRY_MARK);
-	let entry = runtime_tables::intern_misc(&words)?;
-	if runtime_tables::misc_words(entry).as_deref() != Some(&words[..]) {
+	let entry = unsafe { runtime_tables::intern_misc(&words) }?;
+	if unsafe { runtime_tables::misc_words(entry) }.as_deref() != Some(&words[..]) {
 		return Err(format!("BYOND gave {} a code entry that other code already uses", proc.path));
 	}
 
 	let (old, _) = unsafe { proc.bytecode_mut_ptr() };
-	runtime_tables::set_proc_entry_word(proc.id, ProcEntryWords::BYTECODE, entry);
+	unsafe { runtime_tables::set_proc_entry_word(proc.id, ProcEntryWords::BYTECODE, entry) };
 	unsafe {
 		let id = (*proc.entry()).metadata.bytecode;
 		let (new, _) = raw_types::misc::get_bytecode(id);

@@ -60,7 +60,7 @@ struct UnnamedProcKinds {
 
 impl UnnamedProcKinds {
 	fn read() -> Result<Self, String> {
-		let in_lists = runtime_tables::in_list_procs()?;
+		let in_lists = unsafe { runtime_tables::in_list_procs() }?;
 		let global_init = Proc::overrides("")
 			.iter()
 			.map(|proc| proc.id)

@@ -217,7 +217,7 @@ pub fn init_on_next_world_load(added: Option<&Proc>) {
 	if WORLD_LOAD.get().is_none() || get_init_level() != InitLevel::None {
 		return;
 	}
-	*ENDING_WORLD.lock().unwrap() = added.and_then(|proc| Some((proc.id, runtime_tables::proc_entry(proc.id)?)));
+	*ENDING_WORLD.lock().unwrap() = added.and_then(|proc| Some((proc.id, unsafe { runtime_tables::proc_entry(proc.id) }?)));
 	shutdown_partial();
 	WORLD_LOAD_PENDING.store(true, Ordering::Relaxed);
 }
@@ -280,7 +280,7 @@ pub(crate) fn on_proc_call(proc: raw_types::procs::ProcId, src: raw_types::value
 	{
 		let mut ending = ENDING_WORLD.lock().unwrap();
 		if let Some((id, entry)) = *ending {
-			if runtime_tables::proc_entry(id) == Some(entry) {
+			if unsafe { runtime_tables::proc_entry(id) } == Some(entry) {
 				return false;
 			}
 		}

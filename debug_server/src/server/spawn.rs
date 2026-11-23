@@ -67,11 +67,13 @@ impl Spawns {
 
 	pub(super) fn set_stub_locals(&mut self, stub: &Proc, locals: &[String]) -> Result<(), String> {
 		use auxtools::runtime_tables::{self, ProcEntryWords};
-		let now = runtime_tables::proc_entry(stub.id).ok_or("couldn't read the spawn stub's proc entry")?.0[ProcEntryWords::LOCALS];
+		let now = unsafe { runtime_tables::proc_entry(stub.id) }
+			.ok_or("couldn't read the spawn stub's proc entry")?
+			.0[ProcEntryWords::LOCALS];
 		let none = *self.spawn_stub_locals.get_or_insert(now);
 		let table = hot_reload::locals_table(locals, none)?;
 		if table != now {
-			runtime_tables::set_proc_entry_word(stub.id, ProcEntryWords::LOCALS, table);
+			unsafe { runtime_tables::set_proc_entry_word(stub.id, ProcEntryWords::LOCALS, table) };
 		}
 		Ok(())
 	}

@@ -2,6 +2,17 @@ use auxtools::*;
 
 #[hook("/proc/auxtest_tables")]
 fn test_tables() {
+	unsafe {
+		offsets_are_checked()?;
+		#[cfg(target_os = "linux")]
+		dropped_name_map_plans_free_their_memory()?;
+		name_map_plans_survive_new_types()?;
+		mob_edits_survive_new_types()?;
+	}
+	Ok(Value::from(true))
+}
+
+unsafe fn offsets_are_checked() -> DMResult<()> {
 	use runtime_tables::{type_field, type_fields};
 
 	type_field(0, type_fields::PARENT).map_err(|e| runtime!("test_tables: couldn't read a type's parent: {}", e))?;
@@ -11,12 +22,7 @@ fn test_tables() {
 			return Err(runtime!("test_tables: type_field read {:#x} at the bad offset +{:#x}", word, offset));
 		}
 	}
-
-	#[cfg(target_os = "linux")]
-	dropped_name_map_plans_free_their_memory()?;
-	name_map_plans_survive_new_types()?;
-
-	Ok(Value::from(true))
+	Ok(())
 }
 
 #[cfg(target_os = "linux")]
@@ -42,7 +48,7 @@ fn heap_in_use() -> usize {
 }
 
 #[cfg(target_os = "linux")]
-fn dropped_name_map_plans_free_their_memory() -> DMResult<()> {
+unsafe fn dropped_name_map_plans_free_their_memory() -> DMResult<()> {
 	use runtime_tables::{name_map_entries, plan_name_map};
 
 	const PLANS: usize = 10_000;
@@ -62,8 +68,8 @@ fn dropped_name_map_plans_free_their_memory() -> DMResult<()> {
 	Ok(())
 }
 
-fn name_map_plans_survive_new_types() -> DMResult<()> {
-	use runtime_tables::{add_type, name_map_entries, plan_name_map, type_count, type_field, type_fields};
+unsafe fn name_map_plans_survive_new_types() -> DMResult<()> {
+	use runtime_tables::{name_map_entries, plan_name_map};
 
 	let failed = |what: &str, e: String| runtime!("test_tables: couldn't {}: {}", what, e);
 	let original = name_map_entries(0).map_err(|e| failed("read a proc name map", e))?;
@@ -71,15 +77,7 @@ fn name_map_plans_survive_new_types() -> DMResult<()> {
 	let planned = vec![(key.get_id().0, vec![0], 0)];
 	let plan = plan_name_map(0, &planned).map_err(|e| failed("plan a proc name map", e))?;
 
-	let datum = StringRef::new("/datum")?.get_id().0;
-	let parent = (0..type_count().map_err(|e| failed("count the types", e))?)
-		.find(|&id| type_field(id, type_fields::PATH) == Ok(datum))
-		.ok_or_else(|| runtime!("test_tables: there's no /datum type"))?;
-	for i in 0..64 {
-		let path = StringRef::new(&format!("/datum/auxtest_added_{}", i))?;
-		add_type(parent, path.get_id().0).map_err(|e| failed("add a type", e))?;
-		std::mem::forget(path);
-	}
+	add_types("/datum", 64)?;
 
 	plan.write().map_err(|e| failed("write a proc name map", e))?;
 	let written = name_map_entries(0).map_err(|e| failed("read a proc name map", e))?;
@@ -91,6 +89,57 @@ fn name_map_plans_survive_new_types() -> DMResult<()> {
 			"test_tables: a proc name map planned before 64 new types reads {:?} after it was written, expected {:?}",
 			written,
 			planned
+		));
+	}
+	Ok(())
+}
+
+unsafe fn type_id(path: &str) -> DMResult<u32> {
+	use runtime_tables::{type_count, type_field, type_fields};
+
+	let path_id = StringRef::new(path)?.get_id().0;
+	let count = type_count().map_err(|e| runtime!("test_tables: couldn't count the types: {}", e))?;
+	(0..count)
+		.find(|&id| type_field(id, type_fields::PATH) == Ok(path_id))
+		.ok_or_else(|| runtime!("test_tables: there's no {} type", path))
+}
+
+unsafe fn add_types(parent: &str, count: usize) -> DMResult<()> {
+	static ADDED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+	let parent_id = type_id(parent)?;
+	for _ in 0..count {
+		let n = ADDED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+		let path = StringRef::new(&format!("{}/auxtest_added_{}", parent, n))?;
+		runtime_tables::add_type(parent_id, path.get_id().0).map_err(|e| runtime!("test_tables: couldn't add a type: {}", e))?;
+		std::mem::forget(path);
+	}
+	Ok(())
+}
+
+unsafe fn mob_edits_survive_new_types() -> DMResult<()> {
+	use runtime_tables::set_mob_type;
+
+	let failed = |what: &str, e: String| runtime!("test_tables: couldn't {}: {}", what, e);
+	let mob = type_id("/mob")?;
+	let mut added = Ok(());
+	let mut old = 0;
+	set_mob_type(mob, |entry| {
+		old = entry.sight;
+		added = add_types("/mob", 64);
+		entry.sight = 0x1234;
+	})
+	.map_err(|e| failed("set a mob type's sight", e))?;
+	added?;
+	let mut sight = 0;
+	set_mob_type(mob, |entry| {
+		sight = entry.sight;
+		entry.sight = old;
+	})
+	.map_err(|e| failed("read a mob type's sight", e))?;
+	if sight != 0x1234 {
+		return Err(runtime!(
+			"test_tables: a mob type's sight set while 64 mob types were added reads {:#x}, expected 0x1234",
+			sight
 		));
 	}
 	Ok(())

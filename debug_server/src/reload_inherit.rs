@@ -33,13 +33,17 @@ pub(super) fn listed_entries(list: &[u32]) -> Vec<Vec<u32>> {
 
 fn listed(type_id: u32) -> Result<Vec<Vec<u32>>, String> {
 	Ok(listed_entries(
-		&runtime_tables::misc_words(runtime_tables::type_field(type_id, type_fields::BUILTIN_VALUES)?).unwrap_or_default()
+		&unsafe { runtime_tables::misc_words(runtime_tables::type_field(type_id, type_fields::BUILTIN_VALUES)?) }.unwrap_or_default()
 	))
 }
 
 fn set_listed(type_id: u32, entries: &[Vec<u32>]) -> Result<(), String> {
 	let words: Vec<u32> = entries.iter().flatten().copied().collect();
-	let list = if words.is_empty() { NONE } else { runtime_tables::intern_misc(&words)? };
+	let list = if words.is_empty() {
+		NONE
+	} else {
+		unsafe { runtime_tables::intern_misc(&words) }?
+	};
 	unsafe { runtime_tables::set_type_field(type_id, type_fields::BUILTIN_VALUES, list) }
 }
 
@@ -63,13 +67,17 @@ pub(super) fn builtin_in_table(type_id: u32, _var: &str) -> bool {
 fn copy_table_entry(type_id: u32, from: u32, var: &str) -> Result<(), String> {
 	let key = leaked_string(var)?;
 	let table = |t: u32| -> Result<Vec<u32>, String> {
-		Ok(runtime_tables::misc_words(runtime_tables::type_field(t, type_fields::VAR_TABLE)?).unwrap_or_default())
+		Ok(unsafe { runtime_tables::misc_words(runtime_tables::type_field(t, type_fields::VAR_TABLE)?) }.unwrap_or_default())
 	};
 	let mut entries: Vec<Vec<u32>> = table(type_id)?.chunks(4).filter(|e| e[0] != key).map(<[u32]>::to_vec).collect();
 	entries.extend(table(from)?.chunks(4).filter(|e| e[0] == key).map(<[u32]>::to_vec));
 	entries.sort_by_key(|e| e[0]);
 	let words: Vec<u32> = entries.into_iter().flatten().collect();
-	let id = if words.is_empty() { NONE } else { runtime_tables::intern_misc(&words)? };
+	let id = if words.is_empty() {
+		NONE
+	} else {
+		unsafe { runtime_tables::intern_misc(&words) }?
+	};
 	unsafe { runtime_tables::set_type_field(type_id, type_fields::VAR_TABLE, id) }
 }
 
@@ -82,22 +90,22 @@ pub(super) fn copy_builtin(type_id: u32, from: u32, var: &str) -> Result<(), Str
 	for place in places(var)? {
 		match place {
 			Word(offset, _) => {
-				let word = type_field(from, offset)?;
+				let word = unsafe { type_field(from, offset) }?;
 				if offset != type_fields::ICON && offset != type_fields::LAYER {
 					keep_string(word);
 				}
 				unsafe { set_type_field(type_id, offset, word)? }
 			}
 			Half(offset, _) => {
-				let half = (type_field(from, offset & !3)? >> ((offset & 2) * 8)) as u16;
+				let half = (unsafe { type_field(from, offset & !3) }? >> ((offset & 2) * 8)) as u16;
 				unsafe { runtime_tables::set_type_half(type_id, offset, half)? }
 			}
 			Byte(offset, _) => {
-				let byte = (type_field(from, offset & !3)? >> ((offset & 3) * 8)) as u8;
+				let byte = (unsafe { type_field(from, offset & !3) }? >> ((offset & 3) * 8)) as u8;
 				unsafe { runtime_tables::set_type_byte(type_id, offset, byte)? }
 			}
 			Bits(offset, mask, _) => {
-				let word = type_field(type_id, offset)?;
+				let word = unsafe { type_field(type_id, offset) }?;
 				unsafe { set_type_field(type_id, offset, (word & !mask) | (type_field(from, offset)? & mask))? }
 			}
 			Listed(name, _) => {
@@ -105,24 +113,26 @@ pub(super) fn copy_builtin(type_id: u32, from: u32, var: &str) -> Result<(), Str
 				entries.extend(listed(from)?.into_iter().filter(|e| e[0] == name));
 				set_listed(type_id, &entries)?;
 				if let Some((offset, mask)) = bounds_place(var) {
-					let word = type_field(type_id, offset)?;
+					let word = unsafe { type_field(type_id, offset) }?;
 					unsafe { set_type_field(type_id, offset, (word & !mask) | (type_field(from, offset)? & mask))? };
 				}
 			}
 			Mob(var, _) => {
 				let mut parent = None;
-				if runtime_tables::set_mob_type(from, |mob| parent = Some(*mob)).is_err() {
+				if unsafe { runtime_tables::set_mob_type(from, |mob| parent = Some(*mob)) }.is_err() {
 					continue;
 				}
 				let parent = parent.unwrap();
 				if var == "key" {
 					keep_string(parent.key);
 				}
-				runtime_tables::set_mob_type(type_id, |mob| match var {
-					"key" => mob.key = parent.key,
-					"sight" => mob.sight = parent.sight,
-					"see_in_dark" => mob.see_in_dark = parent.see_in_dark,
-					_ => mob.see_invisible = parent.see_invisible
+				(unsafe {
+					runtime_tables::set_mob_type(type_id, |mob| match var {
+						"key" => mob.key = parent.key,
+						"sight" => mob.sight = parent.sight,
+						"see_in_dark" => mob.see_in_dark = parent.see_in_dark,
+						_ => mob.see_invisible = parent.see_invisible
+					})
 				})?
 			}
 		}
@@ -151,7 +161,7 @@ pub(super) fn prepare(inherited: &[BuiltinInherited], prepared: &mut Prepared, e
 
 pub(super) fn apply(inherits: &[(u32, String)], failures: &mut Vec<String>) {
 	for (type_id, var) in inherits {
-		let copied = runtime_tables::type_field(*type_id, type_fields::PARENT).and_then(|parent| copy_builtin(*type_id, parent, var));
+		let copied = unsafe { runtime_tables::type_field(*type_id, type_fields::PARENT) }.and_then(|parent| copy_builtin(*type_id, parent, var));
 		if let Err(e) = copied {
 			failures.push(format!("{}: could not inherit built-in {}: {}", type_path(*type_id), var, e));
 		}

@@ -21,7 +21,7 @@ pub fn prepare(resources: &[HotReloadResource]) -> Result<Vec<Prepared>, Vec<Str
 	if resources.is_empty() {
 		return Ok(vec![]);
 	}
-	appearance_tables::check().map_err(|e| vec![e])?;
+	(unsafe { appearance_tables::check() }).map_err(|e| vec![e])?;
 	let mut prepared = vec![];
 	let mut errors = vec![];
 	for resource in resources {
@@ -59,7 +59,7 @@ pub fn apply(prepared: &[Prepared]) -> Result<Applied, String> {
 		.iter()
 		.flat_map(|resource| resource.replaces.iter().map(|&old| (old, resource.id)))
 		.collect();
-	let repointed = appearance_tables::repoint(&mappings)?;
+	let repointed = unsafe { appearance_tables::repoint(&mappings) }?;
 	let reloaded = prepared
 		.iter()
 		.map(|resource| ReloadedResource {
@@ -80,5 +80,5 @@ pub fn apply(prepared: &[Prepared]) -> Result<Applied, String> {
 }
 
 pub fn resend(appearances: &[u32]) -> Result<usize, String> {
-	appearance_tables::resend(appearances)
+	unsafe { appearance_tables::resend(appearances) }
 }

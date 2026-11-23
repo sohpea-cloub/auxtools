@@ -242,9 +242,11 @@ impl Evaluation {
 		let none = match locals.is_empty() {
 			true => None,
 			false => {
-				let none = runtime_tables::proc_entry(proc.id).ok_or("couldn't read the stub's proc entry")?.0[ProcEntryWords::LOCALS];
+				let none = unsafe { runtime_tables::proc_entry(proc.id) }
+					.ok_or("couldn't read the stub's proc entry")?
+					.0[ProcEntryWords::LOCALS];
 				let table = hot_reload::locals_table(locals, none)?;
-				runtime_tables::set_proc_entry_word(proc.id, ProcEntryWords::LOCALS, table);
+				unsafe { runtime_tables::set_proc_entry_word(proc.id, ProcEntryWords::LOCALS, table) };
 				Some(none)
 			}
 		};
@@ -253,7 +255,7 @@ impl Evaluation {
 		if crate::WORLD_ENDS.load(std::sync::atomic::Ordering::Relaxed) == ends {
 			Self::show_tries(tries);
 			if let Some(none) = none {
-				runtime_tables::set_proc_entry_word(proc.id, ProcEntryWords::LOCALS, none);
+				unsafe { runtime_tables::set_proc_entry_word(proc.id, ProcEntryWords::LOCALS, none) };
 			}
 		}
 		Ok(result)

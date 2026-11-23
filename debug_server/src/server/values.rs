@@ -274,7 +274,7 @@ pub(super) fn members_of(value: &Value, found: &mut BTreeMap<String, bool>) {
 }
 
 pub(super) fn each_proc(mut each: impl FnMut(&str, &str)) {
-	for id in 0..auxtools::runtime_tables::proc_count() {
+	for id in 0..unsafe { auxtools::runtime_tables::proc_count() } {
 		let Some(proc) = Proc::from_id(raw_types::procs::ProcId(id)) else {
 			continue;
 		};

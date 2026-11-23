@@ -419,7 +419,7 @@ fn files_named(id: u32) -> Vec<String> {
 }
 
 pub fn by_file() -> Arc<FileProcs> {
-	let count = auxtools::runtime_tables::proc_count();
+	let count = unsafe { auxtools::runtime_tables::proc_count() };
 	let (counted, changed) = {
 		let mut index = index_for_sure();
 		let files = index.files.get_or_insert_default();
