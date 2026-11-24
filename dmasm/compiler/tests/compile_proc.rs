@@ -2242,6 +2242,35 @@ fn a_safe_write_calls_an_indexed_item_on_the_item() {
 }
 
 #[test]
+fn a_logical_assignment_to_a_safe_element_has_a_value() {
+    let types = "/datum/holder\n\tvar/list/items\n\tvar/datum/holder/next\n";
+    for (body, jump) in [
+        ("return (holder?.items[i] ||= fallback)", "JmpOr"),
+        ("return (holder?.next.items[i] &&= fallback)", "JmpAnd"),
+        ("return (holder?.next?.items[i] ||= fallback)", "JmpOr"),
+        ("return (items?[i] ||= fallback)", "JmpOr"),
+    ] {
+        let code = compile(
+            &format!("{types}/proc/g(datum/holder/holder, list/items, i, fallback)\n\t{body}\n"),
+            "",
+            "g",
+        );
+        assert_has(
+            &code,
+            &[
+                "SetVar cache_key",
+                "SetVar cache",
+                "GetVar cache[cache_key]",
+                jump,
+            ],
+        );
+        assert_has(&code, &["GetVar arg(3)", "SetVarExpr cache[cache_key]"]);
+        assert!(code.starts_with("GetVar arg"), "{}\n{}", body, code);
+        assert!(code.contains("SetCacheJmpIfNull"), "{}\n{}", body, code);
+    }
+}
+
+#[test]
 fn new_without_arguments_is_true_in_a_test() {
     let src = "/datum/t\n/proc/f(a, b)\n\treturn (new /datum/t ? a : b)\n";
     assert_eq!(compile(src, "", "f"), "GetVar arg(0)\nRet\nEnd");

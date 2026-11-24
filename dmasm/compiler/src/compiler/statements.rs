@@ -1606,7 +1606,7 @@ impl SafeChain {
         match (self.fields(), write) {
             (Some(_), SafeWrite::Assign) => self.index.is_some(),
             (Some(_), SafeWrite::Change(_)) => true,
-            (Some(_), SafeWrite::Logical { .. }) => !value_form,
+            (Some(_), SafeWrite::Logical { .. }) => !value_form || self.index.is_some(),
             (None, SafeWrite::Assign) => self.index.is_some(),
             (None, _) => {
                 self.index.is_some() || matches!(self.last.last(), Some(Follow::Field(..)))
@@ -1964,17 +1964,28 @@ pub(super) fn emit_safe_chain_write<'a>(
                 var = Variable::CacheIndex;
             }
             compiler.emit_ins(Instruction::GetVar(var.clone()));
-            compiler.emit_ins(Instruction::Test);
             let end = ends.pop().expect("a segment");
-            compiler.emit_ins(if or {
-                Instruction::Jnz(Label::Named(end.clone()))
-            } else {
-                Instruction::Jz(Label::Named(end.clone()))
-            });
+            let label = Label::Named(end.clone());
+            match (value_form, or) {
+                (true, true) => compiler.emit_ins(Instruction::JmpOr(label)),
+                (true, false) => compiler.emit_ins(Instruction::JmpAnd(label)),
+                (false, _) => {
+                    compiler.emit_ins(Instruction::Test);
+                    compiler.emit_ins(if or {
+                        Instruction::Jnz(label)
+                    } else {
+                        Instruction::Jz(label)
+                    });
+                }
+            }
             let start = compiler.nodes.len();
             emit_value(compiler, value.expect("a value"))?;
             let written = keep_tested_place(compiler, start, &var);
-            compiler.emit_ins(Instruction::SetVar(written));
+            compiler.emit_ins(if value_form {
+                Instruction::SetVarExpr(written)
+            } else {
+                Instruction::SetVar(written)
+            });
             super::known_bugs::safe_logical_write(compiler, &var);
             compiler.emit_label(end);
         }

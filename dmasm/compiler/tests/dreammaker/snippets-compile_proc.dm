@@ -128,6 +128,25 @@ var/const/gc = 7
 	i?.a.b ||= (flag ? x : y)
 /proc/f2(datum/item/i, x, y)
 	return (i?.a.b &&= (x || y))
+// Guards: a_logical_assignment_to_a_safe_element_has_a_value (compile_proc.rs)
+// Known -516.1672: /proc/f1  before 516.1673 DreamMaker leaves out the null tests of `a?.b ||= v` and `&&=`; dmasm keeps them
+// Known -516.1672: /proc/f2  before 516.1673 DreamMaker leaves out the null tests of `a?.b ||= v` and `&&=`; dmasm keeps them
+// Known -516.1672: /proc/f3  before 516.1673 DreamMaker leaves out the null tests of `a?.b ||= v` and `&&=`; dmasm keeps them
+// Known -516.1672: /proc/f4  before 516.1673 DreamMaker leaves out the null tests of `a?.b ||= v` and `&&=`; dmasm keeps them
+// Known -516.1672: /proc/f5  before 516.1673 DreamMaker leaves out the null tests of `a?.b ||= v` and `&&=`; dmasm keeps them
+/datum/holder
+	var/list/items
+	var/datum/holder/next
+/proc/f1(datum/holder/holder, i, fallback)
+	return (holder?.items[i] ||= fallback)
+/proc/f2(datum/holder/holder, i, fallback)
+	return (holder?.next.items[i] &&= fallback)
+/proc/f3(datum/holder/holder, i, fallback)
+	return (holder?.next?.items[i] ||= fallback)
+/proc/f4(datum/holder/holder, i, list/c, j)
+	return (holder?.items[i] ||= c[j]++)
+/proc/f5(list/items, i, fallback)
+	return (items?[i] ||= fallback)
 // Guards: a_logical_assignment_to_a_safe_element_keeps_its_key_across_the_value (compile_proc.rs)
 // Known -516.1672: /proc/f1  before 516.1673 DreamMaker leaves out the null tests of `a?.b ||= v` and `&&=`; dmasm keeps them
 // Known -516.1672: /proc/f2  before 516.1673 DreamMaker leaves out the null tests of `a?.b ||= v` and `&&=`; dmasm keeps them
