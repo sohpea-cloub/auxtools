@@ -1,5 +1,9 @@
 use std::{
 	process::{Command, Output, Stdio},
+	sync::{
+		atomic::{AtomicBool, Ordering},
+		Arc
+	},
 	time::{Duration, Instant}
 };
 
@@ -67,7 +71,11 @@ fn a_wait_for_a_reboot_gives_up_at_its_timeout_while_the_next_world_doesnt_answe
 	let started = Instant::now();
 	let waiting = command(pid, &["wait", "reboot", "--timeout", "2"]);
 	let first = stand_in.world();
-	while !first.requests().iter().any(|request| request.starts_with("Journal")) {
+	while !first
+		.requests()
+		.iter()
+		.any(|request| request.starts_with("Journal") && request.contains("follow: true"))
+	{
 		assert!(started.elapsed() < LATE, "the command didn't follow the journal: {:?}", first.requests());
 		std::thread::sleep(Duration::from_millis(20));
 	}
@@ -138,6 +146,71 @@ fn a_wait_for_a_reboot_from_a_journal_entry_survives_a_reboot_while_it_registers
 		output.status.code(),
 		printed(&output)
 	);
+}
+
+fn rebooting(cut: fn(&Request) -> bool) -> (StandIn, Arc<AtomicBool>) {
+	let rebooted = Arc::new(AtomicBool::new(false));
+	let loaded = JournalEntry {
+		number: 6,
+		time: 0,
+		world_time: 0.0,
+		event: JournalEvent::Loaded { load: 2 }
+	};
+	let flag = rebooted.clone();
+	let stand_in = StandIn::new(Box::new(move |request| {
+		let rebooted = flag.load(Ordering::SeqCst);
+		match request {
+			request if !rebooted && cut(request) => Answer::ToTest,
+			Request::Watcher => Answer::Reply(Response::Ack),
+			Request::Journal { after, .. } => Answer::Reply(Response::Journal {
+				entries: if rebooted && *after < 6 { vec![loaded.clone()] } else { vec![] },
+				first: 1,
+				last: if rebooted { 6 } else { 5 }
+			}),
+			Request::Uptime => Answer::Reply(Response::Uptime {
+				loaded: 0,
+				up: 1.0,
+				world_time: 0.0,
+				loads: if rebooted { 2 } else { 1 },
+				last_reload: None,
+				started: true
+			}),
+			_ => Answer::Nothing
+		}
+	}));
+	(stand_in, rebooted)
+}
+
+fn a_wait_for_a_reboot_sees_a_reboot_that_cuts(what: &str, cut: fn(&Request) -> bool) {
+	let (mut stand_in, rebooted) = rebooting(cut);
+	let pid = stand_in.spawn();
+	let started = Instant::now();
+	let waiting = command(pid, &["wait", "reboot", "--timeout", "5"]);
+	let mut first = stand_in.world();
+	first.next(what, cut);
+	rebooted.store(true, Ordering::SeqCst);
+	first.event(Response::Disconnect);
+	first.close();
+	let output = waiting.wait_with_output().unwrap();
+	let took = started.elapsed();
+	assert!(
+		output.status.code() == Some(0) && printed(&output).starts_with("#6 ") && took < LATE,
+		"wait reboot, cut by a reboot at its {}, ended after {:?} with {:?}: {}",
+		what,
+		took,
+		output.status.code(),
+		printed(&output)
+	);
+}
+
+#[test]
+fn a_wait_for_a_reboot_sees_a_reboot_while_it_registers() {
+	a_wait_for_a_reboot_sees_a_reboot_that_cuts("Watcher", |request| matches!(request, Request::Watcher));
+}
+
+#[test]
+fn a_wait_for_a_reboot_sees_a_reboot_while_it_reads_the_journal() {
+	a_wait_for_a_reboot_sees_a_reboot_that_cuts("Journal", |request| matches!(request, Request::Journal { .. }));
 }
 
 #[test]

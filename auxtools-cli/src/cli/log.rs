@@ -66,10 +66,16 @@ fn limit(timeout: Option<Duration>) -> String {
 pub fn wait_reload(world: &mut World, since: Option<u64>, timeout: Option<Duration>, json: bool) -> Result<()> {
 	let until = timeout.map(|timeout| Instant::now() + timeout);
 	let timed_out = || Failure(TIMED_OUT, format!("timed out{} waiting for a hot reload attempt.", limit(timeout)));
+	let Some(since) = (match since {
+		Some(since) => Some(since),
+		None => world.journal_end(until)?
+	}) else {
+		return Err(timed_out());
+	};
 	if !world.watch_through_reboots(until)? {
 		return Err(timed_out());
 	}
-	let mut follower = Follower::new(since.unwrap_or(u64::MAX), vec![JournalKind::Reload]);
+	let mut follower = Follower::new(since, vec![JournalKind::Reload]);
 	let Some(entry) = follower.next(world, until)? else {
 		return Err(timed_out());
 	};
@@ -84,10 +90,16 @@ pub fn wait_reload(world: &mut World, since: Option<u64>, timeout: Option<Durati
 pub fn wait_reboot(world: &mut World, since: Option<u64>, timeout: Option<Duration>, json: bool) -> Result<()> {
 	let until = timeout.map(|timeout| Instant::now() + timeout);
 	let timed_out = || Failure(TIMED_OUT, format!("timed out{} waiting for the world to reboot.", limit(timeout)));
+	let Some(since) = (match since {
+		Some(since) => Some(since),
+		None => world.journal_end(until)?
+	}) else {
+		return Err(timed_out());
+	};
 	if !world.watch_through_reboots(until)? {
 		return Err(timed_out());
 	}
-	let mut follower = Follower::new(since.unwrap_or(u64::MAX), vec![JournalKind::World]);
+	let mut follower = Follower::new(since, vec![JournalKind::World]);
 	loop {
 		let Some(entry) = follower.next(world, until)? else {
 			return Err(timed_out());
@@ -175,12 +187,7 @@ impl Follower {
 			}
 			match world.next(until) {
 				Ok(None) => return Ok(None),
-				Ok(Some(Response::Journal { entries, last, .. })) => {
-					if self.after == u64::MAX {
-						self.after = last;
-					}
-					self.waiting.extend(entries);
-				}
+				Ok(Some(Response::Journal { entries, .. })) => self.waiting.extend(entries),
 				Ok(Some(Response::Journaled(entry))) if entry.number > self.after => self.waiting.push_back(entry),
 				Ok(Some(_)) => {}
 				Err(Failure(HUNG_UP, _)) => {
@@ -194,6 +201,34 @@ impl Follower {
 }
 
 impl World {
+	fn journal_end(&mut self, until: Option<Instant>) -> Result<Option<u64>> {
+		let mut after = u64::MAX;
+		loop {
+			let patience = Instant::now() + self.patience;
+			let by = until.map_or(patience, |until| until.min(patience));
+			let asked = Request::Journal {
+				after,
+				kinds: vec![JournalKind::World],
+				limit: None,
+				follow: false
+			};
+			match self.request_by(&asked, by) {
+				Ok(Some(Response::Journal { entries, last, .. })) => {
+					let loaded = entries.iter().rev().find(|entry| matches!(entry.event, JournalEvent::Loaded { .. }));
+					return Ok(Some(loaded.map_or(last, |entry| entry.number - 1)));
+				}
+				Ok(Some(other)) => return Err(unexpected(&other)),
+				Ok(None) if by < patience => return Ok(None),
+				Ok(None) => return Err(self.unresponsive("respond")),
+				Err(Failure(HUNG_UP, _)) => {
+					after = 0;
+					self.reconnect(until)?;
+				}
+				Err(e) => return Err(e)
+			}
+		}
+	}
+
 	fn watch_through_reboots(&mut self, until: Option<Instant>) -> Result<bool> {
 		loop {
 			match self.watch_only(until) {
