@@ -119,6 +119,7 @@ impl Shared {
 	pub fn hang_up(&self) {
 		self.0.hung_up.store(true, Ordering::SeqCst);
 		self.0.cancel_reads();
+		self.0.skip_linger();
 	}
 }
 
@@ -134,6 +135,15 @@ impl Connection {
 	fn read(&self, buf: &mut [u8]) -> io::Result<usize> {
 		self.check()?;
 		(&self.stream).read(buf)
+	}
+
+	#[cfg(unix)]
+	const fn skip_linger(&self) {}
+
+	#[cfg(windows)]
+	fn skip_linger(&self) {
+		let Stream::NamedPipe(pipe) = &self.stream;
+		pipe.inner().assume_flushed();
 	}
 
 	#[cfg(unix)]
