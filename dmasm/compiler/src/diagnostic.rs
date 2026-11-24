@@ -52,6 +52,7 @@ pub enum Id {
     ByondSafeLogicalAssign,
     ByondSafeListFromCache,
     ByondSafeLogicalWrite,
+    ByondSafeScopeReceiver,
     ByondFoldedTestFlag,
     ByondZeroWeightPick,
     ByondDefaultDivisionDropped,

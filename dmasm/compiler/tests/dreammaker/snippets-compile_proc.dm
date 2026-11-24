@@ -2606,3 +2606,34 @@ var/list/configs = list(null)
 	return get_config()?.settings::item_type
 /proc/f7()
 	return config.settings::item_type
+// Guards: a_scoped_var_after_a_safe_access_warns_where_dreammaker_reads_the_receivers (compile_proc.rs)
+// Known: /proc/s2  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
+// Known: /proc/s3  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
+// Known: /proc/s4  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
+// Known: /proc/s6  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
+// Known: /proc/s7  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
+// Known: /proc/s8  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
+/datum/holder
+	var/datum/settings/b
+	var/list/l
+/datum/holder/proc/f() as /datum/settings
+	return b
+/datum/holder/proc/g()
+	return b
+/datum/settings
+	var/static/x = 5
+	var/plain = 2
+/proc/s2(datum/holder/a)
+	return a?.f()::plain
+/proc/s3(datum/holder/a)
+	return a?.l[1]::x
+/proc/s4(datum/holder/a)
+	return a?.l[1]::plain
+/proc/s5(datum/holder/a)
+	return a?.b::x
+/proc/s6(datum/holder/a)
+	return a?.b::plain
+/proc/s7(datum/holder/a)
+	return a?.g()::x
+/proc/s8(datum/holder/a)
+	return a?.g()::plain

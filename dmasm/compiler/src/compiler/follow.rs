@@ -677,6 +677,15 @@ fn emit_safe_inner<'a>(
                 )?;
             }
             Follow::StaticField(ident) => {
+                let decl = super::procs::scope_var(compiler, receiver_ty, ident.as_str());
+                if !decl.is_some_and(|decl| super::procs::is_global_member(&decl)) {
+                    compiler.warn_bug(
+                        crate::diagnostic::Id::ByondSafeScopeReceiver,
+                        "`::` on a var after a `?.` and more (`a?.b::c`): DreamMaker restores the \
+                         cache first and reads the initial value of a's var, not b's",
+                        "; dmasm reads b's",
+                    );
+                }
                 kind = commit_field_buffer(compiler, kind, &mut field_buffer)?;
                 let rest = std::iter::once(Follow::StaticField(ident)).chain(it.by_ref());
                 kind = emit_after(compiler, rest.collect(), kind, receiver_ty, before)?;
