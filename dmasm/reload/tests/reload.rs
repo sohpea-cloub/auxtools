@@ -4549,14 +4549,21 @@ fn uncompiled_code_reading_a_changed_const_alone_is_not_refused() {
          /proc/scoped_sum(x)\n{uncompiled}\treturn /datum/c::CAP + 1\n\n\
          /proc/typed_negated(datum/c/c, x)\n{uncompiled}\treturn -c.CAP\n\n\
          /proc/output(x)\n{uncompiled}\tworld << LIMIT\n\tLIMIT << x\n\tLIMIT >> x\n\n\
-         /proc/output_sum(x)\n{uncompiled}\tworld << LIMIT + 1\n"
+         /proc/output_sum(x)\n{uncompiled}\tworld << LIMIT + 1\n\n\
+         /datum/p/proc/g(x)\n\treturn x\n\n\
+         /datum/p/q/g(x)\n{uncompiled}\treturn ..(LIMIT)\n\n\
+         /datum/p/r/g(x)\n{uncompiled}\treturn ..(LIMIT + 1)\n\n\
+         /proc/called_self(x)\n{uncompiled}\treturn .(LIMIT)\n\n\
+         /proc/called_self_sum(x)\n{uncompiled}\treturn .(LIMIT + 1)\n"
     );
     for (name, after, refused) in [
         (
             "alone-const-limit",
             before.replace("LIMIT = 5", "LIMIT = 10"),
             &[
+                "/called_self_sum",
                 "/chosen",
+                "/datum/p/r/g",
                 "/either",
                 "/negated",
                 "/output_sum",

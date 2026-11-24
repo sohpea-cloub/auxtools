@@ -2162,6 +2162,7 @@ fn read_alone(s: &Snapshot, value: &ProcValue) -> HashSet<usize> {
                 }
                 let args: &[Expression] = match &term.elem {
                     Term::Call(name, args) if !builtin(name.as_str()) => args,
+                    Term::ParentCall(args) | Term::SelfCall(args) => args,
                     Term::List(args) | Term::Alist(args) => args,
                     Term::NewImplicit { args: Some(args) }
                     | Term::NewPrefab {

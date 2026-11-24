@@ -202,3 +202,8 @@ var/const/DEP_SCOPED_BASE = 5
 
 /datum/dep_scoped_config
 	var/const/DEP_SCOPED = 5
+
+var/const/DEP_PARENT = 5
+
+/datum/dep_parent/proc/f(x)
+	return x

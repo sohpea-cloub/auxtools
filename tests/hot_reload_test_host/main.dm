@@ -228,3 +228,11 @@ var/hr_tally = 100
 /proc/dep_typed_limit(datum/dep_scoped_config/config)
 	var/const/DEP_TYPED_LIMIT = config.DEP_SCOPED + 1
 	return DEP_TYPED_LIMIT
+
+/datum/dep_parent/child/f(x)
+	var/last = /datum/dep_twice::f()
+	return last ? ..(DEP_PARENT) : 0
+
+/proc/dep_self(x)
+	var/last = /datum/dep_twice::f()
+	return x || !last ? x : .(DEP_PARENT)
