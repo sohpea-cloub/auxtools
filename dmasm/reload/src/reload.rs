@@ -24,7 +24,7 @@ pub use reparent::{Reparented, ReparentedType};
 mod global_init;
 pub mod locals;
 mod resources;
-pub use global_init::GlobalInit;
+pub use global_init::{GlobalInit, StaticOwner};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]

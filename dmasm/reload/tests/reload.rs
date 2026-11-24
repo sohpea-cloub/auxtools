@@ -5049,3 +5049,33 @@ fn a_static_moved_into_a_block_changes_what_a_later_initializer_reads() {
         Err(e) => assert!(e.contains("static initializers"), "{e}"),
     }
 }
+
+#[test]
+fn a_global_init_names_the_override_whose_static_each_initializer_sets() {
+    let before = "var/rolled = rand(1, 2)\n\n\
+                  /datum/t/proc/f()\n\treturn 0\n\n\
+                  /datum/t/f()\n\tvar/static/list/cache = list(1)\n\treturn cache[1]\n\n\
+                  /datum/t/f()\n\tvar/static/list/cache = list(2)\n\treturn ..() + cache[1]\n";
+    let after = before.replace("list(2)", "list(3)");
+    let changes = changes("override-static-owners", before, &after);
+    let init = changes.global_init.as_ref().expect("no global init");
+    let owners: Vec<String> = init
+        .owners
+        .iter()
+        .map(|owner| match owner {
+            Some(owner) => format!("{} {:?}", owner.proc, owner.statics),
+            None => "-".to_owned(),
+        })
+        .collect();
+    assert_eq!(global_init_sets(&changes).len(), owners.len());
+    assert_eq!(
+        owners,
+        [
+            "-",
+            "/datum/t/f (override 1) {\"cache\": 1}",
+            "/datum/t/f (override 2) {\"cache\": 1}",
+        ]
+    );
+    let first = init.without(|var| var.name.0 == b"rolled");
+    assert_eq!(first.owners, init.owners[1..]);
+}

@@ -20,6 +20,30 @@ pub struct GlobalInit {
     pub table: usize,
     #[cfg_attr(feature = "serde", serde(default))]
     pub proc_statics: BTreeMap<String, BTreeMap<String, usize>>,
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub owners: Vec<Option<StaticOwner>>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct StaticOwner {
+    pub proc: super::ProcKey,
+    pub statics: BTreeMap<String, usize>,
+}
+
+fn owners<'a>(
+    set: impl Iterator<Item = &'a Initializer<'a>>,
+    world_key: impl Fn(&super::ProcKey) -> Option<super::ProcKey>,
+) -> Vec<Option<StaticOwner>> {
+    set.map(|init| {
+        let proc = world_key(init.proc.as_ref()?)?;
+        let mut statics = BTreeMap::new();
+        for name in &init.proc_static_names {
+            *statics.entry(name.clone()).or_default() += 1;
+        }
+        Some(StaticOwner { proc, statics })
+    })
+    .collect()
 }
 
 fn proc_statics<'a>(
@@ -336,6 +360,9 @@ impl Snapshot {
             },
             table: 0,
             proc_statics: proc_statics(all.iter().filter(|i| i.constant.is_none())),
+            owners: owners(all.iter().filter(|i| i.constant.is_none()), |key| {
+                Some(key.clone())
+            }),
         })
     }
 
@@ -1750,6 +1777,13 @@ pub(super) fn compare(
             .map(|(init, _)| *init)
             .chain(after.iter().filter(|i| i.constant.is_none())),
     );
+    let owners = owners(
+        table
+            .iter()
+            .map(|(init, _)| *init)
+            .chain(after.iter().filter(|i| i.constant.is_none())),
+        |key| r.old_key(key),
+    );
     let runs = table.into_iter().chain(
         after
             .iter()
@@ -1782,6 +1816,7 @@ pub(super) fn compare(
         },
         table: table_vars,
         proc_statics,
+        owners,
     });
 }
 
@@ -1790,6 +1825,7 @@ impl GlobalInit {
         let mut out = self.clone();
         out.code.nodes = vec![];
         out.table = 0;
+        out.owners = vec![];
         let (mut span, mut sets) = (vec![], 0);
         for node in &self.code.nodes {
             span.push(node.clone());
@@ -1798,6 +1834,9 @@ impl GlobalInit {
                     span.retain(|n| matches!(n, Node::Instruction(Instruction::DbgFile(_), _)));
                 } else {
                     out.table += usize::from(sets < self.table);
+                    if !self.owners.is_empty() {
+                        out.owners.push(self.owners.get(sets).cloned().flatten());
+                    }
                 }
                 out.code.nodes.append(&mut span);
                 sets += 1;

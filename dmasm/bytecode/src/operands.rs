@@ -15,6 +15,8 @@ pub trait Operand: Sized {
     fn serialize(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result;
 
     fn variables<'a>(&'a self, _out: &mut Vec<&'a Variable>) {}
+
+    fn variables_mut<'a>(&'a mut self, _out: &mut Vec<&'a mut Variable>) {}
 }
 
 impl Operand for u32 {
@@ -800,10 +802,29 @@ impl Variable {
             _ => vec![],
         }
     }
+
+    pub fn globals_mut(&mut self) -> Vec<&mut GlobalVar> {
+        match self {
+            Self::Global(global) => vec![global],
+            Self::SetCache(a, b) => {
+                let mut globals = a.globals_mut();
+                globals.extend(b.globals_mut());
+                globals
+            }
+            Self::Initial(v) | Self::IsSaved(v) | Self::PtrRef(v) | Self::PtrDeref(v) => {
+                v.globals_mut()
+            }
+            _ => vec![],
+        }
+    }
 }
 
 impl Operand for Variable {
     fn variables<'a>(&'a self, out: &mut Vec<&'a Variable>) {
+        out.push(self);
+    }
+
+    fn variables_mut<'a>(&'a mut self, out: &mut Vec<&'a mut Variable>) {
         out.push(self);
     }
 

@@ -4,14 +4,14 @@ use dmasm::{
 	diagnostic::{Diagnostic, Id},
 	reload::{
 		BuiltinInherited, ConstValue, GlobalInit, InList, InitProc, LineMove, NewProc, NewType, NewVar, Param, Plan, ProcKey, ProcReload,
-		ProcSettings, Redeclared, RemovedProc, RemovedVar, Reparented, ReparentedType, SettingsChange, StaticVar, VarDefault
+		ProcSettings, Redeclared, RemovedProc, RemovedVar, Reparented, ReparentedType, SettingsChange, StaticOwner, StaticVar, VarDefault
 	},
 	DMString, GlobalVar, Instruction, Label, Node, StaticScope, Value, Variable
 };
 
 use crate::{HotReloadRequest, HotReloadResource, LocalReads, ParsedReads, ShadowingProc, PROTOCOL_VERSION};
 
-const RECORDED: (u32, u64) = (15, 0xAF81_57D0_BEE2_CB9C);
+const RECORDED: (u32, u64) = (15, 0x64D8_9499_08FC_8503);
 
 fn key(path: &str, override_id: u32) -> ProcKey {
 	ProcKey {
@@ -214,7 +214,14 @@ fn sample() -> HotReloadRequest {
 		global_init: Some(GlobalInit {
 			code: code("(global init)"),
 			table: 1,
-			proc_statics: BTreeMap::from([("/datum/a/proc/f".to_owned(), BTreeMap::from([("seen".to_owned(), 2)]))])
+			proc_statics: BTreeMap::from([("/datum/a/proc/f".to_owned(), BTreeMap::from([("seen".to_owned(), 2)]))]),
+			owners: vec![
+				None,
+				Some(StaticOwner {
+					proc: key("/datum/a/f", 1),
+					statics: BTreeMap::from([("seen".to_owned(), 2)])
+				}),
+			]
 		}),
 		shadowing_procs: vec![ShadowingProc {
 			global: "total".to_owned(),

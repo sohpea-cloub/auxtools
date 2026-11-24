@@ -937,7 +937,7 @@ fn prepare_global_init(
 			NAME
 		));
 	}
-	let code = value_code(init.code.clone());
+	let code = value_code(owned_slots(init, world_globals).code);
 	let Some(proc) = global_init_proc() else {
 		let known = global_slots(&code, &init.proc_statics, pending, added, world_globals);
 		let bytecode = assemble_with(NAME, &code, None, known, pending, world_globals, added)?;
@@ -980,12 +980,14 @@ pub fn early_global_init(init: &dmasm::reload::GlobalInit, rest: &HotReloadReque
 		const_values: vec![],
 		proc_locals: vec![]
 	};
+	let mut world_globals = WorldGlobals::default();
+	let init = owned_slots(init, &mut world_globals);
 	let code = value_code(init.code.clone());
-	let known = global_slots(&code, &init.proc_statics, &Pending::default(), &added, &mut WorldGlobals::default());
+	let known = global_slots(&code, &init.proc_statics, &Pending::default(), &added, &mut world_globals);
 	let mut left = 0;
 	let init = init.without(|var| {
 		let key = (var.scope.clone().unwrap_or_default(), var.name.0.clone());
-		let leave = later.contains(&key) && !known.contains_key(&key);
+		let leave = var.id.is_none() && later.contains(&key) && !known.contains_key(&key);
 		left += usize::from(leave);
 		leave
 	});
@@ -1007,7 +1009,7 @@ fn global_slots(
 				file = name.0.clone();
 				continue;
 			}
-			Node::Instruction(dmasm::Instruction::SetVar(dmasm::Variable::Global(global)), _) => global,
+			Node::Instruction(dmasm::Instruction::SetVar(dmasm::Variable::Global(global)), _) if global.id.is_none() => global,
 			_ => continue
 		};
 		let (scope, name) = (global.scope.clone().unwrap_or_default(), global.name.0.clone());
@@ -1057,6 +1059,47 @@ fn global_slots(
 		}
 	}
 	known
+}
+
+fn owned_slots(init: &dmasm::reload::GlobalInit, world_globals: &mut WorldGlobals) -> dmasm::reload::GlobalInit {
+	let mut init = init.clone();
+	let dmasm::reload::GlobalInit { code, owners, .. } = &mut init;
+	let mut set = 0;
+	for node in &mut code.nodes {
+		let Node::Instruction(ins, _) = node else {
+			continue;
+		};
+		let ends = matches!(ins, dmasm::Instruction::SetVar(dmasm::Variable::Global(_)));
+		if let Some(Some(owner)) = owners.get(set) {
+			for var in ins.variables_mut() {
+				for global in var.globals_mut() {
+					if let (None, Some(StaticScope::Proc { nth, .. })) = (global.id, &global.scope) {
+						global.id = owned_slot(owner, *nth, &global.name.0, world_globals);
+					}
+				}
+			}
+		}
+		set += usize::from(ends);
+	}
+	init
+}
+
+fn owned_slot(owner: &dmasm::reload::StaticOwner, nth: u32, name: &[u8], world_globals: &mut WorldGlobals) -> Option<u32> {
+	let proc = find(&owner.proc).ok()?;
+	if let Some(id) = world_globals.globals_of(&proc).local(name, nth) {
+		return Some(id);
+	}
+	let declared = *owner.statics.get(String::from_utf8_lossy(name).as_ref())?;
+	let uses = world_globals.of(&proc);
+	if let Some(named) = uses.by_name().remove(name).filter(|named| named.len() == declared) {
+		return named.get(nth as usize).copied();
+	}
+	let (file, first, last) = uses.place()?;
+	let ids: BTreeSet<u32> = (world_globals.initialized().iter())
+		.filter(|(at, global, line, _)| *at == file && global == name && (first..=last).contains(line))
+		.map(|(.., id)| *id)
+		.collect();
+	(ids.len() == 1).then(|| ids.first().copied()).flatten()
 }
 
 fn global_init_proc() -> Option<Proc> {

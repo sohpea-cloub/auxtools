@@ -108,6 +108,18 @@ macro_rules! instructions {
                 out
             }
 
+            pub fn variables_mut(&mut self) -> Vec<&mut Variable> {
+                let mut out = vec![];
+                match self {
+                    $(
+                        Self::$name$( ( $( $operand_name, )* ) )? => {
+                            $( $( $operand_name.variables_mut(&mut out); )* )?
+                        }
+                    )*
+                }
+                out
+            }
+
             pub fn assemble<'a, E: AssembleEnv>(&'a self, asm: &mut Assembler<'a, E>) -> Result<(), AssembleError> {
                 match self {
                     $(
