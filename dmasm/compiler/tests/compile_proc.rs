@@ -642,6 +642,26 @@ fn a_call_after_a_safe_index_keeps_the_indexed_item_as_its_receiver() {
         assert_has(&code, &["ListGet", "SetVar cache", "PushCache"]);
         assert_has(&code, &[call, "PopCache"]);
     }
+    let types = "/datum/item\n\tvar/datum/item/owner\n/datum/item/proc/refresh(a)\n\treturn a\n";
+    for (body, args) in [
+        ("return items?[1]:owner:refresh()", ""),
+        ("return items?[1].owner.refresh()", ""),
+        ("items?[1]:owner:refresh(x)", "GetVar arg(1)\n"),
+    ] {
+        let code = compile(
+            &format!("{types}/proc/f(list/items, x)\n\t{body}\n"),
+            "",
+            "f",
+        );
+        let count = if args.is_empty() { 0 } else { 1 };
+        assert_has(
+            &code,
+            &[&format!(
+                "ListGet\nSetVar cache\nPushCache\n{args}PopCache\n\
+                 Call cache = cache[\"owner\"]; dynamic_proc(\"refresh\") {count}\nPopCache"
+            )],
+        );
+    }
 }
 
 #[test]

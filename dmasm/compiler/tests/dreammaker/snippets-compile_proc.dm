@@ -1120,6 +1120,21 @@ var/const/LIMIT = 10
 /proc/f6(datum/base/sub/base)
 	return base?:COUNT
 // Guards: a_call_after_a_safe_index_keeps_the_indexed_item_as_its_receiver (compile_proc.rs)
+/datum/item
+	var/datum/item/owner
+/datum/item/proc/refresh(a)
+	return a
+/proc/f1(list/items)
+	return items?[1]:owner:refresh()
+/proc/f2(list/items)
+	return items?[1].owner.refresh()
+/proc/f3(list/items, x)
+	items?[1]:owner:refresh(x)
+/proc/f4(list/items)
+	return items?[1]:owner:owner:refresh()
+/proc/f5(list/items)
+	return items?[1]:owner:refresh(items?[2]:owner:refresh())
+// Guards: a_call_after_a_safe_index_keeps_the_indexed_item_as_its_receiver (compile_proc.rs)
 /datum/item/proc/refresh(a)
 	return a
 /datum/holder

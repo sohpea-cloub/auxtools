@@ -611,8 +611,11 @@ fn emit_safe_inner<'a>(
             Follow::Call(access, ident, args) if !called => {
                 called = true;
                 (ty, after) = super::procs::call_result(compiler, receiver_ty, access, &ident);
+                let rooted_in_value =
+                    !field_buffer.is_empty() && matches!(kind, EvalKind::Stack | EvalKind::ListRef);
                 kind = commit_field_buffer(compiler, kind, &mut field_buffer)?;
-                let computed = !matches!(kind, EvalKind::Var(_) | EvalKind::Field(..));
+                let computed =
+                    rooted_in_value || !matches!(kind, EvalKind::Var(_) | EvalKind::Field(..));
                 let builder = match kind {
                     EvalKind::Var(var) => ChainBuilder::begin(var),
                     EvalKind::Field(mut builder, field) => {
