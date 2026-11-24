@@ -24,6 +24,9 @@ pub(super) struct Retargeted<'s> {
 }
 
 fn resolve(s: &Snapshot, path: &str) -> Option<ProcKey> {
+    if let Some((ty, name)) = path.split_once("::") {
+        return last_definition(s, ty, name);
+    }
     if s.tree.find(path).is_some() {
         return None;
     }
@@ -45,12 +48,36 @@ fn resolve(s: &Snapshot, path: &str) -> Option<ProcKey> {
     })
 }
 
-fn forms(ty: &str, name: &str) -> [String; 3] {
-    [
+fn last_definition(s: &Snapshot, ty: &str, name: &str) -> Option<ProcKey> {
+    let t = s.find_type(ty)?;
+    let values = real(t, name);
+    let declaration = declaration_index(t, name, &values);
+    let verb = t
+        .get()
+        .procs
+        .get(name)?
+        .declaration
+        .as_ref()
+        .is_some_and(|d| d.kind == dreammaker::ast::ProcDeclKind::Verb);
+    let index = (0..values.len())
+        .rev()
+        .find(|&i| !verb || Some(i) != declaration)?;
+    Some(ProcKey {
+        path: proc_path(t, name),
+        override_id: index as u32,
+    })
+}
+
+fn forms(ty: &str, name: &str) -> Vec<String> {
+    let mut forms = vec![
         format!("{ty}/{name}"),
         format!("{ty}/proc/{name}"),
         format!("{ty}/verb/{name}"),
-    ]
+    ];
+    if !ty.is_empty() {
+        forms.push(format!("{ty}::{name}"));
+    }
+    forms
 }
 
 pub(super) fn retargeted<'s>(

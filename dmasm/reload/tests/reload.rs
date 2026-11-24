@@ -3897,3 +3897,42 @@ fn uncompiled_code_naming_another_types_path_of_the_same_name_is_not_refused() {
     let changes = changes("retargeted-other-uncompiled", before, &removed);
     assert_eq!(reloaded(&changes), []);
 }
+
+#[test]
+fn unchanged_code_naming_a_types_last_definition_follows_it() {
+    let before =
+        "/datum/t/proc/f()\n\treturn 0\n\n/datum/t/f()\n\treturn 1\n\n/datum/t/f()\n\treturn 2\n\n\
+                  /proc/calls()\n\treturn call(new /datum/t, /datum/t::f())()\n\n\
+                  /datum/names\n\tvar/said = /datum/t::f()\n";
+    let removed = before.replace("/datum/t/f()\n\treturn 2\n\n", "");
+    let changes = changes("last-removed", before, &removed);
+    assert_eq!(reloaded(&changes), [key("/calls", 0)]);
+    let code = dmasm_bytecode::format(&changes.plan.reloads[0].nodes);
+    assert!(code.contains("PushVal /datum/t/f\n"), "{}", code);
+    let defaults: Vec<(&str, &ConstValue, &[String])> = changes
+        .plan
+        .var_defaults
+        .iter()
+        .map(|d| (d.var.as_str(), &d.value, d.types.as_slice()))
+        .collect();
+    assert_eq!(
+        defaults,
+        [(
+            "said",
+            &ConstValue::Path("/datum/t/f".to_owned()),
+            &["/datum/names".to_owned()][..]
+        )]
+    );
+
+    let changes = changes_of("last-appended", &removed, before);
+    let refused: Vec<String> = changes.refused.iter().map(|r| format!("{r:#}")).collect();
+    assert_eq!(
+        refused,
+        [
+            "/datum/names: initializer compilation failed: line 14: unsupported statement: type::proc() \
+          that names a type's second or later override",
+            "/calls: names a proc whose definitions change, so it must be compiled again, but it \
+          doesn't compile: unsupported statement: type::proc() that names a type's second or later override"
+        ]
+    );
+}

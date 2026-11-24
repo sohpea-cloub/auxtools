@@ -176,3 +176,9 @@ var/datum/declared/declared_one = new
 
 /datum/names_gone
 	var/gone_said = /datum/gone/proc/speak
+
+/proc/calls_last_unchanged()
+	return call(new /datum/last, /datum/last::speak())()
+
+/datum/names_last
+	var/said = /datum/last::speak()

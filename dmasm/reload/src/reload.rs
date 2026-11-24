@@ -2949,7 +2949,10 @@ fn compare_types(
                         var_default(old, new, path, name.as_str(), false, changes);
                     }
                 }
-                Some(old_var) if old_var.value.expression != var.value.expression => {
+                Some(old_var)
+                    if old_var.value.expression != var.value.expression
+                        || old_var.value.constant != var.value.constant =>
+                {
                     var_default(old, new, path, name.as_str(), false, changes);
                 }
                 Some(old_var)

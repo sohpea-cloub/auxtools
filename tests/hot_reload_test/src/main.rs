@@ -2183,6 +2183,16 @@ fn definitions(built: Built) {
 	assert_eq!(eval(&mut client, "calls_picker()"), "\"override\"");
 	println!("ok: type::proc() of a verb added with its override names the override");
 
+	assert_eq!(eval(&mut client, "calls_last_unchanged()"), "\"last override\"");
+	let changes = source.edit("reload.dm", "/datum/last/speak()\n\treturn \"last override\"\n", "");
+	reload(&mut watcher, &changes);
+	assert_eq!(eval(&mut client, "calls_last_unchanged()"), "\"first override\"");
+	assert_eq!(
+		eval(&mut client, "call(new /datum/last, (new /datum/names_last).said)()"),
+		"\"first override\""
+	);
+	println!("ok: unchanged type::proc() names the last definition left after a removal");
+
 	let changes = source.edit("reload.dm", "/datum/lone/speak()\n\treturn \"lone override\"\n", "");
 	let result = expect_reload_result(watcher.request(reload_request(&changes)));
 	assert!(
