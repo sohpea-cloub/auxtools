@@ -992,8 +992,9 @@ impl Snapshot {
         Ok(contents)
     }
 
-    pub fn from_tree(ctx: Context, tree: ObjectTree) -> Snapshot {
+    pub fn from_tree(ctx: Context, mut tree: ObjectTree) -> Snapshot {
         crate::compiler::new_tree();
+        crate::compiler::resolve_proc_references(&mut tree);
         let mut procs = BTreeMap::new();
         for ty in tree.iter_types() {
             for name in ty.get().procs.keys() {

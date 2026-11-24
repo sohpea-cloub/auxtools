@@ -2163,8 +2163,21 @@ fn definitions(built: Built) {
 
 	let changes = source.edit(
 		"reload.dm",
+		"/datum/holder\n",
+		"/datum/holder\n\tvar/handler = /datum/handled::respond()\n"
+	);
+	reload(&mut watcher, &changes);
+	assert_eq!(
+		eval(&mut client, "call(new /datum/handled, (new /datum/holder).handler)()"),
+		"\"override\""
+	);
+	println!("ok: a new var's default of type::proc() names the proc DreamMaker gives");
+
+	let changes = source.edit(
+		"reload.dm",
 		"/obj/picker\n",
-		"/obj/picker/pick_one()\n\treturn \"override\"\n\n/obj/picker/verb/pick_one()\n\treturn \"verb\"\n\n/proc/calls_picker()\n\treturn call(new /obj/picker, /obj/picker::pick_one())()\n"
+		"/obj/picker/pick_one()\n\treturn \"override\"\n\n/obj/picker/verb/pick_one()\n\treturn \"verb\"\n\n/proc/calls_picker()\n\treturn call(new \
+		 /obj/picker, /obj/picker::pick_one())()\n"
 	);
 	reload(&mut watcher, &changes);
 	assert_eq!(eval(&mut client, "calls_picker()"), "\"override\"");

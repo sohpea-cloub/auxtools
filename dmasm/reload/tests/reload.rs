@@ -1115,6 +1115,34 @@ fn new_vars_and_their_overrides() {
 }
 
 #[test]
+fn a_new_var_names_the_proc_dreammaker_gives_for_type_proc() {
+    let before = "/datum/t/proc/f()\n/datum/t/f()\n/datum/t/c\n/datum/u\n";
+    let after = "/datum/t/proc/f()\n/datum/t/f()\n/datum/t/c\n/datum/u\n\tvar/handler = /datum/t::f()\n\tvar/child = /datum/t/c::f()\n";
+    let changes = changes("new-var-proc-reference", before, after);
+    assert!(changes.refused.is_empty(), "{:?}", changes.refused);
+    let mut values: Vec<(String, ConstValue)> = changes
+        .plan
+        .new_vars
+        .iter()
+        .map(|v| (v.var.clone(), v.value.clone()))
+        .collect();
+    values.sort_by(|a, b| a.0.cmp(&b.0));
+    assert_eq!(
+        values,
+        [
+            (
+                "child".to_owned(),
+                ConstValue::Path("/datum/t/f".to_owned())
+            ),
+            (
+                "handler".to_owned(),
+                ConstValue::Path("/datum/t/f".to_owned())
+            ),
+        ]
+    );
+}
+
+#[test]
 fn removing_an_override_goes_back_to_the_inherited_default() {
     let before = "/datum/a\n\tvar/x = 1\n/datum/a/b\n\tx = 2\n";
     let after = "/datum/a\n\tvar/x = 1\n/datum/a/b\n";

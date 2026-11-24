@@ -271,3 +271,11 @@ var/mob/helper/small/old_helper = new
 	return "lone override"
 
 /obj/picker
+
+/datum/handled/proc/respond()
+	return "declaration"
+
+/datum/handled/respond()
+	return "override"
+
+/datum/holder

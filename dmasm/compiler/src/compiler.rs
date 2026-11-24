@@ -17,7 +17,7 @@ mod statements;
 
 pub use procs::{compile_proc, ByondBug, CompiledProc, ProcSource, StaticLocal};
 pub use procs::{compile_proc_as, labels_mut, new_tree, proc_path};
-pub use procs::{definition_order, definition_order_at};
+pub use procs::{definition_order, definition_order_at, resolve_proc_references, type_proc_path};
 
 mod args;
 mod binary_ops;

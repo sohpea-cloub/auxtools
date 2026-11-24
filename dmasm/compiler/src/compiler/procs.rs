@@ -905,26 +905,96 @@ pub(super) fn emit_type_scope(
             Ok(EvalKind::Stack)
         }
         Follow::ProcReference(name) => {
-            let mut current = Some(ty);
-            let mut found = None;
-            while let Some(t) = current {
-                if t.get().procs.contains_key(name.as_str()) {
-                    if !t.is_root() {
-                        found = last_definition(t, name.as_str())?;
-                    }
-                    break;
-                }
-                current = t.parent_type();
-            }
-            let proc_path = found
-                .or_else(|| resolve_proc_path(compiler, &format!("{}.proc/{}", path, name)))
-                .ok_or(CompileError::UnsupportedStatement("::"))?;
+            let proc_path = type_proc_path(ty, name.as_str())?;
             compiler.emit_ins(Instruction::PushVal(crate::operands::Value::Path(
                 proc_path,
             )));
             Ok(EvalKind::Stack)
         }
         _ => unreachable!(),
+    }
+}
+
+pub fn type_proc_path(ty: TypeRef, name: &str) -> Result<String, CompileError> {
+    let mut current = Some(ty);
+    while let Some(t) = current {
+        if t.get().procs.contains_key(name) {
+            if !t.is_root() {
+                if let Some(found) = last_definition(t, name)? {
+                    return Ok(found);
+                }
+            }
+            break;
+        }
+        current = t.parent_type();
+    }
+    let mut current = Some(ty);
+    while let Some(t) = current {
+        if t.get()
+            .procs
+            .get(name)
+            .is_some_and(|p| p.declaration.is_some())
+        {
+            let prefix = if t.is_root() {
+                ""
+            } else {
+                t.get().path.as_str()
+            };
+            return Ok(format!("{}/proc/{}", prefix, name));
+        }
+        current = t.parent_type();
+    }
+    match ty.tree().root().get().procs.contains_key(name) {
+        true => Ok(format!("/proc/{}", name)),
+        false => Err(CompileError::UnsupportedStatement("::")),
+    }
+}
+
+pub fn resolve_proc_references(tree: &mut ObjectTree) {
+    use dreammaker::ast::{Expression, Follow, Term};
+    let mut found = vec![];
+    for ty in tree.iter_types() {
+        for (var_name, var) in ty.get().vars.iter() {
+            let Some(Expression::Base { term, follow }) = &var.value.expression else {
+                continue;
+            };
+            let [follow] = &follow[..] else {
+                continue;
+            };
+            let Follow::ProcReference(name) = &follow.elem else {
+                continue;
+            };
+            let mut term = &term.elem;
+            while let Term::Expr(inner) = term {
+                match &**inner {
+                    Expression::Base {
+                        term: inner,
+                        follow,
+                    } if follow.is_empty() => term = &inner.elem,
+                    _ => break,
+                }
+            }
+            let Term::Prefab(prefab) = term else {
+                continue;
+            };
+            if !prefab.vars.is_empty() {
+                continue;
+            }
+            let Some(on) = tree.find(&prefab.path.to_string()) else {
+                continue;
+            };
+            let constant = type_proc_path(on, name.as_str()).ok().map(|path| {
+                dreammaker::constants::Constant::Prefab(Box::new(
+                    dreammaker::ast::AbsolutePath::from(path.as_str()).into(),
+                ))
+            });
+            found.push((ty.index(), var_name.clone(), constant));
+        }
+    }
+    for (ty, name, constant) in found {
+        if let Some(var) = tree[ty].vars.get_mut(&name) {
+            var.value.constant = constant;
+        }
     }
 }
 
