@@ -1315,6 +1315,9 @@ impl<'a> Walk<'a> {
                 Term::__TYPE__ => self.types.contains(&t.index().index()),
                 Term::Ident(name) => self.value_set(init, name, false, finishing),
                 Term::GlobalIdent(name) => self.value_set(init, name, true, finishing),
+                Term::NewMiniExpr { expr, .. } => {
+                    self.value_set(init, &expr.ident, false, finishing)
+                }
                 Term::Call(name, _) => call(name, false),
                 Term::GlobalCall(name, _) => call(name, true),
                 Term::Prefab(prefab) | Term::NewPrefab { prefab, .. } => {

@@ -5443,6 +5443,31 @@ fn a_static_moved_into_a_block_changes_the_type_a_later_initializer_makes() {
 }
 
 #[test]
+fn an_initializer_that_makes_a_computed_kind_waits_for_it() {
+    let before = "var/global_kind = choose_kind()\nvar/global_item = new global_kind()\n\n\
+                  /proc/made()\n\tvar/static/kind = choose_kind()\n\
+                  \tvar/static/item = new kind()\n\treturn item\n\n\
+                  /proc/choose_kind()\n\treturn /datum/a\n\n/datum/a\n";
+    let after = before
+        .replace("item = new kind()", "item = new kind(1)")
+        .replace("item = new global_kind()", "item = new global_kind(1)");
+    let changes = changes("computed-kind", before, &after);
+    assert!(changes.refused.is_empty(), "{:?}", changes.refused);
+    let sets = global_init_sets(&changes);
+    let at = |name: &str| {
+        sets.iter()
+            .position(|set| set.contains(&format!(":{name} @")))
+            .unwrap_or_else(|| panic!("{name} isn't set: {sets:?}"))
+    };
+    assert!(at("kind") < at("item"), "item before its kind: {:?}", sets);
+    assert!(
+        at("global_kind") < at("global_item"),
+        "global_item before its kind: {:?}",
+        sets
+    );
+}
+
+#[test]
 fn a_global_init_names_the_override_whose_static_each_initializer_sets() {
     let before = "var/rolled = rand(1, 2)\n\n\
                   /datum/t/proc/f()\n\treturn 0\n\n\

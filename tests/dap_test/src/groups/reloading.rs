@@ -1129,6 +1129,46 @@ fn static_made_by_new_of_a_static_moved_into_a_block() {
 	world.end();
 }
 
+const COMPUTED_KINDS: &str = "/proc/rb_computed_kind_made()
+	var/static/rb_computed_kind = rb_computed_kind_chosen()
+	var/static/rb_computed_item = new rb_computed_kind()
+	return \"[rb_computed_item:type]\"
+
+/proc/rb_computed_kind_chosen()
+	return /datum/rb_computed_kind
+
+/datum/rb_computed_kind
+";
+
+fn static_made_by_new_of_a_computed_static() {
+	let dir = copy_of_the_world("static_made_by_new_of_a_computed_static");
+	std::fs::write(dir.join("computed_kinds.dm"), COMPUTED_KINDS).unwrap();
+	let dme = dir.join("dap_test_host.dme");
+	let text = std::fs::read_to_string(&dme).unwrap() + "#include \"computed_kinds.dm\"\n";
+	std::fs::write(&dme, text).unwrap();
+	paths::compile(&dme);
+
+	let mut world = World::launch_in(dir.to_path_buf(), json!({ "hotReload": true }));
+	world.catch_runtimes(false);
+	world.configure();
+	world.wait_output("Hot reload active");
+	assert_eq!(world.eval_global("rb_computed_kind_made()"), "\"/datum/rb_computed_kind\"");
+	let held = |output: &str| output.matches("Hot reload requires a reboot:").count();
+	let settled = |output: &str| reloads(output) + held(output);
+	let before = settled(&world.output);
+	world.marks.edit("computed_kinds.dm", "new rb_computed_kind()", "new rb_computed_kind(1)");
+	world.wait_until("the edit's reload", |output| settled(output) > before);
+	reboot(&mut world, 2);
+	assert_eq!(
+		world.eval_global("rb_computed_kind_made()"),
+		"\"/datum/rb_computed_kind\"",
+		"the type that `new` made from a static set by a proc call after reboot:\n{}",
+		world.output
+	);
+	ok("proc static made by new of a static that a proc call sets, after reboot");
+	world.end();
+}
+
 const LOCAL_LIMIT: &str = "/proc/rb_local_limit()
 	var/const/LIMIT = 5
 	return \"[LIMIT] [LIMIT + 1]\"
@@ -1406,6 +1446,7 @@ pub fn files() {
 	static_gained_beside_a_global_of_its_name();
 	static_reading_through_a_retyped_static();
 	static_made_by_new_of_a_static_moved_into_a_block();
+	static_made_by_new_of_a_computed_static();
 	local_const_changed();
 	file_named_by_a_reload();
 	resource_files();
