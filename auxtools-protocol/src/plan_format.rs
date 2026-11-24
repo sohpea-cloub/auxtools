@@ -11,7 +11,7 @@ use dmasm::{
 
 use crate::{HotReloadRequest, HotReloadResource, LocalReads, ShadowingProc, PROTOCOL_VERSION};
 
-const RECORDED: (u32, u64) = (15, 0x261C_F0CA_2158_4DAC);
+const RECORDED: (u32, u64) = (15, 0x386D_726E_9E57_0529);
 
 fn key(path: &str, override_id: u32) -> ProcKey {
 	ProcKey {
@@ -218,7 +218,8 @@ fn sample() -> HotReloadRequest {
 		}),
 		shadowing_procs: vec![ShadowingProc {
 			global: "total".to_owned(),
-			proc: key("/datum/a/f", 1)
+			proc: key("/datum/a/f", 1),
+			reads: vec![None, Some(0)]
 		}],
 		local_reads: vec![LocalReads {
 			proc: key("/datum/a/f", 1),

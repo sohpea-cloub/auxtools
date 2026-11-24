@@ -53,3 +53,12 @@ var/ST_MIXED = 1
 	st_count++
 	if (/datum/st_twice::f())
 		return st_count
+
+var/const/ST_BOTH = 5
+
+/proc/st_both_root()
+	return ST_BOTH
+
+/proc/st_both()
+	var/static/ST_BOTH = 7
+	return list(ST_BOTH, global.ST_BOTH)

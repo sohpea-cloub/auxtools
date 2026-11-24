@@ -2,7 +2,6 @@ use std::path::PathBuf;
 
 use auxtools_protocol::{HotReloadRequest, LocalReads, ShadowingProc};
 use dmasm::{
-	compiler::definition_order,
 	diagnostic::Id,
 	reload::{Changes, Plan, ProcKey, Refusal, Snapshot},
 	Node, StaticScope
@@ -35,30 +34,34 @@ fn shadowing_procs(plan: &Plan, before: &Snapshot) -> Vec<ShadowingProc> {
 		return vec![];
 	}
 	let mut found = vec![];
-	for ty in before.tree().iter_types() {
-		for (name, proc) in ty.get().procs.iter() {
-			for (override_id, index) in definition_order(ty, name.as_str()).into_iter().enumerate() {
-				let Some(code) = proc.value.get(index).and_then(|value| value.code.as_deref()) else {
-					continue;
-				};
-				let mut declared = vec![];
-				static_locals(code, &mut declared);
-				let key = ProcKey {
-					path: format!("{}/{}", ty.get().path, name),
-					override_id: override_id as u32
-				};
-				for global in globals.iter().filter(|global| declared.iter().any(|name| name == *global)) {
-					let Ok(compiled) = before.compile(&key) else {
-						continue;
-					};
-					if !reads_global(&compiled.nodes, global) {
-						found.push(ShadowingProc {
-							global: global.to_string(),
-							proc: key.clone()
-						});
-					}
-				}
-			}
+	for key in before.procs() {
+		let Some(code) = before.proc_code(key) else {
+			continue;
+		};
+		let mut declared = vec![];
+		static_locals(code, &mut declared);
+		let shadowed: Vec<&str> = globals
+			.iter()
+			.copied()
+			.filter(|global| declared.iter().any(|name| name == global))
+			.collect();
+		if shadowed.is_empty() {
+			continue;
+		}
+		let Ok(compiled) = before.compile(key) else {
+			continue;
+		};
+		let reads = local_reads(&compiled.nodes);
+		for global in shadowed {
+			found.push(ShadowingProc {
+				global: global.to_owned(),
+				proc: key.clone(),
+				reads: reads
+					.iter()
+					.find(|(name, _)| name == global)
+					.map(|(_, reads)| reads.clone())
+					.unwrap_or_default()
+			});
 		}
 	}
 	found
@@ -115,19 +118,6 @@ fn statement_static_locals(statement: &Statement, out: &mut Vec<String>) {
 		}
 		_ => {}
 	}
-}
-
-fn reads_global(nodes: &[Node], name: &str) -> bool {
-	nodes.iter().any(|node| {
-		let Node::Instruction(ins, _) = node else {
-			return false;
-		};
-		ins.variables().iter().any(|var| {
-			var.globals()
-				.iter()
-				.any(|global| global.name.0 == name.as_bytes() && !matches!(global.scope, Some(StaticScope::Proc { .. })))
-		})
-	})
 }
 
 fn without_existing_statics(plan: &mut Plan, before: &Snapshot) -> Vec<LocalReads> {
@@ -512,8 +502,12 @@ mod tests {
 		let (old, changes) = edited("shadowing", before, &before.replace("N = 5", "N = 10"));
 		assert_eq!(changes.plan.redeclared.len(), 1, "{:?}", changes.plan);
 		let sent = request(&changes, &old, false);
-		let procs: Vec<(&str, &str)> = sent.shadowing_procs.iter().map(|p| (p.global.as_str(), p.proc.path.as_str())).collect();
-		assert_eq!(procs, [("N", "/b"), ("N", "/c")]);
+		let procs: Vec<String> = sent
+			.shadowing_procs
+			.iter()
+			.map(|p| format!("{} {} {:?}", p.global, p.proc.path, p.reads))
+			.collect();
+		assert_eq!(procs, ["N /b [Some(0)]", "N /c [Some(0)]", "N /d [Some(0), None]"]);
 	}
 
 	#[test]

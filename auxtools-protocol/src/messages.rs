@@ -792,7 +792,9 @@ pub struct LocalReads {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct ShadowingProc {
 	pub global: String,
-	pub proc: dmasm::reload::ProcKey
+	pub proc: dmasm::reload::ProcKey,
+	#[serde(default)]
+	pub reads: Vec<Option<u32>>
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]

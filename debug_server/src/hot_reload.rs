@@ -10,7 +10,7 @@ use auxtools::{
 	runtime_tables::{self, type_fields, ProcEntryWords, NONE},
 	shutdown, Proc, StringRef
 };
-use auxtools_protocol::{HotReloadRequest, Reloaded};
+use auxtools_protocol::{HotReloadRequest, Reloaded, ShadowingProc};
 use dmasm::{
 	assembler::AssembleEnv as _,
 	reload::{
@@ -521,7 +521,7 @@ pub fn prepare(request: &HotReloadRequest, warnings: &mut Vec<String>, skipped: 
 		}
 	}
 	for var in redeclared {
-		let shadowing: Vec<&ProcKey> = shadowing_procs.iter().filter(|p| p.global == var.var).map(|p| &p.proc).collect();
+		let shadowing: Vec<&ShadowingProc> = shadowing_procs.iter().filter(|p| p.global == var.var).collect();
 		if let Err(e) = prepare_redeclared(
 			var,
 			&shadowing,
@@ -2456,7 +2456,7 @@ fn moved_var_warning(declaring: &str, var: &str, kept: &[u32]) -> Option<String>
 
 fn prepare_redeclared(
 	var: &Redeclared,
-	shadowing: &[&ProcKey],
+	shadowing: &[&ShadowingProc],
 	added: &mut AddedVars,
 	type_vars: &mut TypeVars,
 	world_globals: &mut WorldGlobals,
@@ -2473,10 +2473,22 @@ fn prepare_redeclared(
 				let declared = type_vars.declared_now(type_id).map_err(fail)?;
 				ids.retain(|id| !declared.chunks(2).any(|pair| pair[0] == *id));
 			}
-			for proc in shadowing.iter().filter_map(|key| find(key).ok()) {
-				if let Some(local) = world_globals.of(&proc).by_name().get(var.var.as_bytes()) {
-					ids.retain(|id| !local.contains(id));
+			let mut global_reads = vec![];
+			for shadowing in shadowing {
+				let Ok(proc) = find(&shadowing.proc) else {
+					continue;
+				};
+				let read = world_globals.of(&proc).ids_of(var.var.as_bytes());
+				if shadowing.reads.iter().all(Option::is_some) {
+					ids.retain(|id| !read.contains(id));
+				} else if let Some((own, globals)) = ProcGlobals::told_apart(&read, &shadowing.reads) {
+					ids.retain(|id| !own.values().any(|own| own == id));
+					global_reads.extend(globals);
 				}
+			}
+			let read: Vec<u32> = ids.iter().copied().filter(|id| global_reads.contains(id)).collect();
+			if let [id] = read[..] {
+				ids = vec![id];
 			}
 		}
 		let [id] = ids[..] else {
@@ -3672,6 +3684,10 @@ impl GlobalUses {
 		out
 	}
 
+	fn ids_of(&self, name: &[u8]) -> Vec<u32> {
+		self.uses.iter().filter(|(_, used, ..)| used == name).map(|(.., id)| *id).collect()
+	}
+
 	fn place(&self) -> Option<(Vec<u8>, u32, u32)> {
 		let (first, last) = self.lines?;
 		Some((self.files.first()?.clone(), first, last))
@@ -3689,8 +3705,7 @@ impl ProcGlobals {
 		let mut by_name = uses.by_name();
 		let mut locals = HashMap::new();
 		for (name, reads) in local_reads {
-			let ids: Vec<u32> = uses.uses.iter().filter(|(_, used, ..)| used == name).map(|(.., id)| *id).collect();
-			match Self::told_apart(&ids, reads) {
+			match Self::told_apart(&uses.ids_of(name), reads) {
 				Some((own, globals)) => {
 					by_name.insert(name.clone(), globals);
 					locals.insert(name.clone(), own);

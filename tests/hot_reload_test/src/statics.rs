@@ -42,4 +42,11 @@ pub fn statics(built: Built) {
 	reload(&mut watcher, &changes);
 	assert_eq!(eval(&mut client, "st_counter()"), "3");
 	println!("ok: a static keeps its value when its proc's old code doesn't compile");
+
+	let both = "\"[st_both_root()] [st_both()[1]] [st_both()[2]]\"";
+	assert_eq!(eval(&mut client, both), "\"5 7 5\"");
+	let changes = source.edit("statics.dm", "ST_BOTH = 5", "ST_BOTH = 10");
+	reload(&mut watcher, &changes);
+	assert_eq!(eval(&mut client, both), "\"10 7 10\"");
+	println!("ok: a global const changes beside a proc that reads both it and a static of its name");
 }
