@@ -3,7 +3,7 @@ use dreammaker::ast::{BinaryOp, Expression, Follow, Term, UnaryOp};
 use super::Compiler;
 
 #[derive(Clone, Debug, PartialEq)]
-pub(super) enum Constant {
+pub enum Constant {
     Null,
     Number(f32),
     Text(Vec<u8>),

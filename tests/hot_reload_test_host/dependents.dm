@@ -135,3 +135,10 @@ var/const/DEP_OWN = 5
 /datum/dep_own/proc/next()
 	var/last = /datum/dep_twice::f()
 	return last ? DEP_OWN + 1 : 0
+
+/datum/dep_member_config
+	var/const/DEP_MEMBER = 5
+
+/proc/dep_member_chain(datum/dep_member_config/config)
+	var/last = /datum/dep_twice::f()
+	return last ? config.DEP_MEMBER + 1 : 0

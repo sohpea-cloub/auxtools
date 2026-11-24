@@ -1,6 +1,8 @@
 use std::collections::BTreeSet;
 
-use dreammaker::ast::{Case, Expression, Follow, Ident, PathOp, Prefab, Spanned, Statement, Term};
+use dreammaker::ast::{
+    Case, Expression, Follow, Ident, PathOp, Prefab, Spanned, Statement, Term, VarType,
+};
 
 use super::*;
 use crate::operands::{Proc, Value};
@@ -561,21 +563,31 @@ fn address<T>(node: &T) -> usize {
 }
 
 pub(super) fn local_reads(value: &ProcValue) -> HashSet<(usize, String)> {
+    local_read_types(value).into_keys().collect()
+}
+
+pub(super) fn local_read_types(value: &ProcValue) -> HashMap<(usize, String), String> {
     struct Locals<'a> {
-        scopes: Vec<Vec<&'a str>>,
-        reads: HashSet<(usize, String)>,
+        scopes: Vec<Vec<(&'a str, String)>>,
+        reads: HashMap<(usize, String), String>,
     }
 
     impl<'a> Locals<'a> {
         fn read(&mut self, at: usize, name: &str) {
-            if self.scopes.iter().any(|scope| scope.contains(&name)) {
-                self.reads.insert((at, name.to_owned()));
+            let declared = self
+                .scopes
+                .iter()
+                .rev()
+                .find_map(|scope| scope.iter().rev().find(|(n, _)| *n == name));
+            if let Some((_, ty)) = declared {
+                self.reads.insert((at, name.to_owned()), ty.clone());
             }
         }
 
-        fn declare(&mut self, name: &'a str) {
+        fn declare(&mut self, name: &'a str, ty: Option<&VarType>) {
             if let Some(scope) = self.scopes.last_mut() {
-                scope.push(name);
+                let ty = ty.map(|t| t.type_path.to_string()).unwrap_or_default();
+                scope.push((name, ty));
             }
         }
 
@@ -603,10 +615,10 @@ pub(super) fn local_reads(value: &ProcValue) -> HashSet<(usize, String)> {
             self.scopes.pop();
         }
 
-        fn target(&mut self, at: usize, declared: bool, name: &'a str) {
+        fn target(&mut self, at: usize, declared: Option<&VarType>, name: &'a str) {
             match declared {
-                true => self.declare(name),
-                false => self.read(at, name),
+                Some(ty) => self.declare(name, Some(ty)),
+                None => self.read(at, name),
             }
         }
 
@@ -657,15 +669,15 @@ pub(super) fn local_reads(value: &ProcValue) -> HashSet<(usize, String)> {
                 Statement::ForList(f) => {
                     self.scopes.push(vec![]);
                     self.optional(&f.in_list);
-                    self.target(at, f.var_type.is_some(), &f.name);
+                    self.target(at, f.var_type.as_ref(), &f.name);
                     self.block(&f.block);
                     self.scopes.pop();
                 }
                 Statement::ForKeyValue(f) => {
                     self.scopes.push(vec![]);
                     self.optional(&f.in_list);
-                    self.target(at, f.var_type.is_some(), &f.key);
-                    self.target(at, f.var_type.is_some(), &f.value);
+                    self.target(at, f.var_type.as_ref(), &f.key);
+                    self.target(at, f.var_type.as_ref(), &f.value);
                     self.block(&f.block);
                     self.scopes.pop();
                 }
@@ -674,18 +686,18 @@ pub(super) fn local_reads(value: &ProcValue) -> HashSet<(usize, String)> {
                     self.expression(&f.start);
                     self.expression(&f.end);
                     self.optional(&f.step);
-                    self.target(at, f.var_type.is_some(), &f.name);
+                    self.target(at, f.var_type.as_ref(), &f.name);
                     self.block(&f.block);
                     self.scopes.pop();
                 }
                 Statement::Var(var) => {
                     self.optional(&var.value);
-                    self.declare(&var.name);
+                    self.declare(&var.name, Some(&var.var_type));
                 }
                 Statement::Vars(vars) => {
                     for var in vars {
                         self.optional(&var.value);
-                        self.declare(&var.name);
+                        self.declare(&var.name, Some(&var.var_type));
                     }
                 }
                 Statement::Setting { value, .. } => self.expression(value),
@@ -723,7 +735,7 @@ pub(super) fn local_reads(value: &ProcValue) -> HashSet<(usize, String)> {
                     self.block(try_block);
                     self.scopes.push(vec![]);
                     if let Some(name) = catch_params.first().and_then(|path| path.iter().last()) {
-                        self.declare(name);
+                        self.declare(name, None);
                     }
                     self.block(catch_block);
                     self.scopes.pop();
@@ -734,10 +746,14 @@ pub(super) fn local_reads(value: &ProcValue) -> HashSet<(usize, String)> {
         }
     }
 
-    let parameters = value.parameters.iter().map(|p| p.name.as_str()).collect();
+    let parameters = value
+        .parameters
+        .iter()
+        .map(|p| (p.name.as_str(), p.var_type.type_path.to_string()))
+        .collect();
     let mut locals = Locals {
         scopes: vec![parameters],
-        reads: HashSet::new(),
+        reads: HashMap::new(),
     };
     for parameter in value.parameters.iter() {
         locals.optional(&parameter.default);

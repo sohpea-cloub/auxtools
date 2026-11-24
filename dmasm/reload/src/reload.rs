@@ -1977,7 +1977,7 @@ fn folds_changed(
     value: &ProcValue,
     consts: &HashSet<&str>,
 ) -> bool {
-    use dreammaker::ast::{Expression, Follow, Term};
+    use dreammaker::ast::{Expression, Follow, PropertyAccessKind, Spanned, Term};
     let bound_value = |s: &Snapshot, name: &str| {
         let at = s.find_type(ty)?;
         let (at, declaration) = match at.get_var_declaration(name) {
@@ -1998,7 +1998,42 @@ fn folds_changed(
     };
     let global_changed =
         |name: &str| consts.contains(name) && global_value(old, name) != global_value(new, name);
-    let locals = retargeted::local_reads(value);
+    let local_types = retargeted::local_read_types(value);
+    let chain_changed = |term: &Spanned<Term>, chain: &[Spanned<Follow>]| {
+        let Some(Follow::Field(_, name) | Follow::StaticField(name)) =
+            chain.last().map(|f| &f.elem)
+        else {
+            return false;
+        };
+        if !consts.contains(name.as_str()) {
+            return false;
+        }
+        let expression = Expression::Base {
+            term: Box::new(term.clone()),
+            follow: chain.to_vec().into_boxed_slice(),
+        };
+        let head = match &term.elem {
+            Term::Ident(head) => {
+                local_types.get(&(&term.elem as *const Term as usize, head.to_string()))
+            }
+            _ => None,
+        };
+        let locals: Vec<(&str, &str)> = match (&term.elem, head) {
+            (Term::Ident(name), Some(path)) => vec![(name.as_str(), path.as_str())],
+            _ => vec![],
+        };
+        let folded = |s: &Snapshot| {
+            crate::compiler::fold_in_proc(&s.tree, s.find_type(ty)?, &expression, &locals, s.byond)
+        };
+        let (before, after) = (folded(old), folded(new));
+        before != after
+            || before.is_none()
+                && matches!(
+                    chain.last().map(|f| &f.elem),
+                    Some(Follow::Field(PropertyAccessKind::Colon, _))
+                )
+    };
+    let locals: HashSet<(usize, String)> = local_types.keys().cloned().collect();
     let mut found = false;
     syntax::walk_proc(value, &mut |node| {
         found = found
@@ -2027,7 +2062,23 @@ fn folds_changed(
                             };
                             default(old) != default(new)
                         }
-                        _ => false,
+                        _ => {
+                            let field = |f: &Spanned<Follow>| {
+                                matches!(
+                                    f.elem,
+                                    Follow::Field(
+                                        PropertyAccessKind::Dot | PropertyAccessKind::Colon,
+                                        _
+                                    )
+                                )
+                            };
+                            let fields = follow.iter().take_while(|f| field(f)).count();
+                            let statics = follow
+                                .iter()
+                                .take_while(|f| matches!(f.elem, Follow::StaticField(_)))
+                                .count();
+                            chain_changed(term, &follow[..fields.max(statics)])
+                        }
                     }
                 }
                 _ => false,

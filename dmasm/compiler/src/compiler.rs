@@ -11,6 +11,7 @@ use crate::{ByondVersion, Node};
 
 mod assignment;
 mod fold;
+pub use fold::Constant as Folded;
 mod known_bugs;
 mod procs;
 mod statements;
@@ -1554,4 +1555,32 @@ pub fn fold_initializer(
         }
         fold::Constant::Path(_) | fold::Constant::New => return None,
     })
+}
+
+pub fn fold_in_proc(
+    tree: &dreammaker::objtree::ObjectTree,
+    ty: dreammaker::objtree::TypeRef,
+    expr: &Expression,
+    locals: &[(&str, &str)],
+    byond: ByondVersion,
+) -> Option<Folded> {
+    let value = proc_value(vec![]);
+    let source = procs::ProcSource {
+        tree,
+        ty,
+        name: "(fold)",
+        value: &value,
+        file: "",
+        debug_info: false,
+        index: None,
+        byond,
+        file_names: None,
+    };
+    let mut ctx = procs::proc_ctx(&source, vec![]);
+    for (name, path) in locals {
+        ctx.declare_typed_local(name, path.to_string());
+    }
+    let mut compiler = Compiler::new(vec![], ctx);
+    compiler.byond = byond;
+    fold::value(&compiler, expr).filter(|v| *v != Folded::New)
 }

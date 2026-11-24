@@ -4345,6 +4345,42 @@ fn uncompiled_code_folding_a_changed_const_is_refused() {
 }
 
 #[test]
+fn uncompiled_code_folding_a_changed_member_const_through_a_var_is_refused() {
+    let uncompiled = "\tswitch(x)\n\t\tif(x)\n\t\t\treturn 0\n";
+    let before = format!(
+        "/datum/config\n\tvar/const/LIMIT = 5\n\n\
+         /datum/holder\n\tvar/datum/config/config\n\n\
+         /proc/parameter(datum/config/config, x)\n{uncompiled}\treturn config.LIMIT + 1\n\n\
+         /proc/scoped(datum/config/config, x)\n{uncompiled}\treturn config::LIMIT + 1\n\n\
+         /proc/local(x)\n\tvar/datum/config/c = new\n{uncompiled}\treturn c.LIMIT + 1\n\n\
+         /datum/holder/proc/member(x)\n{uncompiled}\treturn config.LIMIT + 1\n\n\
+         /datum/holder/proc/chained(x)\n{uncompiled}\treturn src.config.LIMIT + 1\n\n\
+         /proc/untyped(config, x)\n{uncompiled}\treturn config:LIMIT + 1\n\n\
+         /proc/untyped_local(x)\n\tvar/config = new /datum/config\n{uncompiled}\treturn config:LIMIT + 1\n\n\
+         /datum/other\n\tvar/const/LIMIT = 2\n\n\
+         /proc/other(datum/other/other, x)\n{uncompiled}\treturn other.LIMIT + 1\n"
+    );
+    let after = before.replace("LIMIT = 5", "LIMIT = 10");
+    let changes = changes_of("uncompiled-member-const", &before, &after);
+    let mut paths: Vec<&str> = changes.refused.iter().map(|r| r.path.as_str()).collect();
+    paths.sort();
+    assert_eq!(
+        paths,
+        [
+            "/datum/holder/chained",
+            "/datum/holder/member",
+            "/local",
+            "/parameter",
+            "/scoped",
+            "/untyped",
+            "/untyped_local"
+        ],
+        "{:?}",
+        changes.refused
+    );
+}
+
+#[test]
 fn uncompiled_code_naming_a_declaration_by_ancestor_search_is_not_refused() {
     let uncompiled = "\tswitch(x)\n\t\tif(x)\n\t\t\treturn 0\n";
     let before = format!(
