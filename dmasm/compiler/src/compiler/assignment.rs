@@ -353,22 +353,15 @@ fn emit_value_assignment(
             });
             compiler.end_assignment_statement();
             let start = compiler.nodes.len();
+            let outer_global = std::mem::replace(&mut compiler.global_field, false);
             let kind = compiler.emit_expr(rhs.clone())?;
             compiler.emit_move_to_stack(kind)?;
-            let touches = |compiler: &Compiler<'_>, start: usize| {
-                compiler.nodes[start..]
-                    .iter()
-                    .any(|n| matches!(n, crate::Node::Instruction(i, _) if super::procs::touches_cache(i)))
-            };
-            let saves = cached
-                && (touches(compiler, start)
-                    || super::statements::unfolded_has(compiler, rhs, touches));
-            if saves {
-                compiler
-                    .nodes
-                    .insert(start, crate::Node::Instruction(Instruction::PushCache, ()));
-                compiler.emit_ins(Instruction::PopCache);
+            let read_global = compiler.global_field;
+            if cached {
+                let element = var == Variable::CacheIndex;
+                super::statements::keep_cache_across_value(compiler, start, rhs, element);
             }
+            compiler.global_field = outer_global || read_global;
             compiler.emit_ins(Instruction::SetVarExpr(var));
             compiler.emit_label(end);
         }

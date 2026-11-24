@@ -2186,6 +2186,27 @@ fn a_logical_assignment_to_a_safe_element_keeps_its_key_across_the_value() {
 }
 
 #[test]
+fn a_logical_assignment_to_an_element_keeps_its_key_across_the_value() {
+    let types = "/datum/holder\n\tvar/list/items\n";
+    for body in [
+        "items[i] ||= counters[j]++",
+        "return (items[i] ||= counters[j]++)",
+        "items[i] &&= (counters[j] ||= 1)",
+        "h.items[i] ||= counters[j]++",
+        "return (h.items[i] ||= counters[j]++)",
+        "return (items[i] ||= counters[j])",
+    ] {
+        let code = compile(
+            &format!("{types}/proc/g(list/items, i, j, list/counters, datum/holder/h)\n\t{body}\n"),
+            "",
+            "g",
+        );
+        assert_has(&code, &["PushCache", "PushCacheKey"]);
+        assert_has(&code, &["PopCacheKey", "PopCache"]);
+    }
+}
+
+#[test]
 fn new_without_arguments_is_true_in_a_test() {
     let src = "/datum/t\n/proc/f(a, b)\n\treturn (new /datum/t ? a : b)\n";
     assert_eq!(compile(src, "", "f"), "GetVar arg(0)\nRet\nEnd");

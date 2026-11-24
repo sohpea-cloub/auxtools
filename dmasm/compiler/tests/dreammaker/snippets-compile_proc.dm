@@ -138,6 +138,25 @@ var/const/gc = 7
 	holder?.items[i] ||= counters[j]++
 /proc/f2(datum/item/holder, i, j)
 	holder?.items[i] &&= holder.counters[j]++
+// Guards: a_logical_assignment_to_an_element_keeps_its_key_across_the_value (compile_proc.rs)
+/datum/holder
+	var/x
+	var/list/items
+/proc/f()
+/proc/f1(list/items, i, j, list/counters)
+	items[i] ||= counters[j]++
+/proc/f2(list/items, i, j, list/counters)
+	return (items[i] ||= counters[j]++)
+/proc/f3(list/items, i, j, list/counters)
+	items[i] &&= (counters[j] ||= 1)
+/proc/f4(datum/holder/h, i, j, list/counters)
+	return (h.items[i] ||= counters[j]++)
+/proc/f5(list/items, i, j, list/counters)
+	return (items[i] ||= counters[j])
+/proc/f6(list/items, i)
+	return (items[i] ||= f())
+/proc/f7(datum/holder/h, list/c, j)
+	return (h.x ||= c[j])
 // Guards: a_logical_assignment_through_a_safe_chain_warns_where_dreammaker_writes_another_var (compile_proc.rs)
 // Known: /proc/f1  DreamMaker writes `a?.b.c ||= v` through the object its test read, a.b.b.c (a BYOND bug, which dmasm warns of); dmasm writes a.b.c
 // Known: /proc/f2  DreamMaker writes `a?.b.c ||= v` through the object its test read, a.b.b.c (a BYOND bug, which dmasm warns of); dmasm writes a.b.c

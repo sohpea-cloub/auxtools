@@ -1378,6 +1378,37 @@ fn saves_cache(compiler: &Compiler, start: usize) -> bool {
     })
 }
 
+pub(super) fn keep_cache_across_value(
+    compiler: &mut Compiler,
+    start: usize,
+    value: &Expression,
+    element: bool,
+) {
+    let saves = std::mem::take(&mut compiler.global_field)
+        || saves_cache(compiler, start)
+        || unfolded_saves_cache(compiler, value);
+    if !saves {
+        return;
+    }
+    let key = element
+        && compiler.nodes[start..].iter().any(|n| {
+            matches!(n, Node::Instruction(i, _)
+                if matches!(i, Instruction::ListGet) || touches_cache_key(i))
+        });
+    if key {
+        compiler
+            .nodes
+            .insert(start, Node::Instruction(Instruction::PushCacheKey, ()));
+    }
+    compiler
+        .nodes
+        .insert(start, Node::Instruction(Instruction::PushCache, ()));
+    if key {
+        compiler.emit_ins(Instruction::PopCacheKey);
+    }
+    compiler.emit_ins(Instruction::PopCache);
+}
+
 fn unfolded_saves_cache(compiler: &mut Compiler, value: &Expression) -> bool {
     unfolded_has(compiler, value, |compiler, start| {
         compiler.global_field || saves_cache(compiler, start)
@@ -2271,27 +2302,7 @@ fn emit_expr_statement_inner(
                 let start = compiler.nodes.len();
                 compiler.global_field = false;
                 emit_value(compiler, rhs)?;
-                let saves = std::mem::take(&mut compiler.global_field)
-                    || saves_cache(compiler, start)
-                    || unfolded_saves_cache(compiler, rhs);
-                let saves_key = !field
-                    && compiler.nodes[start..]
-                        .iter()
-                        .any(|n| matches!(n, Node::Instruction(Instruction::ListGet, _)));
-                if saves {
-                    if saves_key {
-                        compiler
-                            .nodes
-                            .insert(start, Node::Instruction(Instruction::PushCacheKey, ()));
-                    }
-                    compiler
-                        .nodes
-                        .insert(start, Node::Instruction(Instruction::PushCache, ()));
-                    if saves_key {
-                        compiler.emit_ins(Instruction::PopCacheKey);
-                    }
-                    compiler.emit_ins(Instruction::PopCache);
-                }
+                keep_cache_across_value(compiler, start, rhs, !field);
                 if field {
                     compiler.cache = before;
                     compiler.explicit_src = explicit_src;
