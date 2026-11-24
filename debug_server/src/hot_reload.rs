@@ -1,4 +1,5 @@
 use std::{
+	borrow::Cow,
 	collections::{btree_map::Entry, BTreeMap, BTreeSet, HashMap, HashSet},
 	rc::Rc,
 	sync::Mutex
@@ -280,6 +281,15 @@ impl TypeVars {
 
 	fn declared(&mut self, type_id: u32) -> Result<&mut Vec<u32>, String> {
 		Self::words(&mut self.declared, type_id, type_fields::DECLARED_VARS)
+	}
+
+	fn declared_now(&self, type_id: u32) -> Result<Cow<'_, [u32]>, String> {
+		if let Some(words) = self.declared.get(&type_id) {
+			return Ok(Cow::Borrowed(words));
+		}
+		let id = runtime_tables::type_field(type_id, type_fields::DECLARED_VARS)?;
+		let words = runtime_tables::misc_words(id).ok_or_else(|| format!("couldn't read the vars of type {}", type_id))?;
+		Ok(Cow::Owned(words))
 	}
 
 	fn name_of(&self, var_id: u32) -> u32 {
@@ -2257,12 +2267,25 @@ pub fn locals_references(path: &str) -> Result<(u32, u16, u32), String> {
 	let id = runtime_tables::proc_entry(proc.id)
 		.ok_or_else(|| format!("couldn't read the table entry of {}", path))?
 		.0[ProcEntryWords::LOCALS];
+	let (count, references) = misc_references(id).ok_or_else(|| format!("{} has no locals table", path))?;
+	Ok((id, count, references))
+}
+
+#[cfg(feature = "test-commands")]
+pub fn declared_references(path: &str) -> Result<(u32, u32), String> {
+	let id = runtime_tables::type_field(find_type(path)?, type_fields::DECLARED_VARS)?;
+	let (_, references) = misc_references(id).ok_or_else(|| format!("{} has no declared vars", path))?;
+	Ok((id, references))
+}
+
+#[cfg(feature = "test-commands")]
+fn misc_references(id: u32) -> Option<(u16, u32)> {
 	let mut entry = std::ptr::null_mut();
 	unsafe {
 		if raw_types::funcs::get_misc_by_id(&mut entry, raw_types::misc::MiscId::from_raw(id)) != 1 || entry.is_null() {
-			return Err(format!("{} has no locals table", path));
+			return None;
 		}
-		Ok((id, *(entry as *const u16), *((entry as *const u8).add(4) as *const u32)))
+		Some((*(entry as *const u16), *((entry as *const u8).add(4) as *const u32)))
 	}
 }
 
@@ -2416,7 +2439,7 @@ fn prepare_redeclared(
 		let mut ids = variable_ids(var.var.as_bytes());
 		if ids.len() > 1 {
 			for type_id in 0..runtime_tables::type_count().map_err(fail)? {
-				let declared = type_vars.declared(type_id).map_err(fail)?;
+				let declared = type_vars.declared_now(type_id).map_err(fail)?;
 				ids.retain(|id| !declared.chunks(2).any(|pair| pair[0] == *id));
 			}
 			for proc in shadowing.iter().filter_map(|key| find(key).ok()) {

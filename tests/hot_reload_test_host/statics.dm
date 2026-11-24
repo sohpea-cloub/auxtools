@@ -16,3 +16,6 @@ var/const/ST_LIMIT = 5
 /proc/st_const_limit()
 	var/const/ST_LIMIT = 8
 	return ST_LIMIT
+
+/datum/st_holder
+	var/static/st_held = 1

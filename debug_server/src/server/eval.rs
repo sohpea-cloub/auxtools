@@ -357,6 +357,11 @@ impl Server {
 				Err(e) => format!("Failed: {}", e)
 			},
 			#[cfg(feature = "test-commands")]
+			Ok(console::Command::DeclaredReferences(path)) => match hot_reload::declared_references(path) {
+				Ok((id, references)) => format!("table {}: {} references", id, references),
+				Err(e) => format!("Failed: {}", e)
+			},
+			#[cfg(feature = "test-commands")]
 			Ok(console::Command::NextSpawn(number)) => {
 				spawn::number_next(number);
 				format!("the next spawn is number {}", number)

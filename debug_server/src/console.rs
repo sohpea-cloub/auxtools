@@ -15,6 +15,8 @@ pub enum Command<'a> {
 	#[cfg(feature = "test-commands")]
 	LocalsReferences(&'a str),
 	#[cfg(feature = "test-commands")]
+	DeclaredReferences(&'a str),
+	#[cfg(feature = "test-commands")]
 	NextSpawn(u64),
 	Help(&'static str)
 }
@@ -60,6 +62,9 @@ const STRING_REFS_USAGE: &str = "string-refs <text>";
 
 #[cfg(feature = "test-commands")]
 const LOCALS_REFS_USAGE: &str = "locals-refs <proc>";
+
+#[cfg(feature = "test-commands")]
+const DECLARED_REFS_USAGE: &str = "declared-refs <type>";
 
 #[cfg(feature = "test-commands")]
 const FAIL_RELOAD_USAGE: &str = "fail-reload <append|change|copy>";
@@ -135,6 +140,14 @@ pub fn parse(command: &str) -> Result<Command<'_>, String> {
 			}
 		}
 		#[cfg(feature = "test-commands")]
+		"declared-refs" => {
+			at_most(&args, 1, DECLARED_REFS_USAGE)?;
+			match args.first() {
+				Some(path) => Ok(Command::DeclaredReferences(path)),
+				None => Err(format!("error: a type is required\n\nUsage: {}\n", DECLARED_REFS_USAGE))
+			}
+		}
+		#[cfg(feature = "test-commands")]
 		"next-spawn" => {
 			at_most(&args, 1, NEXT_SPAWN_USAGE)?;
 			match args.first().map(|number| number.parse()) {
@@ -195,6 +208,8 @@ mod tests {
 		assert_eq!(parse("string-refs key"), Ok(Command::StringReferences("key")));
 		#[cfg(feature = "test-commands")]
 		assert_eq!(parse("locals-refs /proc/leaf"), Ok(Command::LocalsReferences("/proc/leaf")));
+		#[cfg(feature = "test-commands")]
+		assert_eq!(parse("declared-refs /datum/a"), Ok(Command::DeclaredReferences("/datum/a")));
 		#[cfg(feature = "test-commands")]
 		assert_eq!(parse("next-spawn 16777217"), Ok(Command::NextSpawn(16777217)));
 		#[cfg(not(feature = "test-commands"))]
