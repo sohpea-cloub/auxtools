@@ -48,6 +48,7 @@ pub fn compare(
     let mut parser = dreammaker::Parser::new(&ctx, pp);
     parser.enable_procs();
     let tree = parser.parse_object_tree();
+    dmasm_compiler::compiler::new_tree();
     let file_name = |id: FileId| {
         let path = ctx.file_path(id);
         path.strip_prefix(base)
