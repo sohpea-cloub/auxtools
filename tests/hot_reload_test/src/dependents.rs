@@ -193,6 +193,16 @@ pub fn dependents(built: Built) {
 	reload(&mut watcher, &changes);
 	assert_eq!(eval(&mut client, "\"[dep_local_offset()] [dep_local_default()]\""), "\"11 10\"");
 	println!("ok: a local const read alone follows the local consts and defaults it reads");
+
+	assert_eq!(eval(&mut client, "dep_colon()"), "\"6 5\"");
+	let changes = source.edit(
+		"dependents.dm",
+		"/datum/dep_colon_later\n",
+		"/datum/dep_colon_later\n\tvar/const/DEP_COLON = 9\n"
+	);
+	reload(&mut watcher, &changes);
+	assert_eq!(eval(&mut client, "dep_colon()"), "\"10 9\"");
+	println!("ok: an untyped x:name in an unchanged file finds a later type's new declaration");
 }
 
 fn refused_edit(source: &mut Source, file: &str, from: &str, to: &str) -> Vec<dmasm::reload::Refusal> {

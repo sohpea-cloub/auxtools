@@ -506,6 +506,7 @@ pub struct Changes {
     restart_settings: Vec<(String, String)>,
     defaults_changed: Vec<String>,
     defaults_moved: Vec<String>,
+    colon_names: Vec<String>,
     moved_procs: Vec<String>,
 }
 
@@ -1872,11 +1873,27 @@ fn names_any(value: &ProcValue, names: &HashSet<&str>, defaults: &HashSet<&str>)
     found
 }
 
+fn colon_reads_any(value: &ProcValue, names: &HashSet<&str>) -> bool {
+    use dreammaker::ast::{Follow, PropertyAccessKind};
+    if names.is_empty() {
+        return false;
+    }
+    let mut found = false;
+    syntax::walk_proc(value, &mut |node| {
+        found |= matches!(node, syntax::Node::Follow(Follow::Field(
+            PropertyAccessKind::Colon | PropertyAccessKind::SafeColon,
+            name,
+        )) if names.contains(name.as_str()));
+    });
+    found
+}
+
 fn const_users(old: &Snapshot, new: &Snapshot, realigned: &Realigned, changes: &mut Changes) {
     if changes.consts.is_empty()
         && changes.retyped.is_empty()
         && changes.defaults_changed.is_empty()
         && changes.defaults_moved.is_empty()
+        && changes.colon_names.is_empty()
     {
         return;
     }
@@ -1886,7 +1903,13 @@ fn const_users(old: &Snapshot, new: &Snapshot, realigned: &Realigned, changes: &
         .chain(&changes.retyped)
         .map(String::as_str)
         .collect();
-    let consts: HashSet<&str> = changes.consts.iter().map(String::as_str).collect();
+    let colon_names: HashSet<&str> = changes.colon_names.iter().map(String::as_str).collect();
+    let consts: HashSet<&str> = changes
+        .consts
+        .iter()
+        .chain(&changes.colon_names)
+        .map(String::as_str)
+        .collect();
     let moved: HashSet<&str> = changes
         .defaults_changed
         .iter()
@@ -1909,7 +1932,7 @@ fn const_users(old: &Snapshot, new: &Snapshot, realigned: &Realigned, changes: &
         let (Some(_), Some((new_ty, new_value))) = (old.find(&old_key), new.find(key)) else {
             continue;
         };
-        if !names_any(new_value, &names, &moved) {
+        if !names_any(new_value, &names, &moved) && !colon_reads_any(new_value, &colon_names) {
             continue;
         }
         let compiled = match (old.compile(&old_key), new.compile(key)) {
@@ -3224,6 +3247,9 @@ fn compare_types(
                     moved::var_moved(old, new, n, name.as_str(), old_var, Some(var), changes);
                 }
                 None if var.declaration.is_some() => {
+                    if !n.is_root() && !changes.colon_names.iter().any(|c| c == name.as_str()) {
+                        changes.colon_names.push(name.to_string());
+                    }
                     if new_var(new, n, name.as_str(), var, o.is_none(), changes) {
                         if let Some(added) = changes.plan.new_vars.last_mut() {
                             added.moved_from = moved::moved_from(old, n, name.as_str());
@@ -3310,6 +3336,9 @@ fn compare_types(
                         type_path: path.to_owned(),
                         var: name.to_string(),
                     });
+                    if !changes.colon_names.iter().any(|c| c == name.as_str()) {
+                        changes.colon_names.push(name.to_string());
+                    }
                 }
             } else if n.get_var_declaration(name.as_str()).is_some() {
                 var_default(old, new, path, name.as_str(), false, changes);

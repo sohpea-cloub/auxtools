@@ -195,3 +195,5 @@ var/const/DEP_OFFSET_BASE = 5
 /proc/dep_local_default()
 	var/const/DEP_DEFAULT_LIMIT = /datum/dep_local_config::dep_limit
 	return DEP_DEFAULT_LIMIT
+
+/datum/dep_colon_later

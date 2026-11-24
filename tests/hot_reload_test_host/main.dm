@@ -211,3 +211,9 @@ var/hr_tally = 100
 
 /mob/limited/verb/choose_limit(x in list(/datum/config_limits::limit))
 	return x
+
+/datum/dep_colon_first
+	var/const/DEP_COLON = 5
+
+/proc/dep_colon(x)
+	return "[x:DEP_COLON + 1] [x:DEP_COLON]"

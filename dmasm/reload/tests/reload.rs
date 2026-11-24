@@ -2164,6 +2164,39 @@ fn types_changes(name: &str, code: &str, before: &str, after: &str) -> Changes {
 }
 
 #[test]
+fn a_declaration_that_colon_lookup_finds_instead_recompiles_its_users() {
+    let uncompiled = "\tswitch(x)\n\t\tif(x)\n\t\t\treturn 0\n";
+    let code = format!(
+        "/datum/a\n\tvar/const/LIMIT = 5\n\n\
+         /proc/colon(x)\n\treturn x:LIMIT + 1\n\n\
+         /proc/uncompiled_colon(x)\n{uncompiled}\treturn x:LIMIT + 1\n\n"
+    );
+    let (without, with) = ("/datum/b\n", "/datum/b\n\tvar/const/LIMIT = 9\n");
+    for (name, before, after, folded) in [
+        ("colon-added", without, with, "PushInt 10"),
+        ("colon-removed", with, without, "PushInt 6"),
+    ] {
+        let changes = types_changes(name, &code, before, after);
+        let refused: Vec<&str> = changes.refused.iter().map(|r| r.path.as_str()).collect();
+        assert_eq!(
+            refused,
+            ["/uncompiled_colon"],
+            "{name}: {:?}",
+            changes.refused
+        );
+        let reloads: Vec<&str> = changes
+            .plan
+            .reloads
+            .iter()
+            .map(|r| r.proc.path.as_str())
+            .collect();
+        assert_eq!(reloads, ["/colon"], "{name}: {:?}", changes.plan);
+        let code = dmasm_bytecode::format(&changes.plan.reloads[0].nodes);
+        assert!(code.contains(folded), "{name}: {code}");
+    }
+}
+
+#[test]
 fn a_type_scope_default_that_moves_moves_its_users_lines() {
     let code = "\n\n\n/proc/f()\n\treturn /datum/u::x\n";
     let changes = types_changes(
