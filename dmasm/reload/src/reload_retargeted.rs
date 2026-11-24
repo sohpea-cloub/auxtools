@@ -1,8 +1,8 @@
 use std::collections::BTreeSet;
 
 use dreammaker::ast::{
-    Case, Expression, Follow, Ident, PathOp, Prefab, PropertyAccessKind, Spanned, Statement, Term,
-    VarStatement, VarType,
+    Case, Expression, Follow, Ident, PathOp, Prefab, Spanned, Statement, Term, VarStatement,
+    VarType,
 };
 
 use super::*;
@@ -519,17 +519,21 @@ impl<'r, 's> Scan<'r, 's> {
         let r = self.r;
         self.found = match node {
             syntax::Node::Expression(Expression::Base { term, follow }) => {
-                match (&term.elem, follow.first().map(|f| &f.elem)) {
-                    (Term::Prefab(prefab), Some(first @ Follow::ProcReference(name)))
-                        if prefab.vars.is_empty()
-                            && prefab.path.iter().all(|(op, _)| *op == PathOp::Slash) =>
-                    {
-                        self.resolved.insert(first);
-                        let ty: String = prefab.path.iter().map(|(_, p)| format!("/{p}")).collect();
-                        r.names.contains(name.as_str()) && r.type_call_changes(&ty, name.as_str())
+                (self.own.is_none()
+                    && colon_fields(follow).any(|name| r.colon_names.contains(name)))
+                    || match (&term.elem, follow.first().map(|f| &f.elem)) {
+                        (Term::Prefab(prefab), Some(first @ Follow::ProcReference(name)))
+                            if prefab.vars.is_empty()
+                                && prefab.path.iter().all(|(op, _)| *op == PathOp::Slash) =>
+                        {
+                            self.resolved.insert(first);
+                            let ty: String =
+                                prefab.path.iter().map(|(_, p)| format!("/{p}")).collect();
+                            r.names.contains(name.as_str())
+                                && r.type_call_changes(&ty, name.as_str())
+                        }
+                        _ => false,
                     }
-                    _ => false,
-                }
             }
             syntax::Node::Follow(follow @ Follow::ProcReference(name)) => {
                 !self.resolved.contains(&(follow as *const Follow))
@@ -539,10 +543,6 @@ impl<'r, 's> Scan<'r, 's> {
                 r.defaults.contains(name.as_str())
                     || (self.own.is_none() && r.changed_defaults.contains(name.as_str()))
             }
-            syntax::Node::Follow(Follow::Field(
-                PropertyAccessKind::Colon | PropertyAccessKind::SafeColon,
-                name,
-            )) => self.own.is_none() && r.colon_names.contains(name.as_str()),
             syntax::Node::Term(Term::Prefab(prefab)) => r.prefab_might_name(prefab, self.ty),
             syntax::Node::Term(term @ Term::Ident(name)) => self.rebinds_var(address(term), name),
             syntax::Node::Term(term @ Term::NewMiniExpr { expr, .. }) => {

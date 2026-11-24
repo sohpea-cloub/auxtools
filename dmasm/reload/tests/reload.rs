@@ -2173,7 +2173,9 @@ fn a_declaration_that_colon_lookup_finds_instead_recompiles_its_users() {
          /proc/alone(x)\n\treturn x:LIMIT\n\n\
          /proc/uncompiled_alone(x)\n{uncompiled}\treturn x:LIMIT\n\n\
          /proc/uncompiled_typed(datum/a/x)\n{uncompiled}\treturn x:LIMIT\n\n\
-         /proc/local_const(x)\n\tvar/const/L = x:LIMIT + 1\n\treturn L\n\n"
+         /proc/local_const(x)\n\tvar/const/L = x:LIMIT + 1\n\treturn L\n\n\
+         /proc/indexed(x)\n\tvar/list/datum/a/items = list(x)\n\treturn items[1].LIMIT\n\n\
+         /proc/uncompiled_indexed(x)\n\tvar/list/items = list(x)\n{uncompiled}\treturn items[1]:LIMIT\n\n"
     );
     let (without, with) = ("/datum/b\n", "/datum/b\n\tvar/const/LIMIT = 9\n");
     for (name, before, after, folded) in [
@@ -2186,20 +2188,23 @@ fn a_declaration_that_colon_lookup_finds_instead_recompiles_its_users() {
         refused.sort();
         assert_eq!(
             refused,
-            ["/uncompiled_alone", "/uncompiled_colon"],
+            [
+                "/uncompiled_alone",
+                "/uncompiled_colon",
+                "/uncompiled_indexed"
+            ],
             "{name}: {:?}",
             changes.refused
         );
-        let alone = changes
-            .refused
-            .iter()
-            .find(|r| r.path == "/uncompiled_alone");
-        assert!(
-            alone.unwrap().why.starts_with(
-                "reads a var by `x:name` that another type declares now, so it must be compiled again"
-            ),
-            "{name}: {alone:?}"
-        );
+        for path in ["/uncompiled_alone", "/uncompiled_indexed"] {
+            let alone = changes.refused.iter().find(|r| r.path == path);
+            assert!(
+                alone.unwrap().why.starts_with(
+                    "reads a var by `x:name` that another type declares now, so it must be compiled again"
+                ),
+                "{name}: {alone:?}"
+            );
+        }
         let mut reloads: Vec<&str> = changes
             .plan
             .reloads
@@ -2209,7 +2214,7 @@ fn a_declaration_that_colon_lookup_finds_instead_recompiles_its_users() {
         reloads.sort();
         assert_eq!(
             reloads,
-            ["/alone", "/colon", "/local_const"],
+            ["/alone", "/colon", "/indexed", "/local_const"],
             "{name}: {:?}",
             changes.plan
         );

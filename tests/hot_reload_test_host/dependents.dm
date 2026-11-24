@@ -225,3 +225,8 @@ var/const/DEP_PARENT = 5
 	var/const/DEP_RETYPE = 9
 
 var/datum/dep_retype_first/dep_retype_target
+
+/datum/dep_colon_indexed_first
+	var/const/DEP_COLON_INDEXED = 5
+
+/datum/dep_colon_indexed_later

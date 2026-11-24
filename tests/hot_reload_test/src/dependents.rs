@@ -284,6 +284,24 @@ pub fn dependents(built: Built) {
 	reload(&mut watcher, &changes);
 	assert_eq!(eval(&mut client, "dep_retyped_local_const()"), "10");
 	println!("ok: a local const in an unchanged file follows a var it reads through that is declared with another type");
+
+	assert_eq!(eval(&mut client, "dep_colon_indexed()"), "5");
+	let refused = refused_edit(
+		&mut source,
+		"dependents.dm",
+		"/datum/dep_colon_indexed_later\n",
+		"/datum/dep_colon_indexed_later\n\tvar/const/DEP_COLON_INDEXED = 9\n"
+	);
+	let shown: Vec<String> = refused.iter().map(|r| format!("{:#}", r)).collect();
+	assert_eq!(
+		shown,
+		[
+			"/dep_colon_indexed: reads a var by `x:name` that another type declares now, so it must be compiled again, but it doesn't compile: \
+			 unsupported statement: type::proc() that names a type's second or later override"
+		],
+		"a proc dmasm can't compile that reads items[1]:name from another type after the reload isn't refused"
+	);
+	println!("ok: a reload is refused for a proc dmasm can't compile that reads items[1]:name from another type");
 }
 
 fn refused_edit(source: &mut Source, file: &str, from: &str, to: &str) -> Vec<dmasm::reload::Refusal> {

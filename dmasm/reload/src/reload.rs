@@ -1894,17 +1894,36 @@ fn names_any(value: &ProcValue, names: &HashSet<&str>, defaults: &HashSet<&str>)
     found
 }
 
-fn colon_reads_any(value: &ProcValue, names: &HashSet<&str>) -> bool {
+pub(crate) fn colon_fields(
+    follow: &[dreammaker::ast::Spanned<dreammaker::ast::Follow>],
+) -> impl Iterator<Item = &str> {
     use dreammaker::ast::{Follow, PropertyAccessKind};
+    let after_index =
+        std::iter::once(false).chain(follow.iter().map(|f| matches!(f.elem, Follow::Index(..))));
+    follow
+        .iter()
+        .zip(after_index)
+        .filter_map(|(f, after_index)| match &f.elem {
+            Follow::Field(PropertyAccessKind::Colon | PropertyAccessKind::SafeColon, name) => {
+                Some(name.as_str())
+            }
+            Follow::Field(kind, name) if after_index && *kind != PropertyAccessKind::Scope => {
+                Some(name.as_str())
+            }
+            _ => None,
+        })
+}
+
+fn colon_reads_any(value: &ProcValue, names: &HashSet<&str>) -> bool {
+    use dreammaker::ast::Expression;
     if names.is_empty() {
         return false;
     }
     let mut found = false;
     syntax::walk_proc(value, &mut |node| {
-        found |= matches!(node, syntax::Node::Follow(Follow::Field(
-            PropertyAccessKind::Colon | PropertyAccessKind::SafeColon,
-            name,
-        )) if names.contains(name.as_str()));
+        if let syntax::Node::Expression(Expression::Base { follow, .. }) = node {
+            found |= colon_fields(follow).any(|name| names.contains(name));
+        }
     });
     found
 }
@@ -2356,7 +2375,7 @@ fn colon_rebinds(
     value: &ProcValue,
     names: &HashSet<&str>,
 ) -> bool {
-    use dreammaker::ast::{Expression, Follow, PropertyAccessKind, Term};
+    use dreammaker::ast::{Expression, Term};
     if names.is_empty() {
         return false;
     }
@@ -2366,13 +2385,7 @@ fn colon_rebinds(
         let syntax::Node::Expression(expression @ Expression::Base { term, follow }) = node else {
             return;
         };
-        let colon = |f: &dreammaker::ast::Spanned<Follow>| {
-            matches!(&f.elem, Follow::Field(
-                PropertyAccessKind::Colon | PropertyAccessKind::SafeColon,
-                name,
-            ) if names.contains(name.as_str()))
-        };
-        if found || !follow.iter().any(colon) {
+        if found || !colon_fields(follow).any(|name| names.contains(name)) {
             return;
         }
         let locals: Vec<(&str, &str)> = match &term.elem {

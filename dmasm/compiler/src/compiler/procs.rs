@@ -619,12 +619,22 @@ pub(super) fn field_globals(
         false => term_type(compiler, &term.elem),
     };
     let mut found = vec![];
+    let mut indexed = false;
     for (i, f) in follow.iter().enumerate() {
-        let Follow::Field(kind, name) = &f.elem else {
-            break;
+        let after_index = std::mem::replace(&mut indexed, matches!(f.elem, Follow::Index(..)));
+        let (kind, name) = match &f.elem {
+            Follow::Field(kind, name) => (kind, name),
+            Follow::Index(..) => {
+                found.push(None);
+                ty = None;
+                continue;
+            }
+            _ => break,
         };
         let decl = match kind {
             _ if global && i == 0 => compiler.proc.tree.root().get_var_declaration(name),
+            PropertyAccessKind::Scope => ty.and_then(|t| member_var(t, name.as_str())),
+            _ if after_index => colon_var(compiler, None, name.as_str()),
             PropertyAccessKind::Colon | PropertyAccessKind::SafeColon => {
                 colon_var(compiler, ty, name.as_str())
             }

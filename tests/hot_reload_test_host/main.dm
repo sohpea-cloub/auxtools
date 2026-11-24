@@ -258,3 +258,7 @@ var/hr_tally = 100
 /proc/dep_retyped_local_const()
 	var/const/DEP_RETYPED_LOCAL = dep_retype_target.DEP_RETYPE + 1
 	return DEP_RETYPED_LOCAL
+
+/proc/dep_colon_indexed()
+	var/list/items = list(/datum/dep_twice::f())
+	return items[1]:DEP_COLON_INDEXED
