@@ -354,3 +354,18 @@ var/datum/dep_retype_alone_first/dep_retype_alone_target
 
 /datum/dep_global_caller/proc/call_global()
 	return "[::dep_global_make().type] [::dep_global_make().DEP_GLOBAL_LIMIT]"
+
+/datum/dep_chain_a
+	var/const/DEP_CHAIN_LIMIT = 5
+
+/datum/dep_chain_b
+	var/const/DEP_CHAIN_LIMIT = 9
+
+/datum/dep_chain_builder/proc/dep_chain_make() as /datum/dep_chain_a
+	return new /datum/dep_chain_b
+
+/datum/dep_chain_factory/proc/builder() as /datum/dep_chain_builder
+	return new /datum/dep_chain_builder
+
+/proc/dep_chain(datum/dep_chain_factory/factory)
+	return factory?.builder().dep_chain_make().DEP_CHAIN_LIMIT

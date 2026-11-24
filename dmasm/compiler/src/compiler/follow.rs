@@ -651,6 +651,17 @@ fn emit_safe_inner<'a>(
                 compiler.emit_ins(Instruction::Call(builder.get_leaf(var), count));
                 kind = EvalKind::Stack;
             }
+            Follow::Call(access, ident, args) => {
+                (ty, after) = super::procs::call_result(compiler, receiver_ty, access, &ident);
+                kind = commit_field_buffer(compiler, kind, &mut field_buffer)?;
+                kind = emit_after(
+                    compiler,
+                    vec![Follow::Call(access, ident, args)],
+                    kind,
+                    receiver_ty,
+                    before,
+                )?;
+            }
             other => {
                 kind = commit_field_buffer(compiler, kind, &mut field_buffer)?;
                 kind = emit(compiler, vec![other], kind)?;

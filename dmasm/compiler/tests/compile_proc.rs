@@ -375,6 +375,57 @@ fn a_global_call_calls_the_global_proc_and_reads_by_its_return_type() {
 }
 
 #[test]
+fn a_safe_chain_finds_each_calls_proc_and_value_by_the_type_before_it() {
+    let types = "/datum/a\n\tvar/const/LIMIT = 5\n\tvar/static/S = 1\n\
+                 /datum/b\n\tvar/const/LIMIT = 9\n\tvar/static/S = 2\n\
+                 /datum/decoy/proc/make() as /datum/b\n\treturn new /datum/b\n\
+                 /datum/decoy/proc/named()\n\treturn new /datum/b\n\
+                 /datum/decoy/verb/shown()\n\treturn new /datum/b\n\
+                 /datum/builder/proc/make() as /datum/a\n\treturn new /datum/b\n\
+                 /datum/builder/proc/named()\n\tset name = \"build it\"\n\treturn new /datum/b\n\
+                 /datum/builder/proc/me() as /datum/builder\n\treturn src\n\
+                 /datum/builder/proc/shown()\n\treturn new /datum/b\n\
+                 /datum/factory/proc/builder() as /datum/builder\n\treturn new /datum/builder\n";
+    for body in [
+        "return factory?.builder().make().LIMIT",
+        "return factory?.builder().make().S",
+        "return factory?.builder().make()?.LIMIT",
+        "return factory?.builder().me().make().LIMIT",
+        "return factory?.builder():make().LIMIT",
+        "return factory?.builder().make().LIMIT + 1",
+    ] {
+        let src = format!("{types}/proc/f(datum/factory/factory)\n\t{body}\n");
+        assert_eq!(
+            global_scopes(&src),
+            ["Some(Type(\"/datum/a\"))"],
+            "{}",
+            body
+        );
+    }
+    for (body, call) in [
+        (
+            "return factory?.builder().named()",
+            "Call dynamic_proc(\"build it\") 0",
+        ),
+        (
+            "return factory?.builder().me().named()",
+            "Call dynamic_proc(\"build it\") 0",
+        ),
+        (
+            "return factory?.builder().shown()",
+            "Call dynamic_proc(\"shown\") 0",
+        ),
+    ] {
+        let code = compile(
+            &format!("{types}/proc/f(datum/factory/factory)\n\t{body}\n"),
+            "",
+            "f",
+        );
+        assert_has(&code, &[call]);
+    }
+}
+
+#[test]
 fn a_safe_colon_call_finds_its_proc_and_value_as_a_colon_call_does() {
     let types = "/datum/a\n\tvar/const/LIMIT = 5\n\tvar/static/S = 1\n\
                  /datum/b\n\tvar/const/LIMIT = 9\n\tvar/static/S = 2\n\

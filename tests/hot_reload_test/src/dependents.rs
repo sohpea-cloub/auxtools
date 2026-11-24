@@ -458,6 +458,21 @@ pub fn dependents(built: Built) {
 		"recompiled ::make() in a type with its own make() doesn't call the global proc and read by its return type"
 	);
 	println!("ok: recompiled ::make() in a type with its own make() calls the global proc and reads by its return type");
+
+	let read = "\"[dep_chain(new /datum/dep_chain_factory)] [isnull(dep_chain(null))]\"";
+	assert_eq!(eval(&mut client, read), "\"5 1\"");
+	let changes = source.edit(
+		"dependents.dm",
+		"\treturn factory?.builder().dep_chain_make().DEP_CHAIN_LIMIT",
+		"\treturn 0 || factory?.builder().dep_chain_make().DEP_CHAIN_LIMIT"
+	);
+	reload(&mut watcher, &changes);
+	assert_eq!(
+		eval(&mut client, read),
+		"\"5 1\"",
+		"recompiled factory?.builder().make().name doesn't read the var DreamMaker reads"
+	);
+	println!("ok: recompiled factory?.builder().make().name reads the var DreamMaker reads, and null for a null factory");
 }
 
 fn refused_edit(source: &mut Source, file: &str, from: &str, to: &str) -> Vec<dmasm::reload::Refusal> {

@@ -903,6 +903,52 @@ var/const/LIMIT = 10
 	return ::make(a = 1)
 /proc/f10()
 	return ::make().LIMIT
+// Guards: a_safe_chain_finds_each_calls_proc_and_value_by_the_type_before_it (compile_proc.rs)
+/datum/a
+	var/const/LIMIT = 5
+	var/static/S = 1
+/datum/b
+	var/const/LIMIT = 9
+	var/static/S = 2
+/datum/decoy/proc/make() as /datum/b
+	return new /datum/b
+/datum/decoy/proc/named()
+	return new /datum/b
+/datum/decoy/verb/shown()
+	return new /datum/b
+/datum/builder/proc/make() as /datum/a
+	return new /datum/b
+/datum/builder/proc/named()
+	set name = "build it"
+	return new /datum/b
+/datum/builder/proc/me() as /datum/builder
+	return src
+/datum/builder/proc/shown()
+	return new /datum/b
+/datum/factory/proc/builder() as /datum/builder
+	return new /datum/builder
+/proc/f1(datum/factory/factory)
+	return factory?.builder().make().LIMIT
+/proc/f2(datum/factory/factory)
+	return factory?.builder().make().S
+/proc/f3(datum/factory/factory)
+	return factory?.builder().named()
+/proc/f4(datum/factory/factory)
+	return factory?.builder().make()?.LIMIT
+/proc/f5(datum/factory/factory)
+	return factory?.builder().make():LIMIT
+/proc/f6(datum/factory/factory)
+	factory?.builder().make().S = 4
+/proc/f7(datum/factory/factory)
+	return factory?.builder().me().make().LIMIT
+/proc/f8(datum/factory/factory)
+	return factory?.builder().me().named()
+/proc/f9(datum/factory/factory)
+	return factory?.builder().shown()
+/proc/f10(datum/factory/factory)
+	return factory?.builder():make().LIMIT
+/proc/f11(datum/factory/factory)
+	return factory?.builder().make().LIMIT + 1
 // Guards: a_safe_colon_call_finds_its_proc_and_value_as_a_colon_call_does (compile_proc.rs)
 /datum/a
 	var/const/LIMIT = 5
