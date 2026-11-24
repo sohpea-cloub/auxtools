@@ -16,7 +16,6 @@ pub(super) enum Variables {
 	ListContents(Value, Option<String>),
 	ListPair {
 		key: Value,
-		value: Value,
 		of: Value,
 		entry: Option<String>
 	},
@@ -493,7 +492,6 @@ impl Pausing {
 				expr: entry.clone(),
 				variables: Some(state.get_ref(Variables::ListPair {
 					key,
-					value,
 					of: Value::from(&list),
 					entry
 				}))
@@ -619,10 +617,13 @@ impl Pausing {
 			Variables::Builtins => self.globals_to_variables(true),
 			Variables::ObjectVars(value, expr) => self.object_to_variables(&value, expr.as_deref()),
 			Variables::ListContents(value, expr) => self.list_to_variables(&value, expr.as_deref(), start, count),
-			Variables::ListPair { key, value, entry, .. } => Ok(vec![
-				self.value_to_variable("key".to_owned(), &key, None),
-				self.value_to_variable("value".to_owned(), &value, entry),
-			]),
+			Variables::ListPair { key, of, entry } => {
+				let value = List::from_value(&of)?.get(&key)?;
+				Ok(vec![
+					self.value_to_variable("key".to_owned(), &key, None),
+					self.value_to_variable("value".to_owned(), &value, entry),
+				])
+			}
 			Variables::Pointee(pointer, expr) => Ok(match auxtools::pointer::read(&pointer) {
 				Some(named) => vec![self.value_to_variable("*".to_owned(), &named, expr.map(|pointer| format!("*{}", pointer)))],
 				None => vec![]

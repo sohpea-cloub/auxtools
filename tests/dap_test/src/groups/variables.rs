@@ -208,6 +208,8 @@ fn setting(world: &mut World, version: u64) {
 	let entry = entries[1]["variablesReference"].clone();
 	assert_eq!(set(world, &entry, "value", "6")["value"], "6");
 	assert_eq!(world.eval("assoc[\"b\"]"), "6");
+	let pair = world.variables(&entry);
+	assert_eq!(pair[1]["value"], "6");
 	let why = cannot_set(world, &entry, "key", "\"c\"");
 	assert!(why.starts_with("list keys cannot be edited"), "{}", why);
 	if version >= 516 {
@@ -453,6 +455,12 @@ pub fn run() {
 		let mut inside: Vec<String> = world.children(&variable("pairs")).into_iter().map(|(_, value)| value).collect();
 		inside.sort();
 		assert_eq!(inside, ["\"a\" = 1", "7 = \"seven\""]);
+		let entries = world.variables(&variable("pairs")["variablesReference"].clone());
+		let seven = entries.iter().find(|entry| entry["value"] == "7 = \"seven\"").unwrap();
+		assert_eq!(world.children(seven), [
+			("key".to_owned(), "7".to_owned()),
+			("value".to_owned(), "\"seven\"".to_owned())
+		]);
 		assert_eq!(local("vec"), "vector(1,2,3)");
 		let inside = world.children(&variable("vec"));
 		assert_eq!(
