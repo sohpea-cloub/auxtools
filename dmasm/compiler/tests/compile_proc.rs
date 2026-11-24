@@ -269,6 +269,57 @@ fn type_proc_reference_override() {
 }
 
 #[test]
+fn type_proc_reference_is_the_types_last_definition() {
+    for (code, pushed) in [
+        (
+            "/datum/t/proc/f()\n/proc/g()\n\treturn /datum/t::f()\n",
+            "PushVal /datum/t/proc/f",
+        ),
+        (
+            "/datum/t/proc/f()\n/datum/t/f()\n/datum/t/c\n/proc/g()\n\treturn /datum/t/c::f()\n",
+            "PushVal /datum/t/f",
+        ),
+        (
+            "/datum/t/f()\n/datum/t/proc/f()\n/proc/g()\n\treturn /datum/t::f()\n",
+            "PushVal /datum/t/proc/f",
+        ),
+        (
+            "/datum/t/proc/h()\n/datum/t/f()\n/datum/t/proc/f()\n/proc/g()\n\treturn /datum/t::f()\n",
+            "PushVal /datum/t/f",
+        ),
+    ] {
+        assert_has(&compile(code, "", "g"), &[pushed]);
+    }
+}
+
+#[test]
+fn type_proc_reference_to_a_later_override_is_refused() {
+    let code = "/datum/t/proc/f()\n/datum/t/f()\n/datum/t/f()\n/proc/g()\n\treturn /datum/t::f()\n";
+    let ctx = dreammaker::Context::default();
+    let pp = dreammaker::Preprocessor::from_buffer(&ctx, "test.dm".into(), code.to_owned());
+    let mut parser = dreammaker::Parser::new(&ctx, pp);
+    parser.enable_procs();
+    let tree = parser.parse_object_tree();
+    let value = &tree.root().get().procs["g"].value[0];
+    let source = ProcSource {
+        tree: &tree,
+        ty: tree.root(),
+        name: "g",
+        value,
+        file: "test.dm",
+        debug_info: false,
+        index: None,
+        byond: dmasm_compiler::ByondVersion::LATEST,
+        file_names: None,
+    };
+    let error = compile_proc(&source).unwrap_err().to_string();
+    assert_eq!(
+        error,
+        "line 5: unsupported statement: type::proc() that names a type's second or later override"
+    );
+}
+
+#[test]
 fn var_in_clause() {
     let code = compile(
         "/proc/f(a)\n\tvar/x = a in list(1, 2)\n\treturn x\n",

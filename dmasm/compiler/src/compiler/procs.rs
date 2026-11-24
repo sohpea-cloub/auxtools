@@ -908,9 +908,9 @@ pub(super) fn emit_type_scope(
             let mut current = Some(ty);
             let mut found = None;
             while let Some(t) = current {
-                if let Some(proc) = t.get().procs.get(name.as_str()) {
-                    if proc.declaration.is_none() && !t.is_root() {
-                        found = Some(format!("{}/{}", t.get().path, name));
+                if t.get().procs.contains_key(name.as_str()) {
+                    if !t.is_root() {
+                        found = last_definition(t, name.as_str())?;
                     }
                     break;
                 }
@@ -925,6 +925,44 @@ pub(super) fn emit_type_scope(
             Ok(EvalKind::Stack)
         }
         _ => unreachable!(),
+    }
+}
+
+fn last_definition(t: TypeRef, name: &str) -> Result<Option<String>, CompileError> {
+    let Some(proc) = t.get().procs.get(name) else {
+        return Ok(None);
+    };
+    let real = |location: dreammaker::Location| location.file != dreammaker::FileId::BUILTINS;
+    let declaration = proc.declaration.as_ref().filter(|d| real(d.location));
+    let place = |v: &ProcValue| match declaration {
+        Some(d) if v.location == d.location => t
+            .get()
+            .procs
+            .values()
+            .filter_map(|p| p.declaration.as_ref())
+            .filter(|other| other.kind == d.kind && real(other.location))
+            .map(|other| other.location)
+            .min(),
+        _ => Some(v.location),
+    };
+    let overrides = proc
+        .value
+        .iter()
+        .filter(|v| real(v.location) && declaration.is_none_or(|d| v.location != d.location))
+        .count();
+    let last = proc
+        .value
+        .iter()
+        .filter(|v| real(v.location))
+        .max_by_key(|v| place(v));
+    match last {
+        Some(last) if declaration.is_none_or(|d| last.location != d.location) => match overrides {
+            1 => Ok(Some(format!("{}/{}", t.get().path, name))),
+            _ => Err(CompileError::UnsupportedStatement(
+                "type::proc() that names a type's second or later override",
+            )),
+        },
+        _ => Ok(None),
     }
 }
 
