@@ -4174,3 +4174,31 @@ fn a_changed_const_recompiles_the_initializers_and_in_lists_that_fold_it() {
         }
     }
 }
+
+#[test]
+fn a_default_read_from_a_type_proc_default_names_the_same_proc() {
+    let before = "/datum/t/proc/f()\n/datum/t/f()\n\n\
+                  /datum/config\n\tvar/handler = /datum/t::f()\n\n/datum/user\n";
+    let after = format!(
+        "{before}\tvar/copy = /datum/config::handler\n\tvar/paren = (/datum/config::handler)\n\n\
+         /datum/user2\n\tvar/copy2 = /datum/user::copy\n"
+    );
+    let changes = changes("new-var-reading-proc-reference", before, &after);
+    assert!(changes.refused.is_empty(), "{:?}", changes.refused);
+    let mut values: Vec<(String, ConstValue)> = changes
+        .plan
+        .new_vars
+        .iter()
+        .map(|v| (v.var.clone(), v.value.clone()))
+        .collect();
+    values.sort_by(|a, b| a.0.cmp(&b.0));
+    let path = ConstValue::Path("/datum/t/f".to_owned());
+    assert_eq!(
+        values,
+        [
+            ("copy".to_owned(), path.clone()),
+            ("copy2".to_owned(), path.clone()),
+            ("paren".to_owned(), path)
+        ]
+    );
+}

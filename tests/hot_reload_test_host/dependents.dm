@@ -29,3 +29,14 @@ var/const/DEP_LIMIT = 5
 
 /mob/dep_chooser/verb/choose_dep_limit(x as anything in list(DEP_LIMIT + 1))
 	return x
+
+/datum/dep_called/proc/f()
+	return "declaration"
+
+/datum/dep_called/f()
+	return "override"
+
+/datum/dep_config
+	var/handler = /datum/dep_called::f()
+
+/datum/dep_copier

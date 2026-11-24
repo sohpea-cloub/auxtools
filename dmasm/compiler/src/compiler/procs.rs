@@ -951,50 +951,99 @@ pub fn type_proc_path(ty: TypeRef, name: &str) -> Result<String, CompileError> {
 }
 
 pub fn resolve_proc_references(tree: &mut ObjectTree) {
-    use dreammaker::ast::{Expression, Follow, Term};
+    use dreammaker::ast::Follow;
     let mut found = vec![];
+    let mut reads = vec![];
     for ty in tree.iter_types() {
         for (var_name, var) in ty.get().vars.iter() {
-            let Some(Expression::Base { term, follow }) = &var.value.expression else {
+            let Some((prefab, follow)) = var.value.expression.as_ref().and_then(type_scope_read)
+            else {
                 continue;
             };
-            let [follow] = &follow[..] else {
-                continue;
-            };
-            let Follow::ProcReference(name) = &follow.elem else {
-                continue;
-            };
-            let mut term = &term.elem;
-            while let Term::Expr(inner) = term {
-                match &**inner {
-                    Expression::Base {
-                        term: inner,
-                        follow,
-                    } if follow.is_empty() => term = &inner.elem,
-                    _ => break,
-                }
-            }
-            let Term::Prefab(prefab) = term else {
-                continue;
-            };
-            if !prefab.vars.is_empty() {
-                continue;
-            }
             let Some(on) = tree.find(&prefab.path.to_string()) else {
                 continue;
             };
-            let constant = type_proc_path(on, name.as_str()).ok().map(|path| {
-                dreammaker::constants::Constant::Prefab(Box::new(
-                    dreammaker::ast::AbsolutePath::from(path.as_str()).into(),
-                ))
-            });
-            found.push((ty.index(), var_name.clone(), constant));
+            match follow {
+                Follow::ProcReference(name) => {
+                    let constant = type_proc_path(on, name.as_str()).ok().map(|path| {
+                        dreammaker::constants::Constant::Prefab(Box::new(
+                            dreammaker::ast::AbsolutePath::from(path.as_str()).into(),
+                        ))
+                    });
+                    found.push((ty.index(), var_name.clone(), constant));
+                }
+                Follow::StaticField(name) => reads.push((
+                    ty.index(),
+                    var_name.clone(),
+                    on.get().path.clone(),
+                    name.clone(),
+                )),
+                _ => {}
+            }
         }
     }
+    let mut changed: std::collections::HashSet<dreammaker::ast::Ident> =
+        found.iter().map(|(_, name, _)| name.clone()).collect();
     for (ty, name, constant) in found {
         if let Some(var) = tree[ty].vars.get_mut(&name) {
             var.value.constant = constant;
         }
+    }
+    for _ in 0..reads.len() {
+        let mut again = false;
+        for (ty, name, on, read) in &reads {
+            if !changed.contains(read) {
+                continue;
+            }
+            let constant = tree
+                .find(on)
+                .and_then(|on| on.get_value(read.as_str()))
+                .and_then(|value| value.constant.clone());
+            let Some(var) = tree[*ty].vars.get_mut(name) else {
+                continue;
+            };
+            if var.value.constant != constant {
+                var.value.constant = constant;
+                changed.insert(name.clone());
+                again = true;
+            }
+        }
+        if !again {
+            break;
+        }
+    }
+}
+
+fn type_scope_read(
+    expression: &dreammaker::ast::Expression,
+) -> Option<(&dreammaker::ast::Prefab, &dreammaker::ast::Follow)> {
+    use dreammaker::ast::{Expression, Term};
+    let mut expression = expression;
+    while let Expression::Base { term, follow } = expression {
+        match (&term.elem, &follow[..]) {
+            (Term::Expr(inner), []) => expression = inner,
+            _ => break,
+        }
+    }
+    let Expression::Base { term, follow } = expression else {
+        return None;
+    };
+    let [follow] = &follow[..] else {
+        return None;
+    };
+    let mut term = &term.elem;
+    while let Term::Expr(inner) = term {
+        match &**inner {
+            Expression::Base {
+                term: inner,
+                follow,
+            } if follow.is_empty() => term = &inner.elem,
+            _ => break,
+        }
+    }
+    match term {
+        Term::Prefab(prefab) if prefab.vars.is_empty() => Some((prefab, &follow.elem)),
+        _ => None,
     }
 }
 

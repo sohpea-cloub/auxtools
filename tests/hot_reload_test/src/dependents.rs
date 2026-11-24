@@ -32,4 +32,20 @@ pub fn dependents(built: Built) {
 	reload(&mut watcher, &changes);
 	assert_eq!(eval(&mut client, "(new /datum/dep_limited).limits[1]"), "11");
 	println!("ok: initializers and `in` lists that fold a changed const follow it");
+
+	let changes = source.edit(
+		"dependents.dm",
+		"/datum/dep_copier\n",
+		"/datum/dep_copier\n\tvar/copy = /datum/dep_config::handler\n"
+	);
+	reload(&mut watcher, &changes);
+	assert_eq!(
+		eval(&mut client, "call(new /datum/dep_called, (new /datum/dep_config).handler)()"),
+		"\"override\""
+	);
+	assert_eq!(
+		eval(&mut client, "call(new /datum/dep_called, (new /datum/dep_copier).vars[\"copy\"])()"),
+		"\"override\""
+	);
+	println!("ok: a new default that reads a type::proc() default names the same proc");
 }
