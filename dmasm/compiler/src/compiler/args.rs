@@ -217,8 +217,11 @@ fn do_assoc(
                 compiler.emit_move_to_stack(kind)?;
 
                 compiler.regroup_root = true;
-                let kind = compiler.emit_expr((**rhs).to_owned())?;
-                compiler.emit_move_to_stack(kind)?;
+                let implicit = compiler.destination_type(lhs);
+                let outer = std::mem::replace(&mut compiler.implicit_type, implicit);
+                let kind = compiler.emit_expr((**rhs).to_owned());
+                compiler.implicit_type = outer;
+                compiler.emit_move_to_stack(kind?)?;
             }
 
             other => {

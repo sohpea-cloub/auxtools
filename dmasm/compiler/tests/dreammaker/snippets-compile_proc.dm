@@ -1284,6 +1284,44 @@ var/const/LIMIT = 10
 /proc/f(flag)
 	var/datum/item/r = flag ? locate() : locate()
 	return r
+// Guards: a_named_arguments_place_key_types_its_value (compile_proc.rs)
+// Builds: 516.1648-
+/datum/item
+/datum/other
+/datum/thing
+	var/datum/other/o
+	var/list/l
+	var/datum/item/i
+/proc/g(x, y)
+	return x
+/proc/f1(datum/other/a, datum/thing/q)
+	return g(q.o = astype(q))
+/proc/f2(datum/other/a, datum/thing/q)
+	var/datum/item/r = list(q.o = astype(q))
+	return r
+/proc/f3(datum/other/a, datum/thing/q)
+	return g(q.l = astype(a))
+/proc/f4(datum/other/a, datum/thing/q)
+	return g(q.o[1] = astype(q))
+/proc/f5(datum/other/a, datum/thing/q)
+	return g(q?.o = astype(q))
+/proc/f6(datum/other/a, datum/thing/q)
+	return g(q.i = astype(a), q.o = astype(q))
+/proc/f7(datum/other/a, datum/thing/q)
+	return new /datum/other(q.o = astype(q))
+/proc/f8(datum/other/a, datum/thing/q)
+	return call(q, "x")(q.o = astype(q))
+// Guards: a_named_arguments_place_key_types_its_value (compile_proc.rs)
+/datum/item
+/datum/other
+/datum/thing
+	var/datum/other/o
+	var/list/l
+	var/datum/item/i
+/proc/g(x, y)
+	return x
+/proc/f(datum/thing/q)
+	return list(q.o = new)
 // Guards: an_elements_implicit_cast_takes_its_holders_type (compile_proc.rs)
 // Builds: 516.1648-
 /datum/item

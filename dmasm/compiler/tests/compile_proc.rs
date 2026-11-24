@@ -720,6 +720,53 @@ fn every_implicit_cast_in_a_value_takes_the_destinations_type() {
 }
 
 #[test]
+fn a_named_arguments_place_key_types_its_value() {
+    let types = "/datum/item\n/datum/other\n/datum/thing\n\tvar/datum/other/o\n\tvar/list/l\n\
+                 \tvar/datum/item/i\n/proc/g(x, y)\n\treturn x\n";
+    for (body, casts) in [
+        ("return g(q.o = astype(q))", vec!["/datum/other"]),
+        (
+            "var/datum/item/r = list(q.o = astype(q))",
+            vec!["/datum/other"],
+        ),
+        ("return g(q.l = astype(a))", vec!["/list"]),
+        ("return g(q.o[1] = astype(q))", vec!["/datum/other"]),
+        ("return g(q?.o = astype(q))", vec!["/datum/other"]),
+        (
+            "return g(q.i = astype(a), q.o = astype(q))",
+            vec!["/datum/item", "/datum/other"],
+        ),
+        (
+            "return new /datum/other(q.o = astype(q))",
+            vec!["/datum/other"],
+        ),
+        (
+            "return call(q, \"x\")(q.o = astype(q))",
+            vec!["/datum/other"],
+        ),
+    ] {
+        let code = compile(
+            &format!("{types}/proc/f(datum/other/a, datum/thing/q)\n\t{body}\n"),
+            "",
+            "f",
+        );
+        let found: Vec<_> = code
+            .lines()
+            .zip(code.lines().skip(1))
+            .filter(|(_, next)| *next == "AsType")
+            .map(|(push, _)| push.trim_start_matches("PushVal "))
+            .collect();
+        assert_eq!(found, casts, "{body}\n{code}");
+    }
+    let code = compile(
+        &format!("{types}/proc/f(datum/thing/q)\n\treturn list(q.o = new)\n"),
+        "",
+        "f",
+    );
+    assert_has(&code, &["PushVal /datum/other", "New 0"]);
+}
+
+#[test]
 fn an_elements_implicit_cast_takes_its_holders_type() {
     let types = "/datum/item\n/datum/other\n\tvar/list/l\n/datum/thing\n\tvar/datum/other/o\n\
                  \tvar/list/l\n\tvar/list/datum/item/li\nvar/list/gl\n";
