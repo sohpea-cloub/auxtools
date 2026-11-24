@@ -512,6 +512,33 @@ fn a_safe_colon_call_finds_its_proc_and_value_as_a_colon_call_does() {
 }
 
 #[test]
+fn a_safe_colon_call_on_an_untyped_value_finds_its_proc_as_a_colon_call_does() {
+    let types = "/mob/verb/show()\n\tset name = \"Display\"\n\
+                 /datum/thing/proc/show_proc()\n\tset name = \"Show It\"\n\
+                 /mob/verb/plain_verb()\n";
+    for (body, call) in [
+        ("target?:show()", "Call dynamic_verb(\"Display\") 0"),
+        (
+            "target:show()",
+            "CallStatement cache = arg(0); dynamic_verb(\"Display\") 0",
+        ),
+        ("target?:show_proc()", "Call dynamic_proc(\"Show It\") 0"),
+        (
+            "return target?:show_proc()",
+            "Call dynamic_proc(\"Show It\") 0",
+        ),
+        (
+            "target?:plain_verb()",
+            "Call dynamic_verb(\"plain verb\") 0",
+        ),
+        ("target?:show().x = 1", "Call dynamic_verb(\"Display\") 0"),
+    ] {
+        let code = compile(&format!("{types}/proc/f(target)\n\t{body}\n"), "", "f");
+        assert_has(&code, &[call]);
+    }
+}
+
+#[test]
 fn a_safe_place_after_a_call_is_typed_as_a_read_finds_it() {
     let types = "/datum/child\n/datum/child/special\n\
                  /datum/holder\n\tvar/datum/child/child\n\tvar/datum/holder/inner\n\

@@ -487,6 +487,17 @@ pub fn dependents(built: Built) {
 		"recompiled make()?.STATIC.name += value doesn't change the object that DreamMaker changes"
 	);
 	println!("ok: recompiled make()?.STATIC.name += value changes the object that DreamMaker changes");
+
+	let read = "\"[dep_show_on(new /mob/dep_shower)] [isnull(dep_show_on(null))]\"";
+	assert_eq!(eval(&mut client, read), "\"shown 1\"");
+	let changes = source.edit("dependents.dm", "\treturn target?:dep_show()", "\treturn 0 || target?:dep_show()");
+	reload(&mut watcher, &changes);
+	assert_eq!(
+		eval(&mut client, read),
+		"\"shown 1\"",
+		"recompiled untyped target?:verb() doesn't call the verb by its `set name`"
+	);
+	println!("ok: recompiled untyped target?:verb() calls the verb by its `set name`");
 }
 
 fn refused_edit(source: &mut Source, file: &str, from: &str, to: &str) -> Vec<dmasm::reload::Refusal> {

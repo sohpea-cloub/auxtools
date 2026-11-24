@@ -387,3 +387,10 @@ var/datum/dep_retype_alone_first/dep_retype_alone_target
 	var/datum/dep_shared_a/a = new
 	var/datum/dep_shared_b/b = new
 	return "[a.DEP_SHARED.count] [b.DEP_SHARED.count]"
+
+/mob/dep_shower/verb/dep_show()
+	set name = "Dep Display"
+	return "shown"
+
+/proc/dep_show_on(target)
+	return target?:dep_show()

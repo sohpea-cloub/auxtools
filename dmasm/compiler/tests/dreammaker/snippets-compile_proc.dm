@@ -1013,6 +1013,26 @@ var/const/LIMIT = 10
 	x?:SHARED.count = 3
 /proc/f21(datum/a/x)
 	return (x?.SHARED.count += 1)
+// Guards: a_safe_colon_call_on_an_untyped_value_finds_its_proc_as_a_colon_call_does (compile_proc.rs)
+/mob/verb/show()
+	set name = "Display"
+/datum/thing/proc/show_proc()
+	set name = "Show It"
+/mob/verb/plain_verb()
+/proc/f1(target)
+	target?:show()
+/proc/f2(target)
+	target:show()
+/proc/f3(target)
+	target?:show_proc()
+/proc/f5(target)
+	target?:plain_verb()
+/proc/f6(target)
+	return target?:show_proc()
+/proc/f7(target)
+	target?:show().x = 1
+/proc/f8(target)
+	return target?:show()?.x
 // Guards: a_safe_colon_call_finds_its_proc_and_value_as_a_colon_call_does (compile_proc.rs)
 /datum/a
 	var/const/LIMIT = 5

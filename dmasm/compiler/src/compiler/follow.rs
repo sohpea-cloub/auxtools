@@ -646,15 +646,7 @@ fn emit_safe_inner<'a>(
                     compiler.emit_ins(Instruction::PopCache);
                     popped = true;
                 }
-                let var = super::procs::call_var(
-                    match (receiver_ty, access) {
-                        (Some(t), PropertyAccessKind::Colon) => {
-                            Some(super::procs::colon_proc_type(t, &ident).unwrap_or(t))
-                        }
-                        _ => receiver_ty,
-                    },
-                    &ident,
-                );
+                let var = callee_var(compiler, receiver_ty, access, &ident);
                 compiler.emit_ins(Instruction::Call(builder.get_leaf(var), count));
                 kind = EvalKind::Stack;
             }
