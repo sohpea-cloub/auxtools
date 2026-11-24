@@ -1931,6 +1931,11 @@ fn one_file_parsed_again_on_its_own() {
             again.replace("/datum/a/proc/g()", "/datum/a/proc/final/g()"),
             "declarations",
         ),
+        (
+            "return type",
+            again.replace("/datum/a/proc/g()", "/datum/a/proc/g() as /datum/a"),
+            "declarations",
+        ),
         ("type", format!("{}/datum/b\n", again), "new type"),
         ("parameters", again.replace("g()", "g(z)"), "parameters"),
         (
@@ -2271,6 +2276,85 @@ fn a_declaration_that_colon_lookup_finds_after_a_call_recompiles_its_users() {
             .collect();
         reloads.sort();
         assert_eq!(reloads, ["/colon", "/dot"], "{name}: {:?}", changes.plan);
+    }
+}
+
+#[test]
+fn a_changed_return_type_recompiles_the_callers_that_read_through_it() {
+    let uncompiled = "\tswitch(x)\n\t\tif(x)\n\t\t\treturn 0\n";
+    let code = format!(
+        "/datum/a\n\tvar/const/LIMIT = 5\n\n/datum/b\n\tvar/const/LIMIT = 9\n\n\
+         /proc/dot(datum/factory/factory)\n\treturn factory.make().LIMIT\n\n\
+         /proc/bare()\n\treturn gmake().LIMIT\n\n\
+         /proc/colon(datum/factory/factory)\n\treturn factory.make():LIMIT\n\n\
+         /proc/uncompiled_dot(datum/factory/factory, x)\n{uncompiled}\treturn factory.make().LIMIT\n\n\
+         /proc/uncompiled_colon(datum/factory/factory, x)\n{uncompiled}\treturn factory.make():LIMIT\n\n\
+         /proc/limits()\n\tvar/static/list/limits = list(gmake().LIMIT + 1)\n\treturn limits\n\n"
+    );
+    let untyped = "/datum/factory/proc/make()\n\treturn new /datum/a\n\n/proc/gmake()\n\treturn new /datum/a\n";
+    let typed = untyped.replace("make()\n", "make() as /datum/a\n");
+    for (name, before, after, limit) in [
+        (
+            "return-type-added",
+            untyped,
+            typed.as_str(),
+            "/datum/a:LIMIT",
+        ),
+        (
+            "return-type-removed",
+            typed.as_str(),
+            untyped,
+            "/datum/b:LIMIT",
+        ),
+    ] {
+        let changes = types_changes(name, &code, before, after);
+        let refused: Vec<String> = changes
+            .refused
+            .iter()
+            .map(|r| format!("{}: {}", r.path, r.why))
+            .collect();
+        assert_eq!(refused.len(), 1, "{name}: {refused:?}");
+        assert!(
+            refused[0].starts_with(
+                "/uncompiled_dot: reads a var through a proc that is declared to return another type now, so it must be compiled again"
+            ),
+            "{}: {:?}",
+            name,
+            refused
+        );
+        let mut reloads: Vec<&str> = changes
+            .plan
+            .reloads
+            .iter()
+            .map(|r| r.proc.path.as_str())
+            .collect();
+        reloads.sort();
+        assert_eq!(reloads, ["/bare", "/dot"], "{name}: {:?}", changes.plan);
+        assert_eq!(
+            global_init_sets(&changes),
+            ["/proc/limits#0:limits @29"],
+            "{name}"
+        );
+        let reads: Vec<String> = changes
+            .global_init
+            .as_ref()
+            .unwrap()
+            .code
+            .nodes
+            .iter()
+            .filter_map(|node| match node {
+                Node::Instruction(
+                    Instruction::GetVar(dmasm_bytecode::Variable::Global(var)),
+                    (),
+                ) => Some(format!(
+                    "{}:{}",
+                    scope(var),
+                    String::from_utf8_lossy(&var.name.0)
+                )),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(reads, [limit], "{name}");
     }
 }
 

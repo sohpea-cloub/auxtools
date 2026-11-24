@@ -353,6 +353,20 @@ pub fn dependents(built: Built) {
 		"a proc dmasm can't compile that reads make():name from another type after the reload isn't refused"
 	);
 	println!("ok: a reload is refused for a proc dmasm can't compile that reads make():name from another type");
+
+	assert_eq!(eval(&mut client, "dep_returned()"), "9");
+	let changes = source.edit(
+		"dependents.dm",
+		"/proc/dep_returned_make()\n",
+		"/proc/dep_returned_make() as /datum/dep_returned_first\n"
+	);
+	reload(&mut watcher, &changes);
+	assert_eq!(
+		eval(&mut client, "dep_returned()"),
+		"5",
+		"an unchanged proc that reads make().name doesn't follow make()'s new return type"
+	);
+	println!("ok: an unchanged proc that reads make().name follows make()'s new return type");
 }
 
 fn refused_edit(source: &mut Source, file: &str, from: &str, to: &str) -> Vec<dmasm::reload::Refusal> {

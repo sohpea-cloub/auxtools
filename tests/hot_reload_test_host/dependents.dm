@@ -258,3 +258,12 @@ var/datum/dep_retype_alone_first/dep_retype_alone_target
 
 /datum/dep_call_colon_factory/proc/make()
 	return new /datum/dep_call_colon_first
+
+/datum/dep_returned_first
+	var/const/DEP_RETURNED = 5
+
+/datum/dep_returned_later
+	var/const/DEP_RETURNED = 9
+
+/proc/dep_returned_make()
+	return new /datum/dep_returned_first

@@ -273,3 +273,6 @@ var/hr_tally = 100
 	if(!last)
 		return 0
 	return factory.make():DEP_CALL_COLON
+
+/proc/dep_returned()
+	return dep_returned_make().DEP_RETURNED
