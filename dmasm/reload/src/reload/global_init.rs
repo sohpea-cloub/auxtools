@@ -409,18 +409,6 @@ fn retargeted(
             if !r.expression_might_name(expression, &init.ty.get().path) {
                 return false;
             }
-            let compiled = |s: &Snapshot, init: &Initializer<'_>| {
-                let expression = init.expression?;
-                s.compile_value(
-                    init.ty,
-                    expression,
-                    &init.declared,
-                    value_location(expression, init.location),
-                    init.proc_path.as_deref(),
-                    &init.visible,
-                )
-                .ok()
-            };
             match (compiled(old, was), compiled(new, init)) {
                 (Some(before), Some(after)) => !r.same_code(&before, &after),
                 (None, None) => false,
@@ -429,6 +417,19 @@ fn retargeted(
         }
         _ => false,
     }
+}
+
+fn compiled(s: &Snapshot, init: &Initializer<'_>) -> Option<ProcReload> {
+    let expression = init.expression?;
+    s.compile_value(
+        init.ty,
+        expression,
+        &init.declared,
+        value_location(expression, init.location),
+        init.proc_path.as_deref(),
+        &init.visible,
+    )
+    .ok()
 }
 
 #[allow(clippy::type_complexity)]
@@ -528,8 +529,26 @@ fn renumber_old_statics(
     }
 }
 
-fn changed(new: &Snapshot, before: &[Initializer<'_>], after: &[Initializer<'_>]) -> Vec<Refusal> {
+fn changed(
+    (old, before): (&Snapshot, &[Initializer<'_>]),
+    (new, after): (&Snapshot, &[Initializer<'_>]),
+    r: &Retargeted,
+) -> Vec<Refusal> {
     let was: HashMap<_, _> = before.iter().map(|i| (i.key(), i)).collect();
+    let rebound = |was: &Initializer<'_>, init: &Initializer<'_>| {
+        let (before, after) = (was.bound(), init.bound());
+        let same_slots = before.len() == after.len()
+            && before
+                .iter()
+                .zip(&after)
+                .all(|(b, a)| (b.0, b.1) == (a.0, a.1));
+        before != after
+            && (!same_slots
+                || match (compiled(old, was), compiled(new, init)) {
+                    (Some(before), Some(after)) => !r.same_code(&before, &after),
+                    _ => true,
+                })
+    };
     after
         .iter()
         .filter(|init| {
@@ -537,7 +556,7 @@ fn changed(new: &Snapshot, before: &[Initializer<'_>], after: &[Initializer<'_>]
                 was.constant != init.constant
                     || was.expression != init.expression
                     || was.constructed() != init.constructed()
-                    || was.bound() != init.bound()
+                    || rebound(was, init)
             })
         })
         .map(|init| {
@@ -1763,7 +1782,7 @@ pub(super) fn compare(
     let Some(table) = differences((old, &before), (new, &after), r) else {
         return;
     };
-    let deferred = changed(new, &before, &after);
+    let deferred = changed((old, &before), (new, &after), r);
     let table_vars = table.len();
     let without = |why: String| {
         Diagnostic::warning(

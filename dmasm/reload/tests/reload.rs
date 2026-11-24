@@ -5450,6 +5450,18 @@ fn a_retyped_static_changes_what_a_later_initializer_reads_through_it() {
 }
 
 #[test]
+fn a_retyped_static_that_a_later_initializer_only_reads_changes_nothing() {
+    let before = "/datum/a\n/datum/b\n\n\
+                  /proc/entries()\n\tvar/static/datum/a/config\n\
+                  \tvar/static/list/entries = list(config)\n\treturn entries\n";
+    let after = before.replace("static/datum/a/config", "static/datum/b/config");
+    let changes = changes("static-retyped-plain-read", before, &after);
+    assert!(changes.refused.is_empty(), "{:?}", changes.refused);
+    assert!(changes.deferred.is_empty(), "{:?}", changes.deferred);
+    assert_eq!(reloaded(&changes), [key("/entries", 0)]);
+}
+
+#[test]
 fn a_static_moved_into_a_block_changes_the_type_a_later_initializer_makes() {
     let before = "var/kind = /datum/b\n\n/datum/a\n/datum/b\n\n\
                   /proc/made(x)\n\tvar/static/kind = /datum/a\n\tif (x)\n\t\tkind = null\n\
