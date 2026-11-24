@@ -834,6 +834,44 @@ var/const/LIMIT = 10
 	return factory.make()?.LIMIT
 /proc/f16(datum/factory/factory)
 	return factory.make():LIMIT + 1
+// Guards: a_safe_write_after_a_call_finds_its_static_as_a_read_does (compile_proc.rs)
+// Known -516.1672: /proc/f10  before 516.1673 DreamMaker leaves out the null tests of `a?.b ||= v` and `&&=`; dmasm keeps them
+/datum/a
+	var/static/S = 1
+/datum/b
+	var/static/S = 2
+/datum/factory/proc/make()
+	return new /datum/a
+/datum/factory/proc/typed() as /datum/a
+	return new /datum/a
+/proc/gmake()
+	return new /datum/a
+/proc/gtyped() as /datum/a
+	return new /datum/a
+/proc/f1(datum/factory/factory)
+	factory.make()?.S = 3
+/proc/f2(datum/factory/factory)
+	factory.typed()?.S = 3
+/proc/f3()
+	gmake()?.S = 3
+/proc/f4()
+	gtyped()?.S = 3
+/proc/f5(datum/factory/factory)
+	factory?.make().S = 3
+/proc/f6(datum/factory/factory)
+	factory?.typed().S = 3
+/proc/f7(datum/factory/factory)
+	factory.make()?.S += 3
+/proc/f8(datum/factory/factory)
+	factory.typed()?.S++
+/proc/f9(datum/factory/factory)
+	factory.make()?.S--
+/proc/f10(datum/factory/factory)
+	factory.make()?.S ||= 3
+/proc/f11(datum/factory/factory)
+	return (factory.typed()?.S = 4)
+/proc/f12(datum/factory/factory)
+	return factory.make()?.S++
 // Guards: static_after_double_colon_chain (compile_proc.rs)
 /datum/a
 	var/datum/b/b

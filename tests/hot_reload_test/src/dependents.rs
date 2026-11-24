@@ -381,6 +381,20 @@ pub fn dependents(built: Built) {
 		"an unchanged proc that reads make().name doesn't read the var that untyped lookup finds now"
 	);
 	println!("ok: an unchanged proc that reads make().name reads the var that untyped lookup finds now");
+
+	assert_eq!(eval(&mut client, "dep_safe_write(3)"), "\"1 3\"");
+	let changes = source.edit(
+		"dependents.dm",
+		"factory.make()?.DEP_SAFE_WRITE = value\n",
+		"factory.make()?.DEP_SAFE_WRITE = value + 1\n"
+	);
+	reload(&mut watcher, &changes);
+	assert_eq!(
+		eval(&mut client, "dep_safe_write(5)"),
+		"\"1 6\"",
+		"recompiled make()?.name = value doesn't write the static that DreamMaker writes"
+	);
+	println!("ok: recompiled make()?.name = value writes the static that DreamMaker writes");
 }
 
 fn refused_edit(source: &mut Source, file: &str, from: &str, to: &str) -> Vec<dmasm::reload::Refusal> {

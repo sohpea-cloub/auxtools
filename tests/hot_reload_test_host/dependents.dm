@@ -275,3 +275,19 @@ var/datum/dep_retype_alone_first/dep_retype_alone_target
 
 /proc/dep_bare_make()
 	return new /datum/dep_bare_call_first
+
+/datum/dep_safe_write_a
+	var/static/DEP_SAFE_WRITE = 1
+
+/datum/dep_safe_write_b
+	var/static/DEP_SAFE_WRITE = 2
+
+/datum/dep_safe_write_factory/proc/make()
+	return new /datum/dep_safe_write_a
+
+/proc/dep_safe_write(value)
+	var/datum/dep_safe_write_factory/factory = new
+	factory.make()?.DEP_SAFE_WRITE = value
+	var/datum/dep_safe_write_a/a = new
+	var/datum/dep_safe_write_b/b = new
+	return "[a.DEP_SAFE_WRITE] [b.DEP_SAFE_WRITE]"

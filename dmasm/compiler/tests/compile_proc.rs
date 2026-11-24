@@ -255,6 +255,81 @@ fn a_var_after_a_call_is_found_by_the_procs_return_type() {
     }
 }
 
+fn global_scopes(src: &str) -> Vec<String> {
+    let ctx = dreammaker::Context::default();
+    let pp = dreammaker::Preprocessor::from_buffer(&ctx, "test.dm".into(), src.to_owned());
+    let mut parser = dreammaker::Parser::new(&ctx, pp);
+    parser.enable_procs();
+    let tree = parser.parse_object_tree();
+    let value = tree
+        .root()
+        .get()
+        .procs
+        .get("f")
+        .unwrap()
+        .value
+        .last()
+        .unwrap();
+    let source = ProcSource {
+        tree: &tree,
+        ty: tree.root(),
+        name: "f",
+        value,
+        file: "test.dm",
+        debug_info: false,
+        index: None,
+        byond: dmasm_compiler::ByondVersion::LATEST,
+        file_names: None,
+    };
+    let nodes = compile_proc(&source).expect("compiles").nodes;
+    let mut scopes = vec![];
+    for node in &nodes {
+        let Node::Instruction(ins, _) = node else {
+            continue;
+        };
+        for var in ins.variables() {
+            if let Variable::Global(g) = var {
+                let scope = format!("{:?}", g.scope);
+                if !scopes.contains(&scope) {
+                    scopes.push(scope);
+                }
+            }
+        }
+    }
+    scopes
+}
+
+#[test]
+fn a_safe_write_after_a_call_finds_its_static_as_a_read_does() {
+    let types = "/datum/a\n\tvar/static/S = 1\n/datum/b\n\tvar/static/S = 2\n\
+                 /datum/factory/proc/make()\n\treturn new /datum/a\n\
+                 /datum/factory/proc/typed() as /datum/a\n\treturn new /datum/a\n\
+                 /proc/gmake()\n\treturn new /datum/a\n\
+                 /proc/gtyped() as /datum/a\n\treturn new /datum/a\n";
+    for (body, scope) in [
+        ("factory.make()?.S = 3", "/datum/b"),
+        ("factory.typed()?.S = 3", "/datum/a"),
+        ("gmake()?.S = 3", "/datum/b"),
+        ("gtyped()?.S = 3", "/datum/a"),
+        ("factory?.make().S = 3", "/datum/b"),
+        ("factory?.typed().S = 3", "/datum/a"),
+        ("factory.make()?.S += 3", "/datum/b"),
+        ("factory.typed()?.S++", "/datum/a"),
+        ("factory.make()?.S--", "/datum/b"),
+        ("factory.make()?.S ||= 3", "/datum/b"),
+        ("return (factory.typed()?.S = 4)", "/datum/a"),
+        ("return factory.make()?.S++", "/datum/b"),
+    ] {
+        let src = format!("{types}/proc/f(datum/factory/factory)\n\t{body}\n");
+        assert_eq!(
+            global_scopes(&src),
+            [format!("Some(Type(\"{}\"))", scope)],
+            "{}",
+            body
+        );
+    }
+}
+
 #[test]
 fn a_var_after_an_index_is_found_as_untyped_colon_finds_it() {
     let types = "/datum/a\n\tvar/const/LIMIT = 5\n\tvar/datum/a/link\n\

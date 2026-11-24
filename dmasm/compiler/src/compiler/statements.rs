@@ -1872,13 +1872,17 @@ pub(super) fn static_place(
         follow: Default::default(),
     };
     let follow: Vec<Follow> = follow.iter().map(|f| f.elem.clone()).collect();
-    static_member(
-        compiler,
-        super::procs::expr_type(compiler, &base),
-        &follow,
-        indexed,
-        super::procs::After::Typed,
-    )
+    let (ty, after) = match &term.elem {
+        Term::Call(..) => super::procs::start_type(compiler, &term.elem),
+        Term::Ident(name) if name.as_str() == "global" => {
+            (Some(compiler.proc.tree.root()), super::procs::After::Typed)
+        }
+        _ => (
+            super::procs::expr_type(compiler, &base),
+            super::procs::After::Typed,
+        ),
+    };
+    static_member(compiler, ty, &follow, indexed, after)
 }
 
 pub(super) fn static_member(
@@ -1900,6 +1904,10 @@ pub(super) fn static_member(
             }
             Follow::Index(..) => {
                 (ty, after, decl) = (None, super::procs::After::Index, None);
+            }
+            Follow::Call(access, name, _) => {
+                (ty, after) = super::procs::call_result(compiler, ty, *access, name.as_str());
+                decl = None;
             }
             _ => return None,
         }
