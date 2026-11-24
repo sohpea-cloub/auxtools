@@ -1628,6 +1628,7 @@ pub(super) fn compare(
         .map(String::as_str)
         .collect();
     let colon_names: HashSet<&str> = changes.colon_names.iter().map(String::as_str).collect();
+    let retyped: HashSet<&str> = changes.retyped.iter().map(String::as_str).collect();
     let statics = !changes.consts.is_empty()
         || !defaults.is_empty()
             && new.statics_read(|node| {
@@ -1639,6 +1640,10 @@ pub(super) fn compare(
                 matches!(node, syntax::Node::Expression(Expression::Base { follow, .. })
                     if super::colon_fields(follow).any(|name| colon_names.contains(name)))
             })
+        || !retyped.is_empty()
+            && new.statics_read(
+                |node| matches!(node, syntax::Node::Name(name) if retyped.contains(name)),
+            )
         || changes
             .plan
             .reloads

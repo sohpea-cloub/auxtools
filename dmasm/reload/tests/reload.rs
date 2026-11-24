@@ -4417,6 +4417,20 @@ fn a_static_reading_a_changed_colon_name_is_given_to_a_reboot() {
 }
 
 #[test]
+fn a_static_reading_through_a_retyped_var_is_given_to_a_reboot() {
+    let before = "/datum/a\n\tvar/const/LIMIT = 5\n\n/datum/b\n\tvar/const/LIMIT = 9\n\n\
+                  var/datum/a/target\n\n\
+                  /proc/limits()\n\tvar/static/list/limits = list(target.LIMIT + 1)\n\treturn limits\n";
+    let after = before.replace("var/datum/a/target", "var/datum/b/target");
+    let changes = changes("static-reading-retyped", before, &after);
+    assert!(changes.refused.is_empty(), "{:?}", changes.refused);
+    assert!(changes.deferred.is_empty(), "{:?}", changes.deferred);
+    assert_eq!(global_init_sets(&changes), ["/proc/limits#0:limits @10"]);
+    let code = dmasm_bytecode::format(&changes.global_init.as_ref().unwrap().code.nodes);
+    assert!(code.contains("PushInt 10"), "{}", code);
+}
+
+#[test]
 fn a_static_in_a_branch_added_above_another_is_a_new_one() {
     let before = "/proc/f(x)\n\tif (x == 1)\n\t\tvar/static/n = 0\n\t\tn++\n\t\treturn n\n";
     let added = "\tif (x == 2)\n\t\tvar/static/n = 10\n\t\tn++\n\t\treturn n\n";

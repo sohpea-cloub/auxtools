@@ -846,6 +846,46 @@ fn static_made_by_new_of_a_changed_type() {
 	world.end();
 }
 
+const STATIC_RETYPED: &str = "/datum/rb_static_retyped_a
+	var/const/RB_STATIC_RETYPED = 5
+
+/datum/rb_static_retyped_b
+	var/const/RB_STATIC_RETYPED = 9
+
+var/datum/rb_static_retyped_a/rb_static_retyped_target
+
+/proc/rb_static_retyped_limits()
+	var/static/list/limits = list(rb_static_retyped_target.RB_STATIC_RETYPED + 1)
+	return limits
+";
+
+fn static_reading_through_a_retyped_var() {
+	let dir = copy_of_the_world("static_reading_through_a_retyped_var");
+	std::fs::write(dir.join("static_retyped.dm"), STATIC_RETYPED).unwrap();
+	let dme = dir.join("dap_test_host.dme");
+	let text = std::fs::read_to_string(&dme).unwrap() + "#include \"static_retyped.dm\"\n";
+	std::fs::write(&dme, text).unwrap();
+	paths::compile(&dme);
+
+	let mut world = World::launch_in(dir.to_path_buf(), json!({ "hotReload": true }));
+	world.catch_runtimes(false);
+	world.configure();
+	world.wait_output("Hot reload active");
+	assert_eq!(world.eval_global("rb_static_retyped_limits()[1]"), "6");
+	let unchanged = |output: &str| output.matches("Hot reload: no changes to the running code").count();
+	let before = unchanged(&world.output);
+	world.marks.edit(
+		"static_retyped.dm",
+		"var/datum/rb_static_retyped_a/rb_static_retyped_target",
+		"var/datum/rb_static_retyped_b/rb_static_retyped_target"
+	);
+	world.wait_until("the reload", |output| unchanged(output) > before);
+	reboot(&mut world, 2);
+	assert_eq!(world.eval_global("rb_static_retyped_limits()[1]"), "10");
+	ok("proc static reading a const through a var declared with another type now, after reboot");
+	world.end();
+}
+
 const LOCAL_LIMIT: &str = "/proc/rb_local_limit()
 	var/const/LIMIT = 5
 	return \"[LIMIT] [LIMIT + 1]\"
@@ -1116,6 +1156,7 @@ pub fn files() {
 	static_reading_a_changed_default();
 	static_reading_a_changed_colon_name();
 	static_made_by_new_of_a_changed_type();
+	static_reading_through_a_retyped_var();
 	local_const_changed();
 	file_named_by_a_reload();
 	resource_files();
