@@ -3440,14 +3440,20 @@ fn line_code<'a>(bytecode: &[u32], locals: &'a [String]) -> Vec<(Option<u32>, Ve
 		scanned.instructions.pop();
 	}
 	let (mut lines, mut file, mut inside) = (vec![], None, true);
+	let mut spawn_ends = HashSet::new();
 	for ins in scanned.instructions {
 		let at = ins.offset as usize;
+		let span = at..at + ins.bytecode.len();
 		match ins.opcode {
 			Opcode::DbgFile => inside = *file.get_or_insert(bytecode[at + 1]) == bytecode[at + 1],
 			Opcode::DbgLine => lines.push((inside.then_some(bytecode[at + 1]), at, vec![])),
+			Opcode::End if spawn_ends.contains(&span.end) && lines.last().is_some_and(|(_, _, code)| !code.is_empty()) => {}
 			_ => {
+				if ins.opcode == Opcode::Spawn {
+					spawn_ends.extend(span.clone().filter_map(|word| targets.get(&word).copied()));
+				}
 				if let Some((_, _, code)) = lines.last_mut() {
-					code.push((ins.opcode, at..at + ins.bytecode.len()));
+					code.push((ins.opcode, span));
 				}
 			}
 		}
@@ -4032,6 +4038,36 @@ mod tests {
 			(13, 12),
 			(15, 15),
 			(16, 16)
+		]);
+	}
+
+	#[test]
+	fn keeps_a_line_moved_to_the_end_of_a_spawn_block() {
+		use dmasm::Opcode::*;
+		const LOCAL: u32 = 0xFFDA;
+		let (line, push, set, add, sub, get, spawn, ret, end) = (
+			DbgLine.word(),
+			PushInt.word(),
+			SetVar.word(),
+			AugAdd.word(),
+			AugSub.word(),
+			GetVar.word(),
+			Spawn.word(),
+			Ret.word(),
+			End.word()
+		);
+		let old = [
+			line, 10, push, 1, set, LOCAL, 0, line, 11, push, 2, add, LOCAL, 0, line, 12, push, 1, sub, LOCAL, 0, line, 13, get, LOCAL, 0, ret, end
+		];
+		let new = [
+			line, 10, push, 1, set, LOCAL, 0, line, 11, push, 10, spawn, 21, line, 12, push, 2, add, LOCAL, 0, end, line, 13, push, 1, sub, LOCAL, 0,
+			line, 14, get, LOCAL, 0, ret, end
+		];
+		assert_eq!(kept_lines(&old, &names(&["total"]), &new, &names(&["total"])), [
+			(10, 10),
+			(11, 12),
+			(12, 13),
+			(13, 14)
 		]);
 	}
 }

@@ -356,6 +356,31 @@ pub fn reloads(pid: u64, code: &Path) {
 	std::fs::write(code, &source).unwrap();
 	run(pid, &["wait", "reload", "--since", &since, "--timeout", "15"], 0);
 	println!("ok: wait pause keeps its breakpoint on a statement moved to the end of an `if` with an `else`");
+
+	let before = "/proc/spawned()\n\tvar/total = 1\n\ttotal += 2 // notify\n\ttotal -= 1\n\treturn total\n\n/proc/two_loops()\n";
+	let after = "/proc/spawned()\n\tvar/total = 1\n\tspawn(10)\n\t\ttotal += 2 // notify\n\ttotal -= 1\n\treturn total\n\n/proc/two_loops()\n";
+	let since = newest(pid).to_string();
+	std::fs::write(code, source.replace("/proc/two_loops()\n", before)).unwrap();
+	run(pid, &["wait", "reload", "--since", &since, "--timeout", "15"], 0);
+	let place = format!("attach_host.dm:{}", crate::line_of(code, "\ttotal += 2 // notify"));
+	let waiting = wait_at(pid, &place);
+	let since = newest(pid).to_string();
+	std::fs::write(code, source.replace("/proc/two_loops()\n", after)).unwrap();
+	run(pid, &["wait", "reload", "--since", &since, "--timeout", "15"], 0);
+	run(pid, &["eval", "--spawn", "spawned()"], 0);
+	let (exit, printed) = waiting.finish();
+	let line = crate::line_of(code, "\t\ttotal += 2 // notify");
+	assert!(
+		exit == 0 && printed.contains(&format!("#0 /spawned  attach_host.dm:{}\n", line)),
+		"wait pause on a statement moved to the end of a `spawn` block gave {}: {}",
+		exit,
+		printed
+	);
+	run(pid, &["continue"], 0);
+	let since = newest(pid).to_string();
+	std::fs::write(code, &source).unwrap();
+	run(pid, &["wait", "reload", "--since", &since, "--timeout", "15"], 0);
+	println!("ok: wait pause keeps its breakpoint on a statement moved to the end of a `spawn` block");
 }
 
 pub fn reboot(pid: u64, dir: &Path) {
