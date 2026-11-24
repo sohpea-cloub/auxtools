@@ -1536,6 +1536,9 @@ impl Adapter {
 		let mut told = vec![];
 		for (id, name, condition, hit) in unset {
 			let (breakpoint, in_world) = self.function_breakpoint(id, &name, condition, hit.as_deref(), &mut vec![]);
+			if self.debuggee.as_ref().is_some_and(Debuggee::lost) {
+				break;
+			}
 			if let Some(in_world) = in_world {
 				let mut set = self.set.lock().unwrap();
 				set.entry(FUNCTION_BREAKPOINTS.to_owned()).or_default().push(in_world);

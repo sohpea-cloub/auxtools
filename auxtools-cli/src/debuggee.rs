@@ -228,6 +228,7 @@ pub struct Debuggee {
 	caught_up: bool,
 	stops: u32,
 	resumed_after: u64,
+	lost: bool,
 	pub generation: u64
 }
 
@@ -258,6 +259,7 @@ impl Debuggee {
 			caught_up: false,
 			stops: 0,
 			resumed_after: 0,
+			lost: false,
 			generation
 		})
 	}
@@ -312,6 +314,15 @@ impl Debuggee {
 		self.stopped.load(Ordering::Relaxed)
 	}
 
+	pub const fn lost(&self) -> bool {
+		self.lost
+	}
+
+	fn lose(&mut self, why: Lost) -> String {
+		self.lost = true;
+		lost(why)
+	}
+
 	pub fn leave(&mut self) {
 		if self.client.leave().is_ok() {
 			self.client.closed_by(Instant::now() + GOODBYE_TIMEOUT);
@@ -319,7 +330,7 @@ impl Debuggee {
 	}
 
 	pub fn send(&mut self, request: &Request) -> Result<(), String> {
-		self.client.tell(request, None).map(|_| ()).map_err(lost)
+		self.client.tell(request, None).map(|_| ()).map_err(|why| self.lose(why))
 	}
 
 	pub fn end(&mut self, ending: Ending) -> Result<(), String> {
@@ -334,7 +345,7 @@ impl Debuggee {
 		}
 		let sent = Instant::now();
 		let deadline = sent + RESPONSE_TIMEOUT;
-		let Some(id) = self.client.ask(request, Some(deadline)).map_err(lost)? else {
+		let Some(id) = self.client.ask(request, Some(deadline)).map_err(|why| self.lose(why))? else {
 			return Err("debug server response timed out".to_owned());
 		};
 		loop {
@@ -344,7 +355,7 @@ impl Debuggee {
 				Some(_) => deadline.min(Instant::now() + LEAVING_LOOK),
 				None => deadline
 			};
-			match self.client.hear(Some(until)).map_err(lost)? {
+			match self.client.hear(Some(until)).map_err(|why| self.lose(why))? {
 				Some(Heard::Answer { to, response, after }) if to == id => {
 					if resumes && matches!(response, Response::Ack) {
 						self.resumed_after = after;

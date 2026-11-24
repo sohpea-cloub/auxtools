@@ -1,4 +1,4 @@
-use serde_json::json;
+use serde_json::{json, Value};
 use test_support::{cli, process};
 
 use crate::{ok, world::World};
@@ -14,7 +14,8 @@ fn told_after_reboot() {
 	world.catch_runtimes(false);
 	world.configure();
 	world.wait_output("Hot reload active");
-	let set = world.function_breakpoints(&["/proc/sc_added"]).remove(0);
+	let mut set = world.function_breakpoints(&["/proc/sc_added", "/proc/sc_never"]);
+	let (set, never) = (set.remove(0), set.remove(0));
 	assert_eq!(set["verified"], false, "{}", set);
 	super::reloading::edit(
 		&mut world,
@@ -25,6 +26,18 @@ fn told_after_reboot() {
 
 	world.run("reboot");
 	rebooted(&mut world, 2);
+	world.has_event("breakpoint");
+	let told_of_never: Vec<Value> = (world.events.iter())
+		.filter(|event| event["event"] == "breakpoint" && event["body"]["breakpoint"]["id"] == never["id"])
+		.map(|event| event["body"]["breakpoint"].clone())
+		.collect();
+	assert!(
+		told_of_never.iter().all(|told| told["message"] == never["message"]),
+		"a breakpoint on a missing proc was told {:?}, not only {}",
+		told_of_never,
+		never["message"]
+	);
+	world.events.retain(|event| event["body"]["breakpoint"]["id"] != never["id"]);
 	let told = world.event("breakpoint")["body"]["breakpoint"].clone();
 	let line = world.marks.line("added_1");
 	assert_eq!(
