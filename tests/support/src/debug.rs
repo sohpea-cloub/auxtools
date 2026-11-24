@@ -106,16 +106,16 @@ impl World {
 				std::thread::sleep(Duration::from_millis(100));
 				continue;
 			}
-			match client.messages.recv_timeout(TIMEOUT).map(|message| client.requests.sort(message)) {
-				Ok(Sorted::Answer(_, Response::Ack)) => {
+			match client.answer_unless_hung_up() {
+				Some(Response::Ack) => {
 					if watcher {
 						let response = client.request(Request::Watcher);
 						assert!(matches!(response, Response::Ack), "expected Ack for Watcher, got {:?}", response);
 					}
 					return client;
 				}
-				Ok(Sorted::Event(Response::Disconnect)) | Err(mpsc::RecvTimeoutError::Disconnected) => std::thread::sleep(Duration::from_millis(100)),
-				other => panic!("expected Ack for Configured, got {:?}", other)
+				None => std::thread::sleep(Duration::from_millis(100)),
+				Some(other) => panic!("expected Ack for Configured, got {:?}", other)
 			}
 		}
 	}
@@ -155,6 +155,25 @@ impl Client {
 			requests: Pending::new(),
 			late: 0,
 			watcher
+		}
+	}
+
+	#[track_caller]
+	fn answer_unless_hung_up(&mut self) -> Option<Response> {
+		let until = Instant::now() + TIMEOUT;
+		loop {
+			let message = match self.messages.recv_timeout(until.saturating_duration_since(Instant::now())) {
+				Ok(message) => message,
+				Err(mpsc::RecvTimeoutError::Disconnected) => return None,
+				Err(mpsc::RecvTimeoutError::Timeout) => panic!("timed out waiting for the debug server's answer")
+			};
+			match self.requests.sort(message) {
+				Sorted::Answer(_, response) => return Some(response),
+				Sorted::Event(Response::Disconnect) => return None,
+				Sorted::Event(Response::Notification { message }) => println!("  [debug server] {}", message),
+				Sorted::Late(..) => self.late += 1,
+				Sorted::Event(_) => {}
+			}
 		}
 	}
 
