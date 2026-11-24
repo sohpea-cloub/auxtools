@@ -4457,13 +4457,22 @@ fn uncompiled_code_reading_a_changed_const_alone_is_not_refused() {
          /proc/typed(datum/c/c, x)\n{uncompiled}\treturn c.CAP\n\n\
          /proc/typed_scoped(datum/c/c, x)\n{uncompiled}\treturn c::CAP\n\n\
          /proc/scoped_sum(x)\n{uncompiled}\treturn /datum/c::CAP + 1\n\n\
-         /proc/typed_negated(datum/c/c, x)\n{uncompiled}\treturn -c.CAP\n"
+         /proc/typed_negated(datum/c/c, x)\n{uncompiled}\treturn -c.CAP\n\n\
+         /proc/output(x)\n{uncompiled}\tworld << LIMIT\n\tLIMIT << x\n\tLIMIT >> x\n\n\
+         /proc/output_sum(x)\n{uncompiled}\tworld << LIMIT + 1\n"
     );
     for (name, after, refused) in [
         (
             "alone-const-limit",
             before.replace("LIMIT = 5", "LIMIT = 10"),
-            &["/chosen", "/either", "/negated", "/sum", "/summed_argument"][..],
+            &[
+                "/chosen",
+                "/either",
+                "/negated",
+                "/output_sum",
+                "/sum",
+                "/summed_argument",
+            ][..],
         ),
         (
             "alone-const-cap",

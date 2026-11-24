@@ -162,3 +162,13 @@ var/const/DEP_LOCAL_BASE = 5
 /proc/dep_local_based()
 	var/const/DEP_LOCAL_SUM = DEP_LOCAL_BASE + 1
 	return DEP_LOCAL_SUM
+
+var/const/DEP_OUTPUT = 5
+
+/proc/dep_output()
+	var/last = /datum/dep_twice::f()
+	var/savefile/S = new
+	S["v"] << DEP_OUTPUT
+	var/v
+	S["v"] >> v
+	return last ? v : 0

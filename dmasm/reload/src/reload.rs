@@ -2055,7 +2055,7 @@ fn local_const_users(old: &Snapshot, new: &Snapshot, realigned: &Realigned, chan
 }
 
 fn read_alone(s: &Snapshot, value: &ProcValue) -> HashSet<usize> {
-    use dreammaker::ast::{Expression, Follow, Statement, Term};
+    use dreammaker::ast::{BinaryOp, Expression, Follow, Statement, Term};
     let mut alone: HashSet<usize> = HashSet::new();
     let mark = |alone: &mut HashSet<usize>, e: &Expression| {
         alone.insert(e as *const Expression as usize);
@@ -2083,6 +2083,19 @@ fn read_alone(s: &Snapshot, value: &ProcValue) -> HashSet<usize> {
         syntax::Node::Statement(statement) => match statement {
             Statement::Return(Some(e)) => mark(&mut alone, e),
             Statement::Spawn { delay: Some(e), .. } => mark(&mut alone, e),
+            Statement::Expr(Expression::BinaryOp {
+                op: BinaryOp::LShift,
+                lhs,
+                rhs,
+            }) => {
+                mark(&mut alone, lhs);
+                mark(&mut alone, rhs);
+            }
+            Statement::Expr(Expression::BinaryOp {
+                op: BinaryOp::RShift,
+                lhs,
+                ..
+            }) => mark(&mut alone, lhs),
             Statement::Var(var) => local_value(&mut alone, var),
             Statement::Vars(vars) => vars.iter().for_each(|var| local_value(&mut alone, var)),
             _ => {}
