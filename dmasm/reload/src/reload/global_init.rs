@@ -295,6 +295,26 @@ impl Snapshot {
         })
     }
 
+    fn statics_read_defaults(&self, names: &HashSet<&str>) -> bool {
+        self.procs.keys().any(|key| {
+            let Some(code) = self.find(key).and_then(|(_, value)| value.code.as_ref()) else {
+                return false;
+            };
+            let mut statics = vec![];
+            static_statements(code, None, &mut statics);
+            statics.iter().any(|(_, var)| {
+                var.value.as_ref().is_some_and(|value| {
+                    let mut found = false;
+                    syntax::walk_expression(value, &mut |node| {
+                        found |= matches!(node, syntax::Node::Follow(Follow::StaticField(name))
+                            if names.contains(name.as_str()));
+                    });
+                    found
+                })
+            })
+        })
+    }
+
     fn has_statics(&self, key: &super::ProcKey) -> bool {
         let Some(code) = self.find(key).and_then(|(_, value)| value.code.as_ref()) else {
             return false;
@@ -1541,7 +1561,13 @@ pub(super) fn compare(
     r: &Retargeted,
     changes: &mut super::Changes,
 ) {
+    let defaults: HashSet<&str> = changes
+        .defaults_changed
+        .iter()
+        .map(String::as_str)
+        .collect();
     let statics = !changes.consts.is_empty()
+        || !defaults.is_empty() && new.statics_read_defaults(&defaults)
         || changes
             .plan
             .reloads

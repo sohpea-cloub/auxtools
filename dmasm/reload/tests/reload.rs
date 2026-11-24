@@ -4293,6 +4293,18 @@ fn a_static_folding_a_changed_const_is_given_to_a_reboot() {
 }
 
 #[test]
+fn a_static_reading_a_changed_default_is_given_to_a_reboot() {
+    let before = "/datum/config\n\tvar/limit = 5\n\n\
+                  /proc/limits()\n\tvar/static/list/limits = list(/datum/config::limit)\n\treturn limits\n";
+    let after = before.replace("limit = 5", "limit = 10");
+    let changes = changes("static-reading-default", before, &after);
+    assert!(changes.refused.is_empty(), "{:?}", changes.refused);
+    assert_eq!(global_init_sets(&changes), ["/proc/limits#0:limits @5"]);
+    let code = dmasm_bytecode::format(&changes.global_init.as_ref().unwrap().code.nodes);
+    assert!(code.contains("PushInt 10"), "{}", code);
+}
+
+#[test]
 fn uncompiled_code_folding_a_changed_const_is_refused() {
     let uncompiled = "\tswitch(x)\n\t\tif(x)\n\t\t\treturn 0\n";
     let before = format!(

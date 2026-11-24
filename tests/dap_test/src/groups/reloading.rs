@@ -739,6 +739,36 @@ fn static_folding_a_changed_const() {
 	world.end();
 }
 
+const STATIC_CONFIG: &str = "/datum/rb_static_config
+	var/limit = 5
+";
+
+const STATIC_DEFAULTS: &str = "/proc/rb_static_defaults()
+	var/static/list/limits = list(/datum/rb_static_config::limit)
+	return limits
+";
+
+fn static_reading_a_changed_default() {
+	let dir = copy_of_the_world("static_reading_a_changed_default");
+	std::fs::write(dir.join("static_config.dm"), STATIC_CONFIG).unwrap();
+	std::fs::write(dir.join("static_defaults.dm"), STATIC_DEFAULTS).unwrap();
+	let dme = dir.join("dap_test_host.dme");
+	let text = std::fs::read_to_string(&dme).unwrap() + "#include \"static_config.dm\"\n#include \"static_defaults.dm\"\n";
+	std::fs::write(&dme, text).unwrap();
+	paths::compile(&dme);
+
+	let mut world = World::launch_in(dir.to_path_buf(), json!({ "hotReload": true }));
+	world.catch_runtimes(false);
+	world.configure();
+	world.wait_output("Hot reload active");
+	assert_eq!(world.eval_global("rb_static_defaults()[1]"), "5");
+	edit(&mut world, "static_config.dm", "limit = 5", "limit = 10");
+	reboot(&mut world, 2);
+	assert_eq!(world.eval_global("rb_static_defaults()[1]"), "10");
+	ok("proc static reading a default a reload changes, after reboot");
+	world.end();
+}
+
 #[track_caller]
 fn finished_with(world: &mut World, what: &str) {
 	let deadline = std::time::Instant::now() + test_support::dap::TIMEOUT;
@@ -980,6 +1010,7 @@ pub fn files() {
 	initializer_naming_a_retargeted_path();
 	static_naming_a_retargeted_path();
 	static_folding_a_changed_const();
+	static_reading_a_changed_default();
 	file_named_by_a_reload();
 	resource_files();
 	nothing_to_run();
