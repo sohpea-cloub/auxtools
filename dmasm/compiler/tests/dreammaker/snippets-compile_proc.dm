@@ -768,6 +768,11 @@ var/datum/a/A
 /datum/t/proc/f()
 /proc/g()
 	return /datum/t::f()
+// Guards: type_proc_reference_is_the_types_last_definition (compile_proc.rs)
+/icon/f()
+/icon/proc/f()
+/proc/g()
+	return /icon::f()
 // Guards: vars_after_a_switch_start_null (compile_proc.rs)
 /proc/f(a)
 	var/x

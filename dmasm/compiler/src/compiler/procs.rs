@@ -932,31 +932,18 @@ fn last_definition(t: TypeRef, name: &str) -> Result<Option<String>, CompileErro
     let Some(proc) = t.get().procs.get(name) else {
         return Ok(None);
     };
-    let real = |location: dreammaker::Location| location.file != dreammaker::FileId::BUILTINS;
-    let declaration = proc.declaration.as_ref().filter(|d| real(d.location));
-    let place = |v: &ProcValue| match declaration {
-        Some(d) if v.location == d.location => t
-            .get()
-            .procs
-            .values()
-            .filter_map(|p| p.declaration.as_ref())
-            .filter(|other| other.kind == d.kind && real(other.location))
-            .map(|other| other.location)
-            .min(),
-        _ => Some(v.location),
+    let is_declaration = |v: &ProcValue| {
+        proc.declaration
+            .as_ref()
+            .is_some_and(|d| d.location == v.location)
     };
-    let overrides = proc
-        .value
+    let order = definition_order(t, name);
+    let overrides = order
         .iter()
-        .filter(|v| real(v.location) && declaration.is_none_or(|d| v.location != d.location))
+        .filter(|&&i| !is_declaration(&proc.value[i]))
         .count();
-    let last = proc
-        .value
-        .iter()
-        .filter(|v| real(v.location))
-        .max_by_key(|v| place(v));
-    match last {
-        Some(last) if declaration.is_none_or(|d| last.location != d.location) => match overrides {
+    match order.last().map(|&i| &proc.value[i]) {
+        Some(last) if !is_declaration(last) => match overrides {
             1 => Ok(Some(format!("{}/{}", t.get().path, name))),
             _ => Err(CompileError::UnsupportedStatement(
                 "type::proc() that names a type's second or later override",
@@ -964,6 +951,58 @@ fn last_definition(t: TypeRef, name: &str) -> Result<Option<String>, CompileErro
         },
         _ => Ok(None),
     }
+}
+
+const STDDEF_PROC_BLOCKS: &[&str] = &[
+    "/sound",
+    "/icon",
+    "/matrix",
+    "/database",
+    "/database/query",
+    "/regex",
+    "/generator",
+];
+
+pub fn definition_order(ty: TypeRef, name: &str) -> Vec<usize> {
+    definition_order_at(ty, name, |location| location)
+}
+
+pub fn definition_order_at(
+    ty: TypeRef,
+    name: &str,
+    at: impl Fn(dreammaker::Location) -> dreammaker::Location,
+) -> Vec<usize> {
+    let Some(proc) = ty.get().procs.get(name) else {
+        return vec![];
+    };
+    let declaration = proc
+        .declaration
+        .as_ref()
+        .filter(|d| d.location.file != dreammaker::FileId::BUILTINS);
+    let place = |v: &ProcValue| match declaration {
+        Some(d) if v.location == d.location => {
+            if d.kind == dreammaker::ast::ProcDeclKind::Proc
+                && STDDEF_PROC_BLOCKS.contains(&ty.get().path.as_str())
+            {
+                return None;
+            }
+            ty.get()
+                .procs
+                .values()
+                .filter_map(|p| p.declaration.as_ref())
+                .filter(|other| {
+                    other.kind == d.kind && other.location.file != dreammaker::FileId::BUILTINS
+                })
+                .map(|other| at(other.location))
+                .min()
+        }
+        _ => Some(at(v.location)),
+    };
+    let mut order: Vec<usize> = (0..proc.value.len())
+        .filter(|&i| proc.value[i].location.file != dreammaker::FileId::BUILTINS)
+        .collect();
+    order.sort_by_key(|&i| place(&proc.value[i]));
+    order
 }
 
 pub(super) fn touches_cache(ins: &Instruction) -> bool {

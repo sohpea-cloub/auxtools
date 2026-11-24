@@ -1217,59 +1217,90 @@ fn definitions_are_numbered_in_the_order_dreammaker_gives_them() {
             "/datum/p/f()\n\treturn 1\n/datum/p/proc/f()\n\treturn 2\n",
             "/datum/p/f",
             1,
+            Some("/datum/p/proc/f"),
         ),
         (
             "after-a-declared-proc",
             "/datum/p/proc/g()\n/datum/p/f()\n\treturn 1\n/datum/p/proc/f()\n\treturn 2\n",
             "/datum/p/f",
             0,
+            Some("/datum/p/f"),
         ),
         (
             "between-overrides",
             "/datum/p/f()\n\treturn 1\n/datum/p/proc/g()\n/datum/p/f()\n\treturn 3\n/datum/p/proc/f()\n\treturn 2\n",
             "/datum/p/f",
             1,
+            None,
         ),
         (
             "after-a-declared-verb",
             "/datum/p/verb/g()\n/datum/p/f()\n\treturn 1\n/datum/p/proc/f()\n\treturn 2\n",
             "/datum/p/f",
             1,
+            Some("/datum/p/proc/f"),
         ),
         (
             "verb-after-a-declared-verb",
             "/datum/p/verb/g()\n/datum/p/f()\n\treturn 1\n/datum/p/verb/f()\n\treturn 2\n",
             "/datum/p/f",
             0,
+            Some("/datum/p/f"),
         ),
         (
             "after-a-parent-proc",
             "/datum/proc/g()\n/datum/p/f()\n\treturn 1\n/datum/p/proc/f()\n\treturn 2\n",
             "/datum/p/f",
             1,
+            Some("/datum/p/proc/f"),
         ),
         (
             "global",
             "/g()\n\treturn 1\n/proc/g()\n\treturn 2\n",
             "/g",
             1,
+            None,
         ),
         (
             "type-with-procs-in-stddef",
             "/icon/f()\n\treturn 1\n/icon/proc/f()\n\treturn 2\n",
             "/icon/f",
             0,
+            Some("/icon/f"),
         ),
         (
             "type-without-procs-in-stddef",
             "/mob/f()\n\treturn 1\n/mob/proc/f()\n\treturn 2\n",
             "/mob/f",
             1,
+            Some("/mob/proc/f"),
         ),
     ];
-    for (name, code, path, declaration) in cases {
+    for (name, code, path, declaration, target) in cases {
         let changes = changes_of(name, code, &code.replace("return 2", "return 5"));
         assert_eq!(reloaded(&changes), [key(path, declaration)], "{name}");
+        let Some(target) = target else { continue };
+        let ty = &path[..path.rfind('/').unwrap()];
+        let after = format!(
+            "{}/proc/calls()\n\treturn {}::f()\n",
+            code.replace("return 2", "return 5"),
+            ty
+        );
+        let changes = changes_of(name, code, &after);
+        let calls = changes
+            .plan
+            .new_procs
+            .iter()
+            .find(|p| p.code.proc == key("/calls", 0))
+            .unwrap_or_else(|| panic!("{}: no new /calls in {:?}", name, changes.refused));
+        let code = dmasm_bytecode::format(&calls.code.nodes);
+        assert!(
+            code.contains(&format!("PushVal {}\n", target)),
+            "{}: expected PushVal {} in\n{}",
+            name,
+            target,
+            code
+        );
     }
 }
 

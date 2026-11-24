@@ -6,7 +6,9 @@ use dreammaker::objtree::{ObjectTree, ProcValue, TypeRef};
 use dreammaker::preprocessor::DefineHistory;
 use dreammaker::{Context, FileId, Severity};
 
-use crate::compiler::{compile_proc, CompiledProc, ProcSource};
+use crate::compiler::{
+    compile_proc, definition_order, definition_order_at, CompiledProc, ProcSource,
+};
 use crate::diagnostic::{Diagnostic, Id};
 use crate::syntax;
 
@@ -2547,56 +2549,6 @@ fn compare_inits(
             code,
         });
     }
-}
-
-const STDDEF_PROC_BLOCKS: &[&str] = &[
-    "/sound",
-    "/icon",
-    "/matrix",
-    "/database",
-    "/database/query",
-    "/regex",
-    "/generator",
-];
-
-fn definition_order(ty: TypeRef, name: &str) -> Vec<usize> {
-    definition_order_at(ty, name, |location| location)
-}
-
-fn definition_order_at(
-    ty: TypeRef,
-    name: &str,
-    at: impl Fn(dreammaker::Location) -> dreammaker::Location,
-) -> Vec<usize> {
-    let Some(proc) = ty.get().procs.get(name) else {
-        return vec![];
-    };
-    let declaration = proc
-        .declaration
-        .as_ref()
-        .filter(|d| d.location.file != FileId::BUILTINS);
-    let place = |v: &ProcValue| match declaration {
-        Some(d) if v.location == d.location => {
-            if d.kind == dreammaker::ast::ProcDeclKind::Proc
-                && STDDEF_PROC_BLOCKS.contains(&ty.get().path.as_str())
-            {
-                return None;
-            }
-            ty.get()
-                .procs
-                .values()
-                .filter_map(|p| p.declaration.as_ref())
-                .filter(|other| other.kind == d.kind && other.location.file != FileId::BUILTINS)
-                .map(|other| at(other.location))
-                .min()
-        }
-        _ => Some(at(v.location)),
-    };
-    let mut order: Vec<usize> = (0..proc.value.len())
-        .filter(|&i| proc.value[i].location.file != FileId::BUILTINS)
-        .collect();
-    order.sort_by_key(|&i| place(&proc.value[i]));
-    order
 }
 
 fn real<'a>(ty: TypeRef<'a>, name: &str) -> Vec<&'a ProcValue> {

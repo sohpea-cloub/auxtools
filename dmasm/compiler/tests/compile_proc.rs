@@ -287,6 +287,10 @@ fn type_proc_reference_is_the_types_last_definition() {
             "/datum/t/proc/h()\n/datum/t/f()\n/datum/t/proc/f()\n/proc/g()\n\treturn /datum/t::f()\n",
             "PushVal /datum/t/f",
         ),
+        (
+            "/icon/f()\n/icon/proc/f()\n/proc/g()\n\treturn /icon::f()\n",
+            "PushVal /icon/f",
+        ),
     ] {
         assert_has(&compile(code, "", "g"), &[pushed]);
     }
