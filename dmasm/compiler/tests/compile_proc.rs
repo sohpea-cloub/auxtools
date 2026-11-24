@@ -187,6 +187,75 @@ fn a_safe_chain_finds_a_var_after_an_index_as_untyped_colon_finds_it() {
 }
 
 #[test]
+fn a_var_after_a_call_is_found_by_the_procs_return_type() {
+    let types = "/datum/a\n\tvar/const/LIMIT = 5\n\tvar/static/S = 1\n\tvar/datum/a/link\n\
+                 /datum/b\n\tvar/const/LIMIT = 9\n\tvar/static/S = 2\n\tvar/datum/b/link\n\
+                 /datum/factory/proc/make()\n\treturn new /datum/a\n\
+                 /datum/factory/proc/typed() as /datum/a\n\treturn new /datum/a\n\
+                 /proc/gmake()\n\treturn new /datum/a\n\
+                 /proc/gtyped() as /datum/a\n\treturn new /datum/a\n";
+    for (body, scope) in [
+        ("return factory.make().LIMIT", "/datum/b"),
+        ("return factory.make():LIMIT", "/datum/b"),
+        ("return factory.typed().LIMIT", "/datum/a"),
+        ("return factory.typed():LIMIT", "/datum/b"),
+        ("return factory.typed().link.LIMIT", "/datum/a"),
+        ("return factory.make().link.LIMIT", "/datum/b"),
+        ("return factory.make().S", "/datum/b"),
+        ("return factory?.make().LIMIT", "/datum/b"),
+        ("return factory?.typed().LIMIT", "/datum/a"),
+        ("return factory.typed()?.LIMIT", "/datum/a"),
+        ("return factory.make()?.LIMIT", "/datum/b"),
+        ("return gmake().LIMIT", "/datum/b"),
+        ("return gtyped().LIMIT", "/datum/a"),
+    ] {
+        let src = format!("{types}/proc/f(datum/factory/factory)\n\t{body}\n");
+        let ctx = dreammaker::Context::default();
+        let pp = dreammaker::Preprocessor::from_buffer(&ctx, "test.dm".into(), src);
+        let mut parser = dreammaker::Parser::new(&ctx, pp);
+        parser.enable_procs();
+        let tree = parser.parse_object_tree();
+        let value = tree
+            .root()
+            .get()
+            .procs
+            .get("f")
+            .unwrap()
+            .value
+            .last()
+            .unwrap();
+        let source = ProcSource {
+            tree: &tree,
+            ty: tree.root(),
+            name: "f",
+            value,
+            file: "test.dm",
+            debug_info: false,
+            index: None,
+            byond: dmasm_compiler::ByondVersion::LATEST,
+            file_names: None,
+        };
+        let nodes = compile_proc(&source).expect("compiles").nodes;
+        let scopes: Vec<String> = nodes
+            .iter()
+            .filter_map(|node| match node {
+                Node::Instruction(Instruction::GetVar(Variable::Global(g)), _) => {
+                    Some(format!("{:?}", g.scope))
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            scopes,
+            [format!("Some(Type(\"{}\"))", scope)],
+            "{}: {}",
+            body,
+            dmasm_bytecode::format(&nodes)
+        );
+    }
+}
+
+#[test]
 fn a_var_after_an_index_is_found_as_untyped_colon_finds_it() {
     let types = "/datum/a\n\tvar/const/LIMIT = 5\n\tvar/datum/a/link\n\
                  /datum/b\n\tvar/const/LIMIT = 9\n\tvar/datum/b/link\n";

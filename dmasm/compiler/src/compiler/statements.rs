@@ -1877,7 +1877,7 @@ pub(super) fn static_place(
         super::procs::expr_type(compiler, &base),
         &follow,
         indexed,
-        false,
+        super::procs::After::Typed,
     )
 }
 
@@ -1886,21 +1886,20 @@ pub(super) fn static_member(
     ty: Option<dreammaker::objtree::TypeRef>,
     follow: &[Follow],
     indexed: bool,
-    after_index: bool,
+    after: super::procs::After,
 ) -> Option<Variable> {
     let follow = &follow[..follow.len().checked_sub(indexed as usize)?];
-    let (mut ty, mut after_index, mut decl) = (ty, after_index, None);
+    let (mut ty, mut after, mut decl) = (ty, after, None);
     for f in follow {
         match f {
             Follow::Field(kind, name) => {
-                let found =
-                    super::procs::field_var(compiler, ty, *kind, name.as_str(), after_index)?;
+                let found = super::procs::field_var(compiler, ty, *kind, name.as_str(), after)?;
                 ty = super::procs::declared_type(compiler, &found.get().var_type);
                 decl = Some((name, found));
-                after_index = false;
+                after = super::procs::After::Typed;
             }
             Follow::Index(..) => {
-                (ty, after_index, decl) = (None, true, None);
+                (ty, after, decl) = (None, super::procs::After::Index, None);
             }
             _ => return None,
         }

@@ -1178,7 +1178,7 @@ impl<'a> Compiler<'a> {
                         }
                     }
                 }
-                let ty = procs::term_type(self, &term.elem);
+                let (ty, after) = procs::start_type(self, &term.elem);
                 let elem_ty = match &term.elem {
                     dreammaker::ast::Term::Ident(_) | dreammaker::ast::Term::GlobalIdent(_) => {
                         procs::declared_type_path(
@@ -1249,7 +1249,7 @@ impl<'a> Compiler<'a> {
                 }
                 self.list_elem_type = elem_ty;
                 self.safe_place = safe_place;
-                let kind = follow::emit_typed(self, unspanned_follows, kind, ty)?;
+                let kind = follow::emit_after(self, unspanned_follows, kind, ty, after)?;
                 Ok(kind)
             }
         }

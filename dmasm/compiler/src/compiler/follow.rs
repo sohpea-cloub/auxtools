@@ -2,7 +2,8 @@ use dreammaker::ast::{Follow, ListAccessKind, PropertyAccessKind, UnaryOp};
 
 use crate::{
     compiler::{
-        args, chain_builder::ChainBuilder, operands, unary, CompileError, Compiler, EvalKind,
+        args, chain_builder::ChainBuilder, operands, procs::After, unary, CompileError, Compiler,
+        EvalKind,
     },
     operands::{DMString, GlobalVar, Label, StaticScope, Variable},
     Instruction,
@@ -53,15 +54,15 @@ pub(super) fn emit_typed<'a>(
     kind: EvalKind,
     ty: Option<dreammaker::objtree::TypeRef<'a>>,
 ) -> Result<EvalKind, CompileError> {
-    emit_after(compiler, follow, kind, ty, false)
+    emit_after(compiler, follow, kind, ty, After::Typed)
 }
 
-fn emit_after<'a>(
+pub(super) fn emit_after<'a>(
     compiler: &mut Compiler<'a>,
     follow: Vec<Follow>,
     kind: EvalKind,
     ty: Option<dreammaker::objtree::TypeRef<'a>>,
-    indexed: bool,
+    after: After,
 ) -> Result<EvalKind, CompileError> {
     let mut kind = kind;
     let mut ty = ty;
@@ -70,10 +71,10 @@ fn emit_after<'a>(
 
     let mut field_buffer = vec![];
 
-    let mut indexed = indexed;
+    let mut after = after;
     let mut follow = follow.into_iter();
     while let Some(sub_expr) = follow.next() {
-        let after_index = std::mem::replace(&mut indexed, matches!(sub_expr, Follow::Index(..)));
+        let before = std::mem::replace(&mut after, After::of(&sub_expr));
         let more_fields = matches!(
             follow.as_slice().first(),
             Some(
@@ -84,7 +85,7 @@ fn emit_after<'a>(
         if is_safe(&sub_expr) && !safe_place {
             kind = commit_field_buffer(compiler, kind, &mut field_buffer)?;
             compiler.emit_move_to_stack(kind)?;
-            return emit_safe(compiler, sub_expr, follow.collect(), ty, after_index);
+            return emit_safe(compiler, sub_expr, follow.collect(), ty, before);
         }
         let global_field = compiler.global_field;
         if matches!(
@@ -100,7 +101,7 @@ fn emit_after<'a>(
         match sub_expr {
             Follow::Field(access_kind, ident) => {
                 let field_ty =
-                    super::procs::field_var(compiler, ty, access_kind, ident.as_str(), after_index);
+                    super::procs::field_var(compiler, ty, access_kind, ident.as_str(), before);
                 ty =
                     field_ty.and_then(|d| super::procs::declared_type(compiler, &d.get().var_type));
                 elem_ty = field_ty.and_then(|d| {
@@ -211,12 +212,22 @@ fn emit_after<'a>(
             Follow::Call(index_kind, ident, args) => {
                 let receiver_ty = ty.take();
                 let arg_count = args.len() as u32;
+                let global_call = matches!(kind, EvalKind::Global) && field_buffer.is_empty();
+                (ty, after) = super::procs::call_result(
+                    compiler,
+                    match global_call {
+                        true => Some(compiler.proc.tree.root()),
+                        false => receiver_ty,
+                    },
+                    index_kind,
+                    &ident,
+                );
 
                 match index_kind {
                     PropertyAccessKind::Dot
                     | PropertyAccessKind::Colon
                     | PropertyAccessKind::Scope
-                        if matches!(kind, EvalKind::Global) && field_buffer.is_empty() =>
+                        if global_call =>
                     {
                         match args::emit(compiler, args::ArgsContext::Proc, args.into_vec())? {
                             args::ArgsResult::Normal => {
@@ -469,7 +480,7 @@ fn emit_safe<'a>(
     first: Follow,
     mut rest: Vec<Follow>,
     ty: Option<dreammaker::objtree::TypeRef<'a>>,
-    indexed: bool,
+    after: After,
 ) -> Result<EvalKind, CompileError> {
     let mut unary = vec![];
     while let Some(Follow::Unary(_)) = rest.last() {
@@ -498,7 +509,7 @@ fn emit_safe<'a>(
                     ty,
                     &follows,
                     matches!(follows.last(), Some(Follow::Index(..))),
-                    indexed,
+                    after,
                 );
                 super::statements::emit_safe_chain_write(
                     compiler, chain, None, static_var, None, write, true,
@@ -507,7 +518,7 @@ fn emit_safe<'a>(
             }
         }
     }
-    let kind = emit_safe_inner(compiler, first, rest, ty, indexed)?;
+    let kind = emit_safe_inner(compiler, first, rest, ty, after)?;
     if unary.is_empty() {
         return Ok(kind);
     }
@@ -519,7 +530,7 @@ fn emit_safe_inner<'a>(
     first: Follow,
     rest: Vec<Follow>,
     ty: Option<dreammaker::objtree::TypeRef<'a>>,
-    indexed: bool,
+    after: After,
 ) -> Result<EvalKind, CompileError> {
     let end = compiler.new_label();
     compiler.emit_ins(Instruction::SetCacheJmpIfNull(Label::Named(end.clone())));
@@ -542,13 +553,7 @@ fn emit_safe_inner<'a>(
         )
     });
     if plain {
-        let kind = emit_after(
-            compiler,
-            follows,
-            EvalKind::Var(Variable::Cache),
-            ty,
-            indexed,
-        )?;
+        let kind = emit_after(compiler, follows, EvalKind::Var(Variable::Cache), ty, after)?;
         compiler.emit_move_to_stack(kind)?;
         compiler.emit_label(end);
         return Ok(EvalKind::Stack);
@@ -560,14 +565,14 @@ fn emit_safe_inner<'a>(
     let mut kind = EvalKind::Var(Variable::Cache);
     let mut field_buffer: Vec<String> = vec![];
     let mut ty = ty;
-    let mut indexed = indexed;
+    let mut after = after;
     let mut it = follows.into_iter();
     while let Some(f) = it.next() {
-        let after_index = std::mem::replace(&mut indexed, matches!(f, Follow::Index(..)));
+        let before = std::mem::replace(&mut after, After::of(&f));
         if is_safe(&f) {
             kind = commit_field_buffer(compiler, kind, &mut field_buffer)?;
             compiler.emit_move_to_stack(kind)?;
-            kind = emit_safe(compiler, f, it.by_ref().collect(), ty, after_index)?;
+            kind = emit_safe(compiler, f, it.by_ref().collect(), ty, before)?;
             break;
         }
         let receiver_ty = ty;
@@ -579,7 +584,7 @@ fn emit_safe_inner<'a>(
                     receiver_ty,
                     access_kind,
                     ident.as_str(),
-                    after_index,
+                    before,
                 );
                 ty = decl.and_then(|d| super::procs::declared_type(compiler, &d.get().var_type));
                 match decl {
@@ -598,8 +603,9 @@ fn emit_safe_inner<'a>(
                     _ => field_buffer.push(ident.into_owned()),
                 }
             }
-            Follow::Call(_, ident, args) if !called => {
+            Follow::Call(access, ident, args) if !called => {
                 called = true;
+                (ty, after) = super::procs::call_result(compiler, receiver_ty, access, &ident);
                 kind = commit_field_buffer(compiler, kind, &mut field_buffer)?;
                 let builder = match kind {
                     EvalKind::Var(var) => ChainBuilder::begin(var),
