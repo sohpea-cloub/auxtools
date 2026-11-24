@@ -3414,21 +3414,26 @@ fn line_code<'a>(bytecode: &[u32], locals: &'a [String]) -> Vec<(Option<u32>, Ve
 		let at = ins.offset as usize;
 		match ins.opcode {
 			Opcode::DbgFile => inside = *file.get_or_insert(bytecode[at + 1]) == bytecode[at + 1],
-			Opcode::DbgLine => lines.push((inside.then_some(bytecode[at + 1]), vec![], at, 0)),
+			Opcode::DbgLine => lines.push((inside.then_some(bytecode[at + 1]), at, vec![])),
 			_ => {
-				if let Some((_, code, start, jump_back)) = lines.last_mut() {
-					let span = at..at + ins.bytecode.len();
-					let back = span.clone().any(|word| targets.get(&word).is_some_and(|target| target < start));
-					*jump_back = if back { span.len() } else { 0 };
-					code.extend_from_slice(&words[span]);
+				if let Some((_, _, code)) = lines.last_mut() {
+					code.push((ins.opcode, at..at + ins.bytecode.len()));
 				}
 			}
 		}
 	}
-	(lines.into_iter())
-		.map(|(line, mut code, _, jump_back)| {
-			code.truncate(code.len() - jump_back);
-			(line, code)
+	let ends: Vec<usize> = (lines.iter().skip(1).map(|&(_, start, _)| start)).chain([bytecode.len()]).collect();
+	(lines.iter().zip(ends))
+		.map(|((line, start, code), end)| {
+			let leaves = |span: &std::ops::Range<usize>| {
+				span.clone()
+					.any(|word| targets.get(&word).is_some_and(|target| !(*start..end).contains(target)))
+			};
+			let kept = (code.iter().enumerate().skip(1))
+				.find(|(_, (opcode, span))| matches!(opcode, Opcode::Jmp | Opcode::JmpLoop) && leaves(span))
+				.map_or(code.len(), |(i, _)| i);
+			let words = code[..kept].iter().flat_map(|(_, span)| &words[span.clone()]).copied().collect();
+			(*line, words)
 		})
 		.collect()
 }
@@ -3961,6 +3966,42 @@ mod tests {
 			(12, 11),
 			(13, 12),
 			(14, 14)
+		]);
+	}
+
+	#[test]
+	fn keeps_a_line_moved_to_the_end_of_an_if_with_an_else() {
+		use dmasm::Opcode::*;
+		const LOCAL: u32 = 0xFFDA;
+		let (line, push, set, get, jz, jmp, ret) = (
+			DbgLine.word(),
+			PushInt.word(),
+			SetVar.word(),
+			GetVar.word(),
+			Jz.word(),
+			Jmp.word(),
+			Ret.word()
+		);
+		let header = [line, 10, push, 0, set, LOCAL, 0];
+		let moved = |value: u32| [line, 0, push, value, set, LOCAL, 1];
+		let guard = [line, 0, get, LOCAL, 0, jz, 30];
+		let body = |first: [u32; 7], second: [u32; 7], third: [u32; 7]| -> Vec<u32> {
+			let mut code: Vec<u32> = [header, first, second, third].concat();
+			for (number, at) in [(11, 7), (12, 14), (13, 21)] {
+				code[at + 1] = number;
+			}
+			code.extend([jmp, 37, line, 15, push, 3, set, LOCAL, 1, line, 16, get, LOCAL, 1, ret]);
+			code
+		};
+		let old = body(moved(5), guard, moved(2));
+		let new = body(guard, moved(2), moved(5));
+		assert_eq!(kept_lines(&old, &names(&["a", "b"]), &new, &names(&["a", "b"])), [
+			(10, 10),
+			(11, 13),
+			(12, 11),
+			(13, 12),
+			(15, 15),
+			(16, 16)
 		]);
 	}
 }
