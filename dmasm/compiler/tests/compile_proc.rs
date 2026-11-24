@@ -539,6 +539,58 @@ fn a_safe_colon_call_on_an_untyped_value_finds_its_proc_as_a_colon_call_does() {
 }
 
 #[test]
+fn a_colon_call_finds_its_proc_as_the_last_type_made_declares_it() {
+    let types = "/datum/t1\n\tvar/const/LIMIT = 1\n\tvar/x\n\
+                 /datum/t2\n\tvar/LIMIT = 2\n\tvar/x\n\
+                 /datum/zz\n/datum/aa\n\
+                 /datum/zz/proc/make() as /datum/t1\n\tset name = \"zz\"\n\
+                 /datum/aa/proc/make() as /datum/t2\n\tset name = \"aa\"\n\
+                 /datum/holder/proc/act()\n\tset name = \"holder act\"\n\
+                 /mob/verb/act()\n\tset name = \"mob act\"\n\
+                 /datum/base\n/datum/base/s2\n/datum/base/s1\n\
+                 /datum/base/s1/proc/build()\n\tset name = \"s1\"\n\
+                 /datum/base/s2/proc/build()\n\tset name = \"s2\"\n\
+                 /datum/other/proc/build()\n\tset name = \"other\"\n\
+                 /datum/base/proc/own()\n\tset name = \"base own\"\n\
+                 /datum/other/proc/own()\n\tset name = \"other own\"\n";
+    for (body, call) in [
+        ("return x:make()", "dynamic_proc(\"aa\") 0"),
+        ("return x?:make()", "dynamic_proc(\"aa\") 0"),
+        ("return items[1].make()", "dynamic_proc(\"aa\") 0"),
+        ("return x:act()", "dynamic_verb(\"mob act\") 0"),
+        ("return base:build()", "dynamic_proc(\"s1\") 0"),
+        ("return base?:build()", "dynamic_proc(\"other\") 0"),
+        ("return base:own()", "dynamic_proc(\"base own\") 0"),
+        ("return base?:own()", "dynamic_proc(\"other own\") 0"),
+        ("return items:make()", "dynamic_proc(\"aa\") 0"),
+        ("base?:own().x = 1", "dynamic_proc(\"other own\") 0"),
+        ("x:make()?:own().x = 1", "dynamic_proc(\"other own\") 0"),
+    ] {
+        let code = compile(
+            &format!("{types}/proc/f(x, datum/base/base, list/items)\n\t{body}\n"),
+            "",
+            "f",
+        );
+        assert!(
+            code.contains(call),
+            "{}: expected {} in\n{}",
+            body,
+            call,
+            code
+        );
+    }
+    for body in ["return x:make().LIMIT", "return x?:make()?.LIMIT"] {
+        let code = compile(&format!("{types}/proc/f(x)\n\t{body}\n"), "", "f");
+        assert!(
+            code.contains("cache[\"LIMIT\"]"),
+            "{}: expected /datum/t2's LIMIT, a field, in\n{}",
+            body,
+            code
+        );
+    }
+}
+
+#[test]
 fn a_safe_place_after_a_call_is_typed_as_a_read_finds_it() {
     let types = "/datum/child\n/datum/child/special\n\
                  /datum/holder\n\tvar/datum/child/child\n\tvar/datum/holder/inner\n\

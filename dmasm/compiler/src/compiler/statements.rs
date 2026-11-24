@@ -1454,6 +1454,7 @@ pub(super) struct SafeChain {
     segments: Vec<Vec<Follow>>,
     last: Vec<Follow>,
     index: Option<Expression>,
+    untyped: Vec<bool>,
 }
 
 pub(super) enum SafeWrite<'w> {
@@ -1475,9 +1476,13 @@ fn is_safe_follow(f: &Follow) -> bool {
 pub(super) fn safe_chain(follow: &[Follow]) -> Option<SafeChain> {
     use dreammaker::ast::{ListAccessKind as L, PropertyAccessKind as K};
     let mut segments: Vec<Vec<Follow>> = vec![];
+    let mut untyped = vec![];
     let mut index = None;
     for (i, f) in follow.iter().enumerate() {
         let last = i + 1 == follow.len();
+        if is_safe_follow(f) {
+            untyped.push(matches!(f, Follow::Call(K::SafeColon, _, _)));
+        }
         match f {
             Follow::Field(K::SafeDot, name) => {
                 segments.push(vec![Follow::Field(K::Dot, name.clone())])
@@ -1513,6 +1518,7 @@ pub(super) fn safe_chain(follow: &[Follow]) -> Option<SafeChain> {
         segments,
         last,
         index,
+        untyped,
     })
 }
 
@@ -1667,15 +1673,22 @@ pub(super) fn emit_safe_chain_write<'a>(
     let fields = chain.fields();
     let computed = chain.computed();
     let (mut ty, mut after) = start;
+    let mut untyped = chain.untyped.iter();
     let segment_types: Vec<_> = chain
         .segments
         .iter()
         .map(|segment| {
+            if untyped.next() == Some(&true) {
+                ty = None;
+            }
             let at = (ty, after);
             (ty, after) = chain_type(compiler, ty, after, segment);
             at
         })
         .collect();
+    if untyped.next() == Some(&true) {
+        ty = None;
+    }
     let computed_type = (ty, after);
     let (ty, after) = chain_type(compiler, ty, after, &computed.0);
     let last_var = match &static_var {

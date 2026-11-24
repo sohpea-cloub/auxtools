@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use dreammaker::ast::Block;
-use dreammaker::objtree::{ObjectTree, ProcValue, TypeRef};
+use dreammaker::objtree::{ObjectTree, ProcValue, TypeIndex, TypeRef};
 
 use super::{CompileError, Compiler, EvalKind};
 use crate::operands::{DMString, GlobalVar, StaticScope, Variable};
@@ -456,19 +456,8 @@ pub(super) fn call_result<'a>(
     access: dreammaker::ast::PropertyAccessKind,
     name: &str,
 ) -> (Option<TypeRef<'a>>, After) {
-    use dreammaker::ast::{ProcReturnType, PropertyAccessKind};
-    let ty = match receiver {
-        Some(t)
-            if matches!(
-                access,
-                PropertyAccessKind::Colon | PropertyAccessKind::SafeColon
-            ) =>
-        {
-            Some(colon_proc_type(t, name).unwrap_or(t))
-        }
-        Some(t) => Some(t),
-        None => first_declaring_type(compiler.proc.tree, name),
-    };
+    use dreammaker::ast::ProcReturnType;
+    let ty = callee_type(compiler, receiver, access, name);
     let Some(declaration) = ty.and_then(|t| t.get_proc_declaration(name)) else {
         return (None, After::Typed);
     };
@@ -514,22 +503,114 @@ pub(super) fn colon_var<'a>(
     if let Some(decl) = ty.and_then(|t| member_var(t, name)) {
         return Some(decl);
     }
-    ty.and_then(|t| declared_below(t, name))
-        .or_else(|| declared_below(compiler.proc.tree.root(), name))
+    let tree = compiler.proc.tree;
+    ty.and_then(|t| last_declaring(tree, Some(t), Declared::Var, name))
+        .or_else(|| last_declaring(tree, None, Declared::Var, name))
+        .and_then(|t| member_var(t, name))
 }
 
-fn declared_below<'a>(
-    ty: TypeRef<'a>,
+pub(super) fn callee_type<'a>(
+    compiler: &Compiler<'a>,
+    receiver: Option<TypeRef<'a>>,
+    access: dreammaker::ast::PropertyAccessKind,
     name: &str,
-) -> Option<dreammaker::objtree::VarDeclarationRef<'a>> {
-    let mut children: Vec<TypeRef<'a>> = ty.children().collect();
-    children.sort_by_key(|child| child.index());
-    children.into_iter().rev().find_map(|child| {
-        declared_below(child, name).or_else(|| {
-            child.get().vars.get(name)?.declaration.as_ref()?;
-            member_var(child, name)
-        })
-    })
+) -> Option<TypeRef<'a>> {
+    use dreammaker::ast::PropertyAccessKind;
+    match (receiver, access) {
+        (Some(t), PropertyAccessKind::Colon) => {
+            Some(colon_proc_type(compiler, Some(t), name).unwrap_or(t))
+        }
+        (None, _) | (_, PropertyAccessKind::SafeColon) => colon_proc_type(compiler, None, name),
+        (Some(t), _) => Some(t),
+    }
+}
+
+pub(super) fn colon_proc_type<'a>(
+    compiler: &Compiler<'a>,
+    ty: Option<TypeRef<'a>>,
+    name: &str,
+) -> Option<TypeRef<'a>> {
+    let tree = compiler.proc.tree;
+    match ty.filter(|t| t.get().path != "/list") {
+        Some(t) if t.get_proc(name).is_some_and(|p| !p.ty().is_root()) => Some(t),
+        below => last_declaring(tree, below, Declared::Proc, name),
+    }
+}
+
+#[derive(Clone, Copy)]
+enum Declared {
+    Var,
+    Proc,
+}
+
+fn last_declaring<'a>(
+    tree: &'a ObjectTree,
+    below: Option<TypeRef<'a>>,
+    kind: Declared,
+    name: &str,
+) -> Option<TypeRef<'a>> {
+    let declares = |ty: &dreammaker::objtree::Type| match kind {
+        Declared::Var => ty.vars.get(name).is_some_and(|v| v.declaration.is_some()),
+        Declared::Proc => ty.procs.get(name).is_some_and(|p| p.declaration.is_some()),
+    };
+    let path = with_visiting_order(tree, |order| {
+        let found = match (below, kind) {
+            (None, Declared::Var) => order.last_var.get(name).copied(),
+            (None, Declared::Proc) => order.last_proc.get(name).copied(),
+            (Some(t), _) => {
+                let (start, end) = order.span[t.index().index()];
+                order.types[start + 1..end]
+                    .iter()
+                    .rev()
+                    .copied()
+                    .find(|&i| declares(&tree[i]))
+            }
+        };
+        found.map(|i| tree[i].path.clone())
+    })?;
+    tree.find(&path)
+}
+
+struct VisitingOrder {
+    types: Vec<TypeIndex>,
+    span: Vec<(usize, usize)>,
+    last_var: HashMap<String, TypeIndex>,
+    last_proc: HashMap<String, TypeIndex>,
+}
+
+impl VisitingOrder {
+    fn new(tree: &ObjectTree) -> VisitingOrder {
+        fn visit(ty: TypeRef, order: &mut VisitingOrder) {
+            let start = order.types.len();
+            order.types.push(ty.index());
+            let mut children: Vec<TypeRef> = ty.children().collect();
+            children.sort_by_key(|child| child.index());
+            for child in children {
+                visit(child, order);
+            }
+            order.span[ty.index().index()] = (start, order.types.len());
+        }
+        let mut order = VisitingOrder {
+            types: vec![],
+            span: vec![(0, 0); tree.node_indices().count()],
+            last_var: HashMap::new(),
+            last_proc: HashMap::new(),
+        };
+        visit(tree.root(), &mut order);
+        for &i in &order.types[1..] {
+            for (name, var) in tree[i].vars.iter() {
+                if var.declaration.is_some() {
+                    order.last_var.insert(name.to_string(), i);
+                }
+            }
+            for (name, proc) in tree[i].procs.iter() {
+                if proc.declaration.is_some() {
+                    order.last_proc.insert(name.to_string(), i);
+                }
+            }
+        }
+        order
+    }
 }
 
 static TREES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
@@ -538,50 +619,31 @@ pub fn new_tree() {
     TREES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 }
 
-pub(super) fn first_declaring_type<'a>(tree: &'a ObjectTree, name: &str) -> Option<TypeRef<'a>> {
+fn with_visiting_order<R>(tree: &ObjectTree, f: impl FnOnce(&VisitingOrder) -> R) -> R {
+    type Kept = Vec<((usize, usize), std::rc::Rc<VisitingOrder>)>;
     thread_local! {
-        static FIRST: std::cell::RefCell<((usize, usize), HashMap<String, String>)> =
-            std::cell::RefCell::new(((0, 0), HashMap::new()));
+        static KEPT: std::cell::RefCell<Kept> = const { std::cell::RefCell::new(Vec::new()) };
     }
     let key = (
         tree as *const ObjectTree as usize,
         TREES.load(std::sync::atomic::Ordering::Relaxed),
     );
-    let path = FIRST.with(|cell| {
-        let mut cell = cell.borrow_mut();
-        if cell.0 != key {
-            let mut first: HashMap<String, (dreammaker::objtree::SymbolId, String)> =
-                HashMap::new();
-            for ty in tree.iter_types() {
-                for (proc_name, proc) in ty.get().procs.iter() {
-                    let Some(decl) = &proc.declaration else {
-                        continue;
-                    };
-                    let entry = first
-                        .entry(proc_name.to_string())
-                        .or_insert((decl.id, ty.get().path.clone()));
-                    if decl.id < entry.0 {
-                        *entry = (decl.id, ty.get().path.clone());
-                    }
-                }
-            }
-            *cell = (key, first.into_iter().map(|(k, (_, p))| (k, p)).collect());
-        }
-        cell.1.get(name).cloned()
-    })?;
-    tree.find(&path)
+    let order = KEPT.with(|kept| {
+        let mut kept = kept.borrow_mut();
+        let order = match kept.iter().position(|(k, _)| *k == key) {
+            Some(at) => kept.remove(at).1,
+            None => std::rc::Rc::new(VisitingOrder::new(tree)),
+        };
+        kept.insert(0, (key, order.clone()));
+        kept.truncate(2);
+        order
+    });
+    f(&order)
 }
 
 pub(super) fn list_elem_type<'a>(compiler: &Compiler<'a>, path: &str) -> Option<TypeRef<'a>> {
     let rest = path.strip_prefix("/list/")?;
     compiler.proc.tree.find(&format!("/{rest}"))
-}
-
-pub(super) fn colon_proc_type<'a>(ty: TypeRef<'a>, name: &str) -> Option<TypeRef<'a>> {
-    if ty.get_proc(name).is_some() {
-        return Some(ty);
-    }
-    ty.children().find_map(|child| colon_proc_type(child, name))
 }
 
 pub(super) fn is_global_member(decl: &dreammaker::objtree::VarDeclarationRef) -> bool {

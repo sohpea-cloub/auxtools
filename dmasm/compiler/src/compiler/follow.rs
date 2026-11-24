@@ -23,14 +23,7 @@ fn callee_var<'a>(
     access: PropertyAccessKind,
     name: &str,
 ) -> Variable {
-    let ty = match ty {
-        Some(t) if access == PropertyAccessKind::Colon => {
-            Some(super::procs::colon_proc_type(t, name).unwrap_or(t))
-        }
-        Some(t) => Some(t),
-        None => super::procs::first_declaring_type(compiler.proc.tree, name),
-    };
-    super::procs::call_var(ty, name)
+    super::procs::call_var(super::procs::callee_type(compiler, ty, access, name), name)
 }
 
 fn proc_known(
@@ -39,12 +32,9 @@ fn proc_known(
     access: PropertyAccessKind,
     name: &str,
 ) -> bool {
-    match ty {
-        Some(t) if access == PropertyAccessKind::Colon => {
-            super::procs::colon_proc_type(t, name).is_some()
-        }
-        Some(t) => t.get_proc(name).is_some(),
-        None => super::procs::first_declaring_type(compiler.proc.tree, name).is_some(),
+    match (ty, access) {
+        (Some(t), PropertyAccessKind::Dot) => t.get_proc(name).is_some(),
+        _ => super::procs::colon_proc_type(compiler, ty, name).is_some(),
     }
 }
 
@@ -542,6 +532,10 @@ fn emit_safe_inner<'a>(
     let end = compiler.new_label();
     compiler.emit_ins(Instruction::SetCacheJmpIfNull(Label::Named(end.clone())));
 
+    let ty = match first {
+        Follow::Call(PropertyAccessKind::SafeColon, ..) => None,
+        _ => ty,
+    };
     let mut follows = vec![match first {
         Follow::Field(PropertyAccessKind::SafeColon, ident) => {
             Follow::Field(PropertyAccessKind::Colon, ident)

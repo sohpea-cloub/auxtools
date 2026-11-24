@@ -394,3 +394,17 @@ var/datum/dep_retype_alone_first/dep_retype_alone_target
 
 /proc/dep_show_on(target)
 	return target?:dep_show()
+
+/datum/dep_maker_first
+/datum/dep_maker_last
+
+/datum/dep_maker_first/proc/dep_make()
+	set name = "dep make first"
+	return "first"
+
+/datum/dep_maker_last/proc/dep_make()
+	set name = "dep make last"
+	return "last"
+
+/proc/dep_make_on(x)
+	return x:dep_make()

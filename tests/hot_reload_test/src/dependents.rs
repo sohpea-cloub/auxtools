@@ -498,6 +498,17 @@ pub fn dependents(built: Built) {
 		"recompiled untyped target?:verb() doesn't call the verb by its `set name`"
 	);
 	println!("ok: recompiled untyped target?:verb() calls the verb by its `set name`");
+
+	const MAKE_ON: &str = "dep_make_on(new /datum/dep_maker_last)";
+	assert_eq!(eval(&mut client, MAKE_ON), "\"last\"");
+	let changes = source.edit("dependents.dm", "\treturn x:dep_make()", "\treturn 0 || x:dep_make()");
+	reload(&mut watcher, &changes);
+	assert_eq!(
+		eval(&mut client, MAKE_ON),
+		"\"last\"",
+		"recompiled untyped x:make() doesn't call the proc of the last type made that declares make()"
+	);
+	println!("ok: recompiled untyped x:make() calls the proc of the last type made that declares make()");
 }
 
 fn refused_edit(source: &mut Source, file: &str, from: &str, to: &str) -> Vec<dmasm::reload::Refusal> {

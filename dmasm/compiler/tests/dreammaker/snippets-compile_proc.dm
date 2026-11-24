@@ -1033,6 +1033,71 @@ var/const/LIMIT = 10
 	target?:show().x = 1
 /proc/f8(target)
 	return target?:show()?.x
+// Guards: a_colon_call_finds_its_proc_as_the_last_type_made_declares_it (compile_proc.rs)
+/datum/t1
+	var/const/LIMIT = 1
+	var/x
+/datum/t2
+	var/LIMIT = 2
+	var/x
+/datum/zz
+/datum/aa
+/datum/zz/proc/make() as /datum/t1
+	set name = "zz"
+/datum/aa/proc/make() as /datum/t2
+	set name = "aa"
+/datum/cb
+/datum/ca
+/datum/cb/cc
+/datum/ca/proc/tree_make()
+	set name = "ca"
+/datum/cb/cc/proc/tree_make()
+	set name = "cb/cc"
+/datum/holder/proc/act()
+	set name = "holder act"
+/mob/verb/act()
+	set name = "mob act"
+/datum/base
+/datum/base/s2
+/datum/base/s1
+/datum/base/s1/proc/build()
+	set name = "s1"
+/datum/base/s2/proc/build()
+	set name = "s2"
+/datum/other/proc/build()
+	set name = "other"
+/datum/base/proc/own()
+	set name = "base own"
+/datum/other/proc/own()
+	set name = "other own"
+/proc/f1(x)
+	return x:make()
+/proc/f2(x)
+	return x?:make()
+/proc/f3(list/items)
+	return items[1].make()
+/proc/f4(x)
+	return x:act()
+/proc/f5(datum/base/base)
+	return base:build()
+/proc/f6(datum/base/base)
+	return base?:build()
+/proc/f7(datum/base/base)
+	return base:own()
+/proc/f8(datum/base/base)
+	return base?:own()
+/proc/f9(list/items)
+	return items:make()
+/proc/f10(x)
+	return x:make().LIMIT
+/proc/f11(x)
+	return x?:make()?.LIMIT
+/proc/f12(x)
+	return x:tree_make()
+/proc/f13(datum/base/base)
+	base?:own().x = 1
+/proc/f14(x)
+	x:make()?:own().x = 1
 // Guards: a_safe_colon_call_finds_its_proc_and_value_as_a_colon_call_does (compile_proc.rs)
 /datum/a
 	var/const/LIMIT = 5
