@@ -2161,6 +2161,15 @@ fn definitions(built: Built) {
 	assert_eq!(eval(&mut client, "calls_kin_child()"), "\"parent override\"");
 	println!("ok: unchanged code names a child's first override as it is added and removed");
 
+	let changes = source.edit(
+		"reload.dm",
+		"/obj/picker\n",
+		"/obj/picker/pick_one()\n\treturn \"override\"\n\n/obj/picker/verb/pick_one()\n\treturn \"verb\"\n\n/proc/calls_picker()\n\treturn call(new /obj/picker, /obj/picker::pick_one())()\n"
+	);
+	reload(&mut watcher, &changes);
+	assert_eq!(eval(&mut client, "calls_picker()"), "\"override\"");
+	println!("ok: type::proc() of a verb added with its override names the override");
+
 	let changes = source.edit("reload.dm", "/datum/lone/speak()\n\treturn \"lone override\"\n", "");
 	let result = expect_reload_result(watcher.request(reload_request(&changes)));
 	assert!(

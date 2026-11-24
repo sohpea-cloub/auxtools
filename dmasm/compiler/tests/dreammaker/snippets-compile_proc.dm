@@ -773,6 +773,17 @@ var/datum/a/A
 /icon/proc/f()
 /proc/g()
 	return /icon::f()
+// Guards: type_proc_reference_to_a_verb_is_its_override (compile_proc.rs)
+/mob/verb/choose()
+/mob/choose()
+/mob/m
+/proc/g()
+	return /mob/m::choose()
+// Guards: type_proc_reference_to_a_verb_is_its_override (compile_proc.rs)
+/mob/choose()
+/mob/verb/choose()
+/proc/g()
+	return /mob::choose()
 // Guards: vars_after_a_switch_start_null (compile_proc.rs)
 /proc/f(a)
 	var/x

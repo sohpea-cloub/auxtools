@@ -269,3 +269,5 @@ var/mob/helper/small/old_helper = new
 
 /datum/lone/speak()
 	return "lone override"
+
+/obj/picker

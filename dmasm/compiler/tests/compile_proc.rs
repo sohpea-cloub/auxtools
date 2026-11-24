@@ -297,8 +297,34 @@ fn type_proc_reference_is_the_types_last_definition() {
 }
 
 #[test]
+fn type_proc_reference_to_a_verb_is_its_override() {
+    for code in [
+        "/mob/verb/choose()\n/mob/choose()\n/mob/m\n/proc/g()\n\treturn /mob/m::choose()\n",
+        "/mob/choose()\n/mob/verb/choose()\n/proc/g()\n\treturn /mob::choose()\n",
+    ] {
+        assert_has(&compile(code, "", "g"), &["PushVal /mob/choose"]);
+    }
+}
+
+#[test]
 fn type_proc_reference_to_a_later_override_is_refused() {
     let code = "/datum/t/proc/f()\n/datum/t/f()\n/datum/t/f()\n/proc/g()\n\treturn /datum/t::f()\n";
+    assert_eq!(
+        compile_error(code),
+        "line 5: unsupported statement: type::proc() that names a type's second or later override"
+    );
+}
+
+#[test]
+fn type_proc_reference_to_a_verb_without_an_override_is_refused() {
+    let code = "/mob/verb/choose()\n/mob/m\n/proc/g()\n\treturn /mob/m::choose()\n";
+    assert_eq!(
+        compile_error(code),
+        "line 4: bad proc reference: choose is a verb with no override on /mob"
+    );
+}
+
+fn compile_error(code: &str) -> String {
     let ctx = dreammaker::Context::default();
     let pp = dreammaker::Preprocessor::from_buffer(&ctx, "test.dm".into(), code.to_owned());
     let mut parser = dreammaker::Parser::new(&ctx, pp);
@@ -316,11 +342,7 @@ fn type_proc_reference_to_a_later_override_is_refused() {
         byond: dmasm_compiler::ByondVersion::LATEST,
         file_names: None,
     };
-    let error = compile_proc(&source).unwrap_err().to_string();
-    assert_eq!(
-        error,
-        "line 5: unsupported statement: type::proc() that names a type's second or later override"
-    );
+    compile_proc(&source).unwrap_err().to_string()
 }
 
 #[test]

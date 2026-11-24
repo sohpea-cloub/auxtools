@@ -937,7 +937,21 @@ fn last_definition(t: TypeRef, name: &str) -> Result<Option<String>, CompileErro
             .as_ref()
             .is_some_and(|d| d.location == v.location)
     };
-    let order = definition_order(t, name);
+    let mut order = definition_order(t, name);
+    if proc
+        .declaration
+        .as_ref()
+        .is_some_and(|d| d.kind == dreammaker::ast::ProcDeclKind::Verb)
+    {
+        order.retain(|&i| !is_declaration(&proc.value[i]));
+        if order.is_empty() {
+            return Err(CompileError::BadProcReference(format!(
+                "{} is a verb with no override on {}",
+                name,
+                t.get().path
+            )));
+        }
+    }
     let overrides = order
         .iter()
         .filter(|&&i| !is_declaration(&proc.value[i]))
