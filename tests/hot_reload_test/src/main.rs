@@ -214,6 +214,10 @@ fn wait_for(client: &mut Client, command: &str, expected: &str) {
 	}
 }
 
+fn wait_for_world_new(client: &mut Client) {
+	wait_for(client, "sleeper_state", "\"sleeping\"");
+}
+
 fn paused_line(client: &mut Client) -> (String, Option<u32>) {
 	match client.request(Request::StackFrames {
 		stack_id: 0,
@@ -341,6 +345,7 @@ fn start(built: Built) -> (Source, World, Client, Client) {
 		caught: None
 	});
 	let mut watcher = world.connect_watcher();
+	wait_for_world_new(&mut client);
 
 	let (version, build) = match watcher.request(Request::ByondVersion) {
 		Response::ByondVersion { version, build } => (version, build),
@@ -3347,6 +3352,7 @@ fn resources(built: Built) {
 	eval(&mut client, "request_reboot()");
 	client.wait_closed();
 	let mut client = world.connect();
+	wait_for_world_new(&mut client);
 	assert!(world.output().contains("world/Del says bye"), "world/Del override was not called");
 	assert_eq!(eval(&mut client, "answer()"), "1");
 	assert_eq!(eval(&mut client, "few_locals()"), "1");
