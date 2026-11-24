@@ -1209,6 +1209,13 @@ var/const/LIMIT = 10
 	base?:named()?.S = 3
 /proc/f17(datum/base/base)
 	return base?:make():LIMIT
+// Guards: a_for_loops_var_types_only_its_initial_value (compile_proc.rs)
+// Builds: 516.1648-
+/datum/item
+/datum/other
+/proc/f(datum/other/a)
+	for(var/datum/item/r = 1; astype(a); r = null)
+		return r
 // Guards: a_safe_place_after_a_call_is_typed_as_a_read_finds_it (compile_proc.rs)
 /datum/child
 	var/datum/child/next

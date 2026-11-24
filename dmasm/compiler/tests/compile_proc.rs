@@ -645,6 +645,17 @@ fn a_call_after_a_safe_index_keeps_the_indexed_item_as_its_receiver() {
 }
 
 #[test]
+fn a_for_loops_var_types_only_its_initial_value() {
+    let code = compile(
+        "/datum/item\n/datum/other\n/proc/f(datum/other/a)\n\
+         \tfor(var/datum/item/r = 1; astype(a); r = null)\n\t\treturn r\n",
+        "",
+        "f",
+    );
+    assert_has(&code, &["PushVal /datum/other", "AsType"]);
+}
+
+#[test]
 fn new_of_a_field_chain_reads_it_by_the_declared_type() {
     let types = "/datum/item\n/datum/item/special\n\
                  /datum/config\n\tvar/static/item_type = /datum/item/special\n\

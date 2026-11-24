@@ -1193,6 +1193,7 @@ fn emit_var_statement(
             emit_value(compiler, value)?;
             compiler.emit_ins(Instruction::SetVar(local));
         }
+        compiler.implicit_type = None;
         return Ok(());
     }
     let sized_list = matches!(&var.value, Some(Expression::Base { term, .. })
