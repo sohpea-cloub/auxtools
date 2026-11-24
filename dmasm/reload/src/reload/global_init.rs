@@ -46,6 +46,7 @@ fn proc_statics<'a>(
 struct Initializer<'a> {
     scope: StaticScope,
     name: String,
+    proc: Option<super::ProcKey>,
     location: Location,
     ty: TypeRef<'a>,
     declared: String,
@@ -132,6 +133,7 @@ impl Snapshot {
                             nth: number as u32,
                         },
                         name: name.to_owned(),
+                        proc: Some(key.clone()),
                         location,
                         ty,
                         declared: var.var_type.type_path.to_string(),
@@ -398,6 +400,48 @@ fn differences<'a, 'b>(
         return None;
     }
     Some(table)
+}
+
+fn renumber_old_statics(
+    old: &Snapshot,
+    new: &Snapshot,
+    r: &Retargeted,
+    before: &mut [Initializer<'_>],
+) {
+    let mut numbers: HashMap<super::ProcKey, Vec<(String, u32, u32)>> = HashMap::new();
+    for key in new.procs() {
+        let Some(old_key) = r.old_key(key) else {
+            continue;
+        };
+        let (Some(was), Some(now)) = (old.proc_code(&old_key), new.proc_code(key)) else {
+            continue;
+        };
+        let declared = super::locals::declared(was);
+        if declared.is_empty() || was == now {
+            continue;
+        }
+        let (pairs, _) = super::locals::matched(&declared, &super::locals::declared(now));
+        let pairs = pairs
+            .into_iter()
+            .map(|(name, new, old)| (name.to_owned(), new, old))
+            .collect();
+        numbers.insert(old_key, pairs);
+    }
+    for Initializer {
+        proc, scope, name, ..
+    } in before
+    {
+        let Some(pairs) = proc.as_ref().and_then(|proc| numbers.get(proc)) else {
+            continue;
+        };
+        let StaticScope::Proc { nth, .. } = scope else {
+            continue;
+        };
+        *nth = pairs
+            .iter()
+            .find(|(had, _, old)| had == name && old == nth)
+            .map_or(u32::MAX - *nth, |(_, new, _)| *new);
+    }
 }
 
 fn changed(new: &Snapshot, before: &[Initializer<'_>], after: &[Initializer<'_>]) -> Vec<Refusal> {
@@ -672,6 +716,7 @@ impl<'a> Walk<'a> {
                         let init = Initializer {
                             scope,
                             name: name.to_owned(),
+                            proc: None,
                             location: var.value.location,
                             ty: t,
                             declared: declaration.var_type.type_path.to_string(),
@@ -812,6 +857,7 @@ impl<'a> Walk<'a> {
         let init = Initializer {
             scope: StaticScope::Type(t.get().path.clone()),
             name: name.to_owned(),
+            proc: None,
             location: var.value.location,
             ty: t,
             declared: String::new(),
@@ -1593,7 +1639,8 @@ pub(super) fn compare(
     {
         return;
     }
-    let (before, after) = (old.initializers(true), new.initializers(true));
+    let (mut before, after) = (old.initializers(true), new.initializers(true));
+    renumber_old_statics(old, new, r, &mut before);
     let Some(table) = differences((old, &before), (new, &after), r) else {
         return;
     };

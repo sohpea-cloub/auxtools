@@ -235,6 +235,10 @@ pub(super) fn retargeted<'s>(
 }
 
 impl Retargeted<'_> {
+    pub(super) fn old_key(&self, key: &ProcKey) -> Option<ProcKey> {
+        super::old_key(self.realigned, key)
+    }
+
     pub(super) fn is_empty(&self) -> bool {
         self.leaves_bodies()
             && self.changed_defaults.is_empty()

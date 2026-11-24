@@ -87,6 +87,11 @@ pub fn statics(built: Built) {
 		"\tif (which == 2)\n\t\tvar/static/st_branch_count = 10\n\t\tst_branch_count++\n\t\treturn st_branch_count\n\tif (which == \
 		 1)\n\t\tvar/static/st_branch_count = 0"
 	);
+	assert!(
+		changes.deferred.is_empty(),
+		"the added branch's static waits for a reboot: {:?}",
+		changes.deferred
+	);
 	reload(&mut watcher, &changes);
 	assert_eq!(
 		eval(&mut client, "\"[st_branch(1)] [st_branch(2)]\""),

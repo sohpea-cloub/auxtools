@@ -22,6 +22,7 @@ use crate::{ByondVersion, Instruction, Node, StaticScope};
 pub use reparent::{Reparented, ReparentedType};
 
 mod global_init;
+pub mod locals;
 mod resources;
 pub use global_init::GlobalInit;
 

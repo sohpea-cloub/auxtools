@@ -3,11 +3,11 @@ use std::path::PathBuf;
 use auxtools_protocol::{HotReloadRequest, LocalReads, ParsedReads, ShadowingProc};
 use dmasm::{
 	diagnostic::Id,
-	reload::{Changes, Plan, ProcKey, ProcReload, Refusal, Snapshot},
+	reload::{locals, Changes, Plan, ProcKey, ProcReload, Refusal, Snapshot},
 	Node, StaticScope
 };
 
-mod locals;
+mod reads;
 
 pub const RESTART: &str = "Rebuild the .dmb, then restart the world to load all of the new code.";
 
@@ -166,7 +166,7 @@ impl<'a> OldLocals<'a> {
 				let params = snapshot.proc_parameters(proc).unwrap_or_default();
 				names
 					.into_iter()
-					.filter_map(|name| Some((name.to_owned(), vec![], Some(locals::parsed_reads(params, body, name)?))))
+					.filter_map(|name| Some((name.to_owned(), vec![], Some(reads::parsed_reads(params, body, name)?))))
 					.collect()
 			}
 		};

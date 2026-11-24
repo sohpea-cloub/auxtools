@@ -4416,6 +4416,25 @@ fn a_static_reading_a_changed_colon_name_is_given_to_a_reboot() {
     assert!(code.contains("PushInt 10"), "{}", code);
 }
 
+#[test]
+fn a_static_in_a_branch_added_above_another_is_a_new_one() {
+    let before = "/proc/f(x)\n\tif (x == 1)\n\t\tvar/static/n = 0\n\t\tn++\n\t\treturn n\n";
+    let added = "\tif (x == 2)\n\t\tvar/static/n = 10\n\t\tn++\n\t\treturn n\n";
+    let after = before.replace("\tif (x == 1)", &format!("{added}\tif (x == 1)"));
+    let changes = changes("static-branch-added", before, &after);
+    assert!(changes.refused.is_empty(), "{:?}", changes.refused);
+    assert!(changes.deferred.is_empty(), "{:?}", changes.deferred);
+    assert!(changes.global_init.is_none(), "{:?}", changes.global_init);
+
+    let changed = after.replacen("n = 0", "n = 1", 1);
+    let changes = changes_of("static-branch-changed", &after, &changed);
+    let deferred: Vec<String> = changes.deferred.iter().map(ToString::to_string).collect();
+    assert_eq!(
+        deferred,
+        ["code/code.dm:7: /proc/f: n: changed initializer"]
+    );
+}
+
 fn sent_statics(changes: &Changes, path: &str) -> Vec<String> {
     let reload = changes.plan.reloads.iter().find(|r| r.proc.path == path);
     let reload =
