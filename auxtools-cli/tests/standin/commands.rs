@@ -9,7 +9,8 @@ use test_support::standin::{Answer, Answers, StandIn};
 const LATE: Duration = Duration::from_secs(10);
 
 fn command(pid: u32, args: &[&str]) -> std::process::Child {
-	Command::new(env!("CARGO_BIN_EXE_auxtools"))
+	test_support::paths::use_launcher(env!("CARGO_BIN_EXE_auxtools"));
+	Command::new(test_support::paths::launcher_path())
 		.arg("--pid")
 		.arg(pid.to_string())
 		.args(args)
