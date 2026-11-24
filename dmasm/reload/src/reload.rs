@@ -1988,14 +1988,14 @@ fn folds_changed(
         }
         false
     };
-    let parameters: HashSet<&str> = value.parameters.iter().map(|p| p.name.as_str()).collect();
+    let locals = retargeted::local_reads(value);
     let mut found = false;
     syntax::walk_proc(value, &mut |node| {
         found = found
             || match node {
-                syntax::Node::Term(Term::Ident(name)) => {
+                syntax::Node::Term(term @ Term::Ident(name)) => {
                     consts.contains(name.as_str())
-                        && !parameters.contains(name.as_str())
+                        && !locals.contains(&(term as *const Term as usize, name.to_string()))
                         && (binds_const(old, name) || binds_const(new, name))
                 }
                 syntax::Node::Expression(Expression::Base { term, follow }) => {

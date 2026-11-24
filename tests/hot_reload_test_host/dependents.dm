@@ -70,3 +70,11 @@ var/const/DEP_STEP = 5
 /proc/dep_calls_searched()
 	var/last = /datum/dep_twice::f()
 	return last ? call(new /datum/dep_searched, /datum/dep_searched/child.proc/speak)() : null
+
+var/dep_total = 100
+
+/datum/dep_counted
+
+/datum/dep_counted/proc/add(dep_total)
+	var/last = /datum/dep_twice::f()
+	return last ? dep_total + 1 : 0

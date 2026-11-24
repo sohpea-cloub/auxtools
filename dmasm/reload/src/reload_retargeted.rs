@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 
-use dreammaker::ast::{Expression, Follow, Ident, PathOp, Prefab, Statement, Term};
+use dreammaker::ast::{Case, Expression, Follow, Ident, PathOp, Prefab, Spanned, Statement, Term};
 
 use super::*;
 use crate::operands::{Proc, Value};
@@ -377,6 +377,7 @@ impl Retargeted<'_> {
 
     fn proc_might_name(&self, value: &ProcValue, own: &str, ty: &str) -> bool {
         let mut scan = Scan::new(self, Some(own), Some(ty));
+        scan.value = Some(value);
         for parameter in value.parameters.iter() {
             if let Some(default) = &parameter.default {
                 syntax::walk_expression(default, &mut |node| scan.visit(node));
@@ -467,14 +468,25 @@ struct Scan<'r, 's> {
     r: &'r Retargeted<'s>,
     own: Option<&'r str>,
     ty: Option<&'r str>,
+    value: Option<&'r ProcValue>,
+    locals: Option<HashSet<(usize, String)>>,
     resolved: HashSet<*const Follow>,
     found: bool,
 }
 
 impl<'r, 's> Scan<'r, 's> {
-    fn rebinds_var(&self, name: &str) -> bool {
-        self.ty
+    fn rebinds_var(&mut self, at: usize, name: &str) -> bool {
+        if !self
+            .ty
             .is_some_and(|ty| self.r.rebinds(&self.r.member_vars, ty, name))
+        {
+            return false;
+        }
+        let value = self.value;
+        let locals = self
+            .locals
+            .get_or_insert_with(|| value.map_or_else(HashSet::new, local_reads));
+        !locals.contains(&(at, name.to_owned()))
     }
 
     fn new(r: &'r Retargeted<'s>, own: Option<&'r str>, ty: Option<&'r str>) -> Self {
@@ -482,6 +494,8 @@ impl<'r, 's> Scan<'r, 's> {
             r,
             own,
             ty,
+            value: None,
+            locals: None,
             resolved: HashSet::new(),
             found: false,
         }
@@ -515,10 +529,12 @@ impl<'r, 's> Scan<'r, 's> {
                     || (self.own.is_none() && r.changed_defaults.contains(name.as_str()))
             }
             syntax::Node::Term(Term::Prefab(prefab)) => r.prefab_might_name(prefab, self.ty),
-            syntax::Node::Term(Term::Ident(name)) => self.rebinds_var(name),
-            syntax::Node::Term(Term::NewMiniExpr { expr, .. }) => self.rebinds_var(&expr.ident),
+            syntax::Node::Term(term @ Term::Ident(name)) => self.rebinds_var(address(term), name),
+            syntax::Node::Term(term @ Term::NewMiniExpr { expr, .. }) => {
+                self.rebinds_var(address(term), &expr.ident)
+            }
             syntax::Node::Statement(statement) => {
-                loop_targets(statement).any(|name| self.rebinds_var(name))
+                loop_targets(statement).any(|name| self.rebinds_var(address(statement), name))
             }
             syntax::Node::Term(Term::Call(name, _)) => self
                 .ty
@@ -532,6 +548,195 @@ impl<'r, 's> Scan<'r, 's> {
             _ => false,
         };
     }
+}
+
+fn address<T>(node: &T) -> usize {
+    node as *const T as usize
+}
+
+pub(super) fn local_reads(value: &ProcValue) -> HashSet<(usize, String)> {
+    struct Locals<'a> {
+        scopes: Vec<Vec<&'a str>>,
+        reads: HashSet<(usize, String)>,
+    }
+
+    impl<'a> Locals<'a> {
+        fn read(&mut self, at: usize, name: &str) {
+            if self.scopes.iter().any(|scope| scope.contains(&name)) {
+                self.reads.insert((at, name.to_owned()));
+            }
+        }
+
+        fn declare(&mut self, name: &'a str) {
+            if let Some(scope) = self.scopes.last_mut() {
+                scope.push(name);
+            }
+        }
+
+        fn expression(&mut self, expression: &'a Expression) {
+            syntax::walk_expression(expression, &mut |node| match node {
+                syntax::Node::Term(term @ Term::Ident(name)) => self.read(address(term), name),
+                syntax::Node::Term(term @ Term::NewMiniExpr { expr, .. }) => {
+                    self.read(address(term), &expr.ident)
+                }
+                _ => {}
+            });
+        }
+
+        fn optional(&mut self, expression: &'a Option<Expression>) {
+            if let Some(expression) = expression {
+                self.expression(expression);
+            }
+        }
+
+        fn block(&mut self, block: &'a [Spanned<Statement>]) {
+            self.scopes.push(vec![]);
+            for statement in block {
+                self.statement(&statement.elem);
+            }
+            self.scopes.pop();
+        }
+
+        fn target(&mut self, at: usize, declared: bool, name: &'a str) {
+            match declared {
+                true => self.declare(name),
+                false => self.read(at, name),
+            }
+        }
+
+        fn statement(&mut self, statement: &'a Statement) {
+            let at = address(statement);
+            match statement {
+                Statement::Expr(value) | Statement::Throw(value) | Statement::Del(value) => {
+                    self.expression(value)
+                }
+                Statement::Return(value) | Statement::Crash(value) => self.optional(value),
+                Statement::While { condition, block } => {
+                    self.expression(&condition.elem);
+                    self.block(block);
+                }
+                Statement::DoWhile { block, condition } => {
+                    self.block(block);
+                    self.expression(&condition.elem);
+                }
+                Statement::If { arms, else_arm } => {
+                    for (condition, block) in arms {
+                        self.expression(&condition.elem);
+                        self.block(block);
+                    }
+                    if let Some(block) = else_arm {
+                        self.block(block);
+                    }
+                }
+                Statement::ForInfinite { block } => self.block(block),
+                Statement::ForLoop {
+                    init,
+                    test,
+                    inc,
+                    block,
+                } => {
+                    self.scopes.push(vec![]);
+                    if let Some(init) = init {
+                        self.statement(init);
+                    }
+                    if let Some(test) = test {
+                        self.expression(test);
+                    }
+                    if let Some(inc) = inc {
+                        self.statement(inc);
+                    }
+                    self.block(block);
+                    self.scopes.pop();
+                }
+                Statement::ForList(f) => {
+                    self.scopes.push(vec![]);
+                    self.optional(&f.in_list);
+                    self.target(at, f.var_type.is_some(), &f.name);
+                    self.block(&f.block);
+                    self.scopes.pop();
+                }
+                Statement::ForKeyValue(f) => {
+                    self.scopes.push(vec![]);
+                    self.optional(&f.in_list);
+                    self.target(at, f.var_type.is_some(), &f.key);
+                    self.target(at, f.var_type.is_some(), &f.value);
+                    self.block(&f.block);
+                    self.scopes.pop();
+                }
+                Statement::ForRange(f) => {
+                    self.scopes.push(vec![]);
+                    self.expression(&f.start);
+                    self.expression(&f.end);
+                    self.optional(&f.step);
+                    self.target(at, f.var_type.is_some(), &f.name);
+                    self.block(&f.block);
+                    self.scopes.pop();
+                }
+                Statement::Var(var) => {
+                    self.optional(&var.value);
+                    self.declare(&var.name);
+                }
+                Statement::Vars(vars) => {
+                    for var in vars {
+                        self.optional(&var.value);
+                        self.declare(&var.name);
+                    }
+                }
+                Statement::Setting { value, .. } => self.expression(value),
+                Statement::Spawn { delay, block } => {
+                    self.optional(delay);
+                    self.block(block);
+                }
+                Statement::Switch {
+                    input,
+                    cases,
+                    default,
+                } => {
+                    self.expression(input);
+                    for (values, block) in cases.iter() {
+                        for case in &values.elem {
+                            match case {
+                                Case::Exact(value) => self.expression(value),
+                                Case::Range(from, to) => {
+                                    self.expression(from);
+                                    self.expression(to);
+                                }
+                            }
+                        }
+                        self.block(block);
+                    }
+                    if let Some(block) = default {
+                        self.block(block);
+                    }
+                }
+                Statement::TryCatch {
+                    try_block,
+                    catch_params,
+                    catch_block,
+                } => {
+                    self.block(try_block);
+                    self.scopes.push(vec![]);
+                    if let Some(name) = catch_params.first().and_then(|path| path.iter().last()) {
+                        self.declare(name);
+                    }
+                    self.block(catch_block);
+                    self.scopes.pop();
+                }
+                Statement::Continue(_) | Statement::Break(_) | Statement::Goto(_) => {}
+                Statement::Label { block, .. } => self.block(block),
+            }
+        }
+    }
+
+    let parameters = value.parameters.iter().map(|p| p.name.as_str()).collect();
+    let mut locals = Locals {
+        scopes: vec![parameters],
+        reads: HashSet::new(),
+    };
+    if let Some(code) = &value.code {
+        locals.block(code);
+    }
+    locals.reads
 }
 
 fn loop_targets(statement: &Statement) -> impl Iterator<Item = &str> {

@@ -66,6 +66,11 @@ pub fn dependents(built: Built) {
 	reload(&mut watcher, &changes);
 	assert_eq!(eval(&mut client, "dep_calls_searched()"), "\"searched declaration\"");
 	println!("ok: code dmasm can't compile that names a declaration by ancestor search stays");
+
+	let changes = source.edit("dependents.dm", "/datum/dep_counted\n\n", "/datum/dep_counted\n\tvar/dep_total = 0\n\n");
+	reload(&mut watcher, &changes);
+	assert_eq!(eval(&mut client, "(new /datum/dep_counted).add(5)"), "6");
+	println!("ok: a new member var leaves code dmasm can't compile that reads a parameter of its name");
 }
 
 fn refused_edit(source: &mut Source, file: &str, from: &str, to: &str) -> Vec<dmasm::reload::Refusal> {

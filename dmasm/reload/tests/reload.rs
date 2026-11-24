@@ -3965,12 +3965,20 @@ fn init_types(changes: &Changes) -> Vec<&str> {
 
 #[test]
 fn a_member_var_added_or_removed_takes_unqualified_uses_from_a_global() {
-    let before = "var/count = 100\n\n\
-                  /datum/t\n\tvar/list/counts = list(count)\n\n\
-                  /datum/t/proc/bump()\n\tcount++\n\n\
-                  /datum/t/proc/local()\n\tvar/count = 1\n\treturn count\n\n\
-                  /datum/t/child/proc/bump_more()\n\tcount += 2\n\n\
-                  /datum/u/proc/bump()\n\tcount++\n";
+    let uncompiled = "\tswitch(x)\n\t\tif(x)\n\t\t\treturn 0\n";
+    let before = format!(
+        "var/count = 100\n\n\
+         /datum/t\n\tvar/list/counts = list(count)\n\n\
+         /datum/t/proc/bump()\n\tcount++\n\n\
+         /datum/t/proc/local()\n\tvar/count = 1\n\treturn count\n\n\
+         /datum/t/proc/parameter(count, x)\n{uncompiled}\treturn count\n\n\
+         /datum/t/proc/local_uncompiled(x)\n\tvar/count = 1\n{uncompiled}\treturn count\n\n\
+         /datum/t/proc/inner(x)\n\tif(x)\n\t\tvar/count = 1\n\t\tcount++\n\tfor(var/count in list(1))\n\t\tcount++\n{uncompiled}\n\
+         /datum/t/proc/outer(x)\n\tif(x)\n\t\tvar/count = 1\n\t\tcount++\n\treturn count\n\n\
+         /datum/t/child/proc/bump_more()\n\tcount += 2\n\n\
+         /datum/u/proc/bump()\n\tcount++\n"
+    );
+    let before = before.as_str();
     let added = before.replace("/datum/t\n", "/datum/t\n\tvar/count = 0\n");
     for (name, before, after) in [
         ("member-var-added", before, added.as_str()),
@@ -3979,7 +3987,11 @@ fn a_member_var_added_or_removed_takes_unqualified_uses_from_a_global() {
         let changes = changes_of(name, before, after);
         assert_eq!(
             sorted_reloads(&changes),
-            ["/datum/t/bump", "/datum/t/child/bump_more"],
+            [
+                "/datum/t/bump",
+                "/datum/t/child/bump_more",
+                "/datum/t/outer"
+            ],
             "{}",
             name
         );
@@ -4224,6 +4236,7 @@ fn uncompiled_code_folding_a_changed_const_is_refused() {
         "var/const/LIMIT = 5\n\n\
          /proc/next(x)\n{uncompiled}\treturn LIMIT + 1\n\n\
          /proc/parameter(LIMIT, x)\n{uncompiled}\treturn LIMIT + 1\n\n\
+         /proc/local(x)\n\tvar/LIMIT = 3\n{uncompiled}\treturn LIMIT + 1\n\n\
          /datum/m\n\tvar/LIMIT = 2\n\n\
          /datum/m/proc/member(x)\n{uncompiled}\treturn LIMIT + 1\n\n\
          /datum/c\n\tvar/const/CAP = 3\n\n\
