@@ -276,3 +276,6 @@ var/hr_tally = 100
 
 /proc/dep_returned()
 	return dep_returned_make().DEP_RETURNED
+
+/proc/dep_bare_call()
+	return dep_bare_make().DEP_BARE_CALL

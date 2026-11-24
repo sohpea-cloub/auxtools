@@ -2244,7 +2244,10 @@ fn a_declaration_that_colon_lookup_finds_after_a_call_recompiles_its_users() {
          /proc/dot(datum/factory/factory)\n\treturn factory.make().LIMIT\n\n\
          /proc/uncompiled_colon(datum/factory/factory, x)\n{uncompiled}\treturn factory.make():LIMIT\n\n\
          /proc/uncompiled_dot(datum/factory/factory, x)\n{uncompiled}\treturn factory.make().LIMIT\n\n\
-         /proc/uncompiled_typed(datum/factory/factory, x)\n{uncompiled}\treturn factory.typed().LIMIT\n\n"
+         /proc/uncompiled_typed(datum/factory/factory, x)\n{uncompiled}\treturn factory.typed().LIMIT\n\n\
+         /proc/gmake()\n\treturn new /datum/a\n\n\
+         /proc/bare()\n\treturn gmake().LIMIT\n\n\
+         /proc/uncompiled_bare(x)\n{uncompiled}\treturn gmake().LIMIT\n\n"
     );
     let (without, with) = ("/datum/b\n", "/datum/b\n\tvar/const/LIMIT = 9\n");
     for (name, before, after) in [
@@ -2256,7 +2259,7 @@ fn a_declaration_that_colon_lookup_finds_after_a_call_recompiles_its_users() {
         refused.sort();
         assert_eq!(
             refused,
-            ["/uncompiled_colon", "/uncompiled_dot"],
+            ["/uncompiled_bare", "/uncompiled_colon", "/uncompiled_dot"],
             "{name}: {:?}",
             changes.refused
         );
@@ -2275,7 +2278,41 @@ fn a_declaration_that_colon_lookup_finds_after_a_call_recompiles_its_users() {
             .map(|r| r.proc.path.as_str())
             .collect();
         reloads.sort();
-        assert_eq!(reloads, ["/colon", "/dot"], "{name}: {:?}", changes.plan);
+        assert_eq!(
+            reloads,
+            ["/bare", "/colon", "/dot"],
+            "{name}: {:?}",
+            changes.plan
+        );
+    }
+}
+
+#[test]
+fn a_declaration_that_colon_lookup_finds_after_a_bare_call_recompiles_initializers() {
+    let code = "/datum/a\n\tvar/const/LIMIT = 5\n\n\
+                /proc/gmake()\n\treturn new /datum/a\n\n\
+                /proc/limits()\n\tvar/static/list/limits = list(gmake().LIMIT + 1)\n\treturn limits\n\n\
+                /datum/holder\n\tvar/list/limits = list(gmake().LIMIT + 1)\n\n\
+                var/list/global_limits = list(gmake().LIMIT + 1)\n\n\
+                /mob/verb/choose(x in list(gmake().LIMIT + 1))\n\treturn x\n\n";
+    let (without, with) = ("/datum/b\n", "/datum/b\n\tvar/const/LIMIT = 9\n");
+    for (name, before, after, limit) in [
+        ("bare-call-statics-added", without, with, "/datum/b:LIMIT"),
+        ("bare-call-statics-removed", with, without, "/datum/a:LIMIT"),
+    ] {
+        let changes = types_changes(name, code, before, after);
+        assert!(
+            changes.refused.is_empty(),
+            "{}: {:?}",
+            name,
+            changes.refused
+        );
+        assert_eq!(
+            global_init_sets(&changes),
+            ["/proc/limits#0:limits @8", ":global_limits @14"],
+            "{name}"
+        );
+        assert_eq!(global_init_reads(&changes), [limit, limit], "{name}");
     }
 }
 
@@ -2335,26 +2372,7 @@ fn a_changed_return_type_recompiles_the_callers_that_read_through_it() {
             ["/proc/limits#0:limits @29"],
             "{name}"
         );
-        let reads: Vec<String> = changes
-            .global_init
-            .as_ref()
-            .unwrap()
-            .code
-            .nodes
-            .iter()
-            .filter_map(|node| match node {
-                Node::Instruction(
-                    Instruction::GetVar(dmasm_bytecode::Variable::Global(var)),
-                    (),
-                ) => Some(format!(
-                    "{}:{}",
-                    scope(var),
-                    String::from_utf8_lossy(&var.name.0)
-                )),
-                _ => None,
-            })
-            .collect();
-        assert_eq!(reads, [limit], "{name}");
+        assert_eq!(global_init_reads(&changes), [limit], "{name}");
     }
 }
 
@@ -3578,6 +3596,24 @@ fn global_init_sets(changes: &Changes) -> Vec<String> {
         }
     }
     sets
+}
+
+fn global_init_reads(changes: &Changes) -> Vec<String> {
+    let init = changes.global_init.as_ref().expect("no global init proc");
+    init.code
+        .nodes
+        .iter()
+        .filter_map(|node| match node {
+            Node::Instruction(Instruction::GetVar(dmasm_bytecode::Variable::Global(var)), ()) => {
+                Some(format!(
+                    "{}:{}",
+                    scope(var),
+                    String::from_utf8_lossy(&var.name.0)
+                ))
+            }
+            _ => None,
+        })
+        .collect()
 }
 
 #[test]

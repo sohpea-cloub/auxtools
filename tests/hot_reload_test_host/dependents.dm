@@ -267,3 +267,11 @@ var/datum/dep_retype_alone_first/dep_retype_alone_target
 
 /proc/dep_returned_make()
 	return new /datum/dep_returned_first
+
+/datum/dep_bare_call_first
+	var/const/DEP_BARE_CALL = 5
+
+/datum/dep_bare_call_later
+
+/proc/dep_bare_make()
+	return new /datum/dep_bare_call_first

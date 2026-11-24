@@ -1731,8 +1731,8 @@ pub(super) fn compare(
             })
         || !colon_names.is_empty()
             && new.statics_read(|node| {
-                matches!(node, syntax::Node::Expression(Expression::Base { follow, .. })
-                    if super::colon_fields(follow).any(|name| colon_names.contains(name)))
+                matches!(node, syntax::Node::Expression(Expression::Base { term, follow })
+                    if super::colon_fields(&term.elem, follow).any(|name| colon_names.contains(name)))
             })
         || !retyped.is_empty()
             && new.statics_read(

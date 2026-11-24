@@ -1919,11 +1919,12 @@ fn names_any(value: &ProcValue, names: &HashSet<&str>, defaults: &HashSet<&str>)
     found
 }
 
-pub(crate) fn colon_fields(
-    follow: &[dreammaker::ast::Spanned<dreammaker::ast::Follow>],
-) -> impl Iterator<Item = &str> {
-    use dreammaker::ast::{Follow, PropertyAccessKind};
-    let after_index = std::iter::once(false).chain(
+pub(crate) fn colon_fields<'a>(
+    term: &dreammaker::ast::Term,
+    follow: &'a [dreammaker::ast::Spanned<dreammaker::ast::Follow>],
+) -> impl Iterator<Item = &'a str> {
+    use dreammaker::ast::{Follow, PropertyAccessKind, Term};
+    let after_index = std::iter::once(matches!(term, Term::Call(..))).chain(
         follow
             .iter()
             .map(|f| matches!(f.elem, Follow::Index(..) | Follow::Call(..))),
@@ -1949,8 +1950,8 @@ fn colon_reads_any(value: &ProcValue, names: &HashSet<&str>) -> bool {
     }
     let mut found = false;
     syntax::walk_proc(value, &mut |node| {
-        if let syntax::Node::Expression(Expression::Base { follow, .. }) = node {
-            found |= colon_fields(follow).any(|name| names.contains(name));
+        if let syntax::Node::Expression(Expression::Base { term, follow }) = node {
+            found |= colon_fields(&term.elem, follow).any(|name| names.contains(name));
         }
     });
     found
@@ -2012,8 +2013,8 @@ fn const_users(old: &Snapshot, new: &Snapshot, realigned: &Realigned, changes: &
                 let why = if folds_changed(old, new, path, new_value, &consts) {
                     "folds a const whose value changes"
                 } else if !colon_names.is_empty()
-                    && chain_rebinds(old, new, path, new_value, |_, follow| {
-                        colon_fields(follow).any(|name| colon_names.contains(name))
+                    && chain_rebinds(old, new, path, new_value, |term, follow| {
+                        colon_fields(term, follow).any(|name| colon_names.contains(name))
                     })
                 {
                     "reads a var by `x:name` that another type declares now"

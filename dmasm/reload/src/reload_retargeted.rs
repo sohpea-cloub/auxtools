@@ -524,7 +524,7 @@ impl<'r, 's> Scan<'r, 's> {
         self.found = match node {
             syntax::Node::Expression(Expression::Base { term, follow }) => {
                 (self.own.is_none()
-                    && colon_fields(follow).any(|name| r.colon_names.contains(name)))
+                    && colon_fields(&term.elem, follow).any(|name| r.colon_names.contains(name)))
                     || match (&term.elem, follow.first().map(|f| &f.elem)) {
                         (Term::Prefab(prefab), Some(first @ Follow::ProcReference(name)))
                             if prefab.vars.is_empty()

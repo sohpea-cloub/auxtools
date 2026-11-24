@@ -367,6 +367,20 @@ pub fn dependents(built: Built) {
 		"an unchanged proc that reads make().name doesn't follow make()'s new return type"
 	);
 	println!("ok: an unchanged proc that reads make().name follows make()'s new return type");
+
+	assert_eq!(eval(&mut client, "dep_bare_call()"), "5");
+	let changes = source.edit(
+		"dependents.dm",
+		"/datum/dep_bare_call_later\n",
+		"/datum/dep_bare_call_later\n\tvar/const/DEP_BARE_CALL = 9\n"
+	);
+	reload(&mut watcher, &changes);
+	assert_eq!(
+		eval(&mut client, "dep_bare_call()"),
+		"9",
+		"an unchanged proc that reads make().name doesn't read the var that untyped lookup finds now"
+	);
+	println!("ok: an unchanged proc that reads make().name reads the var that untyped lookup finds now");
 }
 
 fn refused_edit(source: &mut Source, file: &str, from: &str, to: &str) -> Vec<dmasm::reload::Refusal> {
