@@ -886,6 +886,42 @@ fn static_reading_through_a_retyped_var() {
 	world.end();
 }
 
+const STATIC_TYPED: &str = "/datum/rb_static_typed_config
+	var/const/RB_STATIC_TYPED = 5
+
+/proc/rb_static_typed_limits()
+	var/static/datum/rb_static_typed_config/config
+	var/static/list/limits = list(config.RB_STATIC_TYPED)
+	return limits
+";
+
+fn static_reading_through_a_typed_static() {
+	let dir = copy_of_the_world("static_reading_through_a_typed_static");
+	std::fs::write(dir.join("static_typed.dm"), STATIC_TYPED).unwrap();
+	let dme = dir.join("dap_test_host.dme");
+	let text = std::fs::read_to_string(&dme).unwrap() + "#include \"static_typed.dm\"\n";
+	std::fs::write(&dme, text).unwrap();
+	paths::compile(&dme);
+
+	let mut world = World::launch_in(dir.to_path_buf(), json!({ "hotReload": true }));
+	world.catch_runtimes(false);
+	world.configure();
+	world.wait_output("Hot reload active");
+	assert_eq!(world.eval_global("rb_static_typed_limits()[1]"), "5");
+	let held = |output: &str| output.matches("Hot reload requires a reboot:").count();
+	let settled = |output: &str| reloads(output) + held(output);
+	let (reloaded, waiting) = (reloads(&world.output), held(&world.output));
+	world
+		.marks
+		.edit("static_typed.dm", "list(config.RB_STATIC_TYPED)", "list(config.RB_STATIC_TYPED + 1)");
+	world.wait_until("the edit's reload", |output| settled(output) > reloaded + waiting);
+	assert!(held(&world.output) > waiting, "the edit was reloaded without a reboot:\n{}", world.output);
+	reboot(&mut world, 2);
+	assert_eq!(world.eval_global("json_encode(rb_static_typed_limits())"), "\"[6]\"");
+	ok("proc static reading a const through a null static of its proc, after reboot");
+	world.end();
+}
+
 const LOCAL_LIMIT: &str = "/proc/rb_local_limit()
 	var/const/LIMIT = 5
 	return \"[LIMIT] [LIMIT + 1]\"
@@ -1157,6 +1193,7 @@ pub fn files() {
 	static_reading_a_changed_colon_name();
 	static_made_by_new_of_a_changed_type();
 	static_reading_through_a_retyped_var();
+	static_reading_through_a_typed_static();
 	local_const_changed();
 	file_named_by_a_reload();
 	resource_files();

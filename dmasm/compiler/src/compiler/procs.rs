@@ -163,7 +163,7 @@ pub fn compile_proc(source: &ProcSource) -> Result<CompiledProc, CompileError> {
 pub fn compile_proc_as(
     source: &ProcSource,
     proc_path: Option<&str>,
-    statics: &[(String, u32)],
+    statics: &[(String, u32, String)],
 ) -> Result<CompiledProc, CompileError> {
     let declared: Vec<&dreammaker::ast::Parameter> = source
         .value
@@ -184,8 +184,10 @@ pub fn compile_proc_as(
     if let Some(path) = proc_path {
         ctx.proc_path = path.to_owned();
     }
-    for (name, number) in statics {
+    for (name, number, ty) in statics {
         ctx.scopes[0].push((name.clone(), number | STATIC_LOCAL));
+        ctx.static_local_types
+            .insert((name.clone(), *number), ty.clone());
     }
     let mut compiler = Compiler::new(params.clone(), ctx);
     compiler.debug_info = source.debug_info;

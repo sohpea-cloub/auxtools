@@ -54,7 +54,7 @@ struct Initializer<'a> {
     constant: Option<ConstValue>,
     proc_path: Option<String>,
     proc_static_names: Vec<String>,
-    visible: Vec<(String, u32)>,
+    visible: Vec<(String, u32, String)>,
     sized_list: bool,
     params: Vec<(String, String)>,
     scoped_late: bool,
@@ -1003,7 +1003,7 @@ impl<'a> Walk<'a> {
         let t = init.ty;
         if !global {
             if let Some(proc_path) = &init.proc_path {
-                if let Some((_, number)) = init.visible.iter().rev().find(|(n, _)| n == name) {
+                if let Some((_, number, _)) = init.visible.iter().rev().find(|(n, ..)| n == name) {
                     let scope = StaticScope::Proc {
                         path: proc_path.clone(),
                         nth: *number,

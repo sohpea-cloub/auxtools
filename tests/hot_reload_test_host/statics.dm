@@ -164,3 +164,10 @@ var/st_arm = 20
 	var/static/st_pair_count = 5
 	st_pair_count++
 	return ..() + st_pair_count
+
+/datum/st_config
+	var/const/ST_CONFIG_LIMIT = 5
+
+/proc/st_configured()
+	var/static/datum/st_config/st_config
+	return isnull(st_config)

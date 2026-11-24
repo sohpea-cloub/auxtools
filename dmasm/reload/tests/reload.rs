@@ -4965,3 +4965,54 @@ fn the_statics_of_two_overrides_are_compared_with_their_own() {
         ["code/code.dm:10: /datum/t/f: count: changed initializer"]
     );
 }
+
+fn field_reads(nodes: &[Node]) -> Vec<String> {
+    nodes
+        .iter()
+        .filter_map(|node| match node {
+            Node::Instruction(ins, ()) => Some(ins),
+            _ => None,
+        })
+        .flat_map(|ins| ins.variables())
+        .filter_map(|var| match var {
+            dmasm_bytecode::Variable::SetCache(_, field) => match field.as_ref() {
+                dmasm_bytecode::Variable::Field(name) => {
+                    Some(String::from_utf8_lossy(&name.0).into_owned())
+                }
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn a_new_static_reads_through_a_typed_static_by_its_type() {
+    let before = "/datum/config\n\tvar/const/LIMIT = 5\n\n\
+                  /proc/limits()\n\tvar/static/datum/config/config\n\treturn config\n";
+    let after = before.replace(
+        "\treturn config\n",
+        "\tvar/static/list/limits = list(config.LIMIT)\n\treturn limits\n",
+    );
+    let changes = changes("static-typed-read", before, &after);
+    assert!(changes.refused.is_empty(), "{:?}", changes.refused);
+    let reload = changes
+        .plan
+        .reloads
+        .iter()
+        .find(|r| r.proc.path == "/limits");
+    let limits = reload
+        .and_then(|reload| reload.statics.iter().find(|s| s.name == "limits"))
+        .and_then(|limits| limits.init.as_ref())
+        .expect("no initializer for limits");
+    assert!(field_reads(&limits.nodes).is_empty(), "{:?}", limits.nodes);
+    assert_eq!(reads_of(&limits.nodes, "LIMIT"), ["/datum/config:LIMIT"]);
+    let reboot = &changes
+        .global_init
+        .as_ref()
+        .expect("no global init")
+        .code
+        .nodes;
+    assert!(field_reads(reboot).is_empty(), "{:?}", reboot);
+    assert_eq!(reads_of(reboot, "LIMIT"), ["/datum/config:LIMIT"]);
+}

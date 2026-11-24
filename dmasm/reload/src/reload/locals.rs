@@ -3,6 +3,7 @@ use dreammaker::ast::{Case, Expression, Spanned, Statement, VarStatement};
 pub struct Declared<'a> {
     pub name: &'a str,
     pub nth: u32,
+    pub type_path: String,
     place: Vec<Step<'a>>,
     blocks: Vec<u32>,
     pub line: u32,
@@ -42,12 +43,12 @@ pub fn declared(block: &[Spanned<Statement>]) -> Vec<Declared<'_>> {
     walk.out
 }
 
-pub fn visible_at(declared: &[Declared], at: usize) -> Vec<(String, u32)> {
+pub fn visible_at(declared: &[Declared], at: usize) -> Vec<(String, u32, String)> {
     let here = &declared[at].blocks;
     declared[..at]
         .iter()
         .filter(|local| here.starts_with(&local.blocks))
-        .map(|local| (local.name.to_owned(), local.nth))
+        .map(|local| (local.name.to_owned(), local.nth, local.type_path.clone()))
         .collect()
 }
 
@@ -85,6 +86,7 @@ impl<'a> Walk<'a> {
             self.out.push(Declared {
                 name,
                 nth: self.out.iter().filter(|had| had.name == name).count() as u32,
+                type_path: var.var_type.type_path.to_string(),
                 place: self.place.clone(),
                 blocks: self.blocks.clone(),
                 line,

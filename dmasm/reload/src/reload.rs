@@ -1295,7 +1295,7 @@ impl Snapshot {
         declared: &str,
         location: dreammaker::Location,
         proc_path: Option<&str>,
-        statics: &[(String, u32)],
+        statics: &[(String, u32, String)],
     ) -> Result<ProcReload, Diagnostic> {
         use dreammaker::ast::{Expression, Ident, PathOp, Prefab, RelativePath, Spanned, Term};
         let mut expression = expression.clone();
@@ -1370,7 +1370,7 @@ impl Snapshot {
         location: dreammaker::Location,
         debug_info: bool,
         proc_path: Option<&str>,
-        statics: &[(String, u32)],
+        statics: &[(String, u32, String)],
     ) -> Result<ProcReload, Diagnostic> {
         let value = ProcValue {
             location,
@@ -3867,7 +3867,11 @@ pub(crate) fn constructed_type<'d>(
     }
 }
 
-fn visible_statics(declared: &[locals::Declared], name: &str, nth: u32) -> Vec<(String, u32)> {
+fn visible_statics(
+    declared: &[locals::Declared],
+    name: &str,
+    nth: u32,
+) -> Vec<(String, u32, String)> {
     declared
         .iter()
         .position(|local| local.name == name && local.nth == nth)

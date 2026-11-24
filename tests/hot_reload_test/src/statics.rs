@@ -184,6 +184,20 @@ pub fn statics(built: Built) {
 	reload(&mut watcher, &changes);
 	assert_eq!(eval(&mut client, &format!("\"[{pair}] [st_rolled in list(1, 2)]\"")), "\"11 1\"");
 	println!("ok: an added global leaves alone the statics of two overrides with the same name");
+
+	assert_eq!(eval(&mut client, "st_configured()"), "1");
+	let changes = source.edit(
+		"statics.dm",
+		"\treturn isnull(st_config)",
+		"\tvar/static/list/st_config_limits = list(st_config.ST_CONFIG_LIMIT)\n\treturn st_config_limits"
+	);
+	reload(&mut watcher, &changes);
+	assert_eq!(
+		eval(&mut client, "json_encode(st_configured())"),
+		"\"[5]\"",
+		"the new static's value from a const read through a null static of its proc"
+	);
+	println!("ok: a new static's initializer reads a const through a typed static of its proc");
 }
 
 fn declared_references(client: &mut Client, path: &str) -> (u32, u32) {
