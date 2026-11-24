@@ -2606,7 +2606,7 @@ var/list/configs = list(null)
 	return get_config()?.settings::item_type
 /proc/f7()
 	return config.settings::item_type
-// Guards: a_scoped_var_after_a_safe_access_warns_where_dreammaker_reads_the_receivers (compile_proc.rs)
+// Guards: a_scoped_static_after_a_safe_access_is_read_alone, a_scoped_var_after_a_safe_access_warns_where_dreammaker_reads_the_receivers (compile_proc.rs)
 // Known: /proc/s2  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
 // Known: /proc/s3  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
 // Known: /proc/s4  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
@@ -2623,6 +2623,8 @@ var/list/configs = list(null)
 /datum/settings
 	var/static/x = 5
 	var/plain = 2
+/proc/s1(datum/holder/a)
+	return a?.f()::x
 /proc/s2(datum/holder/a)
 	return a?.f()::plain
 /proc/s3(datum/holder/a)
@@ -2637,3 +2639,7 @@ var/list/configs = list(null)
 	return a?.g()::x
 /proc/s8(datum/holder/a)
 	return a?.g()::plain
+/proc/s9(datum/holder/a)
+	return a?.b.f2()::x
+/datum/settings/proc/f2() as /datum/settings
+	return src

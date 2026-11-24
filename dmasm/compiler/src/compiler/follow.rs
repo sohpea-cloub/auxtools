@@ -572,6 +572,7 @@ fn emit_safe_inner<'a>(
     }
 
     compiler.emit_ins(Instruction::PushCache);
+    let body = compiler.nodes.len();
     let mut popped = false;
     let mut called = false;
     let mut kind = EvalKind::Var(Variable::Cache);
@@ -678,14 +679,24 @@ fn emit_safe_inner<'a>(
             }
             Follow::StaticField(ident) => {
                 let decl = super::procs::scope_var(compiler, receiver_ty, ident.as_str());
-                if !decl.is_some_and(|decl| super::procs::is_global_member(&decl)) {
-                    compiler.warn_bug(
-                        crate::diagnostic::Id::ByondSafeScopeReceiver,
-                        "`::` on a var after a `?.` and more (`a?.b::c`): DreamMaker restores the \
-                         cache first and reads the initial value of a's var, not b's",
-                        "; dmasm reads b's",
-                    );
+                if let Some(decl) = decl.filter(super::procs::is_global_member) {
+                    compiler.nodes.truncate(body);
+                    field_buffer.clear();
+                    popped = false;
+                    let scope = decl.ty().get().path.clone();
+                    kind = EvalKind::Var(Variable::Global(GlobalVar::named(
+                        ident.as_str().as_bytes(),
+                        Some(StaticScope::of_type(&scope)),
+                    )));
+                    ty = super::procs::declared_type(compiler, &decl.get().var_type);
+                    continue;
                 }
+                compiler.warn_bug(
+                    crate::diagnostic::Id::ByondSafeScopeReceiver,
+                    "`::` on a var after a `?.` and more (`a?.b::c`): DreamMaker restores the \
+                     cache first and reads the initial value of a's var, not b's",
+                    "; dmasm reads b's",
+                );
                 kind = commit_field_buffer(compiler, kind, &mut field_buffer)?;
                 let rest = std::iter::once(Follow::StaticField(ident)).chain(it.by_ref());
                 kind = emit_after(compiler, rest.collect(), kind, receiver_ty, before)?;

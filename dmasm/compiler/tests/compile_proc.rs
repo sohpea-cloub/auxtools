@@ -3775,6 +3775,28 @@ fn a_scoped_static_after_a_computed_value_is_read_alone() {
 }
 
 #[test]
+fn a_scoped_static_after_a_safe_access_is_read_alone() {
+    let types = "/datum/holder\n\tvar/datum/settings/b\n\tvar/list/l\n\
+                 /datum/holder/proc/f() as /datum/settings\n\treturn b\n\
+                 /datum/settings\n\tvar/static/x = 5\n\tvar/plain = 2\n\
+                 /datum/settings/proc/f2() as /datum/settings\n\treturn src\n";
+    for body in ["return a?.f()::x", "return a?.b.f2()::x", "return a?.b::x"] {
+        let code = compile(
+            &format!("{types}/proc/s(datum/holder/a)\n\t{body}\n"),
+            "",
+            "s",
+        );
+        assert_has(&code, &["PushCache", "GetVar global(\"x\")", "PopCache"]);
+        assert!(
+            !code.contains("Call"),
+            "{}: calls before the static:\n{}",
+            body,
+            code
+        );
+    }
+}
+
+#[test]
 fn a_scoped_var_after_a_safe_access_warns_where_dreammaker_reads_the_receivers() {
     let types = "/datum/holder\n\tvar/datum/settings/b\n\tvar/list/l\n\
                  /datum/holder/proc/f() as /datum/settings\n\treturn b\n\
@@ -3795,7 +3817,7 @@ fn a_scoped_var_after_a_safe_access_warns_where_dreammaker_reads_the_receivers()
     ] {
         assert!(warns(body), "{}", body);
     }
-    for body in ["return a?.b::x", "return a.b::plain"] {
+    for body in ["return a?.f()::x", "return a?.b::x", "return a.b::plain"] {
         assert!(!warns(body), "{}", body);
     }
 }
