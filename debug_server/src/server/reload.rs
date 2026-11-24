@@ -107,9 +107,15 @@ impl Server {
 				let mut waiting = request.clone();
 				let mut early = vec![];
 				let mut failures = vec![];
-				if let Some(init) = &request.global_init {
+				let early_init = request
+					.global_init
+					.as_ref()
+					.map(|init| crate::hot_reload::early_global_init(init, request));
+				if let Some(Err(e)) = &early_init {
+					early.push(format!("{}: reboot will use the build's global and static initializers", e));
+				}
+				if let Some(Ok((init, left))) = early_init {
 					let (globals, others) = request.plan.new_vars.iter().cloned().partition(|var| var.type_path.is_empty());
-					let (init, left) = crate::hot_reload::early_global_init(init, request);
 					if left > 0 {
 						early.push(format!(
 							"(global init): {} new static vars will initialize with the deferred reload at world/New",

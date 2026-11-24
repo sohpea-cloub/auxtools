@@ -5183,18 +5183,14 @@ fn a_global_init_names_the_override_whose_static_each_initializer_sets() {
         .owners
         .iter()
         .map(|owner| match owner {
-            Some(owner) => format!("{} {:?}", owner.proc, owner.statics),
+            Some(owner) => owner.proc.to_string(),
             None => "-".to_owned(),
         })
         .collect();
     assert_eq!(global_init_sets(&changes).len(), owners.len());
     assert_eq!(
         owners,
-        [
-            "-",
-            "/datum/t/f (override 1) {\"cache\": 1}",
-            "/datum/t/f (override 2) {\"cache\": 1}",
-        ]
+        ["-", "/datum/t/f (override 1)", "/datum/t/f (override 2)"]
     );
     let first = init.without(|var| var.name.0 == b"rolled");
     assert_eq!(first.owners, init.owners[1..]);

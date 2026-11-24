@@ -28,7 +28,6 @@ pub struct GlobalInit {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct StaticOwner {
     pub proc: super::ProcKey,
-    pub statics: BTreeMap<String, usize>,
 }
 
 fn owners<'a>(
@@ -37,11 +36,7 @@ fn owners<'a>(
 ) -> Vec<Option<StaticOwner>> {
     set.map(|init| {
         let proc = world_key(init.proc.as_ref()?)?;
-        let mut statics = BTreeMap::new();
-        for name in &init.proc_static_names {
-            *statics.entry(name.clone()).or_default() += 1;
-        }
-        Some(StaticOwner { proc, statics })
+        Some(StaticOwner { proc })
     })
     .collect()
 }

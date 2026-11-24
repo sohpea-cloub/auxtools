@@ -72,6 +72,7 @@ struct AddedVars {
 	in_lists: Vec<(u32, ProcEntryWords)>,
 	instances: StagedInstances,
 	statics: HashMap<(StaticScope, Vec<u8>), u32>,
+	owned_statics: NewStatics,
 	const_values: Vec<(u32, (u32, u32), Option<StringRef>)>,
 	proc_locals: Vec<u32>
 }
@@ -511,6 +512,7 @@ pub fn prepare(request: &HotReloadRequest, warnings: &mut Vec<String>, skipped: 
 		in_lists: vec![],
 		instances: StagedInstances::default(),
 		statics: HashMap::new(),
+		owned_statics: HashMap::new(),
 		const_values: vec![],
 		proc_locals: vec![]
 	};
@@ -937,9 +939,10 @@ fn prepare_global_init(
 			NAME
 		));
 	}
-	let code = value_code(owned_slots(init, world_globals).code);
+	let (owned, _) = owned_slots(init, world_globals, &added.owned_statics)?;
+	let code = value_code(owned.code);
 	let Some(proc) = global_init_proc() else {
-		let known = global_slots(&code, &init.proc_statics, pending, added, world_globals);
+		let known = global_slots(&code, init, pending, added, world_globals);
 		let bytecode = assemble_with(NAME, &code, None, known, pending, world_globals, added)?;
 		return Ok(Some(StartingInit::Now(bytecode)));
 	};
@@ -947,13 +950,13 @@ fn prepare_global_init(
 		warnings.push(ran());
 		return Ok(None);
 	}
-	let known = global_slots(&code, &init.proc_statics, pending, added, world_globals);
+	let known = global_slots(&code, init, pending, added, world_globals);
 	let bytecode = assemble_with(NAME, &code, None, known, pending, world_globals, added)?;
 	let at_start = proc.id == start;
 	prepared_code(proc, NAME.to_owned(), &code, bytecode, pending, world_globals, added).map(|code| Some(StartingInit::Proc(code, at_start)))
 }
 
-pub fn early_global_init(init: &dmasm::reload::GlobalInit, rest: &HotReloadRequest) -> (dmasm::reload::GlobalInit, usize) {
+pub fn early_global_init(init: &dmasm::reload::GlobalInit, rest: &HotReloadRequest) -> Result<(dmasm::reload::GlobalInit, usize), String> {
 	let later: HashSet<(StaticScope, Vec<u8>)> = rest
 		.plan
 		.reloads
@@ -977,39 +980,64 @@ pub fn early_global_init(init: &dmasm::reload::GlobalInit, rest: &HotReloadReque
 		in_lists: vec![],
 		instances: StagedInstances::default(),
 		statics: HashMap::new(),
+		owned_statics: HashMap::new(),
 		const_values: vec![],
 		proc_locals: vec![]
 	};
 	let mut world_globals = WorldGlobals::default();
-	let init = owned_slots(init, &mut world_globals);
+	for reads in &rest.local_reads {
+		if let Ok(proc) = find(&reads.proc) {
+			world_globals.local_reads.entry(proc.id.0).or_default().push(reads.clone());
+		}
+	}
+	let allocated_later: NewStatics = (rest.plan.reloads.iter())
+		.flat_map(|code| {
+			code.statics.iter().filter(|s| !s.constant).filter_map(|s| match s.scope {
+				StaticScope::Proc { nth, .. } => Some(((code.proc.clone(), s.name.as_bytes().to_vec(), nth), None)),
+				_ => None
+			})
+		})
+		.collect();
+	let (init, waits) = owned_slots(init, &mut world_globals, &allocated_later)?;
 	let code = value_code(init.code.clone());
-	let known = global_slots(&code, &init.proc_statics, &Pending::default(), &added, &mut world_globals);
-	let mut left = 0;
+	let known = global_slots(&code, &init, &Pending::default(), &added, &mut world_globals);
+	let (mut left, mut set) = (0, 0);
 	let init = init.without(|var| {
 		let key = (var.scope.clone().unwrap_or_default(), var.name.0.clone());
-		let leave = var.id.is_none() && later.contains(&key) && !known.contains_key(&key);
+		let owned = init.owners.get(set).is_some_and(Option::is_some);
+		let leave = waits[set] || !owned && var.id.is_none() && later.contains(&key) && !known.contains_key(&key);
+		set += 1;
 		left += usize::from(leave);
 		leave
 	});
-	(init, left)
+	Ok((init, left))
 }
 
 fn global_slots(
 	code: &ProcReload,
-	counts: &BTreeMap<String, BTreeMap<String, usize>>,
+	init: &dmasm::reload::GlobalInit,
 	pending: &Pending,
 	added: &AddedVars,
 	world_globals: &mut WorldGlobals
 ) -> HashMap<(StaticScope, Vec<u8>), u32> {
+	let counts = &init.proc_statics;
 	let mut known = HashMap::new();
 	let mut file = vec![];
+	let mut set = 0;
 	for node in &code.nodes {
 		let global = match node {
 			Node::Instruction(dmasm::Instruction::DbgFile(name), _) => {
 				file = name.0.clone();
 				continue;
 			}
-			Node::Instruction(dmasm::Instruction::SetVar(dmasm::Variable::Global(global)), _) if global.id.is_none() => global,
+			Node::Instruction(dmasm::Instruction::SetVar(dmasm::Variable::Global(global)), _) => {
+				set += 1;
+				let owned = init.owners.get(set - 1).is_some_and(Option::is_some);
+				if owned || global.id.is_some() {
+					continue;
+				}
+				global
+			}
 			_ => continue
 		};
 		let (scope, name) = (global.scope.clone().unwrap_or_default(), global.name.0.clone());
@@ -1061,27 +1089,64 @@ fn global_slots(
 	known
 }
 
-fn owned_slots(init: &dmasm::reload::GlobalInit, world_globals: &mut WorldGlobals) -> dmasm::reload::GlobalInit {
+type NewStatics = HashMap<(ProcKey, Vec<u8>, u32), Option<u32>>;
+
+fn owned_slots(
+	init: &dmasm::reload::GlobalInit,
+	world_globals: &mut WorldGlobals,
+	new: &NewStatics
+) -> Result<(dmasm::reload::GlobalInit, Vec<bool>), String> {
 	let mut init = init.clone();
 	let dmasm::reload::GlobalInit { code, owners, .. } = &mut init;
-	let mut set = 0;
+	let mut waits = vec![];
+	let mut later = vec![];
 	for node in &mut code.nodes {
 		let Node::Instruction(ins, _) = node else {
 			continue;
 		};
-		let ends = matches!(ins, dmasm::Instruction::SetVar(dmasm::Variable::Global(_)));
+		let set = waits.len();
+		let sets = match ins {
+			dmasm::Instruction::SetVar(dmasm::Variable::Global(global)) => Some(global.name.0.clone()),
+			_ => None
+		};
 		if let Some(Some(owner)) = owners.get(set) {
 			for var in ins.variables_mut() {
 				for global in var.globals_mut() {
-					if let (None, Some(StaticScope::Proc { nth, .. })) = (global.id, &global.scope) {
-						global.id = owned_slot(owner, *nth, &global.name.0, world_globals);
-					}
+					let (None, Some(StaticScope::Proc { nth, .. })) = (global.id, &global.scope) else {
+						continue;
+					};
+					let name = &global.name.0;
+					global.id = match new.get(&(owner.proc.clone(), name.clone(), *nth)) {
+						Some(Some(id)) => Some(*id),
+						Some(None) => {
+							later.push(name.clone());
+							continue;
+						}
+						None => Some(owned_slot(owner, *nth, name, world_globals).ok_or_else(|| {
+							format!(
+								"static local {} of {}: cannot find its storage in the running world",
+								String::from_utf8_lossy(name),
+								describe(&owner.proc)
+							)
+						})?)
+					};
 				}
 			}
 		}
-		set += usize::from(ends);
+		if let Some(name) = sets {
+			let wait = later.contains(&name);
+			if let (false, Some(read)) = (wait, later.first()) {
+				return Err(format!(
+					"static local {}: its initializer reads the new static {}, which the rest of the reload adds",
+					String::from_utf8_lossy(&name),
+					String::from_utf8_lossy(read)
+				));
+			}
+			waits.push(wait);
+			later.clear();
+		}
 	}
-	init
+	Ok((init, waits))
 }
 
 fn owned_slot(owner: &dmasm::reload::StaticOwner, nth: u32, name: &[u8], world_globals: &mut WorldGlobals) -> Option<u32> {
@@ -1089,13 +1154,8 @@ fn owned_slot(owner: &dmasm::reload::StaticOwner, nth: u32, name: &[u8], world_g
 	if let Some(id) = world_globals.globals_of(&proc).local(name, nth) {
 		return Some(id);
 	}
-	let declared = *owner.statics.get(String::from_utf8_lossy(name).as_ref())?;
-	let uses = world_globals.of(&proc);
-	if let Some(named) = uses.by_name().remove(name).filter(|named| named.len() == declared) {
-		return named.get(nth as usize).copied();
-	}
-	let (file, first, last) = uses.place()?;
-	let ids: BTreeSet<u32> = (world_globals.initialized().iter())
+	let (file, first, last) = world_globals.of(&proc).place()?;
+	let ids: BTreeSet<u32> = (world_globals.assigned().iter())
 		.filter(|(at, global, line, _)| *at == file && global == name && (first..=last).contains(line))
 		.map(|(.., id)| *id)
 		.collect();
@@ -1857,8 +1917,9 @@ fn new_statics(
 				.run_once
 				.push((id, format!("static local {}", local.name), (**init).clone(), HashMap::new()));
 		}
-		if matches!(local.scope, StaticScope::Proc { .. }) {
+		if let StaticScope::Proc { nth, .. } = local.scope {
 			added.proc_locals.push(id);
+			added.owned_statics.insert((code.proc.clone(), name.clone(), nth), Some(id));
 		}
 		added.statics.insert((local.scope.clone(), name.clone()), id);
 		out.insert((local.scope.clone(), name), id);
@@ -3711,7 +3772,8 @@ fn variable_ids(name: &[u8]) -> Vec<u32> {
 struct GlobalUses {
 	files: Vec<Vec<u8>>,
 	lines: Option<(u32, u32)>,
-	uses: Vec<(Option<usize>, Vec<u8>, u32, u32)>
+	uses: Vec<(Option<usize>, Vec<u8>, u32, u32)>,
+	sets: Vec<usize>
 }
 
 impl GlobalUses {
@@ -3733,6 +3795,9 @@ impl GlobalUses {
 					read.lines = Some(read.lines.map_or((line, line), |(first, last)| (first.min(line), last.max(line))));
 				}
 				_ => {
+					if let dmasm::Instruction::SetVar(dmasm::Variable::Global(dmasm::GlobalVar { id: Some(_), .. })) = ins {
+						read.sets.push(read.uses.len());
+					}
 					for var in ins.variables() {
 						for global in var.globals() {
 							if let Some(id) = global.id {
@@ -3848,6 +3913,7 @@ struct WorldGlobals {
 	local_reads: HashMap<u32, Vec<LocalReads>>,
 	users: Option<HashMap<Vec<u8>, Vec<(u32, String)>>>,
 	initialized: Option<Vec<(Vec<u8>, Vec<u8>, u32, u32)>>,
+	assigned: Option<Vec<(Vec<u8>, Vec<u8>, u32, u32)>>,
 	procs: HashMap<u32, (usize, u16, Rc<GlobalUses>)>
 }
 
@@ -3870,16 +3936,27 @@ impl WorldGlobals {
 
 	fn initialized(&mut self) -> &[(Vec<u8>, Vec<u8>, u32, u32)] {
 		if self.initialized.is_none() {
-			let read = crate::unnamed::find(auxtools_protocol::GLOBAL_INIT, 0).map(|proc| self.of(&proc));
-			let uses = read.iter().flat_map(|read| {
-				read.uses.iter().map(|(file, name, line, id)| {
-					let file = file.map_or_else(Vec::new, |file| read.files[file].clone());
-					(file, name.clone(), *line, *id)
-				})
-			});
-			self.initialized = Some(uses.collect());
+			self.read_global_init();
 		}
 		self.initialized.as_deref().unwrap_or_default()
+	}
+
+	fn assigned(&mut self) -> &[(Vec<u8>, Vec<u8>, u32, u32)] {
+		if self.assigned.is_none() {
+			self.read_global_init();
+		}
+		self.assigned.as_deref().unwrap_or_default()
+	}
+
+	fn read_global_init(&mut self) {
+		let read = crate::unnamed::find(auxtools_protocol::GLOBAL_INIT, 0).map(|proc| self.of(&proc));
+		let placed = |read: &GlobalUses, at: usize| {
+			let (file, name, line, id) = &read.uses[at];
+			let file = file.map_or_else(Vec::new, |file| read.files[file].clone());
+			(file, name.clone(), *line, *id)
+		};
+		self.initialized = Some(read.iter().flat_map(|read| (0..read.uses.len()).map(|at| placed(read, at))).collect());
+		self.assigned = Some(read.iter().flat_map(|read| read.sets.iter().map(|at| placed(read, *at))).collect());
 	}
 
 	fn users(&mut self, name: &[u8]) -> &[(u32, String)] {

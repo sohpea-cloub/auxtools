@@ -11,7 +11,7 @@ use dmasm::{
 
 use crate::{HotReloadRequest, HotReloadResource, LocalReads, ParsedReads, ShadowingProc, PROTOCOL_VERSION};
 
-const RECORDED: (u32, u64) = (15, 0x64D8_9499_08FC_8503);
+const RECORDED: (u32, u64) = (15, 0x2B06_B6DD_39CF_528B);
 
 fn key(path: &str, override_id: u32) -> ProcKey {
 	ProcKey {
@@ -215,13 +215,7 @@ fn sample() -> HotReloadRequest {
 			code: code("(global init)"),
 			table: 1,
 			proc_statics: BTreeMap::from([("/datum/a/proc/f".to_owned(), BTreeMap::from([("seen".to_owned(), 2)]))]),
-			owners: vec![
-				None,
-				Some(StaticOwner {
-					proc: key("/datum/a/f", 1),
-					statics: BTreeMap::from([("seen".to_owned(), 2)])
-				}),
-			]
+			owners: vec![None, Some(StaticOwner { proc: key("/datum/a/f", 1) })]
 		}),
 		shadowing_procs: vec![ShadowingProc {
 			global: "total".to_owned(),

@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use auxtools_protocol::{HotReloadRequest, LocalReads, ParsedReads, ShadowingProc};
 use dmasm::{
 	diagnostic::Id,
-	reload::{locals, Changes, Plan, ProcKey, ProcReload, Refusal, Snapshot, StaticVar},
+	reload::{locals, Changes, GlobalInit, Plan, ProcKey, ProcReload, Refusal, Snapshot, StaticVar},
 	Node, StaticScope
 };
 
@@ -15,13 +15,17 @@ pub fn request(changes: &Changes, before: &Snapshot, restarted: bool) -> HotRelo
 	let mut plan = changes.plan.clone();
 	let mut local_reads = without_existing_statics(&mut plan, changes, before);
 	local_reads.extend(removed_locals(&plan, before));
+	let global_init = changes.global_init.clone().filter(|_| restarted);
+	if let Some(init) = &global_init {
+		local_reads.extend(owners_locals(init, &plan, before));
+	}
 	HotReloadRequest {
 		shadowing_procs: shadowing_procs(&plan, before),
 		local_reads,
 		plan,
 		resources: vec![],
 		resource_dirs: vec![],
-		global_init: changes.global_init.clone().filter(|_| restarted)
+		global_init
 	}
 }
 
@@ -169,6 +173,32 @@ fn removed_locals(plan: &Plan, before: &Snapshot) -> Vec<LocalReads> {
 			reads,
 			parsed,
 			kept: vec![]
+		}));
+	}
+	found
+}
+
+fn owners_locals(init: &GlobalInit, plan: &Plan, before: &Snapshot) -> Vec<LocalReads> {
+	let mut found = vec![];
+	let mut seen: Vec<&ProcKey> = vec![];
+	for owner in init.owners.iter().flatten() {
+		let proc = &owner.proc;
+		if seen.contains(&proc) || plan.reloads.iter().any(|code| code.proc == *proc) {
+			continue;
+		}
+		seen.push(proc);
+		let old = OldLocals::of(before, proc);
+		found.extend(old.reads.iter().map(|(name, reads, parsed)| {
+			LocalReads {
+				proc: proc.clone(),
+				name: name.clone(),
+				reads: reads.clone(),
+				parsed: *parsed,
+				kept: (old.declared.iter())
+					.filter(|local| local.name == name && old.read_as(name, local.nth))
+					.map(|local| (local.nth, local.nth))
+					.collect()
+			}
 		}));
 	}
 	found
