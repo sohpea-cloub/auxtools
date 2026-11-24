@@ -618,6 +618,33 @@ fn a_safe_colon_field_finds_its_var_as_on_an_untyped_value() {
 }
 
 #[test]
+fn a_call_after_a_safe_index_keeps_the_indexed_item_as_its_receiver() {
+    let types = "/datum/item/proc/refresh(a)\n\treturn a\n";
+    for (body, call) in [
+        (
+            "return items?[1]:refresh()",
+            "Call dynamic_proc(\"refresh\") 0",
+        ),
+        (
+            "items?[1]:refresh(x)",
+            "GetVar arg(1)\nPopCache\nCall dynamic_proc(\"refresh\") 1",
+        ),
+        (
+            "return items?[1].refresh(items.len)",
+            "PopCache\nCall dynamic_proc(\"refresh\") 1",
+        ),
+    ] {
+        let code = compile(
+            &format!("{types}/proc/f(list/items, x)\n\t{body}\n"),
+            "",
+            "f",
+        );
+        assert_has(&code, &["ListGet", "SetVar cache", "PushCache"]);
+        assert_has(&code, &[call, "PopCache"]);
+    }
+}
+
+#[test]
 fn a_safe_place_after_a_call_is_typed_as_a_read_finds_it() {
     let types = "/datum/child\n/datum/child/special\n\
                  /datum/holder\n\tvar/datum/child/child\n\tvar/datum/holder/inner\n\

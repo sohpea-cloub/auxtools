@@ -522,6 +522,21 @@ pub fn dependents(built: Built) {
 		"unchanged untyped x:make() doesn't call the make() of a type made later"
 	);
 	println!("ok: unchanged untyped x:make() calls the make() of a type made later");
+
+	const REFRESHED: &str = "\"[dep_refresh_first(list(new /datum/dep_refreshed))] [isnull(dep_refresh_first(null))]\"";
+	assert_eq!(eval(&mut client, REFRESHED), "\"refreshed 2 1\"");
+	let changes = source.edit(
+		"dependents.dm",
+		"\treturn items?[1]:dep_refresh(2)",
+		"\treturn 0 || items?[1]:dep_refresh(2)"
+	);
+	reload(&mut watcher, &changes);
+	assert_eq!(
+		eval(&mut client, REFRESHED),
+		"\"refreshed 2 1\"",
+		"recompiled items?[1]:refresh() doesn't call refresh() on the item, or a null list isn't skipped"
+	);
+	println!("ok: recompiled items?[1]:refresh() calls refresh() on the item, and a null list is skipped");
 }
 
 fn refused_edit(source: &mut Source, file: &str, from: &str, to: &str) -> Vec<dmasm::reload::Refusal> {

@@ -612,6 +612,7 @@ fn emit_safe_inner<'a>(
                 called = true;
                 (ty, after) = super::procs::call_result(compiler, receiver_ty, access, &ident);
                 kind = commit_field_buffer(compiler, kind, &mut field_buffer)?;
+                let computed = !matches!(kind, EvalKind::Var(_) | EvalKind::Field(..));
                 let builder = match kind {
                     EvalKind::Var(var) => ChainBuilder::begin(var),
                     EvalKind::Field(mut builder, field) => {
@@ -624,6 +625,15 @@ fn emit_safe_inner<'a>(
                         ChainBuilder::begin(Variable::Cache)
                     }
                 };
+                if computed {
+                    compiler.emit_ins(Instruction::PushCache);
+                    let count = compiler.emit_call_args(args.into_vec())?;
+                    compiler.emit_ins(Instruction::PopCache);
+                    let var = callee_var(compiler, receiver_ty, access, &ident);
+                    compiler.emit_ins(Instruction::Call(builder.get_leaf(var), count));
+                    kind = EvalKind::Stack;
+                    continue;
+                }
                 let start = compiler.nodes.len();
                 let count = compiler.emit_call_args(args.into_vec())?;
                 let touched = compiler.nodes[start..].iter().any(|n| {
