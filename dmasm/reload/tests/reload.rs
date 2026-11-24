@@ -2198,6 +2198,36 @@ fn a_declaration_that_colon_lookup_finds_instead_recompiles_its_users() {
 }
 
 #[test]
+fn a_declaration_that_colon_lookup_finds_instead_recompiles_initializers_and_in_lists() {
+    let code = "/datum/a\n\tvar/const/LIMIT = 5\n\n\
+                /datum/holder\n\tvar/holder\n\tvar/list/limits = list(holder:LIMIT + 1)\n\n\
+                var/global_holder\nvar/list/global_limits = list(global_holder:LIMIT + 1)\n\n\
+                /mob/var/holder\n\n\
+                /mob/verb/choose(x in list(holder:LIMIT + 1))\n\treturn x\n\n";
+    let (without, with) = ("/datum/b\n", "/datum/b\n\tvar/const/LIMIT = 9\n");
+    for (name, before, after, folded) in [
+        ("colon-lists-added", without, with, "PushInt 10"),
+        ("colon-lists-removed", with, without, "PushInt 6"),
+    ] {
+        let changes = types_changes(name, code, before, after);
+        assert_eq!(sorted_reloads(&changes), ["/mob/choose"], "{name}");
+        let InList::New(list) = &changes.plan.reloads[0].params[0].in_list else {
+            panic!("{name}: {:?}", changes.plan.reloads[0].params[0].in_list);
+        };
+        let list = dmasm_bytecode::format(&list.nodes);
+        assert!(list.contains(folded), "{name}: {list}");
+        assert_eq!(init_types(&changes), ["/datum/holder"], "{name}");
+        let init = dmasm_bytecode::format(&changes.plan.init_procs[0].code.as_ref().unwrap().nodes);
+        assert!(init.contains(folded), "{name}: {init}");
+        assert_eq!(
+            global_init_sets(&changes)[..],
+            [":global_limits @9"],
+            "{name}"
+        );
+    }
+}
+
+#[test]
 fn a_type_scope_default_that_moves_moves_its_users_lines() {
     let code = "\n\n\n/proc/f()\n\treturn /datum/u::x\n";
     let changes = types_changes(

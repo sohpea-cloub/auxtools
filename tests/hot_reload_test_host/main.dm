@@ -236,3 +236,13 @@ var/hr_tally = 100
 /proc/dep_self(x)
 	var/last = /datum/dep_twice::f()
 	return x || !last ? x : .(DEP_PARENT)
+
+/mob/dep_colon_chooser
+	var/dep_colon_holder
+
+/mob/dep_colon_chooser/verb/choose_dep_colon_list(x as anything in list(dep_colon_holder:DEP_COLON_LIST + 1))
+	return x
+
+/datum/dep_colon_inits
+	var/dep_colon_holder
+	var/list/limits = list(dep_colon_holder:DEP_COLON_LIST + 1)

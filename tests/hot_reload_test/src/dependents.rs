@@ -223,6 +223,36 @@ pub fn dependents(built: Built) {
 	reload(&mut watcher, &changes);
 	assert_eq!(eval(&mut client, "dep_colon()"), "\"6 5\"");
 	println!("ok: an untyped x:name in an unchanged file finds an earlier type's declaration when a later type is removed");
+
+	assert_eq!(eval(&mut client, "(new /datum/dep_colon_inits).limits[1]"), "6");
+	let changes = source.edit(
+		"dependents.dm",
+		"/datum/dep_colon_list_later\n",
+		"/datum/dep_colon_list_later\n\tvar/const/DEP_COLON_LIST = 9\n"
+	);
+	let chooser = changes
+		.plan
+		.reloads
+		.iter()
+		.find(|r| r.proc.path == "/mob/dep_colon_chooser/choose_dep_colon_list");
+	let Some(InList::New(choices)) = chooser.map(|r| &r.params[0].in_list) else {
+		panic!("the verb's unchanged `in` list isn't compiled again: {:?}", chooser);
+	};
+	let code: Vec<_> = (choices.nodes.iter())
+		.filter_map(|node| match node {
+			dmasm::Node::Instruction(instruction, _) => Some(instruction),
+			_ => None
+		})
+		.collect();
+	assert!(
+		code.windows(2)
+			.any(|pair| matches!(pair, [dmasm::Instruction::PushInt(10), dmasm::Instruction::NewList(1)])),
+		"the verb's new `in` list isn't list(10): {}",
+		dmasm::format(&choices.nodes)
+	);
+	reload(&mut watcher, &changes);
+	assert_eq!(eval(&mut client, "(new /datum/dep_colon_inits).limits[1]"), "10");
+	println!("ok: initializers and `in` lists in an unchanged file follow the declaration an untyped x:name finds");
 }
 
 fn refused_edit(source: &mut Source, file: &str, from: &str, to: &str) -> Vec<dmasm::reload::Refusal> {

@@ -1,8 +1,8 @@
 use std::collections::BTreeSet;
 
 use dreammaker::ast::{
-    Case, Expression, Follow, Ident, PathOp, Prefab, Spanned, Statement, Term, VarStatement,
-    VarType,
+    Case, Expression, Follow, Ident, PathOp, Prefab, PropertyAccessKind, Spanned, Statement, Term,
+    VarStatement, VarType,
 };
 
 use super::*;
@@ -29,6 +29,7 @@ pub(super) struct Retargeted<'s> {
     changed_defaults: HashSet<String>,
     changed_consts: HashSet<String>,
     retyped: HashSet<String>,
+    colon_names: HashSet<String>,
 }
 
 fn resolve(s: &Snapshot, path: &str) -> Option<ProcKey> {
@@ -144,6 +145,7 @@ pub(super) fn retargeted<'s>(
         changed_defaults: changes.defaults_changed.iter().cloned().collect(),
         changed_consts: changes.consts.iter().cloned().collect(),
         retyped: changes.retyped.iter().cloned().collect(),
+        colon_names: changes.colon_names.iter().cloned().collect(),
     };
     let touched: BTreeSet<&str> = realigned
         .keys()
@@ -238,6 +240,7 @@ impl Retargeted<'_> {
             && self.changed_defaults.is_empty()
             && self.changed_consts.is_empty()
             && self.retyped.is_empty()
+            && self.colon_names.is_empty()
     }
 
     fn leaves_bodies(&self) -> bool {
@@ -536,6 +539,10 @@ impl<'r, 's> Scan<'r, 's> {
                 r.defaults.contains(name.as_str())
                     || (self.own.is_none() && r.changed_defaults.contains(name.as_str()))
             }
+            syntax::Node::Follow(Follow::Field(
+                PropertyAccessKind::Colon | PropertyAccessKind::SafeColon,
+                name,
+            )) => self.own.is_none() && r.colon_names.contains(name.as_str()),
             syntax::Node::Term(Term::Prefab(prefab)) => r.prefab_might_name(prefab, self.ty),
             syntax::Node::Term(term @ Term::Ident(name)) => self.rebinds_var(address(term), name),
             syntax::Node::Term(term @ Term::NewMiniExpr { expr, .. }) => {

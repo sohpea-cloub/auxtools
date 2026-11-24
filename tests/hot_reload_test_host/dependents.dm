@@ -207,3 +207,8 @@ var/const/DEP_PARENT = 5
 
 /datum/dep_parent/proc/f(x)
 	return x
+
+/datum/dep_colon_list_first
+	var/const/DEP_COLON_LIST = 5
+
+/datum/dep_colon_list_later
