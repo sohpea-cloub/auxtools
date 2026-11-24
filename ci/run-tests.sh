@@ -8,7 +8,8 @@
 # because the suites inspect a world with those console commands. BYOND is
 # the installation directory that contains bin/. Run from the repository root.
 #
-# Set WINE=wine to run Windows binaries on Linux.
+# Set WINE=wine to run Windows binaries on Linux. Wine then uses WINEPREFIX,
+# or without it a prefix of the run's own in target/wine-prefix.
 #
 # The tests run in parallel, each in target/run-tests/TEST with its own copy
 # of the test worlds. Each test prints its output when it ends. A test that
@@ -75,9 +76,21 @@ run() {
 	report "$name" $status $(($(date +%s) - start))
 }
 
-if [ -n "${WINE:-}" ] && ! "$WINE" reg query 'HKCU\Software\Wine\Drivers' /v Graphics 2>/dev/null | grep -q null; then
-	"$WINE" reg add 'HKCU\Software\Wine\Drivers' /v Graphics /d null /f >/dev/null
-	"${WINESERVER:-wineserver}" -w
+if [ -n "${WINE:-}" ]; then
+	own_prefix=
+	if [ -z "${WINEPREFIX:-}" ]; then
+		mkdir -p target
+		export WINEPREFIX=$PWD/target/wine-prefix
+		own_prefix=1
+	fi
+	if ! "$WINE" reg query 'HKCU\Software\Wine\Drivers' /v Graphics 2>/dev/null | grep -q null; then
+		if [ -n "$own_prefix" ]; then
+			"$WINE" reg add 'HKCU\Software\Wine\Drivers' /v Graphics /d null /f >/dev/null
+			"${WINESERVER:-wineserver}" -w
+		else
+			echo "warning: the Wine prefix $WINEPREFIX doesn't use Wine's null graphics driver, so without a display a world may exit at its start. To set it: $WINE reg add 'HKCU\Software\Wine\Drivers' /v Graphics /d null /f" >&2
+		fi
+	fi
 fi
 
 if [ -n "${SERIAL:-}" ]; then
