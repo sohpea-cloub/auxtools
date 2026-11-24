@@ -720,6 +720,37 @@ fn every_implicit_cast_in_a_value_takes_the_destinations_type() {
 }
 
 #[test]
+fn an_elements_implicit_cast_takes_its_holders_type() {
+    let types = "/datum/item\n/datum/other\n\tvar/list/l\n/datum/thing\n\tvar/datum/other/o\n\
+                 \tvar/list/l\n\tvar/list/datum/item/li\nvar/list/gl\n";
+    for (body, cast) in [
+        ("q.o[1] = astype(q)", "/datum/other"),
+        ("q.l[astype(q)] = 1", "/list"),
+        ("q.o.l[1] = astype(a)", "/list"),
+        ("q?.l[1] = astype(a)", "/list"),
+        ("gl[1] = astype(a)", "/list"),
+        ("args[1] = astype(a)", "/list"),
+        ("q.l[1] ||= astype(a)", "/list"),
+        ("return (q.o[1] = astype(q))", "/datum/other"),
+        ("var/datum/item/r = (q.l[1] = astype(q))", "/list"),
+        ("var/list/l = list()\n\tl[1] = astype(a)", "/list"),
+    ] {
+        let code = compile(
+            &format!("{types}/proc/f(datum/other/a, datum/thing/q)\n\t{body}\n"),
+            "",
+            "f",
+        );
+        assert_has(&code, &[&format!("PushVal {cast}"), "AsType"]);
+    }
+    let code = compile(
+        &format!("{types}/proc/f(datum/thing/q)\n\tq.li[1] = new\n"),
+        "",
+        "f",
+    );
+    assert_has(&code, &["PushVal /list", "New 0"]);
+}
+
+#[test]
 fn a_for_loops_var_types_only_its_initial_value() {
     let code = compile(
         "/datum/item\n/datum/other\n/proc/f(datum/other/a)\n\

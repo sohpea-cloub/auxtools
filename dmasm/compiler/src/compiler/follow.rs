@@ -505,7 +505,6 @@ fn emit_safe<'a>(
                     compiler,
                     chain,
                     (ty, after),
-                    None,
                     static_var,
                     None,
                     write,

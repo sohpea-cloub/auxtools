@@ -857,6 +857,35 @@ impl<'a> Compiler<'a> {
             .filter(|_| procs::place_typed(place))
     }
 
+    fn destination_type(&self, place: &Expression) -> Option<String> {
+        let var_type = |place: &Expression| match place {
+            Expression::Base { term, follow }
+                if follow.is_empty()
+                    && matches!(&term.elem, dreammaker::ast::Term::Ident(i) if i.as_str() == "args") =>
+            {
+                Some("/list".to_owned())
+            }
+            _ => self
+                .place_type_name(place)
+                .or_else(|| statements::list_type_of(self, place)),
+        };
+        let Expression::Base { term, follow } = place else {
+            return var_type(place);
+        };
+        match follow.split_last().map(|(last, rest)| (&last.elem, rest)) {
+            Some((Follow::Index(dreammaker::ast::ListAccessKind::Normal, _), rest))
+                if !matches!(rest.last().map(|f| &f.elem), Some(Follow::Index(..))) =>
+            {
+                var_type(&Expression::Base {
+                    term: term.clone(),
+                    follow: rest.to_vec().into_boxed_slice(),
+                })
+            }
+            Some((Follow::Index(..), _)) => None,
+            _ => var_type(place),
+        }
+    }
+
     pub(crate) fn end_assignment_statement(&mut self) {
         if self.cache.as_ref().is_some_and(|h| h.len() > 1) {
             self.cache = None;

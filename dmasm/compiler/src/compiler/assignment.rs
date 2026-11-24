@@ -185,6 +185,24 @@ pub(super) fn emit(
     lhs: Expression,
     rhs: Expression,
 ) -> Result<EvalKind, CompileError> {
+    let implicit = match op {
+        AssignOp::Assign | AssignOp::OrAssign | AssignOp::AndAssign => {
+            compiler.destination_type(&lhs)
+        }
+        _ => compiler.implicit_type.clone(),
+    };
+    let outer = std::mem::replace(&mut compiler.implicit_type, implicit);
+    let kind = emit_assignment(compiler, op, lhs, rhs);
+    compiler.implicit_type = outer;
+    kind
+}
+
+fn emit_assignment(
+    compiler: &mut Compiler<'_>,
+    op: AssignOp,
+    lhs: Expression,
+    rhs: Expression,
+) -> Result<EvalKind, CompileError> {
     let mut lhs = lhs;
     while let Expression::Base { term, follow } = &lhs {
         match &term.elem {
@@ -314,11 +332,8 @@ fn emit_value_assignment(
     };
     match op {
         AssignOp::Assign => {
-            let implicit = compiler.place_type_name(lhs);
-            let outer = std::mem::replace(&mut compiler.implicit_type, implicit);
-            let kind = compiler.emit_expr(rhs.clone());
-            compiler.implicit_type = outer;
-            compiler.emit_move_to_stack(kind?)?;
+            let kind = compiler.emit_expr(rhs.clone())?;
+            compiler.emit_move_to_stack(kind)?;
             store(compiler)?;
         }
         AssignOp::AndAssign | AssignOp::OrAssign => {
@@ -343,11 +358,8 @@ fn emit_value_assignment(
             });
             compiler.end_assignment_statement();
             let start = compiler.nodes.len();
-            let implicit = compiler.place_type_name(lhs);
-            let outer = std::mem::replace(&mut compiler.implicit_type, implicit);
-            let kind = compiler.emit_expr(rhs.clone());
-            compiler.implicit_type = outer;
-            compiler.emit_move_to_stack(kind?)?;
+            let kind = compiler.emit_expr(rhs.clone())?;
+            compiler.emit_move_to_stack(kind)?;
             let touches = |compiler: &Compiler<'_>, start: usize| {
                 compiler.nodes[start..]
                     .iter()
