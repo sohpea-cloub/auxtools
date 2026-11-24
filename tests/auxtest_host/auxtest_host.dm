@@ -41,12 +41,18 @@ var/datum/weak_test_datum
 /mob/verb/auxtest_verb()
 	return
 
+/proc/auxtest_temp_savefile()
+	for (var/attempt in 1 to 5)
+		try
+			return new /savefile
+		catch
+
 /proc/auxtest_islist_samples()
 	var/mob/M = new
 	M.filters += filter(type = "blur")
-	var/savefile/F = new
+	var/savefile/F = auxtest_temp_savefile()
 	var/list/L = list(1, 2)
-	return list(
+	. = list(
 		null, 1, "string", M, /list, &L,
 #if DM_VERSION >= 516
 		alist("a" = 1),
@@ -54,8 +60,10 @@ var/datum/weak_test_datum
 		L, L.vars, args,
 		M.verbs, M.contents, M.vars, M.overlays, M.group, M.vis_contents,
 		M.filters, M.filters[1],
-		F.dir, world.contents, world.vars, global.vars,
+		world.contents, world.vars, global.vars,
 	)
+	if (F)
+		. += list(F.dir)
 
 #if DM_VERSION >= 516
 /proc/auxtest_alist_sample()
@@ -253,6 +261,6 @@ BIG_TWINS(auxtest_big_a, auxtest_big_b)
 	. = ..()
 
 /world/Error(exception/e)
-	auxtest_out("FAILED: world/Error([e])")
+	auxtest_out("FAILED: world/Error([e.name]) [replacetext(e.desc, "\n", " ")]")
 	. = ..()
 	shutdown()
