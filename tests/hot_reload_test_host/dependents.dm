@@ -409,6 +409,9 @@ var/datum/dep_retype_alone_first/dep_retype_alone_target
 /proc/dep_make_on(x)
 	return x:dep_make()
 
+/proc/dep_make_last_on(datum/dep_maker_last/x)
+	return x.dep_make()
+
 /datum/dep_refreshed/proc/dep_refresh(a)
 	return "refreshed [a]"
 

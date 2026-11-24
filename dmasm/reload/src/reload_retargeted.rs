@@ -30,6 +30,7 @@ pub(super) struct Retargeted<'s> {
     changed_consts: HashSet<String>,
     retyped: HashSet<String>,
     colon_names: HashSet<String>,
+    renamed_calls: HashSet<String>,
 }
 
 fn resolve(s: &Snapshot, path: &str) -> Option<ProcKey> {
@@ -146,6 +147,7 @@ pub(super) fn retargeted<'s>(
         changed_consts: changes.consts.iter().cloned().collect(),
         retyped: changes.retyped.iter().cloned().collect(),
         colon_names: changes.colon_names.iter().cloned().collect(),
+        renamed_calls: changes.renamed_calls.iter().cloned().collect(),
     };
     let touched: BTreeSet<&str> = realigned
         .keys()
@@ -245,6 +247,7 @@ impl Retargeted<'_> {
             && self.changed_consts.is_empty()
             && self.retyped.is_empty()
             && self.colon_names.is_empty()
+            && self.renamed_calls.is_empty()
     }
 
     fn leaves_bodies(&self) -> bool {
@@ -564,7 +567,9 @@ impl<'r, 's> Scan<'r, 's> {
                 r.consts.contains(name)
                     || r.global_names.contains(name)
                     || (self.own.is_none()
-                        && (r.changed_consts.contains(name) || r.retyped.contains(name)))
+                        && (r.changed_consts.contains(name)
+                            || r.retyped.contains(name)
+                            || r.renamed_calls.contains(name)))
             }
             _ => false,
         };

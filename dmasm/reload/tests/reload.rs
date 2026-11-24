@@ -2304,6 +2304,110 @@ fn a_proc_declaration_that_colon_lookup_finds_instead_recompiles_its_callers() {
 }
 
 #[test]
+fn a_changed_set_name_recompiles_the_callers_that_call_by_it() {
+    let uncompiled = "\tswitch(x)\n\t\tif(x)\n\t\t\treturn 0\n";
+    let code = format!(
+        "/datum/c\n\n\
+         /proc/colon(x)\n\treturn x:make()\n\n\
+         /proc/typed(datum/b/x)\n\treturn x.make()\n\n\
+         /proc/typed_sub(datum/b/sub/x)\n\treturn x?.make()\n\n\
+         /proc/uncompiled_typed(datum/b/x)\n{uncompiled}\treturn x.make()\n\n\
+         /proc/other(datum/c/x)\n\treturn x.make()\n\n\
+         /proc/uncompiled_other(datum/c/x)\n{uncompiled}\treturn x.make()\n\n\
+         /datum/b/proc/bare()\n\treturn make()\n\n\
+         /datum/b/proc/uncompiled_bare(x)\n{uncompiled}\treturn make()\n\n"
+    );
+    let types = |name: &str| {
+        format!(
+            "/datum/c/proc/make()\n\
+             /datum/b/proc/make()\n\tset name = \"{name}\"\n\
+             /datum/b/sub\n"
+        )
+    };
+    let changes = types_changes(
+        "set-name-changed",
+        &code,
+        &types("b make"),
+        &types("b make renamed"),
+    );
+    let mut refused: Vec<&str> = changes.refused.iter().map(|r| r.path.as_str()).collect();
+    refused.sort();
+    assert_eq!(
+        refused,
+        ["/datum/b/uncompiled_bare", "/uncompiled_typed"],
+        "{:?}",
+        changes.refused
+    );
+    for refusal in &changes.refused {
+        assert!(
+            refusal
+                .why
+                .starts_with("calls a proc whose `set name` changed, so it must be compiled again"),
+            "{}",
+            refusal
+        );
+    }
+    let mut reloads: Vec<&str> = changes
+        .plan
+        .reloads
+        .iter()
+        .map(|r| r.proc.path.as_str())
+        .collect();
+    reloads.sort();
+    assert_eq!(
+        reloads,
+        [
+            "/colon",
+            "/datum/b/bare",
+            "/datum/b/make",
+            "/typed",
+            "/typed_sub"
+        ],
+        "{:?}",
+        changes.plan
+    );
+    for reload in changes
+        .plan
+        .reloads
+        .iter()
+        .filter(|r| r.proc.path != "/datum/b/make")
+    {
+        let code = dmasm_bytecode::format(&reload.nodes);
+        assert!(
+            code.contains("dynamic_proc(\"b make renamed\")"),
+            "{}: {code}",
+            reload.proc.path
+        );
+    }
+}
+
+#[test]
+fn a_changed_set_name_recompiles_initializers_that_call_by_it() {
+    let code = "var/datum/b/holder\nvar/made = holder?.make()\n\n\
+                /proc/kept()\n\tvar/static/made = global.holder?.make()\n\treturn made\n\n";
+    let types = |name: &str| format!("/datum/b/proc/make()\n\tset name = \"{name}\"\n");
+    let changes = types_changes(
+        "set-name-initializer",
+        code,
+        &types("b make"),
+        &types("b make renamed"),
+    );
+    assert_eq!(
+        global_init_sets(&changes),
+        ["/proc/kept#0:made @5", ":made @2"],
+        "{:?}",
+        changes.refused
+    );
+    let init = changes.global_init.as_ref().unwrap();
+    let init = dmasm_bytecode::format(&init.code.nodes);
+    assert_eq!(
+        init.matches("dynamic_proc(\"b make renamed\")").count(),
+        2,
+        "{init}"
+    );
+}
+
+#[test]
 fn a_declaration_that_colon_lookup_finds_after_a_call_recompiles_its_users() {
     let uncompiled = "\tswitch(x)\n\t\tif(x)\n\t\t\treturn 0\n";
     let code = format!(

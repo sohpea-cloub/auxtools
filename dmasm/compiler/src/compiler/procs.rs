@@ -330,7 +330,7 @@ pub(super) fn call_var(ty: Option<TypeRef>, name: &str) -> Variable {
     }
 }
 
-pub(super) fn call_name(ty: Option<TypeRef>, name: &str) -> DMString {
+pub fn call_name(ty: Option<TypeRef>, name: &str) -> DMString {
     let mut current = ty;
     while let Some(t) = current {
         if let Some(proc) = t.get().procs.get(name) {
@@ -809,6 +809,16 @@ pub(super) fn chain_targets(
         false => start_type(compiler, &term.elem),
     };
     let mut found = vec![];
+    if let Term::Call(name, _) = &term.elem {
+        let ty = compiler.proc.ty;
+        if !ty.is_root()
+            && ty
+                .get_proc(name.as_str())
+                .is_some_and(|p| !p.ty().is_root())
+        {
+            found.push(Some(format!("{:?}", call_var(Some(ty), name.as_str()))));
+        }
+    }
     for (i, f) in follow.iter().enumerate() {
         let before = std::mem::replace(&mut after, After::of(&f.elem));
         let (kind, name) = match &f.elem {

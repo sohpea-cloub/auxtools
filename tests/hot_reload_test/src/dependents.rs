@@ -510,6 +510,21 @@ pub fn dependents(built: Built) {
 	);
 	println!("ok: recompiled untyped x:make() calls the proc of the last type made that declares make()");
 
+	const LAST: &str = "\"[dep_make_on(new /datum/dep_maker_last)] [dep_make_last_on(new /datum/dep_maker_last)]\"";
+	assert_eq!(eval(&mut client, LAST), "\"last last\"");
+	let changes = source.edit(
+		"dependents.dm",
+		"\tset name = \"dep make last\"",
+		"\tset name = \"dep make last renamed\""
+	);
+	reload(&mut watcher, &changes);
+	assert_eq!(
+		eval(&mut client, LAST),
+		"\"last last\"",
+		"unchanged x:make() and x.make() don't call make() by its new `set name`"
+	);
+	println!("ok: unchanged x:make() and x.make() call make() by its new `set name`");
+
 	let changes = source.edit(
 		"dependents.dm",
 		"/proc/dep_make_on(x)",

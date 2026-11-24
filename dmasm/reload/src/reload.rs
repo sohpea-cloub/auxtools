@@ -508,6 +508,7 @@ pub struct Changes {
     defaults_changed: Vec<String>,
     defaults_moved: Vec<String>,
     colon_names: Vec<String>,
+    renamed_calls: Vec<String>,
     moved_procs: Vec<String>,
     new_code: Vec<(ProcKey, Block)>,
 }
@@ -1992,6 +1993,7 @@ fn const_users(old: &Snapshot, new: &Snapshot, realigned: &Realigned, changes: &
         && changes.defaults_changed.is_empty()
         && changes.defaults_moved.is_empty()
         && changes.colon_names.is_empty()
+        && changes.renamed_calls.is_empty()
     {
         return;
     }
@@ -1999,8 +2001,10 @@ fn const_users(old: &Snapshot, new: &Snapshot, realigned: &Realigned, changes: &
         .consts
         .iter()
         .chain(&changes.retyped)
+        .chain(&changes.renamed_calls)
         .map(String::as_str)
         .collect();
+    let renamed: HashSet<&str> = changes.renamed_calls.iter().map(String::as_str).collect();
     let colon_names: HashSet<&str> = changes.colon_names.iter().map(String::as_str).collect();
     let retyped: HashSet<&str> = changes.retyped.iter().map(String::as_str).collect();
     let consts: HashSet<&str> = changes
@@ -2052,6 +2056,16 @@ fn const_users(old: &Snapshot, new: &Snapshot, realigned: &Realigned, changes: &
                     })
                 {
                     "calls a proc by `x:name()` that another type declares now"
+                } else if !renamed.is_empty()
+                    && chain_rebinds(old, new, path, new_value, |term, follow| {
+                        matches!(term, Term::Call(name, _) if renamed.contains(name.as_str()))
+                            || follow.iter().any(|f| {
+                                matches!(&f.elem, Follow::Call(_, name, _)
+                                    if renamed.contains(name.as_str()))
+                            })
+                    })
+                {
+                    "calls a proc whose `set name` changed"
                 } else if !retyped.is_empty()
                     && chain_rebinds(old, new, path, new_value, |term, follow| {
                         matches!(term, Term::Ident(name) if retyped.contains(name.as_str()))
@@ -3701,6 +3715,27 @@ fn compare_types(
             for name in redeclared {
                 if !changes.colon_names.iter().any(|c| c == name.as_str()) {
                     changes.colon_names.push(name.to_string());
+                }
+            }
+        }
+        if let Some(o) = o.filter(|_| !n.is_root()) {
+            let sets_name = |p: Option<&dreammaker::objtree::TypeProc>| {
+                p.is_some_and(|p| {
+                    p.value.iter().flat_map(|v| v.code.iter().flat_map(|c| c.iter())).any(
+                        |s| matches!(&s.elem, Statement::Setting { name, .. } if name.as_str() == "name"),
+                    )
+                })
+            };
+            let names = np
+                .keys()
+                .chain(op.keys().filter(|name| !np.contains_key(*name)));
+            for name in names {
+                if (sets_name(op.get(name)) || sets_name(np.get(name)))
+                    && crate::compiler::call_name(Some(o), name)
+                        != crate::compiler::call_name(Some(n), name)
+                    && !changes.renamed_calls.iter().any(|r| r == name.as_str())
+                {
+                    changes.renamed_calls.push(name.to_string());
                 }
             }
         }
