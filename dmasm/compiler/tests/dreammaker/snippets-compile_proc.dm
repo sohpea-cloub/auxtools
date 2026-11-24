@@ -118,6 +118,26 @@ var/const/gc = 7
 	if(a.m.x)
 		var/c = ("s")
 		return a.m.y
+// Guards: a_logical_assignment_through_a_safe_chain_warns_where_dreammaker_writes_another_var (compile_proc.rs)
+// Known: /proc/f1  DreamMaker writes `a?.b.c ||= v` through the object its test read, a.b.b.c (a BYOND bug, which dmasm warns of); dmasm writes a.b.c
+// Known: /proc/f2  DreamMaker writes `a?.b.c ||= v` through the object its test read, a.b.b.c (a BYOND bug, which dmasm warns of); dmasm writes a.b.c
+// Known: /proc/f3  DreamMaker writes `a?.b.c ||= v` through the object its test read, a.b.b.c (a BYOND bug, which dmasm warns of); dmasm writes a.b.c
+// Known -516.1672: /proc/f4  before 516.1673 DreamMaker leaves out the null tests of `a?.b ||= v` and `&&=`; dmasm keeps them
+// Known -516.1672: /proc/f5  before 516.1673 DreamMaker leaves out the null tests of `a?.b ||= v` and `&&=`; dmasm keeps them
+/datum/item
+	var/datum/item/a
+	var/datum/item/b
+	var/datum/item/c
+/proc/f1(datum/item/i, x)
+	i?.a.b ||= x
+/proc/f2(list/items, x)
+	items?[1]:a:b &&= x
+/proc/f3(datum/item/i, x)
+	return (i?.a.b.c ||= x)
+/proc/f4(datum/item/i, x)
+	i?.a ||= x
+/proc/f5(datum/item/i, datum/item/x)
+	i?.a.b ||= x.c
 // Guards: a_name_alone_on_its_line_that_a_goto_names_is_a_label (compile_proc.rs)
 /proc/f()
 	var/i = 0

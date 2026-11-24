@@ -409,7 +409,7 @@ fn normalize(nodes: &mut Nodes, names: &HashMap<String, Vec<u8>>) -> Vec<usize> 
                     full = Variable::SetCache(Box::new(b.clone()), Box::new(full));
                 }
                 *v = full;
-                expanded[index] = h.len();
+                expanded[index] = h.len() + usize::from(uses_cache(&h[0]));
             }
         }
     }
