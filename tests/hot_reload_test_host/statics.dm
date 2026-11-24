@@ -116,3 +116,15 @@ var/ST_DEFAULT = 1
 	var/static/st_seed = 1
 	st_seed++
 	return st_seed
+
+var/const/ST_GONE = 5
+
+/proc/st_gone_root()
+	return ST_GONE
+
+/datum/st_gone
+
+/datum/st_gone/proc/count()
+	var/static/ST_GONE = 7
+	ST_GONE++
+	return ST_GONE

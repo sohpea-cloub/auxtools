@@ -122,6 +122,18 @@ pub fn statics(built: Built) {
 	reload(&mut watcher, &changes);
 	assert_eq!(eval(&mut client, "st_seeded()"), "\"4 3\"");
 	println!("ok: a new static's initializer reads an earlier static of its proc");
+
+	assert_eq!(eval(&mut client, "\"[st_gone_root()] [(new /datum/st_gone).count()]\""), "\"5 8\"");
+	let changes = source.edit(
+		"statics.dm",
+		"\n/datum/st_gone/proc/count()\n\tvar/static/ST_GONE = 7\n\tST_GONE++\n\treturn ST_GONE\n",
+		""
+	);
+	reload(&mut watcher, &changes);
+	let changes = source.edit("statics.dm", "ST_GONE = 5", "ST_GONE = 10");
+	reload(&mut watcher, &changes);
+	assert_eq!(eval(&mut client, "st_gone_root()"), "10");
+	println!("ok: a global const changes after a proc with a static of its name was removed");
 }
 
 fn declared_references(client: &mut Client, path: &str) -> (u32, u32) {

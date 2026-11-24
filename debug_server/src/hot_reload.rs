@@ -545,6 +545,10 @@ pub fn prepare(request: &HotReloadRequest, warnings: &mut Vec<String>, skipped: 
 			}
 			continue;
 		}
+		if let Ok(proc) = find(&removed.proc) {
+			let own = world_globals.globals_of(&proc).locals;
+			added.proc_locals.extend(own.values().flat_map(|own| own.values().copied()));
+		}
 		match prepare_removal(removed, &mut staged) {
 			Ok(p) => {
 				if removed.verb {

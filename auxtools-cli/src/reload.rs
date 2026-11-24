@@ -13,7 +13,8 @@ pub const RESTART: &str = "Rebuild the .dmb, then restart the world to load all 
 
 pub fn request(changes: &Changes, before: &Snapshot, restarted: bool) -> HotReloadRequest {
 	let mut plan = changes.plan.clone();
-	let local_reads = without_existing_statics(&mut plan, changes, before);
+	let mut local_reads = without_existing_statics(&mut plan, changes, before);
+	local_reads.extend(removed_locals(&plan, before));
 	HotReloadRequest {
 		shadowing_procs: shadowing_procs(&plan, before),
 		local_reads,
@@ -136,6 +137,21 @@ fn without_existing_statics(plan: &mut Plan, changes: &Changes, before: &Snapsho
 					.map(|(_, new, old)| (*new, *old))
 					.collect()
 			}
+		}));
+	}
+	found
+}
+
+fn removed_locals(plan: &Plan, before: &Snapshot) -> Vec<LocalReads> {
+	let mut found = vec![];
+	for removed in &plan.removed_procs {
+		let old = OldLocals::of(before, &removed.proc);
+		found.extend(old.reads.into_iter().map(|(name, reads, parsed)| LocalReads {
+			proc: removed.proc.clone(),
+			name,
+			reads,
+			parsed,
+			kept: vec![]
 		}));
 	}
 	found
@@ -602,6 +618,20 @@ mod tests {
 		let sent = request(&changes, &old, false);
 		let statics: Vec<&str> = sent.plan.reloads[0].statics.iter().map(|local| local.name.as_str()).collect();
 		assert!(statics.is_empty(), "expected no statics sent, got {:?}", statics);
+	}
+
+	#[test]
+	fn a_request_sends_the_reads_of_a_removed_procs_locals() {
+		let before = "var/const/N = 5\n/datum/t\n/datum/t/proc/f()\n\tvar/static/N = 7\n\tN++\n\treturn N + global.N\n";
+		let (old, changes) = edited("removed", before, "var/const/N = 5\n/datum/t\n");
+		assert_eq!(changes.plan.removed_procs.len(), 1, "{:?}", changes.plan);
+		let sent = request(&changes, &old, false);
+		let reads: Vec<String> = sent
+			.local_reads
+			.iter()
+			.map(|reads| format!("{} {} {:?} {:?}", reads.proc, reads.name, reads.reads, reads.kept))
+			.collect();
+		assert_eq!(reads, ["/datum/t/f N [Some(0), Some(0), None] []"]);
 	}
 
 	#[test]
