@@ -1970,6 +1970,90 @@ fn const_users(old: &Snapshot, new: &Snapshot, realigned: &Realigned, changes: &
     }
 }
 
+fn read_alone(s: &Snapshot, value: &ProcValue) -> HashSet<usize> {
+    use dreammaker::ast::{Expression, Follow, Statement, Term};
+    let mut alone: HashSet<usize> = HashSet::new();
+    let mark = |alone: &mut HashSet<usize>, e: &Expression| {
+        alone.insert(e as *const Expression as usize);
+    };
+    let local_value = |alone: &mut HashSet<usize>, var: &dreammaker::ast::VarStatement| {
+        let flags = var.var_type.flags;
+        if let Some(e) = var.value.as_ref() {
+            if !flags.is_static() && !flags.is_const() {
+                alone.insert(e as *const Expression as usize);
+            }
+        }
+    };
+    let builtin = |name: &str| {
+        s.tree
+            .root()
+            .get_proc(name)
+            .is_some_and(|p| p.location.file == FileId::BUILTINS)
+    };
+    syntax::walk_proc(value, &mut |node| match node {
+        syntax::Node::Parameter(p) => {
+            if let Some(default) = &p.default {
+                mark(&mut alone, default);
+            }
+        }
+        syntax::Node::Statement(statement) => match statement {
+            Statement::Return(Some(e)) => mark(&mut alone, e),
+            Statement::Spawn { delay: Some(e), .. } => mark(&mut alone, e),
+            Statement::Var(var) => local_value(&mut alone, var),
+            Statement::Vars(vars) => vars.iter().for_each(|var| local_value(&mut alone, var)),
+            _ => {}
+        },
+        syntax::Node::Expression(expression) => match expression {
+            Expression::AssignOp { rhs, .. } => mark(&mut alone, rhs),
+            Expression::TernaryOp { if_, else_, .. }
+                if alone.contains(&(expression as *const Expression as usize)) =>
+            {
+                mark(&mut alone, if_);
+                mark(&mut alone, else_);
+            }
+            Expression::Base { term, follow } => {
+                if follow.is_empty() && alone.contains(&(expression as *const Expression as usize))
+                {
+                    alone.insert(&term.elem as *const Term as usize);
+                    if let Term::Expr(inner) = &term.elem {
+                        mark(&mut alone, inner);
+                    }
+                }
+                let args: &[Expression] = match &term.elem {
+                    Term::Call(name, args) if !builtin(name.as_str()) => args,
+                    Term::List(args) | Term::Alist(args) => args,
+                    Term::NewImplicit { args: Some(args) }
+                    | Term::NewPrefab {
+                        args: Some(args), ..
+                    }
+                    | Term::NewMiniExpr {
+                        args: Some(args), ..
+                    } => args,
+                    _ => &[],
+                };
+                for arg in args {
+                    mark(&mut alone, arg);
+                }
+                if let Term::InterpString(_, parts) = &term.elem {
+                    for part in parts.iter().filter_map(|(part, _)| part.as_ref()) {
+                        mark(&mut alone, part);
+                    }
+                }
+                for f in follow.iter() {
+                    match &f.elem {
+                        Follow::Call(_, _, args) => args.iter().for_each(|a| mark(&mut alone, a)),
+                        Follow::Index(_, index) => mark(&mut alone, index),
+                        _ => {}
+                    }
+                }
+            }
+            _ => {}
+        },
+        _ => {}
+    });
+    alone
+}
+
 fn folds_changed(
     old: &Snapshot,
     new: &Snapshot,
@@ -2034,6 +2118,11 @@ fn folds_changed(
                 )
     };
     let locals: HashSet<(usize, String)> = local_types.keys().cloned().collect();
+    let alone = read_alone(new, value);
+    let read_alone = |e: &Expression, chain: usize| {
+        matches!(e, Expression::Base { follow, .. } if follow.len() == chain)
+            && alone.contains(&(e as *const Expression as usize))
+    };
     let mut found = false;
     syntax::walk_proc(value, &mut |node| {
         found = found
@@ -2041,15 +2130,18 @@ fn folds_changed(
                 syntax::Node::Term(term @ Term::Ident(name)) => {
                     consts.contains(name.as_str())
                         && !locals.contains(&(term as *const Term as usize, name.to_string()))
+                        && !alone.contains(&(term as *const Term as usize))
                         && bound_value(old, name) != bound_value(new, name)
                 }
-                syntax::Node::Term(Term::GlobalIdent(name)) => global_changed(name),
-                syntax::Node::Expression(Expression::Base { term, follow }) => {
+                syntax::Node::Term(term @ Term::GlobalIdent(name)) => {
+                    !alone.contains(&(term as *const Term as usize)) && global_changed(name)
+                }
+                syntax::Node::Expression(expression @ Expression::Base { term, follow }) => {
                     match (&term.elem, follow.first().map(|f| &f.elem)) {
                         (Term::Ident(global), Some(Follow::Field(_, name)))
                             if global.as_str() == "global" =>
                         {
-                            global_changed(name)
+                            !read_alone(expression, 1) && global_changed(name)
                         }
                         (Term::Prefab(prefab), Some(Follow::StaticField(name)))
                             if prefab.vars.is_empty() =>
@@ -2060,7 +2152,13 @@ fn folds_changed(
                                     .and_then(|t| t.get_value(name.as_str()))
                                     .map(|v| v.constant.clone())
                             };
-                            default(old) != default(new)
+                            let is_const = |s: &Snapshot| {
+                                s.find_type(&path)
+                                    .and_then(|t| t.get_var_declaration(name.as_str()))
+                                    .is_some_and(|d| d.get().var_type.flags.is_const())
+                            };
+                            !(read_alone(expression, 1) && is_const(new))
+                                && default(old) != default(new)
                         }
                         _ => {
                             let field = |f: &Spanned<Follow>| {
@@ -2077,7 +2175,8 @@ fn folds_changed(
                                 .iter()
                                 .take_while(|f| matches!(f.elem, Follow::StaticField(_)))
                                 .count();
-                            chain_changed(term, &follow[..fields.max(statics)])
+                            let chain = fields.max(statics);
+                            !read_alone(expression, chain) && chain_changed(term, &follow[..chain])
                         }
                     }
                 }

@@ -142,6 +142,24 @@ pub fn dependents(built: Built) {
 		refused
 	);
 	println!("ok: a reload is refused for a proc dmasm can't compile that folds a changed member const through a typed var");
+
+	assert_eq!(eval(&mut client, "\"[dep_alone()] [dep_alone_sum()]\""), "\"5 6\"");
+	let refused = refused_edit(&mut source, "dependents.dm", "DEP_ALONE = 5", "DEP_ALONE = 10");
+	let paths: Vec<&str> = refused.iter().map(|r| r.path.as_str()).collect();
+	assert_eq!(
+		paths,
+		["/dep_alone_sum"],
+		"a changed const read alone in code dmasm can't compile refuses the reload, or one it folds doesn't: {:?}",
+		refused
+	);
+	let changes = source.edit(
+		"dependents.dm",
+		"DEP_ALONE = 5\n\n/proc/dep_alone_sum()\n\tvar/last = /datum/dep_twice::f()\n\treturn last ? ::DEP_ALONE + 1 : 0",
+		"DEP_ALONE = 10\n\n/proc/dep_alone_sum()\n\treturn ::DEP_ALONE + 1"
+	);
+	reload(&mut watcher, &changes);
+	assert_eq!(eval(&mut client, "\"[dep_alone()] [dep_alone_sum()]\""), "\"10 11\"");
+	println!("ok: code dmasm can't compile that reads a changed const alone sees its new value");
 }
 
 fn refused_edit(source: &mut Source, file: &str, from: &str, to: &str) -> Vec<dmasm::reload::Refusal> {

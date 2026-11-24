@@ -4309,7 +4309,7 @@ fn uncompiled_code_folding_a_changed_const_is_refused() {
          /proc/dotted(x)\n{uncompiled}\treturn global.LIMIT + 1\n\n\
          /datum/c\n\tvar/const/CAP = 3\n\n\
          /datum/c/proc/capped(x)\n{uncompiled}\treturn CAP * 2\n\n\
-         /proc/scoped(x)\n{uncompiled}\treturn /datum/c::CAP\n\n\
+         /proc/scoped(x)\n{uncompiled}\treturn /datum/c::CAP * 2\n\n\
          /proc/compiled()\n\treturn LIMIT + CAP\n"
     );
     for (name, after, refused) in [
@@ -4378,6 +4378,55 @@ fn uncompiled_code_folding_a_changed_member_const_through_a_var_is_refused() {
         "{:?}",
         changes.refused
     );
+}
+
+#[test]
+fn uncompiled_code_reading_a_changed_const_alone_is_not_refused() {
+    let uncompiled = "\tswitch(x)\n\t\tif(x)\n\t\t\treturn 0\n";
+    let before = format!(
+        "var/const/LIMIT = 5\n\n\
+         /datum/c\n\tvar/const/CAP = 3\n\n\
+         /proc/f(a)\n\treturn a\n\n\
+         /proc/bare(x)\n{uncompiled}\treturn LIMIT\n\n\
+         /proc/qualified(x)\n{uncompiled}\treturn ::LIMIT\n\n\
+         /proc/dotted(x)\n{uncompiled}\treturn global.LIMIT\n\n\
+         /proc/parens(x)\n{uncompiled}\treturn (::LIMIT)\n\n\
+         /proc/assigned(x)\n{uncompiled}\tx = ::LIMIT\n\treturn x\n\n\
+         /proc/initialized(x)\n{uncompiled}\tvar/y = ::LIMIT\n\treturn y\n\n\
+         /proc/defaulted(x, y = ::LIMIT)\n{uncompiled}\treturn y\n\n\
+         /proc/argument(x)\n{uncompiled}\treturn f(::LIMIT)\n\n\
+         /proc/listed(x)\n{uncompiled}\treturn list(::LIMIT, \"a\" = ::LIMIT)\n\n\
+         /proc/indexed(x)\n{uncompiled}\treturn x[::LIMIT]\n\n\
+         /proc/text(x)\n{uncompiled}\treturn \"[::LIMIT]\"\n\n\
+         /proc/branch(x)\n{uncompiled}\treturn x ? ::LIMIT : 2\n\n\
+         /proc/either(x)\n{uncompiled}\treturn ::LIMIT || x\n\n\
+         /proc/sum(x)\n{uncompiled}\treturn ::LIMIT + 1\n\n\
+         /proc/negated(x)\n{uncompiled}\treturn -::LIMIT\n\n\
+         /proc/chosen(x)\n{uncompiled}\treturn ::LIMIT ? 1 : 2\n\n\
+         /proc/summed_argument(x)\n{uncompiled}\treturn f(::LIMIT + 1)\n\n\
+         /proc/scoped(x)\n{uncompiled}\treturn /datum/c::CAP\n\n\
+         /proc/typed(datum/c/c, x)\n{uncompiled}\treturn c.CAP\n\n\
+         /proc/typed_scoped(datum/c/c, x)\n{uncompiled}\treturn c::CAP\n\n\
+         /proc/scoped_sum(x)\n{uncompiled}\treturn /datum/c::CAP + 1\n\n\
+         /proc/typed_negated(datum/c/c, x)\n{uncompiled}\treturn -c.CAP\n"
+    );
+    for (name, after, refused) in [
+        (
+            "alone-const-limit",
+            before.replace("LIMIT = 5", "LIMIT = 10"),
+            &["/chosen", "/either", "/negated", "/sum", "/summed_argument"][..],
+        ),
+        (
+            "alone-const-cap",
+            before.replace("CAP = 3", "CAP = 4"),
+            &["/scoped_sum", "/typed_negated"][..],
+        ),
+    ] {
+        let changes = changes_of(name, &before, &after);
+        let mut paths: Vec<&str> = changes.refused.iter().map(|r| r.path.as_str()).collect();
+        paths.sort();
+        assert_eq!(paths, refused, "{}: {:?}", name, changes.refused);
+    }
 }
 
 #[test]

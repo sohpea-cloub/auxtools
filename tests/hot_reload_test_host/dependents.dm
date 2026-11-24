@@ -142,3 +142,13 @@ var/const/DEP_OWN = 5
 /proc/dep_member_chain(datum/dep_member_config/config)
 	var/last = /datum/dep_twice::f()
 	return last ? config.DEP_MEMBER + 1 : 0
+
+var/const/DEP_ALONE = 5
+
+/proc/dep_alone_sum()
+	var/last = /datum/dep_twice::f()
+	return last ? ::DEP_ALONE + 1 : 0
+
+/proc/dep_alone()
+	var/last = /datum/dep_twice::f()
+	return last ? ::DEP_ALONE : 0
