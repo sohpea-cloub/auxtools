@@ -295,7 +295,7 @@ impl Snapshot {
         })
     }
 
-    fn statics_read_defaults(&self, names: &HashSet<&str>) -> bool {
+    fn statics_read(&self, reads: impl Fn(syntax::Node) -> bool) -> bool {
         self.procs.keys().any(|key| {
             let Some(code) = self.find(key).and_then(|(_, value)| value.code.as_ref()) else {
                 return false;
@@ -305,10 +305,7 @@ impl Snapshot {
             statics.iter().any(|(_, var)| {
                 var.value.as_ref().is_some_and(|value| {
                     let mut found = false;
-                    syntax::walk_expression(value, &mut |node| {
-                        found |= matches!(node, syntax::Node::Follow(Follow::StaticField(name))
-                            if names.contains(name.as_str()));
-                    });
+                    syntax::walk_expression(value, &mut |node| found |= reads(node));
                     found
                 })
             })
@@ -1566,8 +1563,18 @@ pub(super) fn compare(
         .iter()
         .map(String::as_str)
         .collect();
+    let colon_names: HashSet<&str> = changes.colon_names.iter().map(String::as_str).collect();
     let statics = !changes.consts.is_empty()
-        || !defaults.is_empty() && new.statics_read_defaults(&defaults)
+        || !defaults.is_empty()
+            && new.statics_read(|node| {
+                matches!(node, syntax::Node::Follow(Follow::StaticField(name))
+                    if defaults.contains(name.as_str()))
+            })
+        || !colon_names.is_empty()
+            && new.statics_read(|node| {
+                matches!(node, syntax::Node::Expression(Expression::Base { follow, .. })
+                    if super::colon_fields(follow).any(|name| colon_names.contains(name)))
+            })
         || changes
             .plan
             .reloads

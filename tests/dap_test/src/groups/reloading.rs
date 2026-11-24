@@ -769,6 +769,45 @@ fn static_reading_a_changed_default() {
 	world.end();
 }
 
+const STATIC_COLON_TYPES: &str = "/datum/rb_static_colon_first
+	var/const/RB_STATIC_COLON = 5
+
+/datum/rb_static_colon_later
+";
+
+const STATIC_COLON: &str = "var/rb_static_colon_holder
+
+/proc/rb_static_colon_limits()
+	var/static/list/limits = list(rb_static_colon_holder:RB_STATIC_COLON + 1)
+	return limits
+";
+
+fn static_reading_a_changed_colon_name() {
+	let dir = copy_of_the_world("static_reading_a_changed_colon_name");
+	std::fs::write(dir.join("static_colon_types.dm"), STATIC_COLON_TYPES).unwrap();
+	std::fs::write(dir.join("static_colon.dm"), STATIC_COLON).unwrap();
+	let dme = dir.join("dap_test_host.dme");
+	let text = std::fs::read_to_string(&dme).unwrap() + "#include \"static_colon_types.dm\"\n#include \"static_colon.dm\"\n";
+	std::fs::write(&dme, text).unwrap();
+	paths::compile(&dme);
+
+	let mut world = World::launch_in(dir.to_path_buf(), json!({ "hotReload": true }));
+	world.catch_runtimes(false);
+	world.configure();
+	world.wait_output("Hot reload active");
+	assert_eq!(world.eval_global("rb_static_colon_limits()[1]"), "6");
+	edit(
+		&mut world,
+		"static_colon_types.dm",
+		"/datum/rb_static_colon_later\n",
+		"/datum/rb_static_colon_later\n\tvar/const/RB_STATIC_COLON = 9\n"
+	);
+	reboot(&mut world, 2);
+	assert_eq!(world.eval_global("rb_static_colon_limits()[1]"), "10");
+	ok("proc static reading a var by x:name that another type declares now, after reboot");
+	world.end();
+}
+
 const LOCAL_LIMIT: &str = "/proc/rb_local_limit()
 	var/const/LIMIT = 5
 	return \"[LIMIT] [LIMIT + 1]\"
@@ -1037,6 +1076,7 @@ pub fn files() {
 	static_naming_a_retargeted_path();
 	static_folding_a_changed_const();
 	static_reading_a_changed_default();
+	static_reading_a_changed_colon_name();
 	local_const_changed();
 	file_named_by_a_reload();
 	resource_files();

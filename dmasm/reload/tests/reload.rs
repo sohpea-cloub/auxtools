@@ -4399,6 +4399,23 @@ fn a_static_reading_a_changed_default_is_given_to_a_reboot() {
     assert!(code.contains("PushInt 10"), "{}", code);
 }
 
+#[test]
+fn a_static_reading_a_changed_colon_name_is_given_to_a_reboot() {
+    let code = "/datum/a\n\tvar/const/LIMIT = 5\n\nvar/holder\n\n\
+                /proc/limits()\n\tvar/static/list/limits = list(holder:LIMIT + 1)\n\treturn limits\n\n";
+    let changes = types_changes(
+        "static-reading-colon",
+        code,
+        "/datum/b\n",
+        "/datum/b\n\tvar/const/LIMIT = 9\n",
+    );
+    assert!(changes.refused.is_empty(), "{:?}", changes.refused);
+    assert!(changes.deferred.is_empty(), "{:?}", changes.deferred);
+    assert_eq!(global_init_sets(&changes), ["/proc/limits#0:limits @7"]);
+    let code = dmasm_bytecode::format(&changes.global_init.as_ref().unwrap().code.nodes);
+    assert!(code.contains("PushInt 10"), "{}", code);
+}
+
 fn sent_statics(changes: &Changes, path: &str) -> Vec<String> {
     let reload = changes.plan.reloads.iter().find(|r| r.proc.path == path);
     let reload =
