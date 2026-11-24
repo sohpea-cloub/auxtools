@@ -49,6 +49,16 @@ pub fn statics(built: Built) {
 	reload(&mut watcher, &changes);
 	assert_eq!(eval(&mut client, both), "\"10 7 10\"");
 	println!("ok: a global const changes beside a proc that reads both it and a static of its name");
+
+	assert_eq!(eval(&mut client, "\"[st_stateful()] [st_registered]\""), "\"2 1\"");
+	let changes = source.edit("statics.dm", "global.st_state + 1", "global.st_state + 2");
+	reload(&mut watcher, &changes);
+	assert_eq!(
+		eval(&mut client, "\"[st_stateful()] [st_registered]\""),
+		"\"3 1\"",
+		"the proc's result and the runs of the initializer of a static that neither code reads"
+	);
+	println!("ok: an edit leaves alone a static that neither the old nor the new code reads");
 }
 
 fn declared_references(client: &mut Client, path: &str) -> (u32, u32) {

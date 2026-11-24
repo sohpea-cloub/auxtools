@@ -62,3 +62,15 @@ var/const/ST_BOTH = 5
 /proc/st_both()
 	var/static/ST_BOTH = 7
 	return list(ST_BOTH, global.ST_BOTH)
+
+var/st_registered = 0
+
+/proc/st_register()
+	st_registered++
+	return st_registered
+
+var/st_state = 1
+
+/proc/st_stateful()
+	var/static/st_state = st_register()
+	return global.st_state + 1

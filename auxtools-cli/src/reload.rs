@@ -141,10 +141,14 @@ fn without_existing_statics(plan: &mut Plan, before: &Snapshot) -> Vec<LocalRead
 				.find(|(name, _)| *name == local.name)
 				.is_some_and(|(_, reads)| !reads.contains(&Some(local_number(&local.scope))));
 			let existing = declared && !unread;
+			let read_now = reads_static(nodes, &local.name, &local.scope);
+			if declared && unread && !read_now {
+				return false;
+			}
 			if !existing {
 				local.constant = false;
 			}
-			!existing || local.constant && reads_static(nodes, &local.name, &local.scope)
+			!existing || local.constant && read_now
 		});
 		found.extend(
 			reads
@@ -472,6 +476,16 @@ mod tests {
 		let sent = request(&changes, &old, false);
 		let statics: Vec<&str> = sent.plan.reloads[0].statics.iter().map(|local| local.name.as_str()).collect();
 		assert_eq!(statics, ["added"]);
+	}
+
+	#[test]
+	fn a_request_leaves_out_a_static_that_neither_code_reads() {
+		let before = "var/state = 0\n/proc/register()\n\treturn 1\n/proc/f()\n\tvar/static/state = register()\n\treturn global.state + 1\n";
+		let (old, changes) = edited("unread-static", before, &before.replace("global.state + 1", "global.state + 2"));
+		assert_eq!(changes.plan.reloads[0].statics.len(), 1, "{:?}", changes.plan);
+		let sent = request(&changes, &old, false);
+		let statics: Vec<&str> = sent.plan.reloads[0].statics.iter().map(|local| local.name.as_str()).collect();
+		assert!(statics.is_empty(), "expected no statics sent, got {:?}", statics);
 	}
 
 	#[test]
