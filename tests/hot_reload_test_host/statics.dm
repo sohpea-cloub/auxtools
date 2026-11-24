@@ -91,3 +91,13 @@ var/ST_UNKNOWN = 1
 		st_branch_count++
 		return st_branch_count
 	return 0
+
+var/const/ST_RENAMED = 5
+
+/proc/st_renamed_root()
+	return ST_RENAMED
+
+/proc/st_renamed()
+	var/static/ST_RENAMED = 7
+	ST_RENAMED++
+	return ST_RENAMED

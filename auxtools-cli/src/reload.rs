@@ -50,7 +50,11 @@ pub fn unmatched_locals(changes: &Changes, before: &Snapshot) -> Vec<Refusal> {
 
 fn old_and_new_locals<'a>(code: &ProcReload, changes: &'a Changes, before: &'a Snapshot) -> (Vec<locals::Declared<'a>>, Vec<locals::Declared<'a>>) {
 	let old = before.proc_code(&code.proc);
-	let new = changes.new_code(&code.proc).or(old);
+	let new = if code.statics.is_empty() {
+		None
+	} else {
+		changes.new_code(&code.proc).or(old)
+	};
 	let declared = |body: Option<&'a dreammaker::ast::Block>| body.map(|body| locals::declared(body)).unwrap_or_default();
 	(declared(old), declared(new))
 }
@@ -101,10 +105,10 @@ fn shadowing_procs(plan: &Plan, before: &Snapshot) -> Vec<ShadowingProc> {
 fn without_existing_statics(plan: &mut Plan, changes: &Changes, before: &Snapshot) -> Vec<LocalReads> {
 	let mut found = vec![];
 	for code in &mut plan.reloads {
-		if code.statics.is_empty() {
+		let old = OldLocals::of(before, &code.proc);
+		if code.statics.is_empty() && old.declared.is_empty() {
 			continue;
 		}
-		let old = OldLocals::of(before, &code.proc);
 		let (_, new_locals) = old_and_new_locals(code, changes, before);
 		let (matched, _) = locals::matched(&old.declared, &new_locals);
 		let was = |name: &str, nth: u32| matched.iter().find(|(had, new, _)| *had == name && *new == nth).map(|(.., old)| *old);
@@ -149,6 +153,9 @@ impl<'a> OldLocals<'a> {
 		let mut names: Vec<&str> = declared.iter().map(|local| local.name).collect();
 		names.sort_unstable();
 		names.dedup();
+		if names.is_empty() {
+			return Self { declared, reads: vec![] };
+		}
 		let reads = match snapshot.compile(proc) {
 			Ok(old) => local_reads(&old.nodes)
 				.into_iter()
@@ -546,6 +553,19 @@ mod tests {
 		assert_eq!(refused, ["code.dm:3: /f: n: the edit leaves 2 static or const locals of this name \
 		                      where there were 1, in blocks of the same kinds. Which of them keep their \
 		                      values can't be told. Rebuild to apply it"]);
+	}
+
+	#[test]
+	fn a_request_sends_the_reads_of_a_local_that_the_new_code_renamed() {
+		let before = "/proc/f()\n\tvar/static/n = 7\n\tn++\n\treturn n\n";
+		let (old, changes) = edited("renamed", before, "/proc/f()\n\tvar/m = 7\n\tm++\n\treturn m\n");
+		let sent = request(&changes, &old, false);
+		let reads: Vec<String> = sent
+			.local_reads
+			.iter()
+			.map(|reads| format!("{} {} {:?}", reads.proc, reads.name, reads.kept))
+			.collect();
+		assert_eq!(reads, ["/f n []"]);
 	}
 
 	#[test]

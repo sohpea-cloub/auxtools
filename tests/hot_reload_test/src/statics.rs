@@ -84,6 +84,19 @@ pub fn statics(built: Built) {
 		"the counts of the old branch's static and of the added branch's"
 	);
 	println!("ok: a branch added above another with a static of the same name leaves the other's value with it");
+
+	let renamed = "\"[st_renamed_root()] [st_renamed()]\"";
+	assert_eq!(eval(&mut client, renamed), "\"5 8\"");
+	let changes = source.edit(
+		"statics.dm",
+		"\tvar/static/ST_RENAMED = 7\n\tST_RENAMED++\n\treturn ST_RENAMED",
+		"\tvar/static/st_renamed_count = 7\n\tst_renamed_count++\n\treturn st_renamed_count"
+	);
+	reload(&mut watcher, &changes);
+	let changes = source.edit("statics.dm", "ST_RENAMED = 5", "ST_RENAMED = 10");
+	reload(&mut watcher, &changes);
+	assert_eq!(eval(&mut client, renamed), "\"10 8\"");
+	println!("ok: a global const changes after a static of its name was renamed");
 }
 
 fn declared_references(client: &mut Client, path: &str) -> (u32, u32) {
