@@ -3,8 +3,10 @@ use std::{
 	path::{Path, PathBuf},
 	sync::{
 		atomic::{AtomicBool, Ordering},
+		mpsc::{self, RecvTimeoutError},
 		Arc, OnceLock
 	},
+	thread::JoinHandle,
 	time::{Duration, Instant}
 };
 
@@ -241,7 +243,7 @@ fn worlds_among(processes: Vec<(u32, String)>) -> Vec<World> {
 				responsive,
 				unavailable: None
 			};
-			match answer.map(|answer| answer.recv_timeout(until.saturating_duration_since(Instant::now()))) {
+			match answer.map(|probe| probe.finished_by(until + PROBE_CLOSE_PATIENCE)) {
 				Some(Ok(Ok(Probed::Info { args, cwd }))) => Some(World {
 					pid,
 					program: program.clone(),
@@ -265,15 +267,30 @@ fn worlds_among(processes: Vec<(u32, String)>) -> Vec<World> {
 		.collect()
 }
 
-fn probe(stream: Stream, until: Instant) -> std::sync::mpsc::Receiver<io::Result<Probed>> {
-	let (sender, receiver) = std::sync::mpsc::channel();
-	std::thread::Builder::new()
+const PROBE_CLOSE_PATIENCE: Duration = Duration::from_secs(1);
+
+struct Probe {
+	answer: mpsc::Receiver<io::Result<Probed>>,
+	worker: JoinHandle<()>
+}
+
+impl Probe {
+	fn finished_by(self, until: Instant) -> Result<io::Result<Probed>, RecvTimeoutError> {
+		let answer = self.answer.recv_timeout(until.saturating_duration_since(Instant::now()))?;
+		let _ = self.worker.join();
+		Ok(answer)
+	}
+}
+
+fn probe(stream: Stream, until: Instant) -> Probe {
+	let (sender, answer) = mpsc::channel();
+	let worker = std::thread::Builder::new()
 		.name("world probe".to_owned())
 		.spawn(move || {
-			let answer = Client::on(stream).and_then(|mut client| {
+			let answer = Client::probing(stream).and_then(|mut client| {
 				let answer = probed(&mut client, until);
 				let _ = client.leave();
-				client.hang_up();
+				client.close();
 				match answer {
 					Ok(Some(probed)) => Ok(probed),
 					Ok(None) => Ok(Probed::Unanswered),
@@ -284,7 +301,7 @@ fn probe(stream: Stream, until: Instant) -> std::sync::mpsc::Receiver<io::Result
 			let _ = sender.send(answer);
 		})
 		.expect("couldn't start a thread");
-	receiver
+	Probe { answer, worker }
 }
 
 fn probed(client: &mut Client, until: Instant) -> Result<Option<Probed>, Lost> {
@@ -528,12 +545,20 @@ mod tests {
 	}
 
 	fn threads_named(name: &str) -> usize {
+		const PF_EXITING: u32 = 0x4;
 		let Ok(tasks) = std::fs::read_dir("/proc/self/task") else {
 			return 0;
+		};
+		let running = |stat: String| {
+			let flags = stat
+				.rsplit_once(") ")
+				.and_then(|(_, fields)| fields.split(' ').nth(6)?.parse::<u32>().ok());
+			flags.is_some_and(|flags| flags & PF_EXITING == 0)
 		};
 		tasks
 			.flatten()
 			.filter(|task| std::fs::read_to_string(task.path().join("comm")).is_ok_and(|comm| comm.trim_end() == name))
+			.filter(|task| std::fs::read_to_string(task.path().join("stat")).is_ok_and(running))
 			.count()
 	}
 
@@ -590,7 +615,9 @@ mod tests {
 			started.elapsed()
 		);
 		assert_eq!(connections.asked_for_info.load(Ordering::SeqCst), 1, "WorldInfo requests");
-		released(&connections, 1, &["world probe", "world reader"]);
+		let left = (threads_named("world probe"), threads_named("probe reader"));
+		assert_eq!(left, (0, 0), "probe and reader threads still running after the listing");
+		released(&connections, 1, &[]);
 	}
 
 	#[test]
@@ -603,5 +630,20 @@ mod tests {
 		assert_eq!(responsive, [(pid, Some(true))]);
 		released(&connections, 1, &["world probe"]);
 		assert_eq!(*connections.requests.lock().unwrap(), ["Watcher", "WorldInfo", "Disconnect"]);
+	}
+
+	#[test]
+	fn a_listing_returns_after_its_probes_end() {
+		let _probing = PROBES.lock().unwrap_or_else(|e| e.into_inner());
+		let pid = unused_pid(5);
+		let connections = world(pid, answering);
+		for round in 1..=200 {
+			let worlds = worlds_among(vec![(pid, "DreamDaemon".to_owned())]);
+			let responsive: Vec<_> = worlds.iter().map(|world| (world.pid, world.responsive)).collect();
+			assert_eq!(responsive, [(pid, Some(true))]);
+			let left = (threads_named("world probe"), threads_named("probe reader"));
+			assert_eq!(left, (0, 0), "probe and reader threads still running after listing {} times", round);
+		}
+		released(&connections, 200, &[]);
 	}
 }
