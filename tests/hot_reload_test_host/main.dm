@@ -262,3 +262,7 @@ var/hr_tally = 100
 /proc/dep_colon_indexed()
 	var/list/items = list(/datum/dep_twice::f())
 	return items[1]:DEP_COLON_INDEXED
+
+/proc/dep_retyped_alone()
+	var/last = /datum/dep_twice::f()
+	return last ? dep_retype_alone_target.DEP_RETYPE_ALONE : 0

@@ -230,3 +230,11 @@ var/datum/dep_retype_first/dep_retype_target
 	var/const/DEP_COLON_INDEXED = 5
 
 /datum/dep_colon_indexed_later
+
+/datum/dep_retype_alone_first
+	var/const/DEP_RETYPE_ALONE = 5
+
+/datum/dep_retype_alone_later
+	var/const/DEP_RETYPE_ALONE = 9
+
+var/datum/dep_retype_alone_first/dep_retype_alone_target

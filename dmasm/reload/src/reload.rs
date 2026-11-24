@@ -1949,6 +1949,7 @@ fn colon_reads_any(value: &ProcValue, names: &HashSet<&str>) -> bool {
 }
 
 fn const_users(old: &Snapshot, new: &Snapshot, realigned: &Realigned, changes: &mut Changes) {
+    use dreammaker::ast::{Follow, Term};
     if changes.consts.is_empty()
         && changes.retyped.is_empty()
         && changes.defaults_changed.is_empty()
@@ -1964,6 +1965,7 @@ fn const_users(old: &Snapshot, new: &Snapshot, realigned: &Realigned, changes: &
         .map(String::as_str)
         .collect();
     let colon_names: HashSet<&str> = changes.colon_names.iter().map(String::as_str).collect();
+    let retyped: HashSet<&str> = changes.retyped.iter().map(String::as_str).collect();
     let consts: HashSet<&str> = changes
         .consts
         .iter()
@@ -2001,8 +2003,22 @@ fn const_users(old: &Snapshot, new: &Snapshot, realigned: &Realigned, changes: &
                 let path = &new_ty.get().path;
                 let why = if folds_changed(old, new, path, new_value, &consts) {
                     "folds a const whose value changes"
-                } else if colon_rebinds(old, new, path, new_value, &colon_names) {
+                } else if !colon_names.is_empty()
+                    && chain_rebinds(old, new, path, new_value, |_, follow| {
+                        colon_fields(follow).any(|name| colon_names.contains(name))
+                    })
+                {
                     "reads a var by `x:name` that another type declares now"
+                } else if !retyped.is_empty()
+                    && chain_rebinds(old, new, path, new_value, |term, follow| {
+                        matches!(term, Term::Ident(name) if retyped.contains(name.as_str()))
+                            || follow.iter().any(|f| {
+                                matches!(&f.elem, Follow::Field(_, name)
+                                    if retyped.contains(name.as_str()))
+                            })
+                    })
+                {
+                    "reads a var through a var that is declared with another type now"
                 } else {
                     continue;
                 };
@@ -2388,24 +2404,21 @@ fn folds_changed(
     found
 }
 
-fn colon_rebinds(
+fn chain_rebinds(
     old: &Snapshot,
     new: &Snapshot,
     ty: &str,
     value: &ProcValue,
-    names: &HashSet<&str>,
+    reads: impl Fn(&dreammaker::ast::Term, &[dreammaker::ast::Spanned<dreammaker::ast::Follow>]) -> bool,
 ) -> bool {
     use dreammaker::ast::{Expression, Term};
-    if names.is_empty() {
-        return false;
-    }
     let local_types = retargeted::local_read_types(value);
     let mut found = false;
     syntax::walk_proc(value, &mut |node| {
         let syntax::Node::Expression(expression @ Expression::Base { term, follow }) = node else {
             return;
         };
-        if found || !colon_fields(follow).any(|name| names.contains(name)) {
+        if found || !reads(&term.elem, follow) {
             return;
         }
         let locals: Vec<(&str, &str)> = match &term.elem {

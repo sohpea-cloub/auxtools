@@ -4581,6 +4581,53 @@ fn a_local_const_follows_a_retyped_var_it_reads_through() {
 }
 
 #[test]
+fn uncompiled_code_reading_through_a_retyped_var_is_refused() {
+    let uncompiled = "\tswitch(x)\n\t\tif(x)\n\t\t\treturn 0\n";
+    let before = format!(
+        "/datum/a\n\tvar/const/LIMIT = 5\n\tvar/count = 1\n\n\
+         /datum/b\n\tvar/const/LIMIT = 9\n\tvar/count = 2\n\n\
+         /datum/a/child\n\n\
+         var/datum/a/target\n\n\
+         /proc/alone(x)\n{uncompiled}\treturn target.LIMIT\n\n\
+         /proc/folded(x)\n{uncompiled}\treturn target.LIMIT + 1\n\n\
+         /proc/plain(x)\n{uncompiled}\treturn target.count\n\n\
+         /datum/holder\n\tvar/datum/a/member_target\n\n\
+         /datum/holder/proc/member(x)\n{uncompiled}\treturn member_target.LIMIT\n"
+    );
+    for (name, from, to, refused) in [
+        (
+            "uncompiled-retyped-other",
+            "/datum/a/",
+            "/datum/b/",
+            &["/alone", "/datum/holder/member", "/folded"][..],
+        ),
+        (
+            "uncompiled-retyped-child",
+            "/datum/a/target",
+            "/datum/a/child/target",
+            &[][..],
+        ),
+    ] {
+        let after = before.replace(&format!("var{from}"), &format!("var{to}"));
+        assert_ne!(after, before, "{name}");
+        let changes = changes_of(name, &before, &after);
+        let mut paths: Vec<&str> = changes.refused.iter().map(|r| r.path.as_str()).collect();
+        paths.sort();
+        assert_eq!(paths, refused, "{}: {:?}", name, changes.refused);
+        for refusal in &changes.refused {
+            assert!(
+                refusal.why.starts_with(
+                    "reads a var through a var that is declared with another type now, so it must be compiled again, but it doesn't compile: "
+                ),
+                "{}: {}",
+                name,
+                refusal
+            );
+        }
+    }
+}
+
+#[test]
 fn uncompiled_code_folding_a_changed_const_is_refused() {
     let uncompiled = "\tswitch(x)\n\t\tif(x)\n\t\t\treturn 0\n";
     let before = format!(
