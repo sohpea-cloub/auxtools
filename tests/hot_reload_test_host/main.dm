@@ -157,5 +157,8 @@ var/datum/declared/declared_one = new
 /datum/reads_names_twice
 	var/list/all = list(/datum/names_twice::said)
 
+/mob/chooser/verb/choose_twice(x in list(/datum/twice/speak))
+	return x
+
 /proc/calls_kin_child()
 	return call(new /datum/kin/middle/child, /datum/kin/middle/child::speak())()

@@ -6,7 +6,7 @@ use std::{
 };
 
 use auxtools_protocol::*;
-use dmasm::reload::{diff, Changes, ParseOptions, Snapshot};
+use dmasm::reload::{diff, Changes, InList, ParseOptions, Snapshot};
 use test_support::{
 	debug::{breakpoint_id, Client, World},
 	paths,
@@ -2102,6 +2102,12 @@ fn definitions(built: Built) {
 			"/proc/calls_twice()\n\treturn call(new /datum/twice, /datum/twice/speak)()\n\n/proc/first_def()\n"
 		)
 	]);
+	let chooser = changes.plan.reloads.iter().find(|r| r.proc.path == "/mob/chooser/choose_twice");
+	assert!(
+		matches!(chooser.map(|r| &r.params[0].in_list), Some(InList::New(_))),
+		"the verb's unchanged `in` list isn't compiled again: {:?}",
+		chooser
+	);
 	assert_eq!(eval(&mut client, "calls_twice_unchanged()"), "\"first override\"");
 	reload(&mut watcher, &changes);
 	assert_eq!(eval(&mut client, "calls_twice()"), "\"second override\"");

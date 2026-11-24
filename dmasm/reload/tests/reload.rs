@@ -3811,6 +3811,25 @@ fn unchanged_code_reading_a_default_that_names_a_retargeted_path_is_compiled_aga
 }
 
 #[test]
+fn a_verbs_unchanged_in_list_naming_a_retargeted_path_is_compiled_again() {
+    let before = "/datum/t/proc/f()\n\treturn list(0)\n\n/datum/t/f()\n\treturn list(1)\n\n\
+                  /datum/t/f()\n\treturn list(2)\n\n\
+                  /mob/verb/choose(x in call(new /datum/t, /datum/t/f)())\n\treturn x\n";
+    for (name, body) in [
+        ("retargeted-in-list", "return x"),
+        ("retargeted-in-list-body", "return 1"),
+    ] {
+        let after = before
+            .replace("/datum/t/f()\n\treturn list(1)\n\n", "")
+            .replace("return x", body);
+        let changes = changes_of(name, before, &after);
+        assert_eq!(reloaded(&changes), [key("/mob/choose", 0)], "{}", name);
+        let in_list = &changes.plan.reloads[0].params[0].in_list;
+        assert!(matches!(in_list, InList::New(_)), "{}: {:?}", name, in_list);
+    }
+}
+
+#[test]
 fn uncompiled_code_naming_another_types_path_of_the_same_name_is_not_refused() {
     let before = "/datum/a/proc/f()\n\treturn 0\n\n/datum/a/f()\n\treturn 1\n\n/datum/a/f()\n\treturn 2\n\n\
                   /datum/b/proc/f()\n\treturn 0\n\n/datum/b/f()\n\treturn 3\n\n\

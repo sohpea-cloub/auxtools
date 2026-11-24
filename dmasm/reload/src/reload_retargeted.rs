@@ -336,45 +336,105 @@ pub(super) fn path_users(r: &Retargeted, changes: &mut Changes) {
         return;
     }
     let (old, new) = (r.old, r.new);
-    for (key, (_, name, _)) in new.procs.iter() {
+    let refuse = |changes: &mut Changes, key: &ProcKey, e: &Diagnostic| {
+        let refusal = new.uncompiled(key, e);
+        changes.refused.push(Refusal {
+            why: format!(
+                "names a proc whose definitions change, so it must be compiled again, but it {}",
+                refusal.why
+            ),
+            ..refusal
+        });
+    };
+    'procs: for (key, (_, name, _)) in new.procs.iter() {
         let Some(old_key) = old_key(r.realigned, key) else {
             continue;
         };
-        let (Some(_), Some((_, value))) = (old.find(&old_key), new.find(key)) else {
+        let (Some((old_ty, old_value)), Some((new_ty, value))) =
+            (old.find(&old_key), new.find(key))
+        else {
             continue;
         };
-        if changes
+        let reloaded = changes
             .plan
             .reloads
             .iter()
-            .any(|reload| reload.proc == old_key)
-            || !r.proc_might_name(value, name)
-        {
+            .position(|reload| reload.proc == old_key);
+
+        let mut lists = HashSet::new();
+        for parameter in value.parameters.iter() {
+            let Some(after) = &parameter.in_list else {
+                continue;
+            };
+            let Some(before) = old_value
+                .parameters
+                .iter()
+                .find(|p| p.name == parameter.name)
+                .and_then(|p| p.in_list.as_ref())
+                .filter(|before| *before == after)
+            else {
+                continue;
+            };
+            if !r.expressions_might_name([after]) {
+                continue;
+            }
+            let after =
+                match new.compile_in_list(new_ty, after, value_location(after, value.location)) {
+                    Ok(after) => after,
+                    Err(e) => {
+                        let e = Diagnostic::error(
+                            e.id,
+                            format!("parameter {}'s `in` list: {e}", parameter.name),
+                        );
+                        refuse(changes, key, &e);
+                        continue 'procs;
+                    }
+                };
+            let before =
+                old.compile_in_list(old_ty, before, value_location(before, old_value.location));
+            if r.retargets(before, &after) {
+                lists.insert(parameter.name.as_str());
+            }
+        }
+
+        let body = if reloaded.is_none() && r.proc_might_name(value, name) {
+            match new.compile_code(key) {
+                Ok(after) => r
+                    .retargets(old.compile_code(&old_key), &after)
+                    .then_some(after),
+                Err(e) => {
+                    refuse(changes, key, &e);
+                    continue;
+                }
+            }
+        } else {
+            None
+        };
+        if body.is_none() && lists.is_empty() {
             continue;
         }
-        let reload = new.compile_code(key).and_then(|mut reload| {
-            new.compile_in_lists(key, &mut reload, |_, _| false)?;
-            Ok(reload)
-        });
+        let in_lists = |name: &str, _: &Expression| lists.contains(name);
+        let reload = match reloaded {
+            Some(at) => new
+                .compile_in_lists(key, &mut changes.plan.reloads[at], in_lists)
+                .map(|()| None),
+            None => body
+                .map_or_else(|| new.compile_code(key), Ok)
+                .and_then(|mut reload| {
+                    new.compile_in_lists(key, &mut reload, in_lists)?;
+                    Ok(Some(reload))
+                }),
+        };
         match reload {
-            Ok(reload) if !r.retargets(old.compile_code(&old_key), &reload) => {}
-            Ok(reload) => {
+            Ok(Some(reload)) => {
                 changes.plan.line_moves.retain(|m| m.proc != old_key);
                 changes.plan.reloads.push(ProcReload {
                     proc: old_key,
                     ..reload
                 });
             }
-            Err(e) => {
-                let refusal = new.uncompiled(key, &e);
-                changes.refused.push(Refusal {
-                    why: format!(
-                        "names a proc whose definitions change, so it must be compiled again, but it {}",
-                        refusal.why
-                    ),
-                    ..refusal
-                });
-            }
+            Ok(None) => {}
+            Err(e) => refuse(changes, key, &e),
         }
     }
 }
