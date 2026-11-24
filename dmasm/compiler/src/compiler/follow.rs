@@ -87,10 +87,12 @@ pub(super) fn emit_typed<'a>(
         }
         match sub_expr {
             Follow::Field(access_kind, ident) => {
-                let field_ty = ty.and_then(|t| match access_kind {
-                    PropertyAccessKind::Colon => super::procs::colon_var(t, ident.as_str()),
-                    _ => super::procs::member_var(t, ident.as_str()),
-                });
+                let field_ty = match access_kind {
+                    PropertyAccessKind::Colon => {
+                        super::procs::colon_var(compiler, ty, ident.as_str())
+                    }
+                    _ => ty.and_then(|t| super::procs::member_var(t, ident.as_str())),
+                };
                 ty =
                     field_ty.and_then(|d| super::procs::declared_type(compiler, &d.get().var_type));
                 elem_ty = field_ty.and_then(|d| {
@@ -507,6 +509,9 @@ fn emit_safe_inner<'a>(
     compiler.emit_ins(Instruction::SetCacheJmpIfNull(Label::Named(end.clone())));
 
     let mut follows = vec![match first {
+        Follow::Field(PropertyAccessKind::SafeColon, ident) => {
+            Follow::Field(PropertyAccessKind::Colon, ident)
+        }
         Follow::Field(_, ident) => Follow::Field(PropertyAccessKind::Dot, ident),
         Follow::Call(_, ident, args) => Follow::Call(PropertyAccessKind::Dot, ident, args),
         Follow::Index(_, expr) => Follow::Index(ListAccessKind::Normal, expr),
@@ -544,8 +549,13 @@ fn emit_safe_inner<'a>(
         let receiver_ty = ty;
         ty = None;
         match f {
-            Follow::Field(_, ident) => {
-                let decl = receiver_ty.and_then(|t| super::procs::member_var(t, ident.as_str()));
+            Follow::Field(access_kind, ident) => {
+                let decl = match access_kind {
+                    PropertyAccessKind::Colon | PropertyAccessKind::SafeColon => {
+                        super::procs::colon_var(compiler, receiver_ty, ident.as_str())
+                    }
+                    _ => receiver_ty.and_then(|t| super::procs::member_var(t, ident.as_str())),
+                };
                 ty = decl.and_then(|d| super::procs::declared_type(compiler, &d.get().var_type));
                 match decl {
                     Some(decl) if super::procs::is_global_member(&decl) => {

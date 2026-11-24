@@ -177,8 +177,13 @@ fn field_const(
         term: Box::new(term.clone()),
         follow: fields[..fields.len() - 1].to_vec().into_boxed_slice(),
     };
-    let ty = super::procs::expr_type(c, &holder)?;
-    let decl = super::procs::member_var(ty, name.as_str())?;
+    let ty = super::procs::expr_type(c, &holder);
+    let decl = match &fields[fields.len() - 1].elem {
+        Follow::Field(dreammaker::ast::PropertyAccessKind::Colon, _) => {
+            super::procs::colon_var(c, ty, name.as_str())?
+        }
+        _ => super::procs::member_var(ty?, name.as_str())?,
+    };
     if !decl.get().var_type.flags.is_const()
         || decl.get().location.file == dreammaker::FileId::BUILTINS
     {

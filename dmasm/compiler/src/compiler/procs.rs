@@ -401,13 +401,29 @@ pub(super) fn member_var<'a>(
 }
 
 pub(super) fn colon_var<'a>(
+    compiler: &Compiler<'a>,
+    ty: Option<TypeRef<'a>>,
+    name: &str,
+) -> Option<dreammaker::objtree::VarDeclarationRef<'a>> {
+    if let Some(decl) = ty.and_then(|t| member_var(t, name)) {
+        return Some(decl);
+    }
+    ty.and_then(|t| declared_below(t, name))
+        .or_else(|| declared_below(compiler.proc.tree.root(), name))
+}
+
+fn declared_below<'a>(
     ty: TypeRef<'a>,
     name: &str,
 ) -> Option<dreammaker::objtree::VarDeclarationRef<'a>> {
-    if let Some(decl) = member_var(ty, name) {
-        return Some(decl);
-    }
-    ty.children().find_map(|child| colon_var(child, name))
+    let mut children: Vec<TypeRef<'a>> = ty.children().collect();
+    children.sort_by_key(|child| child.index());
+    children.into_iter().rev().find_map(|child| {
+        declared_below(child, name).or_else(|| {
+            child.get().vars.get(name)?.declaration.as_ref()?;
+            member_var(child, name)
+        })
+    })
 }
 
 static TREES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);

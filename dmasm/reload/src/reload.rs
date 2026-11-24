@@ -2189,13 +2189,7 @@ fn folds_changed(
         let folded = |s: &Snapshot| {
             crate::compiler::fold_in_proc(&s.tree, s.find_type(ty)?, &expression, &locals, s.byond)
         };
-        let (before, after) = (folded(old), folded(new));
-        before != after
-            || before.is_none()
-                && matches!(
-                    chain.last().map(|f| &f.elem),
-                    Some(Follow::Field(PropertyAccessKind::Colon, _))
-                )
+        folded(old) != folded(new)
     };
     let locals: HashSet<(usize, String)> = local_types.keys().cloned().collect();
     let alone = read_alone(new, value);

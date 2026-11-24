@@ -715,6 +715,18 @@ var/gx = 1
 /proc/f(n)
 	var/list/L[n]
 	return L
+// Guards: colon_reads_the_last_type_that_declares_its_var (compile_proc.rs)
+/datum/q
+/datum/p/a
+	var/const/LIMIT = 5
+/datum/p/b
+	var/const/LIMIT = 9
+/datum/p/b/c
+/datum/q
+	var/const/LIMIT = 20
+	var/static/S = 4
+/proc/f(x, datum/q/y, list/z)
+	return list(x:LIMIT + 1, y:LIMIT + 1, z:LIMIT + 1, x:LIMIT, -y:LIMIT, x:S, x?:S)
 // Guards: static_after_double_colon_chain (compile_proc.rs)
 /datum/a
 	var/datum/b/b
