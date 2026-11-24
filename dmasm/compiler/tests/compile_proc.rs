@@ -2086,6 +2086,8 @@ fn a_logical_assignment_through_a_safe_chain_warns_where_dreammaker_writes_anoth
         "i?.f().a.b ||= x",
         "i?.a?.b.c ||= x",
         "return (i?.a.b ||= x)",
+        "i?.a.b ||= x.c",
+        "i?.a.b ||= i.f()",
     ] {
         assert!(warns(body, 1689), "no warning for {}", body);
         assert!(warns(body, 1637), "no warning before 516.1673 for {}", body);
@@ -2100,10 +2102,29 @@ fn a_logical_assignment_through_a_safe_chain_warns_where_dreammaker_writes_anoth
         "i.a.b ||= x",
         "i?.a.f().b ||= x",
         "i?.a.b += x",
-        "i?.a.b ||= x.c",
-        "i?.a.b ||= i.f()",
     ] {
         assert!(!warns(body, 1689), "a warning for {}", body);
+    }
+}
+
+#[test]
+fn a_logical_assignment_through_a_safe_chain_writes_the_var_its_test_read() {
+    let types = "/datum/item\n\tvar/datum/item/a\n\tvar/datum/item/b\n\tvar/datum/item/c\n\
+                 /datum/item/proc/f()\n\treturn src\n";
+    for (body, write) in [
+        ("i?.a.b ||= x.c", "SetVar cache[\"b\"]"),
+        ("i?.a.b &&= i.f()", "SetVar cache[\"b\"]"),
+        ("i?.a.b.c ||= x.c", "SetVar cache[\"c\"]"),
+        ("items?[1].a.b ||= x.c", "SetVar cache[\"b\"]"),
+        ("i?.f().a.b &&= x.c", "SetVar cache[\"b\"]"),
+        ("return (i?.a.b ||= x.c)", "SetVarExpr cache[\"b\"]"),
+    ] {
+        let code = compile(
+            &format!("{types}/proc/g(datum/item/i, list/items, datum/item/x)\n\t{body}\n"),
+            "",
+            "g",
+        );
+        assert_has(&code, &["PopCache", write]);
     }
 }
 

@@ -1837,19 +1837,11 @@ pub(super) fn emit_safe_chain_write<'a>(
                 }
                 let start = compiler.nodes.len();
                 emit_value(compiler, value.expect("a value"))?;
-                if compiler.nodes[start..]
-                    .iter()
-                    .any(|n| matches!(n, Node::Instruction(i, _) if super::procs::touches_cache(i)))
-                {
-                    compiler
-                        .nodes
-                        .insert(start, Node::Instruction(Instruction::PushCache, ()));
-                    compiler.emit_ins(Instruction::PopCache);
-                }
+                let written = keep_tested_place(compiler, start, &var);
                 compiler.emit_ins(if value_form {
-                    Instruction::SetVarExpr(var.clone())
+                    Instruction::SetVarExpr(written)
                 } else {
-                    Instruction::SetVar(var.clone())
+                    Instruction::SetVar(written)
                 });
                 super::known_bugs::safe_logical_write(compiler, &var);
                 let Label::Named(end) = end else {
@@ -1941,16 +1933,8 @@ pub(super) fn emit_safe_chain_write<'a>(
             });
             let start = compiler.nodes.len();
             emit_value(compiler, value.expect("a value"))?;
-            if compiler.nodes[start..]
-                .iter()
-                .any(|n| matches!(n, Node::Instruction(i, _) if super::procs::touches_cache(i)))
-            {
-                compiler
-                    .nodes
-                    .insert(start, Node::Instruction(Instruction::PushCache, ()));
-                compiler.emit_ins(Instruction::PopCache);
-            }
-            compiler.emit_ins(Instruction::SetVar(var.clone()));
+            let written = keep_tested_place(compiler, start, &var);
+            compiler.emit_ins(Instruction::SetVar(written));
             super::known_bugs::safe_logical_write(compiler, &var);
             compiler.emit_label(end);
         }
@@ -2503,6 +2487,24 @@ pub(super) fn aug_instruction(op: AssignOp, var: Variable) -> Instruction {
     }
 }
 
+fn keep_tested_place(compiler: &mut Compiler, start: usize, var: &Variable) -> Variable {
+    if !compiler.nodes[start..]
+        .iter()
+        .any(|n| matches!(n, Node::Instruction(i, _) if super::procs::touches_cache(i)))
+    {
+        return var.clone();
+    }
+    compiler
+        .nodes
+        .insert(start, Node::Instruction(Instruction::PushCache, ()));
+    compiler.emit_ins(Instruction::PopCache);
+    let mut last = var;
+    while let Variable::SetCache(_, rest) = last {
+        last = rest;
+    }
+    last.clone()
+}
+
 pub(super) fn emit_safe_logical_assign(
     compiler: &mut Compiler,
     place: &Expression,
@@ -2545,16 +2547,8 @@ pub(super) fn emit_safe_logical_assign(
     });
     let start = compiler.nodes.len();
     emit_value(compiler, rhs)?;
-    if compiler.nodes[start..]
-        .iter()
-        .any(|n| matches!(n, Node::Instruction(i, _) if super::procs::touches_cache(i)))
-    {
-        compiler
-            .nodes
-            .insert(start, Node::Instruction(Instruction::PushCache, ()));
-        compiler.emit_ins(Instruction::PopCache);
-    }
-    compiler.emit_ins(Instruction::SetVarExpr(var.clone()));
+    let written = keep_tested_place(compiler, start, &var);
+    compiler.emit_ins(Instruction::SetVarExpr(written));
     super::known_bugs::safe_logical_write(compiler, &var);
     compiler.emit_label(end);
     Ok(true)
