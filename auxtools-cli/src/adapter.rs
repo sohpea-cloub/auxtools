@@ -166,6 +166,7 @@ struct ClientAbilities {
 struct CompletionsArguments {
 	frame_id: Option<i64>,
 	text: String,
+	line: Option<i64>,
 	column: i64
 }
 
@@ -2008,9 +2009,14 @@ impl Adapter {
 	}
 
 	fn completions(&mut self, args: CompletionsArguments) -> Handled {
-		let before = args.column.max(1) as usize - 1;
-		let cursor = args
+		let line = args
 			.text
+			.split('\n')
+			.nth(args.line.map_or(0, |line| line.max(1) as usize - 1))
+			.unwrap_or_default();
+		let text = line.strip_suffix('\r').unwrap_or(line);
+		let before = args.column.max(1) as usize - 1;
+		let cursor = text
 			.char_indices()
 			.scan(0, |units, (at, c)| {
 				let here = *units;
@@ -2018,12 +2024,12 @@ impl Adapter {
 				Some((at, here))
 			})
 			.find(|(_, units)| *units >= before)
-			.map_or(args.text.len(), |(at, _)| at);
-		let Some(place) = completion_place(&args.text[..cursor]) else {
+			.map_or(text.len(), |(at, _)| at);
+		let Some(place) = completion_place(&text[..cursor]) else {
 			return Ok(serde_json::json!({ "targets": [] }));
 		};
-		let prefix = &args.text[place.start..cursor];
-		let (start, length) = (args.text[..place.start].encode_utf16().count() + 1, prefix.encode_utf16().count());
+		let prefix = &text[place.start..cursor];
+		let (start, length) = (text[..place.start].encode_utf16().count() + 1, prefix.encode_utf16().count());
 		let target = |label: &str, kind: &str| serde_json::json!({ "label": label, "type": kind, "start": start, "length": length });
 
 		if place.command {

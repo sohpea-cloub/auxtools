@@ -86,6 +86,20 @@ fn completions(world: &mut World) {
 		(&targets["targets"][0]["start"], &targets["targets"][0]["length"]),
 		(&json!(12), &json!(2))
 	);
+	for text in ["src.na\nloc", "src.na\r\nloc"] {
+		let targets = world.request("completions", json!({ "frameId": frame, "text": text, "line": 2, "column": 4 }));
+		assert_eq!(targets["targets"][0]["label"], "local_list", "{:?}", text);
+		assert_eq!(
+			(&targets["targets"][0]["start"], &targets["targets"][0]["length"]),
+			(&json!(1), &json!(3))
+		);
+	}
+	let targets = world.request("completions", json!({ "frameId": frame, "text": "loc\nsrc.na", "line": 2, "column": 7 }));
+	assert_eq!(targets["targets"][0]["label"], "name");
+	assert_eq!(
+		(&targets["targets"][0]["start"], &targets["targets"][0]["length"]),
+		(&json!(5), &json!(2))
+	);
 	ok("completion replacement range");
 
 	assert_eq!(offered(world, "#d", Some(&frame)), [
