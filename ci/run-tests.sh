@@ -75,13 +75,17 @@ run() {
 	report "$name" $status $(($(date +%s) - start))
 }
 
+if [ -n "${WINE:-}" ] && ! "$WINE" reg query 'HKCU\Software\Wine\Drivers' /v Graphics 2>/dev/null | grep -q null; then
+	"$WINE" reg add 'HKCU\Software\Wine\Drivers' /v Graphics /d null /f >/dev/null
+	"${WINESERVER:-wineserver}" -w
+fi
+
 if [ -n "${SERIAL:-}" ]; then
 	for test in $tests; do
 		run "$test" "$programs/$test$exe"
 	done
 else
 	rm -rf "$work"
-	[ -z "${WINE:-}" ] || "$WINE" cmd /c exit
 	declare -A pids
 	trap 'kill "${pids[@]}" 2>/dev/null; exit 130' INT TERM
 	start=$(date +%s)
