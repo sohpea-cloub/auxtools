@@ -421,7 +421,8 @@ pub fn prepare(request: &HotReloadRequest, warnings: &mut Vec<String>, skipped: 
 		plan,
 		resources: _,
 		resource_dirs: _,
-		global_init
+		global_init,
+		shadowing_procs
 	} = request;
 	let Plan {
 		new_types,
@@ -498,7 +499,16 @@ pub fn prepare(request: &HotReloadRequest, warnings: &mut Vec<String>, skipped: 
 		}
 	}
 	for var in redeclared {
-		if let Err(e) = prepare_redeclared(var, &mut added, &mut type_vars, &mut pending, &mut prepared.global_values) {
+		let shadowing: Vec<&ProcKey> = shadowing_procs.iter().filter(|p| p.global == var.var).map(|p| &p.proc).collect();
+		if let Err(e) = prepare_redeclared(
+			var,
+			&shadowing,
+			&mut added,
+			&mut type_vars,
+			&mut world_globals,
+			&mut pending,
+			&mut prepared.global_values
+		) {
 			errors.push(e);
 		}
 	}
@@ -2392,8 +2402,10 @@ fn moved_var_warning(declaring: &str, var: &str, kept: &[u32]) -> Option<String>
 
 fn prepare_redeclared(
 	var: &Redeclared,
+	shadowing: &[&ProcKey],
 	added: &mut AddedVars,
 	type_vars: &mut TypeVars,
+	world_globals: &mut WorldGlobals,
 	pending: &mut Pending,
 	global_values: &mut Vec<(u32, (u32, u32), Option<StringRef>)>
 ) -> Result<(), String> {
@@ -2406,6 +2418,11 @@ fn prepare_redeclared(
 			for type_id in 0..runtime_tables::type_count().map_err(fail)? {
 				let declared = type_vars.declared(type_id).map_err(fail)?;
 				ids.retain(|id| !declared.chunks(2).any(|pair| pair[0] == *id));
+			}
+			for proc in shadowing.iter().filter_map(|key| find(key).ok()) {
+				if let Some(local) = world_globals.of(&proc).by_name().get(var.var.as_bytes()) {
+					ids.retain(|id| !local.contains(id));
+				}
 			}
 		}
 		let [id] = ids[..] else {

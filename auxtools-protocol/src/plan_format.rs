@@ -9,9 +9,9 @@ use dmasm::{
 	DMString, GlobalVar, Instruction, Label, Node, StaticScope, Value, Variable
 };
 
-use crate::{HotReloadRequest, HotReloadResource, PROTOCOL_VERSION};
+use crate::{HotReloadRequest, HotReloadResource, ShadowingProc, PROTOCOL_VERSION};
 
-const RECORDED: (u32, u64) = (15, 0x3266_2E27_70C9_3EA4);
+const RECORDED: (u32, u64) = (15, 0x6659_BF71_49B7_7982);
 
 fn key(path: &str, override_id: u32) -> ProcKey {
 	ProcKey {
@@ -213,7 +213,11 @@ fn sample() -> HotReloadRequest {
 			code: code("(global init)"),
 			table: 1,
 			proc_statics: BTreeMap::from([("/datum/a/proc/f".to_owned(), BTreeMap::from([("seen".to_owned(), 2)]))])
-		})
+		}),
+		shadowing_procs: vec![ShadowingProc {
+			global: "total".to_owned(),
+			proc: key("/datum/a/f", 1)
+		}]
 	}
 }
 

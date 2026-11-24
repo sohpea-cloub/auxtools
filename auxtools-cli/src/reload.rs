@@ -1,10 +1,13 @@
 use std::path::PathBuf;
 
-use auxtools_protocol::HotReloadRequest;
+use auxtools_protocol::{HotReloadRequest, ShadowingProc};
 use dmasm::{
+	compiler::definition_order,
 	diagnostic::Id,
-	reload::{Changes, Plan, Refusal, Snapshot}
+	reload::{Changes, Plan, ProcKey, Refusal, Snapshot},
+	Node, StaticScope
 };
+use dreammaker::ast::{Spanned, Statement, VarStatement};
 
 pub const RESTART: &str = "Rebuild the .dmb, then restart the world to load all of the new code.";
 
@@ -12,11 +15,118 @@ pub fn request(changes: &Changes, before: &Snapshot, restarted: bool) -> HotRelo
 	let mut plan = changes.plan.clone();
 	without_existing_statics(&mut plan, before);
 	HotReloadRequest {
+		shadowing_procs: shadowing_procs(&plan, before),
 		plan,
 		resources: vec![],
 		resource_dirs: vec![],
 		global_init: changes.global_init.clone().filter(|_| restarted)
 	}
+}
+
+fn shadowing_procs(plan: &Plan, before: &Snapshot) -> Vec<ShadowingProc> {
+	let globals: Vec<&str> = plan
+		.redeclared
+		.iter()
+		.filter(|var| var.type_path.is_empty())
+		.map(|var| var.var.as_str())
+		.collect();
+	if globals.is_empty() {
+		return vec![];
+	}
+	let mut found = vec![];
+	for ty in before.tree().iter_types() {
+		for (name, proc) in ty.get().procs.iter() {
+			for (override_id, index) in definition_order(ty, name.as_str()).into_iter().enumerate() {
+				let Some(code) = proc.value.get(index).and_then(|value| value.code.as_deref()) else {
+					continue;
+				};
+				let mut declared = vec![];
+				static_locals(code, &mut declared);
+				let key = ProcKey {
+					path: format!("{}/{}", ty.get().path, name),
+					override_id: override_id as u32
+				};
+				for global in globals.iter().filter(|global| declared.iter().any(|name| name == *global)) {
+					let Ok(compiled) = before.compile(&key) else {
+						continue;
+					};
+					if !reads_global(&compiled.nodes, global) {
+						found.push(ShadowingProc {
+							global: global.to_string(),
+							proc: key.clone()
+						});
+					}
+				}
+			}
+		}
+	}
+	found
+}
+
+fn static_locals(block: &[Spanned<Statement>], out: &mut Vec<String>) {
+	for statement in block {
+		statement_static_locals(&statement.elem, out);
+	}
+}
+
+fn statement_static_locals(statement: &Statement, out: &mut Vec<String>) {
+	let mut var = |var: &VarStatement| {
+		if var.var_type.flags.is_static() || var.var_type.flags.is_const() {
+			out.push(var.name.to_string());
+		}
+	};
+	match statement {
+		Statement::Var(one) => var(one),
+		Statement::Vars(all) => all.iter().for_each(var),
+		Statement::While { block, .. }
+		| Statement::DoWhile { block, .. }
+		| Statement::ForInfinite { block }
+		| Statement::Spawn { block, .. }
+		| Statement::Label { block, .. } => static_locals(block, out),
+		Statement::ForList(each) => static_locals(&each.block, out),
+		Statement::ForKeyValue(each) => static_locals(&each.block, out),
+		Statement::ForRange(each) => static_locals(&each.block, out),
+		Statement::ForLoop { init, inc, block, .. } => {
+			for part in init.iter().chain(inc) {
+				statement_static_locals(part, out);
+			}
+			static_locals(block, out);
+		}
+		Statement::If { arms, else_arm } => {
+			for (_, block) in arms {
+				static_locals(block, out);
+			}
+			if let Some(block) = else_arm {
+				static_locals(block, out);
+			}
+		}
+		Statement::Switch { cases, default, .. } => {
+			for (_, block) in cases.iter() {
+				static_locals(block, out);
+			}
+			if let Some(block) = default {
+				static_locals(block, out);
+			}
+		}
+		Statement::TryCatch { try_block, catch_block, .. } => {
+			static_locals(try_block, out);
+			static_locals(catch_block, out);
+		}
+		_ => {}
+	}
+}
+
+fn reads_global(nodes: &[Node], name: &str) -> bool {
+	nodes.iter().any(|node| {
+		let Node::Instruction(ins, _) = node else {
+			return false;
+		};
+		ins.variables().iter().any(|var| {
+			var.globals()
+				.iter()
+				.any(|global| global.name.0 == name.as_bytes() && !matches!(global.scope, Some(StaticScope::Proc { .. })))
+		})
+	})
 }
 
 fn without_existing_statics(plan: &mut Plan, before: &Snapshot) {
@@ -249,6 +359,17 @@ mod tests {
 		assert_eq!(sent.plan.removed_vars.len(), 1);
 		assert_eq!(sent.plan.len(), changes.plan.len());
 		assert!(sent.resources.is_empty() && sent.resource_dirs.is_empty());
+	}
+
+	#[test]
+	fn a_request_names_the_procs_whose_locals_share_a_changed_globals_name() {
+		let before = "var/const/N = 5\n/proc/a()\n\treturn N\n/proc/b()\n\tvar/static/N = 7\n\treturn N\n/proc/c()\n\tif \
+		              (prob(50))\n\t\tvar/const/N = 8\n\t\treturn N\n/proc/d()\n\tvar/static/N = 9\n\treturn N + global.N\n";
+		let (old, changes) = edited("shadowing", before, &before.replace("N = 5", "N = 10"));
+		assert_eq!(changes.plan.redeclared.len(), 1, "{:?}", changes.plan);
+		let sent = request(&changes, &old, false);
+		let procs: Vec<(&str, &str)> = sent.shadowing_procs.iter().map(|p| (p.global.as_str(), p.proc.path.as_str())).collect();
+		assert_eq!(procs, [("N", "/b"), ("N", "/c")]);
 	}
 
 	#[test]
