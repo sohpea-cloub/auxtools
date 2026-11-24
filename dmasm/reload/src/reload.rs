@@ -1865,9 +1865,22 @@ pub fn diff(old: &Snapshot, new: &Snapshot, changed_files: Option<&HashSet<PathB
     retargeted::path_users(&retargeted, &mut changes);
     local_const_users(old, new, &realigned, &mut changes);
     global_init::compare(old, new, &retargeted, &mut changes);
-    changes.keep_new_code(|key| new.proc_code(key));
+    changes.keep_new_code(|key| new.proc_code(&new_key(&realigned, key)?));
     changes.collect_warnings();
     changes
+}
+
+fn new_key(realigned: &Realigned, old: &ProcKey) -> Option<ProcKey> {
+    match realigned.get(&old.path) {
+        None => Some(old.clone()),
+        Some(map) => map
+            .iter()
+            .position(|id| *id == Some(old.override_id))
+            .map(|at| ProcKey {
+                path: old.path.clone(),
+                override_id: at as u32,
+            }),
+    }
 }
 
 type Realigned = HashMap<String, Vec<Option<u32>>>;

@@ -4435,6 +4435,25 @@ fn a_static_in_a_branch_added_above_another_is_a_new_one() {
     );
 }
 
+#[test]
+fn a_shifted_override_keeps_its_own_new_code() {
+    let before = "var/const/STEP = 1\n/datum/t/proc/f()\n\treturn 0\n\n/datum/t/f()\n\tvar/static/count = 0\n\tcount += STEP + 1\n\treturn count\n";
+    let after = before.replace("STEP = 1", "STEP = 2").replace(
+        "\n/datum/t/f()\n\tvar/static",
+        "\n/datum/t/f()\n\treturn ..()\n\n/datum/t/f()\n\tvar/static",
+    );
+    let changes = changes("shifted-override", before, &after);
+    assert_eq!(reloaded(&changes), [key("/datum/t/f", 1)]);
+    let code = changes
+        .new_code(&key("/datum/t/f", 1))
+        .expect("no new code for the shifted override");
+    let declared: Vec<&str> = dmasm_reload::reload::locals::declared(code)
+        .iter()
+        .map(|local| local.name)
+        .collect();
+    assert_eq!(declared, ["count"]);
+}
+
 fn sent_statics(changes: &Changes, path: &str) -> Vec<String> {
     let reload = changes.plan.reloads.iter().find(|r| r.proc.path == path);
     let reload =
