@@ -917,6 +917,68 @@ var/const/LIMIT = 10
 	base?:named()?.S = 3
 /proc/f17(datum/base/base)
 	return base?:make():LIMIT
+// Guards: a_safe_place_after_a_call_is_typed_as_a_read_finds_it (compile_proc.rs)
+/datum/child
+	var/datum/child/next
+/datum/child/special
+/datum/holder
+	var/datum/holder/inner
+	var/datum/child/child
+	var/list/items
+/datum/other
+	var/datum/child/special/child
+/datum/holder/proc/me() as /datum/holder
+	return src
+/datum/maker/proc/get_holder() as /datum/holder
+	return new /datum/holder
+/datum/maker/proc/untyped_holder()
+	return new /datum/holder
+/proc/get_holder() as /datum/holder
+	return new /datum/holder
+/proc/f1()
+	get_holder()?.child = new
+/proc/f2(datum/maker/maker)
+	maker.get_holder()?.child = new
+/proc/f3(datum/maker/maker)
+	maker.untyped_holder()?.child = new
+/proc/f4(datum/maker/maker)
+	maker.get_holder()?:child = new
+/proc/f5(datum/maker/maker)
+	maker?.get_holder()?.child = new
+/proc/f6()
+	get_holder()?.child.next = new
+/proc/f7()
+	get_holder().inner?.child = new
+/proc/f8()
+	get_holder()?.inner.child = new
+/proc/f9(datum/holder/h)
+	h.me()?.child = new
+/proc/f10()
+	get_holder()?.items = new
+/proc/f11()
+	get_holder()?.child = new()
+/proc/f12()
+	return (get_holder()?.child = new)
+/proc/f13(datum/holder/h)
+	h.inner.child = new
+// Guards: a_safe_place_after_a_call_is_typed_as_a_read_finds_it (compile_proc.rs)
+// Builds: 516.1648-
+/datum/child
+/datum/child/special
+/datum/holder
+	var/datum/child/child
+/datum/other
+	var/datum/child/special/child
+/datum/maker/proc/untyped_holder()
+	return new /datum/holder
+/proc/get_holder() as /datum/holder
+	return new /datum/holder
+/proc/f1(x)
+	get_holder()?.child = astype(x)
+/proc/f2()
+	return astype(get_holder().child)
+/proc/f3(datum/maker/maker)
+	return astype(maker.untyped_holder().child)
 // Guards: static_after_double_colon_chain (compile_proc.rs)
 /datum/a
 	var/datum/b/b

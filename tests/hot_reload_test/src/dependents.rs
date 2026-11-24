@@ -410,6 +410,21 @@ pub fn dependents(built: Built) {
 		"recompiled base?:make().name doesn't read the var DreamMaker reads"
 	);
 	println!("ok: recompiled base?:make().name reads the var DreamMaker reads, and null for a null base");
+
+	const MADE_AFTER_CALL: &str = "\"/datum/dep_new_child /datum/dep_new_child/special\"";
+	assert_eq!(eval(&mut client, "dep_implicit_new()"), MADE_AFTER_CALL);
+	let changes = source.edit(
+		"dependents.dm",
+		"\ttyped.me()?.dep_new_made = new\n",
+		"\ttyped.me()?.dep_new_made = new()\n"
+	);
+	reload(&mut watcher, &changes);
+	assert_eq!(
+		eval(&mut client, "dep_implicit_new()"),
+		MADE_AFTER_CALL,
+		"recompiled make()?.name = new doesn't make the type DreamMaker makes"
+	);
+	println!("ok: recompiled make()?.name = new makes the type DreamMaker makes");
 }
 
 fn refused_edit(source: &mut Source, file: &str, from: &str, to: &str) -> Vec<dmasm::reload::Refusal> {

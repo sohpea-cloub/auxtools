@@ -305,3 +305,25 @@ var/datum/dep_retype_alone_first/dep_retype_alone_target
 
 /proc/dep_safe_colon(datum/dep_safe_colon_base/base)
 	return base?:make().DEP_SAFE_COLON
+
+/datum/dep_new_child
+/datum/dep_new_child/special
+
+/datum/dep_new_holder
+	var/datum/dep_new_child/dep_new_made
+
+/datum/dep_new_other
+	var/datum/dep_new_child/special/dep_new_made
+
+/datum/dep_new_holder/proc/me() as /datum/dep_new_holder
+	return src
+
+/datum/dep_new_holder/proc/untyped_me()
+	return src
+
+/proc/dep_implicit_new()
+	var/datum/dep_new_holder/typed = new
+	var/datum/dep_new_holder/untyped = new
+	typed.me()?.dep_new_made = new
+	untyped.untyped_me()?.dep_new_made = new
+	return "[typed.dep_new_made.type] [untyped.dep_new_made.type]"

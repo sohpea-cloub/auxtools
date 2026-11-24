@@ -852,6 +852,11 @@ impl<'a> Compiler<'a> {
         procs::expr_type(self, expr).map(|t| t.get().path.clone())
     }
 
+    fn place_type_name(&self, place: &Expression) -> Option<String> {
+        self.static_type_name(place)
+            .filter(|_| procs::place_typed(place))
+    }
+
     pub(crate) fn end_assignment_statement(&mut self) {
         if self.cache.as_ref().is_some_and(|h| h.len() > 1) {
             self.cache = None;

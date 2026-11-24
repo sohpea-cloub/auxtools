@@ -371,6 +371,45 @@ fn a_safe_colon_call_finds_its_proc_and_value_as_a_colon_call_does() {
 }
 
 #[test]
+fn a_safe_place_after_a_call_is_typed_as_a_read_finds_it() {
+    let types = "/datum/child\n/datum/child/special\n\
+                 /datum/holder\n\tvar/datum/child/child\n\tvar/datum/holder/inner\n\
+                 /datum/other\n\tvar/datum/child/special/child\n\
+                 /datum/maker/proc/untyped_holder()\n\treturn new /datum/holder\n\
+                 /proc/get_holder() as /datum/holder\n\treturn new /datum/holder\n";
+    for (body, made) in [
+        ("get_holder()?.child = new", "/datum/child"),
+        (
+            "maker.untyped_holder()?.child = new",
+            "/datum/child/special",
+        ),
+        ("get_holder()?:child = new", "/datum/child/special"),
+        ("get_holder().inner?.child = new", "/datum/child"),
+        ("get_holder()?.child = astype(x)", "/datum/child"),
+        ("return astype(get_holder().child)", "/datum/child"),
+    ] {
+        let code = compile(
+            &format!("{types}/proc/f(datum/maker/maker, x)\n\t{body}\n"),
+            "",
+            "f",
+        );
+        assert_has(&code, &[&format!("PushVal {made}")]);
+    }
+    for body in [
+        "get_holder().child = new",
+        "get_holder().inner.child = new",
+        "maker?.untyped_holder().child = new",
+    ] {
+        assert_eq!(
+            compile_error(&format!("{types}/proc/g(datum/maker/maker)\n\t{body}\n")),
+            "line 13: implicit new() calls are not supported",
+            "{}",
+            body
+        );
+    }
+}
+
+#[test]
 fn a_var_after_an_index_is_found_as_untyped_colon_finds_it() {
     let types = "/datum/a\n\tvar/const/LIMIT = 5\n\tvar/datum/a/link\n\
                  /datum/b\n\tvar/const/LIMIT = 9\n\tvar/datum/b/link\n";

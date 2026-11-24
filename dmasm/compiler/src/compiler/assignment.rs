@@ -314,7 +314,7 @@ fn emit_value_assignment(
     };
     match op {
         AssignOp::Assign => {
-            compiler.implicit_type = compiler.static_type_name(lhs);
+            compiler.implicit_type = compiler.place_type_name(lhs);
             let kind = compiler.emit_expr(rhs.clone());
             compiler.implicit_type = None;
             compiler.emit_move_to_stack(kind?)?;
@@ -342,7 +342,7 @@ fn emit_value_assignment(
             });
             compiler.end_assignment_statement();
             let start = compiler.nodes.len();
-            compiler.implicit_type = compiler.static_type_name(lhs);
+            compiler.implicit_type = compiler.place_type_name(lhs);
             let kind = compiler.emit_expr(rhs.clone())?;
             compiler.emit_move_to_stack(kind)?;
             compiler.implicit_type = None;

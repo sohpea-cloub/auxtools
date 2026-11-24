@@ -663,7 +663,7 @@ pub(super) fn expr_type<'a>(
     compiler: &Compiler<'a>,
     expr: &dreammaker::ast::Expression,
 ) -> Option<TypeRef<'a>> {
-    use dreammaker::ast::{Expression, Follow, PropertyAccessKind, Term};
+    use dreammaker::ast::{Expression, Follow, Term};
     let Expression::Base { term, follow } = expr else {
         return None;
     };
@@ -672,32 +672,60 @@ pub(super) fn expr_type<'a>(
             return expr_type(compiler, inner);
         }
     }
-    let global = matches!(&term.elem, Term::Ident(i) if i.as_str() == "global")
-        && matches!(follow.first().map(|f| &f.elem), Some(Follow::Field(..)));
-    let mut ty = if global {
-        let decl = compiler
-            .proc
-            .tree
-            .root()
-            .get_var_declaration(match &follow[0].elem {
-                Follow::Field(_, name) => name.as_str(),
-                _ => unreachable!(),
-            })?;
-        declared_type(compiler, &decl.get().var_type)
-    } else {
-        term_type(compiler, &term.elem)
+    let global = matches!(&term.elem, Term::Ident(i) if i.as_str() == "global");
+    let mut follow = follow.iter();
+    let (mut ty, mut after) = match (global, follow.as_slice().first().map(|f| &f.elem)) {
+        (true, Some(Follow::Field(_, name))) => {
+            follow.next();
+            let decl = compiler
+                .proc
+                .tree
+                .root()
+                .get_var_declaration(name.as_str())?;
+            (declared_type(compiler, &decl.get().var_type), After::Typed)
+        }
+        (true, Some(Follow::Call(..))) => (Some(compiler.proc.tree.root()), After::Typed),
+        _ => start_type(compiler, &term.elem),
     };
-    for f in &follow[global as usize..] {
-        let decl = match &f.elem {
-            Follow::Field(PropertyAccessKind::Colon | PropertyAccessKind::SafeColon, name) => {
-                colon_var(compiler, ty, name.as_str())?
+    for f in follow {
+        match &f.elem {
+            Follow::Field(kind, name) => {
+                let decl = field_var(compiler, ty, *kind, name.as_str(), after)?;
+                ty = declared_type(compiler, &decl.get().var_type);
+                after = After::Typed;
             }
-            Follow::Field(_, name) => member_var(ty?, name.as_str())?,
+            Follow::Call(access, name, _) => {
+                (ty, after) = call_result(compiler, ty, *access, name.as_str());
+            }
             _ => return None,
-        };
-        ty = declared_type(compiler, &decl.get().var_type);
+        }
     }
-    ty
+    ty.filter(|_| after != After::Call)
+}
+
+pub(super) fn place_typed(place: &dreammaker::ast::Expression) -> bool {
+    use dreammaker::ast::{Expression, Follow, ListAccessKind, PropertyAccessKind, Term};
+    let Expression::Base { term, follow } = place else {
+        return true;
+    };
+    let safe = follow.iter().rposition(|f| {
+        matches!(
+            f.elem,
+            Follow::Field(
+                PropertyAccessKind::SafeDot | PropertyAccessKind::SafeColon,
+                _
+            ) | Follow::Call(
+                PropertyAccessKind::SafeDot | PropertyAccessKind::SafeColon,
+                _,
+                _
+            ) | Follow::Index(ListAccessKind::Safe, _)
+        )
+    });
+    let call = |f: &dreammaker::ast::Spanned<Follow>| matches!(f.elem, Follow::Call(..));
+    match safe {
+        Some(at) => !follow[at..].iter().any(call),
+        None => !matches!(term.elem, Term::Call(..)) && !follow.iter().any(call),
+    }
 }
 
 pub(super) fn field_globals(
