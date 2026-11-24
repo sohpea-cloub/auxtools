@@ -5633,3 +5633,25 @@ fn an_initializer_that_reads_a_computed_static_through_a_var_waits_for_it() {
         }
     }
 }
+
+#[test]
+fn a_read_through_a_static_takes_the_statics_type() {
+    let before = "var/datum/holder/items\n\n\
+                  /proc/f()\n\tvar/static/list/items = list(1, 2)\n\
+                  \tvar/static/count = items.len\n\treturn count\n\n\
+                  var/later = f()\n\n/datum/holder\n";
+    let after = before.replace("var/later = f()", "var/later = f() || 0");
+    let changes = changes("read-through-static", before, &after);
+    assert!(changes.refused.is_empty(), "{:?}", changes.refused);
+    let sets = global_init_sets(&changes);
+    let at = |var: &str| {
+        sets.iter()
+            .position(|set| set.starts_with(&format!("{} @", var)))
+            .unwrap_or_else(|| panic!("{} isn't set: {:?}", var, sets))
+    };
+    assert!(
+        at("/proc/f#0:count") < at(":later"),
+        "later, which calls the proc, before the proc's static: {:?}",
+        sets
+    );
+}

@@ -1106,22 +1106,7 @@ impl<'a> Walk<'a> {
         fields: impl IntoIterator<Item = (PropertyAccessKind, &'f str)>,
         finishing: bool,
     ) -> bool {
-        let declared = |ty: TypeRef, name: &str| {
-            ty.get_var_declaration(name)
-                .map(|d| d.get().var_type.type_path.to_string())
-        };
-        let mut path = init
-            .visible
-            .iter()
-            .rev()
-            .find(|(n, ..)| n == name)
-            .map(|(.., ty)| ty.clone())
-            .or_else(|| {
-                let param = init.params.iter().find(|(param, _)| param == name);
-                param.map(|(_, ty)| ty.clone())
-            })
-            .or_else(|| declared(init.ty, name))
-            .or_else(|| declared(snapshot.tree.root(), name));
+        let mut path = declared_type(snapshot, init, name);
         for (kind, field) in fields {
             if !matches!(kind, PropertyAccessKind::Dot | PropertyAccessKind::SafeDot) {
                 return true;
@@ -1366,16 +1351,7 @@ impl<'a> Walk<'a> {
                         _ => None,
                     });
                     ready &= self.chain_statics_set(snapshot, init, name, fields, finishing);
-                    let declared = |ty: TypeRef| {
-                        ty.get_var_declaration(name)
-                            .map(|d| d.get().var_type.type_path.to_string())
-                    };
-                    let param = init.params.iter().find(|(param, _)| param == name);
-                    let path = match param
-                        .map(|(_, path)| path.clone())
-                        .or_else(|| declared(t))
-                        .or_else(|| declared(root))
-                    {
+                    let path = match declared_type(snapshot, init, name) {
                         Some(path) => path,
                         None if name == "world" => "world".to_owned(),
                         None => String::new(),
@@ -1532,6 +1508,24 @@ fn literal(expression: &Expression) -> bool {
         }
         _ => false,
     }
+}
+
+fn declared_type(snapshot: &Snapshot, init: &Initializer, name: &str) -> Option<String> {
+    let declared = |ty: TypeRef, name: &str| {
+        ty.get_var_declaration(name)
+            .map(|d| d.get().var_type.type_path.to_string())
+    };
+    init.visible
+        .iter()
+        .rev()
+        .find(|(n, ..)| n == name)
+        .map(|(.., ty)| ty.clone())
+        .or_else(|| {
+            let param = init.params.iter().find(|(param, _)| param == name);
+            param.map(|(_, ty)| ty.clone())
+        })
+        .or_else(|| declared(init.ty, name))
+        .or_else(|| declared(snapshot.tree.root(), name))
 }
 
 enum Seen<'e> {
