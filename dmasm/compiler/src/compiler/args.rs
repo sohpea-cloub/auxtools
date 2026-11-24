@@ -156,6 +156,19 @@ fn do_normal(compiler: &mut Compiler, args: Vec<Expression>) -> Result<ArgsResul
     Ok(ArgsResult::Normal)
 }
 
+fn emit_keyed_value(
+    compiler: &mut Compiler,
+    value: &Expression,
+    key: String,
+) -> Result<(), CompileError> {
+    compiler.regroup_root = true;
+    let outer = compiler.implicit_type.replace(super::Implied::Untyped(key));
+    let kind = compiler.emit_expr(value.clone());
+    compiler.implicit_type = outer;
+    compiler.emit_move_to_stack(kind?)?;
+    Ok(())
+}
+
 fn do_assoc(
     compiler: &mut Compiler,
     context: ArgsContext,
@@ -176,9 +189,7 @@ fn do_assoc(
                         compiler.emit_ins(Instruction::PushVal(Value::DMString(DMString(
                             b"null".to_vec(),
                         ))));
-                        compiler.regroup_root = true;
-                        let kind = compiler.emit_expr((**rhs).to_owned())?;
-                        compiler.emit_move_to_stack(kind)?;
+                        emit_keyed_value(compiler, rhs, "\"null\"".to_owned())?;
                         continue;
                     }
 
@@ -195,9 +206,7 @@ fn do_assoc(
                             ))));
                         }
 
-                        compiler.regroup_root = true;
-                        let kind = compiler.emit_expr((**rhs).to_owned())?;
-                        compiler.emit_move_to_stack(kind)?;
+                        emit_keyed_value(compiler, rhs, format!("\"{}\"", ident))?;
                         continue;
                     }
                 }
@@ -217,7 +226,7 @@ fn do_assoc(
                 compiler.emit_move_to_stack(kind)?;
 
                 compiler.regroup_root = true;
-                let implicit = compiler.destination_type(lhs);
+                let implicit = Some(compiler.destination(lhs));
                 let outer = std::mem::replace(&mut compiler.implicit_type, implicit);
                 let kind = compiler.emit_expr((**rhs).to_owned());
                 compiler.implicit_type = outer;

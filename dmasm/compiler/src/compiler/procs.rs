@@ -197,7 +197,7 @@ pub fn compile_proc_as(
         source.file.as_bytes().to_vec(),
     )));
     compiler.implicit_type =
-        value_type.and_then(|ty| super::statements::implicit_type_for(&compiler, ty));
+        value_type.and_then(|ty| super::statements::implied_for(&compiler, ty, ""));
 
     let empty: Block = Box::new([]);
     let code = source.value.code.as_ref().unwrap_or(&empty);

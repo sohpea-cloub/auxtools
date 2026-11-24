@@ -390,8 +390,8 @@ fn emit_code(
             compiler.emit_ins(Instruction::RegexNew(2));
         }
         "rgb" => return emit_rgb(compiler, args),
-        "astype" if n == 1 && compiler.implicit_type.is_some() => {
-            let path = compiler.implicit_type.clone().unwrap();
+        "astype" if n == 1 && compiler.implied_type()?.is_some() => {
+            let path = compiler.implied_type()?.unwrap();
             push_args(compiler, args)?;
             compiler.emit_ins(Instruction::PushVal(operands::Value::Path(path)));
             compiler.emit_ins(Instruction::AsType);

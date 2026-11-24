@@ -67,7 +67,11 @@ pub(super) fn emit_proc_body(
             } => &**lhs,
             other => other,
         };
-        compiler.implicit_type = implicit_type_for(compiler, &param.var_type.type_path.to_string());
+        compiler.implicit_type = implied_for(
+            compiler,
+            &param.var_type.type_path.to_string(),
+            param.name.as_str(),
+        );
         let kind = compiler.emit_expr(default.clone());
         compiler.implicit_type = None;
         let kind = kind?;
@@ -1180,7 +1184,7 @@ fn emit_var_statement(
         return Ok(());
     }
     let ty = var.var_type.type_path.to_string();
-    compiler.implicit_type = implicit_type_for(compiler, &ty);
+    compiler.implicit_type = implied_for(compiler, &ty, var.name.as_str());
     let slot_var = |compiler: &mut Compiler| {
         let slot = ctx(compiler).declare_typed_local(var.name.as_str(), ty.clone());
         Variable::Local(slot)
@@ -1297,7 +1301,14 @@ fn loop_filter(compiler: &Compiler, ty: &str) -> (crate::TypeFilter, Option<Stri
     (filter, if exact { None } else { Some(path) })
 }
 
-pub(super) fn implicit_type_for(compiler: &Compiler, ty: &str) -> Option<String> {
+pub(super) fn implied_for(compiler: &Compiler, ty: &str, name: &str) -> Option<super::Implied> {
+    if ty.is_empty() {
+        return Some(super::Implied::Untyped(name.to_owned()));
+    }
+    implicit_type_for(compiler, ty).map(super::Implied::Type)
+}
+
+fn implicit_type_for(compiler: &Compiler, ty: &str) -> Option<String> {
     if ty.is_empty() {
         return None;
     }
@@ -2083,7 +2094,7 @@ fn emit_expr_statement(compiler: &mut Compiler, expr: &Expression) -> Result<(),
         }
     }
     if let Expression::AssignOp { lhs, .. } = expr {
-        compiler.implicit_type = compiler.destination_type(lhs);
+        compiler.implicit_type = Some(compiler.destination(lhs));
     }
     let emitted = emit_expr_statement_inner(compiler, expr);
     compiler.implicit_type = None;

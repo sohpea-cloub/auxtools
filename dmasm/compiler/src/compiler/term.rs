@@ -253,8 +253,8 @@ pub(super) fn emit(compiler: &mut Compiler<'_>, term: Term) -> Result<EvalKind, 
             Err(CompileError::UnsupportedRelativeCall)
         }
 
-        Term::NewImplicit { args } if compiler.implicit_type.is_some() => {
-            let path = compiler.implicit_type.clone().unwrap();
+        Term::NewImplicit { args } if compiler.implied_type()?.is_some() => {
+            let path = compiler.implied_type()?.unwrap();
             compiler.emit_ins(Instruction::PushVal(Value::Path(path)));
             emit_new(compiler, args)
         }
@@ -293,8 +293,8 @@ pub(super) fn emit(compiler: &mut Compiler<'_>, term: Term) -> Result<EvalKind, 
             args::emit_normal(compiler, args::ArgsContext::Proc, args.into_vec())?;
 
             match args_len {
-                0 if compiler.implicit_type.is_some() => {
-                    let path = compiler.implicit_type.clone().unwrap();
+                0 if compiler.implied_type()?.is_some() => {
+                    let path = compiler.implied_type()?.unwrap();
                     compiler.emit_ins(Instruction::PushVal(Value::Path(path)));
                     match in_list {
                         Some(list) => {
@@ -577,8 +577,8 @@ pub(super) fn emit(compiler: &mut Compiler<'_>, term: Term) -> Result<EvalKind, 
             compiler.emit_ins(Instruction::PushVal(Value::Path(path)));
             Ok(EvalKind::Stack)
         }
-        Term::__IMPLIED_TYPE__ if compiler.implicit_type.is_some() => {
-            let path = compiler.implicit_type.clone().unwrap();
+        Term::__IMPLIED_TYPE__ if compiler.implied_type()?.is_some() => {
+            let path = compiler.implied_type()?.unwrap();
             compiler.emit_ins(Instruction::PushVal(Value::Path(path)));
             Ok(EvalKind::Stack)
         }

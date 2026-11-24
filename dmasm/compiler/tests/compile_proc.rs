@@ -720,6 +720,96 @@ fn every_implicit_cast_in_a_value_takes_the_destinations_type() {
 }
 
 #[test]
+fn an_implicit_value_for_a_destination_without_a_type_is_refused() {
+    let types = "/datum/item\n/datum/other\n/datum/thing\n\tvar/u\n\tvar/datum/other/o\n\
+                 \tvar/list/l\nvar/gu\n/proc/f(x)\n\treturn x\n/proc/mk()\n\treturn 1\n";
+    for (body, place) in [
+        ("var/x = astype(a)", "x"),
+        ("var/x\n\tx = astype(a)", "x"),
+        ("q.u = astype(a)", "q.u"),
+        ("var/x = new", "x"),
+        ("var/x = locate()", "x"),
+        ("var/x = f(astype(a))", "x"),
+        ("var/x = q ? astype(a) : 1", "x"),
+        ("var/x = __IMPLIED_TYPE__", "x"),
+        ("var/x = 1\n\tx += astype(a)", "x"),
+        ("var/x = 1\n\tx ||= astype(a)", "x"),
+        ("var/x\n\tx ||= new", "x"),
+        (". = astype(a)", "."),
+        ("gu = astype(a)", "gu"),
+        ("var/x = locate() in q.l", "x"),
+        ("q?.u = astype(a)", "<expression>.u"),
+        ("q?.u ||= astype(a)", "<expression>.u"),
+        ("return f(q.u = astype(a))", "q.u"),
+        ("return list(\"k\" = astype(a))", "\"k\""),
+        ("return list(k = astype(a))", "\"k\""),
+        ("return new /datum/item(x = astype(a))", "\"x\""),
+        ("f(null = astype(a))", "\"null\""),
+        ("var/l\n\tl[1] = astype(a)", "l"),
+        ("q.u[1] = astype(a)", "q.u"),
+        ("var/list/l\n\tl[1][2] = astype(a)", ""),
+        ("q.l?[1] = astype(a)", "<expression>"),
+        ("mk()[1] = astype(a)", ""),
+        ("mk().o = new", ""),
+        ("var/x\n\tx[astype(q)] = 1", "x"),
+        ("for(var/x = astype(a); x; x = null)\n\t\treturn", "x"),
+    ] {
+        let lines =
+            types.lines().count() + 1 + body.lines().filter(|l| !l.starts_with("\t\t")).count();
+        assert_eq!(
+            compile_error(&format!(
+                "{types}/proc/g(datum/other/a, datum/thing/q)\n\t{body}\n"
+            )),
+            format!("line {lines}: {place}: unknown variable type"),
+            "{body}"
+        );
+    }
+    assert_eq!(
+        compile_error(&format!("{types}/proc/g(datum/other/a, x = astype(a))\n")),
+        "x: unknown variable type"
+    );
+    let src = format!("{types}/datum/item/var/datum/other/a\n/proc/g()\n\treturn astype(a)\n");
+    let ctx = dreammaker::Context::default();
+    let pp = dreammaker::Preprocessor::from_buffer(&ctx, "test.dm".into(), src);
+    let mut parser = dreammaker::Parser::new(&ctx, pp);
+    parser.enable_procs();
+    let tree = parser.parse_object_tree();
+    let item = tree.find("/datum/item").unwrap();
+    let source = ProcSource {
+        tree: &tree,
+        ty: item,
+        name: "g",
+        value: &tree.root().get().procs["g"].value[0],
+        file: "test.dm",
+        debug_info: false,
+        index: None,
+        byond: dmasm_compiler::ByondVersion::LATEST,
+        file_names: None,
+    };
+    let error = dmasm_compiler::compiler::compile_proc_as(&source, None, &[], Some(""));
+    assert!(
+        error
+            .as_ref()
+            .is_err_and(|e| e.to_string().ends_with(": unknown variable type")),
+        "an initializer of a var without a type: {error:?}"
+    );
+    for body in [
+        "var/x = (q.o = astype(a))",
+        "return astype(a)",
+        "f(astype(a))",
+        "var/x = istype(a)",
+        "q.l[1] = astype(a)",
+        "var/list/datum/item/l = list()\n\tl[1] = astype(a)",
+    ] {
+        compile(
+            &format!("{types}/proc/f2(datum/other/a, datum/thing/q)\n\t{body}\n"),
+            "",
+            "f2",
+        );
+    }
+}
+
+#[test]
 fn an_augmented_assignments_implicit_cast_takes_the_destinations_type() {
     let types = "/datum/item\n/datum/other\n/datum/thing\n\tvar/datum/item/o\n\tvar/list/l\n";
     for (body, cast) in [
@@ -905,7 +995,7 @@ fn a_safe_place_after_a_call_is_typed_as_a_read_finds_it() {
     ] {
         assert_eq!(
             compile_error(&format!("{types}/proc/g(datum/maker/maker)\n\t{body}\n")),
-            "line 13: implicit new() calls are not supported",
+            "line 13: : unknown variable type",
             "{}",
             body
         );
