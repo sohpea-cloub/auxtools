@@ -4,3 +4,20 @@
 
 /datum/dep_holder
 	var/datum/dep_made/item = new
+
+var/dep_item_type = /datum/dep_made
+var/dep_count = 100
+
+/datum/dep_factory
+
+/datum/dep_factory/proc/make()
+	return new dep_item_type()
+
+/datum/dep_factory/proc/first()
+	for(dep_count in list(7))
+		break
+
+/proc/dep_factory_counts()
+	var/datum/factory = new /datum/dep_factory
+	factory:first()
+	return "[factory.vars["dep_count"]] [dep_count]"

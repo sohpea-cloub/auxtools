@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 
-use dreammaker::ast::{Expression, Follow, PathOp, Prefab, Term};
+use dreammaker::ast::{Expression, Follow, Ident, PathOp, Prefab, Statement, Term};
 
 use super::*;
 use crate::operands::{Proc, Value};
@@ -426,6 +426,11 @@ struct Scan<'r, 's> {
 }
 
 impl<'r, 's> Scan<'r, 's> {
+    fn rebinds_var(&self, name: &str) -> bool {
+        self.ty
+            .is_some_and(|ty| self.r.rebinds(&self.r.member_vars, ty, name))
+    }
+
     fn new(r: &'r Retargeted<'s>, own: Option<&'r str>, ty: Option<&'r str>) -> Self {
         Scan {
             r,
@@ -464,9 +469,11 @@ impl<'r, 's> Scan<'r, 's> {
                     || (self.own.is_none() && r.changed_defaults.contains(name.as_str()))
             }
             syntax::Node::Term(Term::Prefab(prefab)) => r.prefab_might_name(prefab),
-            syntax::Node::Term(Term::Ident(name)) => self
-                .ty
-                .is_some_and(|ty| r.rebinds(&r.member_vars, ty, name.as_str())),
+            syntax::Node::Term(Term::Ident(name)) => self.rebinds_var(name),
+            syntax::Node::Term(Term::NewMiniExpr { expr, .. }) => self.rebinds_var(&expr.ident),
+            syntax::Node::Statement(statement) => {
+                loop_targets(statement).any(|name| self.rebinds_var(name))
+            }
             syntax::Node::Term(Term::Call(name, _)) => self
                 .ty
                 .is_some_and(|ty| r.rebinds(&r.member_procs, ty, name.as_str())),
@@ -475,6 +482,18 @@ impl<'r, 's> Scan<'r, 's> {
             _ => false,
         };
     }
+}
+
+fn loop_targets(statement: &Statement) -> impl Iterator<Item = &str> {
+    let names: [Option<&Ident>; 2] = match statement {
+        Statement::ForList(f) if f.var_type.is_none() => [Some(&f.name), None],
+        Statement::ForRange(f) if f.var_type.is_none() => [Some(&f.name), None],
+        Statement::ForKeyValue(f) if f.var_type.is_none() => [Some(&f.key), Some(&f.value)],
+        _ => [None, None],
+    };
+    IntoIterator::into_iter(names)
+        .flatten()
+        .map(|name| name.as_str())
 }
 
 fn code_paths<'c>(code: &'c ProcReload, out: &mut Vec<&'c str>) {

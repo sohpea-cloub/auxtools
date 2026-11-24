@@ -4094,3 +4094,37 @@ fn an_implicit_new_follows_the_vars_declared_type() {
         assert!(code.contains("/datum/b"), "{}: {}", init.type_path, code);
     }
 }
+
+#[test]
+fn a_member_var_added_takes_bare_names_in_new_and_loop_targets() {
+    let before = "/datum/a\n/datum/b\n\nvar/item_type = /datum/a\nvar/count = 100\nvar/other = 0\n\n\
+                  /datum/t\n\n\
+                  /datum/t/proc/make()\n\treturn new item_type()\n\n\
+                  /datum/t/proc/each()\n\tfor(count in list(7))\n\t\tbreak\n\n\
+                  /datum/t/proc/range()\n\tfor(count in 1 to 3)\n\t\tbreak\n\n\
+                  /datum/t/proc/stepped()\n\tfor(count = 1 to 3 step 2)\n\t\tbreak\n\n\
+                  /datum/t/proc/pairs()\n\tfor(other, count in list(1, 2))\n\t\tbreak\n\n\
+                  /datum/t/proc/unrelated()\n\tfor(other in list(7))\n\t\tbreak\n\treturn new /datum/a()\n";
+    let added = before.replace(
+        "/datum/t\n\n",
+        "/datum/t\n\tvar/item_type = /datum/b\n\tvar/count = 0\n\n",
+    );
+    for (name, before, after) in [
+        ("member-var-new-added", before, added.as_str()),
+        ("member-var-new-removed", added.as_str(), before),
+    ] {
+        let changes = changes_of(name, before, after);
+        assert_eq!(
+            sorted_reloads(&changes),
+            [
+                "/datum/t/each",
+                "/datum/t/make",
+                "/datum/t/pairs",
+                "/datum/t/range",
+                "/datum/t/stepped"
+            ],
+            "{}",
+            name
+        );
+    }
+}
