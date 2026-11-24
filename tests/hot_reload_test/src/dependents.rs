@@ -537,6 +537,26 @@ pub fn dependents(built: Built) {
 		"recompiled items?[1]:refresh() doesn't call refresh() on the item, or a null list isn't skipped"
 	);
 	println!("ok: recompiled items?[1]:refresh() calls refresh() on the item, and a null list is skipped");
+
+	const NEW_FROM: &str = "\"[dep_new_from(new /datum/dep_new_config)] [dep_new_from(null)]\"";
+	assert_eq!(eval(&mut client, NEW_FROM), "\"/datum/dep_new_item/special /datum/dep_new_item/special\"");
+	let changes = source.edit(
+		"dependents.dm",
+		"\tvar/datum/dep_new_item/made = new config.item_type()\n\treturn made.type",
+		"\tvar/datum/dep_new_item/made = new config.item_type()\n\treturn 0 || made.type"
+	);
+	assert!(
+		changes.plan.reloads.iter().any(|r| r.proc.path == "/dep_new_from"),
+		"dep_new_from isn't compiled again: {:?}",
+		changes.plan
+	);
+	reload(&mut watcher, &changes);
+	assert_eq!(
+		eval(&mut client, NEW_FROM),
+		"\"/datum/dep_new_item/special /datum/dep_new_item/special\"",
+		"recompiled new config.item_type() doesn't read the static path of config's declared type"
+	);
+	println!("ok: recompiled new config.item_type() reads the static path of config's declared type, also with a null config");
 }
 
 fn refused_edit(source: &mut Source, file: &str, from: &str, to: &str) -> Vec<dmasm::reload::Refusal> {

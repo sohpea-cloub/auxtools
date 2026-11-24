@@ -1139,6 +1139,31 @@ var/const/LIMIT = 10
 	return items?[1]:refresh()?:refresh()
 /proc/f7(datum/holder/h)
 	return h?.items[1].refresh(h.one)
+// Guards: new_of_a_field_chain_reads_it_by_the_declared_type (compile_proc.rs)
+/datum/item
+/datum/item/special
+/datum/config
+	var/static/item_type = /datum/item/special
+	var/plain_type = /datum/item
+	var/const/CONST_TYPE = /datum/item/special
+	var/datum/config/inner
+/proc/f1(datum/config/config)
+	return new config.item_type()
+/proc/f2(datum/config/config)
+	return new config.plain_type()
+/proc/f3(datum/config/config)
+	return new config.item_type(1)
+/proc/f4(datum/config/config)
+	return new config.inner.item_type()
+/proc/f5(config)
+	return new config:item_type()
+/proc/f6(datum/config/config)
+	return new config.CONST_TYPE()
+/proc/f7(datum/config/config)
+	var/datum/item/I = new config.item_type
+	return I
+/datum/config/proc/f8()
+	return new src.item_type()
 // Guards: a_safe_colon_call_finds_its_proc_and_value_as_a_colon_call_does (compile_proc.rs)
 /datum/a
 	var/const/LIMIT = 5

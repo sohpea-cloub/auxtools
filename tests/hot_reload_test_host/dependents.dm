@@ -414,3 +414,12 @@ var/datum/dep_retype_alone_first/dep_retype_alone_target
 
 /proc/dep_refresh_first(list/items)
 	return items?[1]:dep_refresh(2)
+
+/datum/dep_new_item
+/datum/dep_new_item/special
+/datum/dep_new_config
+	var/static/item_type = /datum/dep_new_item/special
+
+/proc/dep_new_from(datum/dep_new_config/config)
+	var/datum/dep_new_item/made = new config.item_type()
+	return made.type

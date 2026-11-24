@@ -645,6 +645,43 @@ fn a_call_after_a_safe_index_keeps_the_indexed_item_as_its_receiver() {
 }
 
 #[test]
+fn new_of_a_field_chain_reads_it_by_the_declared_type() {
+    let types = "/datum/item\n/datum/item/special\n\
+                 /datum/config\n\tvar/static/item_type = /datum/item/special\n\
+                 \tvar/const/CONST_TYPE = /datum/item/special\n\
+                 \tvar/plain_type = /datum/item\n\tvar/datum/config/inner\n";
+    for body in [
+        "return new config.item_type()",
+        "return new config.item_type(1)",
+        "return new config.inner.item_type()",
+        "return new config.CONST_TYPE()",
+    ] {
+        let src = format!("{types}/proc/f(datum/config/config)\n\t{body}\n");
+        assert_eq!(
+            global_scopes(&src),
+            ["Some(Type(\"/datum/config\"))"],
+            "{}",
+            body
+        );
+    }
+    let code = compile(
+        &format!("{types}/datum/config/proc/f()\n\treturn new src.item_type()\n"),
+        "/datum/config",
+        "f",
+    );
+    assert_has(&code, &["GetVar global(\"item_type\")", "New 0"]);
+    let code = compile(
+        &format!("{types}/proc/f(datum/config/config)\n\treturn new config.plain_type()\n"),
+        "",
+        "f",
+    );
+    assert_has(
+        &code,
+        &["GetVar cache = arg(0); cache[\"plain_type\"]", "New 0"],
+    );
+}
+
+#[test]
 fn a_safe_place_after_a_call_is_typed_as_a_read_finds_it() {
     let types = "/datum/child\n/datum/child/special\n\
                  /datum/holder\n\tvar/datum/child/child\n\tvar/datum/holder/inner\n\
