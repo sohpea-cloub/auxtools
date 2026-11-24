@@ -225,6 +225,7 @@ pub fn dependents(built: Built) {
 	println!("ok: an untyped x:name in an unchanged file finds an earlier type's declaration when a later type is removed");
 
 	assert_eq!(eval(&mut client, "(new /datum/dep_colon_inits).limits[1]"), "6");
+	assert_eq!(eval(&mut client, "dep_colon_local_const()"), "6");
 	let changes = source.edit(
 		"dependents.dm",
 		"/datum/dep_colon_list_later\n",
@@ -253,6 +254,8 @@ pub fn dependents(built: Built) {
 	reload(&mut watcher, &changes);
 	assert_eq!(eval(&mut client, "(new /datum/dep_colon_inits).limits[1]"), "10");
 	println!("ok: initializers and `in` lists in an unchanged file follow the declaration an untyped x:name finds");
+	assert_eq!(eval(&mut client, "dep_colon_local_const()"), "10");
+	println!("ok: a local const in an unchanged file follows the declaration an untyped x:name finds");
 
 	assert_eq!(eval(&mut client, "dep_colon_alone()"), "5");
 	let refused = refused_edit(

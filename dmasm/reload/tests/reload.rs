@@ -2172,7 +2172,8 @@ fn a_declaration_that_colon_lookup_finds_instead_recompiles_its_users() {
          /proc/uncompiled_colon(x)\n{uncompiled}\treturn x:LIMIT + 1\n\n\
          /proc/alone(x)\n\treturn x:LIMIT\n\n\
          /proc/uncompiled_alone(x)\n{uncompiled}\treturn x:LIMIT\n\n\
-         /proc/uncompiled_typed(datum/a/x)\n{uncompiled}\treturn x:LIMIT\n\n"
+         /proc/uncompiled_typed(datum/a/x)\n{uncompiled}\treturn x:LIMIT\n\n\
+         /proc/local_const(x)\n\tvar/const/L = x:LIMIT + 1\n\treturn L\n\n"
     );
     let (without, with) = ("/datum/b\n", "/datum/b\n\tvar/const/LIMIT = 9\n");
     for (name, before, after, folded) in [
@@ -2206,7 +2207,12 @@ fn a_declaration_that_colon_lookup_finds_instead_recompiles_its_users() {
             .map(|r| r.proc.path.as_str())
             .collect();
         reloads.sort();
-        assert_eq!(reloads, ["/alone", "/colon"], "{name}: {:?}", changes.plan);
+        assert_eq!(
+            reloads,
+            ["/alone", "/colon", "/local_const"],
+            "{name}: {:?}",
+            changes.plan
+        );
         let colon = changes
             .plan
             .reloads

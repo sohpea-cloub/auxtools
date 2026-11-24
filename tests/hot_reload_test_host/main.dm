@@ -250,3 +250,7 @@ var/hr_tally = 100
 /proc/dep_colon_alone(x)
 	var/last = /datum/dep_twice::f()
 	return last ? x:DEP_COLON_ALONE : 0
+
+/proc/dep_colon_local_const(x)
+	var/const/DEP_COLON_LOCAL = x:DEP_COLON_LIST + 1
+	return DEP_COLON_LOCAL
