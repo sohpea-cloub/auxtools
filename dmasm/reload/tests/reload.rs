@@ -4202,3 +4202,17 @@ fn a_default_read_from_a_type_proc_default_names_the_same_proc() {
         ]
     );
 }
+
+#[test]
+fn a_static_naming_a_retargeted_path_is_given_to_a_reboot() {
+    let before =
+        "/datum/t/proc/f()\n\treturn 0\n\n/datum/t/f()\n\treturn 1\n\n/datum/t/f()\n\treturn 2\n\n\
+                  /proc/callback()\n\tvar/static/handler = /datum/t/f\n\treturn handler\n\n\
+                  /proc/other()\n\tvar/static/kept = /datum/t/proc/f\n\treturn kept\n";
+    let removed = before.replace("/datum/t/f()\n\treturn 1\n\n", "");
+    let changes = changes("static-retargeted", before, &removed);
+    assert!(changes.refused.is_empty(), "{:?}", changes.refused);
+    assert!(changes.deferred.is_empty(), "{:?}", changes.deferred);
+    assert_eq!(changes.global_init.as_ref().map(|i| i.table), Some(1));
+    assert_eq!(global_init_sets(&changes), ["/proc/callback#0:handler @8"]);
+}

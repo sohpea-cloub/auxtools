@@ -379,7 +379,12 @@ impl Retargeted<'_> {
             && before.statics.iter().zip(&after.statics).all(|(b, a)| {
                 b.name == a.name
                     && b.scope == a.scope
-                    && b.value == a.value
+                    && match (&b.value, &a.value) {
+                        (Some(ConstValue::Path(b)), Some(ConstValue::Path(a))) => {
+                            self.before(b) == self.after(a)
+                        }
+                        (b, a) => b == a,
+                    }
                     && match (&b.init, &a.init) {
                         (Some(b), Some(a)) => same_instructions(&b.nodes, &a.nodes),
                         (b, a) => b.is_none() && a.is_none(),
