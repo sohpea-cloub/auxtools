@@ -24,10 +24,20 @@ pub fn dependents(built: Built) {
 
 	let changes = source.edit("dependents.dm", "DEP_LIMIT = 5", "DEP_LIMIT = 10");
 	let chooser = changes.plan.reloads.iter().find(|r| r.proc.path == "/mob/dep_chooser/choose_dep_limit");
+	let Some(InList::New(choices)) = chooser.map(|r| &r.params[0].in_list) else {
+		panic!("the verb's unchanged `in` list isn't compiled again: {:?}", chooser);
+	};
+	let code: Vec<_> = (choices.nodes.iter())
+		.filter_map(|node| match node {
+			dmasm::Node::Instruction(instruction, _) => Some(instruction),
+			_ => None
+		})
+		.collect();
 	assert!(
-		matches!(chooser.map(|r| &r.params[0].in_list), Some(InList::New(_))),
-		"the verb's unchanged `in` list isn't compiled again: {:?}",
-		chooser
+		code.windows(2)
+			.any(|pair| matches!(pair, [dmasm::Instruction::PushInt(11), dmasm::Instruction::NewList(1)])),
+		"the verb's new `in` list isn't list(11): {}",
+		dmasm::format(&choices.nodes)
 	);
 	reload(&mut watcher, &changes);
 	assert_eq!(eval(&mut client, "(new /datum/dep_limited).limits[1]"), "11");
