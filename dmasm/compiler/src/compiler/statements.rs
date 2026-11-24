@@ -1616,10 +1616,11 @@ impl SafeChain {
 }
 
 fn call_after_cache_use(compiler: &Compiler, start: usize) -> Option<usize> {
+    let depth = compiler.expression_depth();
     let site = compiler
         .call_sites
         .iter()
-        .filter(|site| site.args >= start)
+        .filter(|site| site.depth == depth && site.args >= start)
         .min_by_key(|site| site.args)?;
     if !site.receiver_in_cache {
         return None;

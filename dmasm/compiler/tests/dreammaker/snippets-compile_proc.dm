@@ -1883,7 +1883,7 @@ var/g = 1
 /proc/w()
 	var/datum/t/T = new
 	*(&T.v) = 3
-// Guards: every assignment through `?.`: one to three, ending in a var, an element or a call, `=`, `+=`, `||=`, `&&=` and `++`, as a statement and a value (no test of its own)
+// Guards: every assignment through `?.`: one to three, ending in a var, an element or a call, with calls in arguments and list indexes, `=`, `+=`, `||=`, `&&=` and `++`, as a statement and a value (no test of its own)
 // Known -516.1672: /proc/f1_or_s  before 516.1673 DreamMaker leaves out the null tests of `a?.b ||= v` and `&&=`; dmasm keeps them
 // Known -516.1672: /proc/f1_or_sm  before 516.1673 DreamMaker leaves out the null tests of `a?.b ||= v` and `&&=`; dmasm keeps them
 // Known -516.1672: /proc/f1_or_v  before 516.1673 DreamMaker leaves out the null tests of `a?.b ||= v` and `&&=`; dmasm keeps them
@@ -1964,10 +1964,10 @@ var/g = 1
 // Known -516.1672: /proc/e5_and_sm  before 516.1673 DreamMaker leaves out the null tests of `a?.b ||= v` and `&&=`; dmasm keeps them
 // Known -516.1672: /proc/e5_and_v  before 516.1673 DreamMaker leaves out the null tests of `a?.b ||= v` and `&&=`; dmasm keeps them
 // Known -516.1672: /proc/e5_and_vm  before 516.1673 DreamMaker leaves out the null tests of `a?.b ||= v` and `&&=`; dmasm keeps them
-// Known: /proc/c1_set_sm  DreamMaker calls m() on what the value left in the cache (a BYOND bug, which dmasm warns of); dmasm calls it on h
-// Known: /proc/c1_set_vm  DreamMaker calls m() on what the value left in the cache (a BYOND bug, which dmasm warns of); dmasm calls it on h
-// Known: /proc/c1_add_sm  DreamMaker calls m() on what the value left in the cache (a BYOND bug, which dmasm warns of); dmasm calls it on h
-// Known: /proc/c1_add_vm  DreamMaker calls m() on what the value left in the cache (a BYOND bug, which dmasm warns of); dmasm calls it on h
+// Known: /proc/c1_set_sm  DreamMaker uses what the arguments or the value left in the cache as the receiver (a BYOND bug, which dmasm warns of); dmasm uses h
+// Known: /proc/c1_set_vm  DreamMaker uses what the arguments or the value left in the cache as the receiver (a BYOND bug, which dmasm warns of); dmasm uses h
+// Known: /proc/c1_add_sm  DreamMaker uses what the arguments or the value left in the cache as the receiver (a BYOND bug, which dmasm warns of); dmasm uses h
+// Known: /proc/c1_add_vm  DreamMaker uses what the arguments or the value left in the cache as the receiver (a BYOND bug, which dmasm warns of); dmasm uses h
 // Known -516.1672: /proc/c1_or_s  before 516.1673 DreamMaker leaves out the null tests of `a?.b ||= v` and `&&=`; dmasm keeps them
 // Known -516.1672: /proc/c1_or_sm  before 516.1673 DreamMaker leaves out the null tests of `a?.b ||= v` and `&&=`; dmasm keeps them
 // Known -516.1672: /proc/c1_or_v  before 516.1673 DreamMaker leaves out the null tests of `a?.b ||= v` and `&&=`; dmasm keeps them
@@ -1976,10 +1976,10 @@ var/g = 1
 // Known -516.1672: /proc/c1_and_sm  before 516.1673 DreamMaker leaves out the null tests of `a?.b ||= v` and `&&=`; dmasm keeps them
 // Known -516.1672: /proc/c1_and_v  before 516.1673 DreamMaker leaves out the null tests of `a?.b ||= v` and `&&=`; dmasm keeps them
 // Known -516.1672: /proc/c1_and_vm  before 516.1673 DreamMaker leaves out the null tests of `a?.b ||= v` and `&&=`; dmasm keeps them
-// Known: /proc/c2_set_sm  DreamMaker calls m() on what the value left in the cache (a BYOND bug, which dmasm warns of); dmasm calls it on h
-// Known: /proc/c2_set_vm  DreamMaker calls m() on what the value left in the cache (a BYOND bug, which dmasm warns of); dmasm calls it on h
-// Known: /proc/c2_add_sm  DreamMaker calls m() on what the value left in the cache (a BYOND bug, which dmasm warns of); dmasm calls it on h
-// Known: /proc/c2_add_vm  DreamMaker calls m() on what the value left in the cache (a BYOND bug, which dmasm warns of); dmasm calls it on h
+// Known: /proc/c2_set_sm  DreamMaker uses what the arguments or the value left in the cache as the receiver (a BYOND bug, which dmasm warns of); dmasm uses h
+// Known: /proc/c2_set_vm  DreamMaker uses what the arguments or the value left in the cache as the receiver (a BYOND bug, which dmasm warns of); dmasm uses h
+// Known: /proc/c2_add_sm  DreamMaker uses what the arguments or the value left in the cache as the receiver (a BYOND bug, which dmasm warns of); dmasm uses h
+// Known: /proc/c2_add_vm  DreamMaker uses what the arguments or the value left in the cache as the receiver (a BYOND bug, which dmasm warns of); dmasm uses h
 // Known -516.1672: /proc/c2_or_s  before 516.1673 DreamMaker leaves out the null tests of `a?.b ||= v` and `&&=`; dmasm keeps them
 // Known -516.1672: /proc/c2_or_sm  before 516.1673 DreamMaker leaves out the null tests of `a?.b ||= v` and `&&=`; dmasm keeps them
 // Known -516.1672: /proc/c2_or_v  before 516.1673 DreamMaker leaves out the null tests of `a?.b ||= v` and `&&=`; dmasm keeps them
@@ -1996,10 +1996,10 @@ var/g = 1
 // Known -516.1672: /proc/c3_and_sm  before 516.1673 DreamMaker leaves out the null tests of `a?.b ||= v` and `&&=`; dmasm keeps them
 // Known -516.1672: /proc/c3_and_v  before 516.1673 DreamMaker leaves out the null tests of `a?.b ||= v` and `&&=`; dmasm keeps them
 // Known -516.1672: /proc/c3_and_vm  before 516.1673 DreamMaker leaves out the null tests of `a?.b ||= v` and `&&=`; dmasm keeps them
-// Known: /proc/c4_set_sm  DreamMaker calls m() on what the value left in the cache (a BYOND bug, which dmasm warns of); dmasm calls it on h
-// Known: /proc/c4_set_vm  DreamMaker calls m() on what the value left in the cache (a BYOND bug, which dmasm warns of); dmasm calls it on h
-// Known: /proc/c4_add_sm  DreamMaker calls m() on what the value left in the cache (a BYOND bug, which dmasm warns of); dmasm calls it on h
-// Known: /proc/c4_add_vm  DreamMaker calls m() on what the value left in the cache (a BYOND bug, which dmasm warns of); dmasm calls it on h
+// Known: /proc/c4_set_sm  DreamMaker uses what the arguments or the value left in the cache as the receiver (a BYOND bug, which dmasm warns of); dmasm uses h
+// Known: /proc/c4_set_vm  DreamMaker uses what the arguments or the value left in the cache as the receiver (a BYOND bug, which dmasm warns of); dmasm uses h
+// Known: /proc/c4_add_sm  DreamMaker uses what the arguments or the value left in the cache as the receiver (a BYOND bug, which dmasm warns of); dmasm uses h
+// Known: /proc/c4_add_vm  DreamMaker uses what the arguments or the value left in the cache as the receiver (a BYOND bug, which dmasm warns of); dmasm uses h
 // Known -516.1672: /proc/c4_or_s  before 516.1673 DreamMaker leaves out the null tests of `a?.b ||= v` and `&&=`; dmasm keeps them
 // Known -516.1672: /proc/c4_or_sm  before 516.1673 DreamMaker leaves out the null tests of `a?.b ||= v` and `&&=`; dmasm keeps them
 // Known -516.1672: /proc/c4_or_v  before 516.1673 DreamMaker leaves out the null tests of `a?.b ||= v` and `&&=`; dmasm keeps them
@@ -2008,10 +2008,10 @@ var/g = 1
 // Known -516.1672: /proc/c4_and_sm  before 516.1673 DreamMaker leaves out the null tests of `a?.b ||= v` and `&&=`; dmasm keeps them
 // Known -516.1672: /proc/c4_and_v  before 516.1673 DreamMaker leaves out the null tests of `a?.b ||= v` and `&&=`; dmasm keeps them
 // Known -516.1672: /proc/c4_and_vm  before 516.1673 DreamMaker leaves out the null tests of `a?.b ||= v` and `&&=`; dmasm keeps them
-// Known: /proc/c5_set_sm  DreamMaker calls m() on what the value left in the cache (a BYOND bug, which dmasm warns of); dmasm calls it on h
-// Known: /proc/c5_set_vm  DreamMaker calls m() on what the value left in the cache (a BYOND bug, which dmasm warns of); dmasm calls it on h
-// Known: /proc/c5_add_sm  DreamMaker calls m() on what the value left in the cache (a BYOND bug, which dmasm warns of); dmasm calls it on h
-// Known: /proc/c5_add_vm  DreamMaker calls m() on what the value left in the cache (a BYOND bug, which dmasm warns of); dmasm calls it on h
+// Known: /proc/c5_set_sm  DreamMaker uses what the arguments or the value left in the cache as the receiver (a BYOND bug, which dmasm warns of); dmasm uses h
+// Known: /proc/c5_set_vm  DreamMaker uses what the arguments or the value left in the cache as the receiver (a BYOND bug, which dmasm warns of); dmasm uses h
+// Known: /proc/c5_add_sm  DreamMaker uses what the arguments or the value left in the cache as the receiver (a BYOND bug, which dmasm warns of); dmasm uses h
+// Known: /proc/c5_add_vm  DreamMaker uses what the arguments or the value left in the cache as the receiver (a BYOND bug, which dmasm warns of); dmasm uses h
 // Known -516.1672: /proc/c5_or_s  before 516.1673 DreamMaker leaves out the null tests of `a?.b ||= v` and `&&=`; dmasm keeps them
 // Known -516.1672: /proc/c5_or_sm  before 516.1673 DreamMaker leaves out the null tests of `a?.b ||= v` and `&&=`; dmasm keeps them
 // Known -516.1672: /proc/c5_or_v  before 516.1673 DreamMaker leaves out the null tests of `a?.b ||= v` and `&&=`; dmasm keeps them
@@ -2020,552 +2020,914 @@ var/g = 1
 // Known -516.1672: /proc/c5_and_sm  before 516.1673 DreamMaker leaves out the null tests of `a?.b ||= v` and `&&=`; dmasm keeps them
 // Known -516.1672: /proc/c5_and_v  before 516.1673 DreamMaker leaves out the null tests of `a?.b ||= v` and `&&=`; dmasm keeps them
 // Known -516.1672: /proc/c5_and_vm  before 516.1673 DreamMaker leaves out the null tests of `a?.b ||= v` and `&&=`; dmasm keeps them
+// Known: /proc/n1_set_s  DreamMaker uses what the arguments or the value left in the cache as the receiver (a BYOND bug, which dmasm warns of); dmasm uses h
+// Known: /proc/n1_set_sm  DreamMaker uses what the arguments or the value left in the cache as the receiver (a BYOND bug, which dmasm warns of); dmasm uses h
+// Known: /proc/n1_set_v  DreamMaker uses what the arguments or the value left in the cache as the receiver (a BYOND bug, which dmasm warns of); dmasm uses h
+// Known: /proc/n1_set_vm  DreamMaker uses what the arguments or the value left in the cache as the receiver (a BYOND bug, which dmasm warns of); dmasm uses h
+// Known: /proc/n1_add_s  DreamMaker uses what the arguments or the value left in the cache as the receiver (a BYOND bug, which dmasm warns of); dmasm uses h
+// Known: /proc/n1_add_sm  DreamMaker uses what the arguments or the value left in the cache as the receiver (a BYOND bug, which dmasm warns of); dmasm uses h
+// Known: /proc/n1_add_v  DreamMaker uses what the arguments or the value left in the cache as the receiver (a BYOND bug, which dmasm warns of); dmasm uses h
+// Known: /proc/n1_add_vm  DreamMaker uses what the arguments or the value left in the cache as the receiver (a BYOND bug, which dmasm warns of); dmasm uses h
+// Known: /proc/n1_or_s  DreamMaker uses what the arguments or the value left in the cache as the receiver (a BYOND bug, which dmasm warns of); dmasm uses h
+// Known: /proc/n1_or_sm  DreamMaker uses what the arguments or the value left in the cache as the receiver (a BYOND bug, which dmasm warns of); dmasm uses h
+// Known: /proc/n1_or_v  DreamMaker uses what the arguments or the value left in the cache as the receiver (a BYOND bug, which dmasm warns of); dmasm uses h
+// Known: /proc/n1_or_vm  DreamMaker uses what the arguments or the value left in the cache as the receiver (a BYOND bug, which dmasm warns of); dmasm uses h
+// Known: /proc/n1_and_s  DreamMaker uses what the arguments or the value left in the cache as the receiver (a BYOND bug, which dmasm warns of); dmasm uses h
+// Known: /proc/n1_and_sm  DreamMaker uses what the arguments or the value left in the cache as the receiver (a BYOND bug, which dmasm warns of); dmasm uses h
+// Known: /proc/n1_and_v  DreamMaker uses what the arguments or the value left in the cache as the receiver (a BYOND bug, which dmasm warns of); dmasm uses h
+// Known: /proc/n1_and_vm  DreamMaker uses what the arguments or the value left in the cache as the receiver (a BYOND bug, which dmasm warns of); dmasm uses h
+// Known -516.1672: /proc/n2_or_s  before 516.1673 DreamMaker leaves out the null tests of `a?.b ||= v` and `&&=`; dmasm keeps them
+// Known -516.1672: /proc/n2_or_sm  before 516.1673 DreamMaker leaves out the null tests of `a?.b ||= v` and `&&=`; dmasm keeps them
+// Known -516.1672: /proc/n2_or_v  before 516.1673 DreamMaker leaves out the null tests of `a?.b ||= v` and `&&=`; dmasm keeps them
+// Known -516.1672: /proc/n2_or_vm  before 516.1673 DreamMaker leaves out the null tests of `a?.b ||= v` and `&&=`; dmasm keeps them
+// Known -516.1672: /proc/n2_and_s  before 516.1673 DreamMaker leaves out the null tests of `a?.b ||= v` and `&&=`; dmasm keeps them
+// Known -516.1672: /proc/n2_and_sm  before 516.1673 DreamMaker leaves out the null tests of `a?.b ||= v` and `&&=`; dmasm keeps them
+// Known -516.1672: /proc/n2_and_v  before 516.1673 DreamMaker leaves out the null tests of `a?.b ||= v` and `&&=`; dmasm keeps them
+// Known -516.1672: /proc/n2_and_vm  before 516.1673 DreamMaker leaves out the null tests of `a?.b ||= v` and `&&=`; dmasm keeps them
+// Known: /proc/n3_set_s  DreamMaker uses what the arguments or the value left in the cache as the receiver (a BYOND bug, which dmasm warns of); dmasm uses h
+// Known: /proc/n3_set_sm  DreamMaker uses what the arguments or the value left in the cache as the receiver (a BYOND bug, which dmasm warns of); dmasm uses h
+// Known: /proc/n3_set_v  DreamMaker uses what the arguments or the value left in the cache as the receiver (a BYOND bug, which dmasm warns of); dmasm uses h
+// Known: /proc/n3_set_vm  DreamMaker uses what the arguments or the value left in the cache as the receiver (a BYOND bug, which dmasm warns of); dmasm uses h
+// Known: /proc/n3_add_s  DreamMaker uses what the arguments or the value left in the cache as the receiver (a BYOND bug, which dmasm warns of); dmasm uses h
+// Known: /proc/n3_add_sm  DreamMaker uses what the arguments or the value left in the cache as the receiver (a BYOND bug, which dmasm warns of); dmasm uses h
+// Known: /proc/n3_add_v  DreamMaker uses what the arguments or the value left in the cache as the receiver (a BYOND bug, which dmasm warns of); dmasm uses h
+// Known: /proc/n3_add_vm  DreamMaker uses what the arguments or the value left in the cache as the receiver (a BYOND bug, which dmasm warns of); dmasm uses h
+// Known: /proc/n3_or_s  DreamMaker uses what the arguments or the value left in the cache as the receiver (a BYOND bug, which dmasm warns of); dmasm uses h
+// Known: /proc/n3_or_sm  DreamMaker uses what the arguments or the value left in the cache as the receiver (a BYOND bug, which dmasm warns of); dmasm uses h
+// Known: /proc/n3_or_v  DreamMaker uses what the arguments or the value left in the cache as the receiver (a BYOND bug, which dmasm warns of); dmasm uses h
+// Known: /proc/n3_or_vm  DreamMaker uses what the arguments or the value left in the cache as the receiver (a BYOND bug, which dmasm warns of); dmasm uses h
+// Known: /proc/n3_and_s  DreamMaker uses what the arguments or the value left in the cache as the receiver (a BYOND bug, which dmasm warns of); dmasm uses h
+// Known: /proc/n3_and_sm  DreamMaker uses what the arguments or the value left in the cache as the receiver (a BYOND bug, which dmasm warns of); dmasm uses h
+// Known: /proc/n3_and_v  DreamMaker uses what the arguments or the value left in the cache as the receiver (a BYOND bug, which dmasm warns of); dmasm uses h
+// Known: /proc/n3_and_vm  DreamMaker uses what the arguments or the value left in the cache as the receiver (a BYOND bug, which dmasm warns of); dmasm uses h
+// Known: /proc/n4_set_s  DreamMaker uses what the arguments or the value left in the cache as the receiver (a BYOND bug, which dmasm warns of); dmasm uses h
+// Known: /proc/n4_set_sm  DreamMaker uses what the arguments or the value left in the cache as the receiver (a BYOND bug, which dmasm warns of); dmasm uses h
+// Known: /proc/n4_set_v  DreamMaker uses what the arguments or the value left in the cache as the receiver (a BYOND bug, which dmasm warns of); dmasm uses h
+// Known: /proc/n4_set_vm  DreamMaker uses what the arguments or the value left in the cache as the receiver (a BYOND bug, which dmasm warns of); dmasm uses h
+// Known: /proc/n4_add_s  DreamMaker uses what the arguments or the value left in the cache as the receiver (a BYOND bug, which dmasm warns of); dmasm uses h
+// Known: /proc/n4_add_sm  DreamMaker uses what the arguments or the value left in the cache as the receiver (a BYOND bug, which dmasm warns of); dmasm uses h
+// Known: /proc/n4_add_v  DreamMaker uses what the arguments or the value left in the cache as the receiver (a BYOND bug, which dmasm warns of); dmasm uses h
+// Known: /proc/n4_add_vm  DreamMaker uses what the arguments or the value left in the cache as the receiver (a BYOND bug, which dmasm warns of); dmasm uses h
+// Known: /proc/n4_or_s  DreamMaker uses what the arguments or the value left in the cache as the receiver (a BYOND bug, which dmasm warns of); dmasm uses h
+// Known: /proc/n4_or_sm  DreamMaker uses what the arguments or the value left in the cache as the receiver (a BYOND bug, which dmasm warns of); dmasm uses h
+// Known: /proc/n4_or_v  DreamMaker uses what the arguments or the value left in the cache as the receiver (a BYOND bug, which dmasm warns of); dmasm uses h
+// Known: /proc/n4_or_vm  DreamMaker uses what the arguments or the value left in the cache as the receiver (a BYOND bug, which dmasm warns of); dmasm uses h
+// Known: /proc/n4_and_s  DreamMaker uses what the arguments or the value left in the cache as the receiver (a BYOND bug, which dmasm warns of); dmasm uses h
+// Known: /proc/n4_and_sm  DreamMaker uses what the arguments or the value left in the cache as the receiver (a BYOND bug, which dmasm warns of); dmasm uses h
+// Known: /proc/n4_and_v  DreamMaker uses what the arguments or the value left in the cache as the receiver (a BYOND bug, which dmasm warns of); dmasm uses h
+// Known: /proc/n4_and_vm  DreamMaker uses what the arguments or the value left in the cache as the receiver (a BYOND bug, which dmasm warns of); dmasm uses h
+// Known: /proc/n5_set_s  DreamMaker uses what the arguments or the value left in the cache as the receiver (a BYOND bug, which dmasm warns of); dmasm uses h
+// Known: /proc/n5_set_sm  DreamMaker uses what the arguments or the value left in the cache as the receiver (a BYOND bug, which dmasm warns of); dmasm uses h
+// Known: /proc/n5_set_v  DreamMaker uses what the arguments or the value left in the cache as the receiver (a BYOND bug, which dmasm warns of); dmasm uses h
+// Known: /proc/n5_set_vm  DreamMaker uses what the arguments or the value left in the cache as the receiver (a BYOND bug, which dmasm warns of); dmasm uses h
+// Known: /proc/n5_add_s  DreamMaker uses what the arguments or the value left in the cache as the receiver (a BYOND bug, which dmasm warns of); dmasm uses h
+// Known: /proc/n5_add_sm  DreamMaker uses what the arguments or the value left in the cache as the receiver (a BYOND bug, which dmasm warns of); dmasm uses h
+// Known: /proc/n5_add_v  DreamMaker uses what the arguments or the value left in the cache as the receiver (a BYOND bug, which dmasm warns of); dmasm uses h
+// Known: /proc/n5_add_vm  DreamMaker uses what the arguments or the value left in the cache as the receiver (a BYOND bug, which dmasm warns of); dmasm uses h
+// Known: /proc/n5_or_s  DreamMaker uses what the arguments or the value left in the cache as the receiver (a BYOND bug, which dmasm warns of); dmasm uses h
+// Known: /proc/n5_or_sm  DreamMaker uses what the arguments or the value left in the cache as the receiver (a BYOND bug, which dmasm warns of); dmasm uses h
+// Known: /proc/n5_or_v  DreamMaker uses what the arguments or the value left in the cache as the receiver (a BYOND bug, which dmasm warns of); dmasm uses h
+// Known: /proc/n5_or_vm  DreamMaker uses what the arguments or the value left in the cache as the receiver (a BYOND bug, which dmasm warns of); dmasm uses h
+// Known: /proc/n5_and_s  DreamMaker uses what the arguments or the value left in the cache as the receiver (a BYOND bug, which dmasm warns of); dmasm uses h
+// Known: /proc/n5_and_sm  DreamMaker uses what the arguments or the value left in the cache as the receiver (a BYOND bug, which dmasm warns of); dmasm uses h
+// Known: /proc/n5_and_v  DreamMaker uses what the arguments or the value left in the cache as the receiver (a BYOND bug, which dmasm warns of); dmasm uses h
+// Known: /proc/n5_and_vm  DreamMaker uses what the arguments or the value left in the cache as the receiver (a BYOND bug, which dmasm warns of); dmasm uses h
+// Known: /proc/n6_set_s  DreamMaker uses what the arguments or the value left in the cache as the receiver (a BYOND bug, which dmasm warns of); dmasm uses h
+// Known: /proc/n6_set_sm  DreamMaker uses what the arguments or the value left in the cache as the receiver (a BYOND bug, which dmasm warns of); dmasm uses h
+// Known: /proc/n6_set_v  DreamMaker uses what the arguments or the value left in the cache as the receiver (a BYOND bug, which dmasm warns of); dmasm uses h
+// Known: /proc/n6_set_vm  DreamMaker uses what the arguments or the value left in the cache as the receiver (a BYOND bug, which dmasm warns of); dmasm uses h
+// Known: /proc/n6_add_s  DreamMaker uses what the arguments or the value left in the cache as the receiver (a BYOND bug, which dmasm warns of); dmasm uses h
+// Known: /proc/n6_add_sm  DreamMaker uses what the arguments or the value left in the cache as the receiver (a BYOND bug, which dmasm warns of); dmasm uses h
+// Known: /proc/n6_add_v  DreamMaker uses what the arguments or the value left in the cache as the receiver (a BYOND bug, which dmasm warns of); dmasm uses h
+// Known: /proc/n6_add_vm  DreamMaker uses what the arguments or the value left in the cache as the receiver (a BYOND bug, which dmasm warns of); dmasm uses h
+// Known: /proc/n6_or_s  DreamMaker uses what the arguments or the value left in the cache as the receiver (a BYOND bug, which dmasm warns of); dmasm uses h
+// Known: /proc/n6_or_sm  DreamMaker uses what the arguments or the value left in the cache as the receiver (a BYOND bug, which dmasm warns of); dmasm uses h
+// Known: /proc/n6_or_v  DreamMaker uses what the arguments or the value left in the cache as the receiver (a BYOND bug, which dmasm warns of); dmasm uses h
+// Known: /proc/n6_or_vm  DreamMaker uses what the arguments or the value left in the cache as the receiver (a BYOND bug, which dmasm warns of); dmasm uses h
+// Known: /proc/n6_and_s  DreamMaker uses what the arguments or the value left in the cache as the receiver (a BYOND bug, which dmasm warns of); dmasm uses h
+// Known: /proc/n6_and_sm  DreamMaker uses what the arguments or the value left in the cache as the receiver (a BYOND bug, which dmasm warns of); dmasm uses h
+// Known: /proc/n6_and_v  DreamMaker uses what the arguments or the value left in the cache as the receiver (a BYOND bug, which dmasm warns of); dmasm uses h
+// Known: /proc/n6_and_vm  DreamMaker uses what the arguments or the value left in the cache as the receiver (a BYOND bug, which dmasm warns of); dmasm uses h
+// Known: /proc/n7_set_sm  DreamMaker uses what the arguments or the value left in the cache as the receiver (a BYOND bug, which dmasm warns of); dmasm uses h
+// Known: /proc/n7_set_vm  DreamMaker uses what the arguments or the value left in the cache as the receiver (a BYOND bug, which dmasm warns of); dmasm uses h
+// Known: /proc/n7_add_sm  DreamMaker uses what the arguments or the value left in the cache as the receiver (a BYOND bug, which dmasm warns of); dmasm uses h
+// Known: /proc/n7_add_vm  DreamMaker uses what the arguments or the value left in the cache as the receiver (a BYOND bug, which dmasm warns of); dmasm uses h
+// Known -516.1672: /proc/n7_or_s  before 516.1673 DreamMaker leaves out the null tests of `a?.b ||= v` and `&&=`; dmasm keeps them
+// Known -516.1672: /proc/n7_or_sm  before 516.1673 DreamMaker leaves out the null tests of `a?.b ||= v` and `&&=`; dmasm keeps them
+// Known -516.1672: /proc/n7_or_v  before 516.1673 DreamMaker leaves out the null tests of `a?.b ||= v` and `&&=`; dmasm keeps them
+// Known -516.1672: /proc/n7_or_vm  before 516.1673 DreamMaker leaves out the null tests of `a?.b ||= v` and `&&=`; dmasm keeps them
+// Known -516.1672: /proc/n7_and_s  before 516.1673 DreamMaker leaves out the null tests of `a?.b ||= v` and `&&=`; dmasm keeps them
+// Known -516.1672: /proc/n7_and_sm  before 516.1673 DreamMaker leaves out the null tests of `a?.b ||= v` and `&&=`; dmasm keeps them
+// Known -516.1672: /proc/n7_and_v  before 516.1673 DreamMaker leaves out the null tests of `a?.b ||= v` and `&&=`; dmasm keeps them
+// Known -516.1672: /proc/n7_and_vm  before 516.1673 DreamMaker leaves out the null tests of `a?.b ||= v` and `&&=`; dmasm keeps them
+// Known: /proc/n1_inc_s  DreamMaker uses what the arguments or the value left in the cache as the receiver (a BYOND bug, which dmasm warns of); dmasm uses h
+// Known: /proc/n1_inc_v  DreamMaker uses what the arguments or the value left in the cache as the receiver (a BYOND bug, which dmasm warns of); dmasm uses h
+// Known: /proc/n3_inc_s  DreamMaker uses what the arguments or the value left in the cache as the receiver (a BYOND bug, which dmasm warns of); dmasm uses h
+// Known: /proc/n3_inc_v  DreamMaker uses what the arguments or the value left in the cache as the receiver (a BYOND bug, which dmasm warns of); dmasm uses h
+// Known: /proc/n4_inc_s  DreamMaker uses what the arguments or the value left in the cache as the receiver (a BYOND bug, which dmasm warns of); dmasm uses h
+// Known: /proc/n4_inc_v  DreamMaker uses what the arguments or the value left in the cache as the receiver (a BYOND bug, which dmasm warns of); dmasm uses h
+// Known: /proc/n5_inc_s  DreamMaker uses what the arguments or the value left in the cache as the receiver (a BYOND bug, which dmasm warns of); dmasm uses h
+// Known: /proc/n5_inc_v  DreamMaker uses what the arguments or the value left in the cache as the receiver (a BYOND bug, which dmasm warns of); dmasm uses h
+// Known: /proc/n6_inc_s  DreamMaker uses what the arguments or the value left in the cache as the receiver (a BYOND bug, which dmasm warns of); dmasm uses h
+// Known: /proc/n6_inc_v  DreamMaker uses what the arguments or the value left in the cache as the receiver (a BYOND bug, which dmasm warns of); dmasm uses h
 /datum/h
 	var/v
 	var/datum/h/c
 	var/list/l
-/datum/h/proc/m()
+/datum/h/proc/m(a)
 	return src
-/proc/f1_set_s(datum/h/h, list/l, i, x)
+/proc/f1_set_s(datum/h/h, list/l, i, x, datum/h/y)
 	h?.v = x
-/proc/f1_set_sm(datum/h/h, list/l, i, datum/h/x)
+/proc/f1_set_sm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	h?.v = x.v
-/proc/f1_set_v(datum/h/h, list/l, i, x)
+/proc/f1_set_v(datum/h/h, list/l, i, x, datum/h/y)
 	return (h?.v = x)
-/proc/f1_set_vm(datum/h/h, list/l, i, datum/h/x)
+/proc/f1_set_vm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	return (h?.v = x.v)
-/proc/f1_add_s(datum/h/h, list/l, i, x)
+/proc/f1_add_s(datum/h/h, list/l, i, x, datum/h/y)
 	h?.v += x
-/proc/f1_add_sm(datum/h/h, list/l, i, datum/h/x)
+/proc/f1_add_sm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	h?.v += x.v
-/proc/f1_add_v(datum/h/h, list/l, i, x)
+/proc/f1_add_v(datum/h/h, list/l, i, x, datum/h/y)
 	return (h?.v += x)
-/proc/f1_add_vm(datum/h/h, list/l, i, datum/h/x)
+/proc/f1_add_vm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	return (h?.v += x.v)
-/proc/f1_or_s(datum/h/h, list/l, i, x)
+/proc/f1_or_s(datum/h/h, list/l, i, x, datum/h/y)
 	h?.v ||= x
-/proc/f1_or_sm(datum/h/h, list/l, i, datum/h/x)
+/proc/f1_or_sm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	h?.v ||= x.v
-/proc/f1_or_v(datum/h/h, list/l, i, x)
+/proc/f1_or_v(datum/h/h, list/l, i, x, datum/h/y)
 	return (h?.v ||= x)
-/proc/f1_or_vm(datum/h/h, list/l, i, datum/h/x)
+/proc/f1_or_vm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	return (h?.v ||= x.v)
-/proc/f1_and_s(datum/h/h, list/l, i, x)
+/proc/f1_and_s(datum/h/h, list/l, i, x, datum/h/y)
 	h?.v &&= x
-/proc/f1_and_sm(datum/h/h, list/l, i, datum/h/x)
+/proc/f1_and_sm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	h?.v &&= x.v
-/proc/f1_and_v(datum/h/h, list/l, i, x)
+/proc/f1_and_v(datum/h/h, list/l, i, x, datum/h/y)
 	return (h?.v &&= x)
-/proc/f1_and_vm(datum/h/h, list/l, i, datum/h/x)
+/proc/f1_and_vm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	return (h?.v &&= x.v)
-/proc/f2_set_s(datum/h/h, list/l, i, x)
+/proc/f2_set_s(datum/h/h, list/l, i, x, datum/h/y)
 	h?.c?.v = x
-/proc/f2_set_sm(datum/h/h, list/l, i, datum/h/x)
+/proc/f2_set_sm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	h?.c?.v = x.v
-/proc/f2_set_v(datum/h/h, list/l, i, x)
+/proc/f2_set_v(datum/h/h, list/l, i, x, datum/h/y)
 	return (h?.c?.v = x)
-/proc/f2_set_vm(datum/h/h, list/l, i, datum/h/x)
+/proc/f2_set_vm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	return (h?.c?.v = x.v)
-/proc/f2_add_s(datum/h/h, list/l, i, x)
+/proc/f2_add_s(datum/h/h, list/l, i, x, datum/h/y)
 	h?.c?.v += x
-/proc/f2_add_sm(datum/h/h, list/l, i, datum/h/x)
+/proc/f2_add_sm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	h?.c?.v += x.v
-/proc/f2_add_v(datum/h/h, list/l, i, x)
+/proc/f2_add_v(datum/h/h, list/l, i, x, datum/h/y)
 	return (h?.c?.v += x)
-/proc/f2_add_vm(datum/h/h, list/l, i, datum/h/x)
+/proc/f2_add_vm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	return (h?.c?.v += x.v)
-/proc/f2_or_s(datum/h/h, list/l, i, x)
+/proc/f2_or_s(datum/h/h, list/l, i, x, datum/h/y)
 	h?.c?.v ||= x
-/proc/f2_or_sm(datum/h/h, list/l, i, datum/h/x)
+/proc/f2_or_sm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	h?.c?.v ||= x.v
-/proc/f2_or_v(datum/h/h, list/l, i, x)
+/proc/f2_or_v(datum/h/h, list/l, i, x, datum/h/y)
 	return (h?.c?.v ||= x)
-/proc/f2_or_vm(datum/h/h, list/l, i, datum/h/x)
+/proc/f2_or_vm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	return (h?.c?.v ||= x.v)
-/proc/f2_and_s(datum/h/h, list/l, i, x)
+/proc/f2_and_s(datum/h/h, list/l, i, x, datum/h/y)
 	h?.c?.v &&= x
-/proc/f2_and_sm(datum/h/h, list/l, i, datum/h/x)
+/proc/f2_and_sm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	h?.c?.v &&= x.v
-/proc/f2_and_v(datum/h/h, list/l, i, x)
+/proc/f2_and_v(datum/h/h, list/l, i, x, datum/h/y)
 	return (h?.c?.v &&= x)
-/proc/f2_and_vm(datum/h/h, list/l, i, datum/h/x)
+/proc/f2_and_vm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	return (h?.c?.v &&= x.v)
-/proc/f3_set_s(datum/h/h, list/l, i, x)
+/proc/f3_set_s(datum/h/h, list/l, i, x, datum/h/y)
 	h?.c.v = x
-/proc/f3_set_sm(datum/h/h, list/l, i, datum/h/x)
+/proc/f3_set_sm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	h?.c.v = x.v
-/proc/f3_set_v(datum/h/h, list/l, i, x)
+/proc/f3_set_v(datum/h/h, list/l, i, x, datum/h/y)
 	return (h?.c.v = x)
-/proc/f3_set_vm(datum/h/h, list/l, i, datum/h/x)
+/proc/f3_set_vm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	return (h?.c.v = x.v)
-/proc/f3_add_s(datum/h/h, list/l, i, x)
+/proc/f3_add_s(datum/h/h, list/l, i, x, datum/h/y)
 	h?.c.v += x
-/proc/f3_add_sm(datum/h/h, list/l, i, datum/h/x)
+/proc/f3_add_sm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	h?.c.v += x.v
-/proc/f3_add_v(datum/h/h, list/l, i, x)
+/proc/f3_add_v(datum/h/h, list/l, i, x, datum/h/y)
 	return (h?.c.v += x)
-/proc/f3_add_vm(datum/h/h, list/l, i, datum/h/x)
+/proc/f3_add_vm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	return (h?.c.v += x.v)
-/proc/f3_or_s(datum/h/h, list/l, i, x)
+/proc/f3_or_s(datum/h/h, list/l, i, x, datum/h/y)
 	h?.c.v ||= x
-/proc/f3_or_sm(datum/h/h, list/l, i, datum/h/x)
+/proc/f3_or_sm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	h?.c.v ||= x.v
-/proc/f3_or_v(datum/h/h, list/l, i, x)
+/proc/f3_or_v(datum/h/h, list/l, i, x, datum/h/y)
 	return (h?.c.v ||= x)
-/proc/f3_or_vm(datum/h/h, list/l, i, datum/h/x)
+/proc/f3_or_vm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	return (h?.c.v ||= x.v)
-/proc/f3_and_s(datum/h/h, list/l, i, x)
+/proc/f3_and_s(datum/h/h, list/l, i, x, datum/h/y)
 	h?.c.v &&= x
-/proc/f3_and_sm(datum/h/h, list/l, i, datum/h/x)
+/proc/f3_and_sm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	h?.c.v &&= x.v
-/proc/f3_and_v(datum/h/h, list/l, i, x)
+/proc/f3_and_v(datum/h/h, list/l, i, x, datum/h/y)
 	return (h?.c.v &&= x)
-/proc/f3_and_vm(datum/h/h, list/l, i, datum/h/x)
+/proc/f3_and_vm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	return (h?.c.v &&= x.v)
-/proc/f4_set_s(datum/h/h, list/l, i, x)
+/proc/f4_set_s(datum/h/h, list/l, i, x, datum/h/y)
 	h.c?.v = x
-/proc/f4_set_sm(datum/h/h, list/l, i, datum/h/x)
+/proc/f4_set_sm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	h.c?.v = x.v
-/proc/f4_set_v(datum/h/h, list/l, i, x)
+/proc/f4_set_v(datum/h/h, list/l, i, x, datum/h/y)
 	return (h.c?.v = x)
-/proc/f4_set_vm(datum/h/h, list/l, i, datum/h/x)
+/proc/f4_set_vm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	return (h.c?.v = x.v)
-/proc/f4_add_s(datum/h/h, list/l, i, x)
+/proc/f4_add_s(datum/h/h, list/l, i, x, datum/h/y)
 	h.c?.v += x
-/proc/f4_add_sm(datum/h/h, list/l, i, datum/h/x)
+/proc/f4_add_sm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	h.c?.v += x.v
-/proc/f4_add_v(datum/h/h, list/l, i, x)
+/proc/f4_add_v(datum/h/h, list/l, i, x, datum/h/y)
 	return (h.c?.v += x)
-/proc/f4_add_vm(datum/h/h, list/l, i, datum/h/x)
+/proc/f4_add_vm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	return (h.c?.v += x.v)
-/proc/f4_or_s(datum/h/h, list/l, i, x)
+/proc/f4_or_s(datum/h/h, list/l, i, x, datum/h/y)
 	h.c?.v ||= x
-/proc/f4_or_sm(datum/h/h, list/l, i, datum/h/x)
+/proc/f4_or_sm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	h.c?.v ||= x.v
-/proc/f4_or_v(datum/h/h, list/l, i, x)
+/proc/f4_or_v(datum/h/h, list/l, i, x, datum/h/y)
 	return (h.c?.v ||= x)
-/proc/f4_or_vm(datum/h/h, list/l, i, datum/h/x)
+/proc/f4_or_vm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	return (h.c?.v ||= x.v)
-/proc/f4_and_s(datum/h/h, list/l, i, x)
+/proc/f4_and_s(datum/h/h, list/l, i, x, datum/h/y)
 	h.c?.v &&= x
-/proc/f4_and_sm(datum/h/h, list/l, i, datum/h/x)
+/proc/f4_and_sm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	h.c?.v &&= x.v
-/proc/f4_and_v(datum/h/h, list/l, i, x)
+/proc/f4_and_v(datum/h/h, list/l, i, x, datum/h/y)
 	return (h.c?.v &&= x)
-/proc/f4_and_vm(datum/h/h, list/l, i, datum/h/x)
+/proc/f4_and_vm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	return (h.c?.v &&= x.v)
-/proc/f5_set_s(datum/h/h, list/l, i, x)
+/proc/f5_set_s(datum/h/h, list/l, i, x, datum/h/y)
 	h?.c?.c?.v = x
-/proc/f5_set_sm(datum/h/h, list/l, i, datum/h/x)
+/proc/f5_set_sm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	h?.c?.c?.v = x.v
-/proc/f5_set_v(datum/h/h, list/l, i, x)
+/proc/f5_set_v(datum/h/h, list/l, i, x, datum/h/y)
 	return (h?.c?.c?.v = x)
-/proc/f5_set_vm(datum/h/h, list/l, i, datum/h/x)
+/proc/f5_set_vm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	return (h?.c?.c?.v = x.v)
-/proc/f5_add_s(datum/h/h, list/l, i, x)
+/proc/f5_add_s(datum/h/h, list/l, i, x, datum/h/y)
 	h?.c?.c?.v += x
-/proc/f5_add_sm(datum/h/h, list/l, i, datum/h/x)
+/proc/f5_add_sm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	h?.c?.c?.v += x.v
-/proc/f5_add_v(datum/h/h, list/l, i, x)
+/proc/f5_add_v(datum/h/h, list/l, i, x, datum/h/y)
 	return (h?.c?.c?.v += x)
-/proc/f5_add_vm(datum/h/h, list/l, i, datum/h/x)
+/proc/f5_add_vm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	return (h?.c?.c?.v += x.v)
-/proc/f5_or_s(datum/h/h, list/l, i, x)
+/proc/f5_or_s(datum/h/h, list/l, i, x, datum/h/y)
 	h?.c?.c?.v ||= x
-/proc/f5_or_sm(datum/h/h, list/l, i, datum/h/x)
+/proc/f5_or_sm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	h?.c?.c?.v ||= x.v
-/proc/f5_or_v(datum/h/h, list/l, i, x)
+/proc/f5_or_v(datum/h/h, list/l, i, x, datum/h/y)
 	return (h?.c?.c?.v ||= x)
-/proc/f5_or_vm(datum/h/h, list/l, i, datum/h/x)
+/proc/f5_or_vm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	return (h?.c?.c?.v ||= x.v)
-/proc/f5_and_s(datum/h/h, list/l, i, x)
+/proc/f5_and_s(datum/h/h, list/l, i, x, datum/h/y)
 	h?.c?.c?.v &&= x
-/proc/f5_and_sm(datum/h/h, list/l, i, datum/h/x)
+/proc/f5_and_sm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	h?.c?.c?.v &&= x.v
-/proc/f5_and_v(datum/h/h, list/l, i, x)
+/proc/f5_and_v(datum/h/h, list/l, i, x, datum/h/y)
 	return (h?.c?.c?.v &&= x)
-/proc/f5_and_vm(datum/h/h, list/l, i, datum/h/x)
+/proc/f5_and_vm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	return (h?.c?.c?.v &&= x.v)
-/proc/e1_set_s(datum/h/h, list/l, i, x)
+/proc/e1_set_s(datum/h/h, list/l, i, x, datum/h/y)
 	h?.l[i] = x
-/proc/e1_set_sm(datum/h/h, list/l, i, datum/h/x)
+/proc/e1_set_sm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	h?.l[i] = x.v
-/proc/e1_set_v(datum/h/h, list/l, i, x)
+/proc/e1_set_v(datum/h/h, list/l, i, x, datum/h/y)
 	return (h?.l[i] = x)
-/proc/e1_set_vm(datum/h/h, list/l, i, datum/h/x)
+/proc/e1_set_vm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	return (h?.l[i] = x.v)
-/proc/e1_add_s(datum/h/h, list/l, i, x)
+/proc/e1_add_s(datum/h/h, list/l, i, x, datum/h/y)
 	h?.l[i] += x
-/proc/e1_add_sm(datum/h/h, list/l, i, datum/h/x)
+/proc/e1_add_sm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	h?.l[i] += x.v
-/proc/e1_add_v(datum/h/h, list/l, i, x)
+/proc/e1_add_v(datum/h/h, list/l, i, x, datum/h/y)
 	return (h?.l[i] += x)
-/proc/e1_add_vm(datum/h/h, list/l, i, datum/h/x)
+/proc/e1_add_vm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	return (h?.l[i] += x.v)
-/proc/e1_or_s(datum/h/h, list/l, i, x)
+/proc/e1_or_s(datum/h/h, list/l, i, x, datum/h/y)
 	h?.l[i] ||= x
-/proc/e1_or_sm(datum/h/h, list/l, i, datum/h/x)
+/proc/e1_or_sm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	h?.l[i] ||= x.v
-/proc/e1_or_v(datum/h/h, list/l, i, x)
+/proc/e1_or_v(datum/h/h, list/l, i, x, datum/h/y)
 	return (h?.l[i] ||= x)
-/proc/e1_or_vm(datum/h/h, list/l, i, datum/h/x)
+/proc/e1_or_vm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	return (h?.l[i] ||= x.v)
-/proc/e1_and_s(datum/h/h, list/l, i, x)
+/proc/e1_and_s(datum/h/h, list/l, i, x, datum/h/y)
 	h?.l[i] &&= x
-/proc/e1_and_sm(datum/h/h, list/l, i, datum/h/x)
+/proc/e1_and_sm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	h?.l[i] &&= x.v
-/proc/e1_and_v(datum/h/h, list/l, i, x)
+/proc/e1_and_v(datum/h/h, list/l, i, x, datum/h/y)
 	return (h?.l[i] &&= x)
-/proc/e1_and_vm(datum/h/h, list/l, i, datum/h/x)
+/proc/e1_and_vm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	return (h?.l[i] &&= x.v)
-/proc/e2_set_s(datum/h/h, list/l, i, x)
+/proc/e2_set_s(datum/h/h, list/l, i, x, datum/h/y)
 	h?.c?.l[i] = x
-/proc/e2_set_sm(datum/h/h, list/l, i, datum/h/x)
+/proc/e2_set_sm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	h?.c?.l[i] = x.v
-/proc/e2_set_v(datum/h/h, list/l, i, x)
+/proc/e2_set_v(datum/h/h, list/l, i, x, datum/h/y)
 	return (h?.c?.l[i] = x)
-/proc/e2_set_vm(datum/h/h, list/l, i, datum/h/x)
+/proc/e2_set_vm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	return (h?.c?.l[i] = x.v)
-/proc/e2_add_s(datum/h/h, list/l, i, x)
+/proc/e2_add_s(datum/h/h, list/l, i, x, datum/h/y)
 	h?.c?.l[i] += x
-/proc/e2_add_sm(datum/h/h, list/l, i, datum/h/x)
+/proc/e2_add_sm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	h?.c?.l[i] += x.v
-/proc/e2_add_v(datum/h/h, list/l, i, x)
+/proc/e2_add_v(datum/h/h, list/l, i, x, datum/h/y)
 	return (h?.c?.l[i] += x)
-/proc/e2_add_vm(datum/h/h, list/l, i, datum/h/x)
+/proc/e2_add_vm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	return (h?.c?.l[i] += x.v)
-/proc/e2_or_s(datum/h/h, list/l, i, x)
+/proc/e2_or_s(datum/h/h, list/l, i, x, datum/h/y)
 	h?.c?.l[i] ||= x
-/proc/e2_or_sm(datum/h/h, list/l, i, datum/h/x)
+/proc/e2_or_sm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	h?.c?.l[i] ||= x.v
-/proc/e2_or_v(datum/h/h, list/l, i, x)
+/proc/e2_or_v(datum/h/h, list/l, i, x, datum/h/y)
 	return (h?.c?.l[i] ||= x)
-/proc/e2_or_vm(datum/h/h, list/l, i, datum/h/x)
+/proc/e2_or_vm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	return (h?.c?.l[i] ||= x.v)
-/proc/e2_and_s(datum/h/h, list/l, i, x)
+/proc/e2_and_s(datum/h/h, list/l, i, x, datum/h/y)
 	h?.c?.l[i] &&= x
-/proc/e2_and_sm(datum/h/h, list/l, i, datum/h/x)
+/proc/e2_and_sm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	h?.c?.l[i] &&= x.v
-/proc/e2_and_v(datum/h/h, list/l, i, x)
+/proc/e2_and_v(datum/h/h, list/l, i, x, datum/h/y)
 	return (h?.c?.l[i] &&= x)
-/proc/e2_and_vm(datum/h/h, list/l, i, datum/h/x)
+/proc/e2_and_vm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	return (h?.c?.l[i] &&= x.v)
-/proc/e3_set_s(datum/h/h, list/l, i, x)
+/proc/e3_set_s(datum/h/h, list/l, i, x, datum/h/y)
 	h?.c.l[i] = x
-/proc/e3_set_sm(datum/h/h, list/l, i, datum/h/x)
+/proc/e3_set_sm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	h?.c.l[i] = x.v
-/proc/e3_set_v(datum/h/h, list/l, i, x)
+/proc/e3_set_v(datum/h/h, list/l, i, x, datum/h/y)
 	return (h?.c.l[i] = x)
-/proc/e3_set_vm(datum/h/h, list/l, i, datum/h/x)
+/proc/e3_set_vm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	return (h?.c.l[i] = x.v)
-/proc/e3_add_s(datum/h/h, list/l, i, x)
+/proc/e3_add_s(datum/h/h, list/l, i, x, datum/h/y)
 	h?.c.l[i] += x
-/proc/e3_add_sm(datum/h/h, list/l, i, datum/h/x)
+/proc/e3_add_sm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	h?.c.l[i] += x.v
-/proc/e3_add_v(datum/h/h, list/l, i, x)
+/proc/e3_add_v(datum/h/h, list/l, i, x, datum/h/y)
 	return (h?.c.l[i] += x)
-/proc/e3_add_vm(datum/h/h, list/l, i, datum/h/x)
+/proc/e3_add_vm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	return (h?.c.l[i] += x.v)
-/proc/e3_or_s(datum/h/h, list/l, i, x)
+/proc/e3_or_s(datum/h/h, list/l, i, x, datum/h/y)
 	h?.c.l[i] ||= x
-/proc/e3_or_sm(datum/h/h, list/l, i, datum/h/x)
+/proc/e3_or_sm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	h?.c.l[i] ||= x.v
-/proc/e3_or_v(datum/h/h, list/l, i, x)
+/proc/e3_or_v(datum/h/h, list/l, i, x, datum/h/y)
 	return (h?.c.l[i] ||= x)
-/proc/e3_or_vm(datum/h/h, list/l, i, datum/h/x)
+/proc/e3_or_vm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	return (h?.c.l[i] ||= x.v)
-/proc/e3_and_s(datum/h/h, list/l, i, x)
+/proc/e3_and_s(datum/h/h, list/l, i, x, datum/h/y)
 	h?.c.l[i] &&= x
-/proc/e3_and_sm(datum/h/h, list/l, i, datum/h/x)
+/proc/e3_and_sm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	h?.c.l[i] &&= x.v
-/proc/e3_and_v(datum/h/h, list/l, i, x)
+/proc/e3_and_v(datum/h/h, list/l, i, x, datum/h/y)
 	return (h?.c.l[i] &&= x)
-/proc/e3_and_vm(datum/h/h, list/l, i, datum/h/x)
+/proc/e3_and_vm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	return (h?.c.l[i] &&= x.v)
-/proc/e4_set_s(datum/h/h, list/l, i, x)
+/proc/e4_set_s(datum/h/h, list/l, i, x, datum/h/y)
 	l?[i] = x
-/proc/e4_set_sm(datum/h/h, list/l, i, datum/h/x)
+/proc/e4_set_sm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	l?[i] = x.v
-/proc/e4_set_v(datum/h/h, list/l, i, x)
+/proc/e4_set_v(datum/h/h, list/l, i, x, datum/h/y)
 	return (l?[i] = x)
-/proc/e4_set_vm(datum/h/h, list/l, i, datum/h/x)
+/proc/e4_set_vm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	return (l?[i] = x.v)
-/proc/e4_add_s(datum/h/h, list/l, i, x)
+/proc/e4_add_s(datum/h/h, list/l, i, x, datum/h/y)
 	l?[i] += x
-/proc/e4_add_sm(datum/h/h, list/l, i, datum/h/x)
+/proc/e4_add_sm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	l?[i] += x.v
-/proc/e4_add_v(datum/h/h, list/l, i, x)
+/proc/e4_add_v(datum/h/h, list/l, i, x, datum/h/y)
 	return (l?[i] += x)
-/proc/e4_add_vm(datum/h/h, list/l, i, datum/h/x)
+/proc/e4_add_vm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	return (l?[i] += x.v)
-/proc/e4_or_s(datum/h/h, list/l, i, x)
+/proc/e4_or_s(datum/h/h, list/l, i, x, datum/h/y)
 	l?[i] ||= x
-/proc/e4_or_sm(datum/h/h, list/l, i, datum/h/x)
+/proc/e4_or_sm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	l?[i] ||= x.v
-/proc/e4_or_v(datum/h/h, list/l, i, x)
+/proc/e4_or_v(datum/h/h, list/l, i, x, datum/h/y)
 	return (l?[i] ||= x)
-/proc/e4_or_vm(datum/h/h, list/l, i, datum/h/x)
+/proc/e4_or_vm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	return (l?[i] ||= x.v)
-/proc/e4_and_s(datum/h/h, list/l, i, x)
+/proc/e4_and_s(datum/h/h, list/l, i, x, datum/h/y)
 	l?[i] &&= x
-/proc/e4_and_sm(datum/h/h, list/l, i, datum/h/x)
+/proc/e4_and_sm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	l?[i] &&= x.v
-/proc/e4_and_v(datum/h/h, list/l, i, x)
+/proc/e4_and_v(datum/h/h, list/l, i, x, datum/h/y)
 	return (l?[i] &&= x)
-/proc/e4_and_vm(datum/h/h, list/l, i, datum/h/x)
+/proc/e4_and_vm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	return (l?[i] &&= x.v)
-/proc/e5_set_s(datum/h/h, list/l, i, x)
+/proc/e5_set_s(datum/h/h, list/l, i, x, datum/h/y)
 	h.c?.l[i] = x
-/proc/e5_set_sm(datum/h/h, list/l, i, datum/h/x)
+/proc/e5_set_sm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	h.c?.l[i] = x.v
-/proc/e5_set_v(datum/h/h, list/l, i, x)
+/proc/e5_set_v(datum/h/h, list/l, i, x, datum/h/y)
 	return (h.c?.l[i] = x)
-/proc/e5_set_vm(datum/h/h, list/l, i, datum/h/x)
+/proc/e5_set_vm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	return (h.c?.l[i] = x.v)
-/proc/e5_add_s(datum/h/h, list/l, i, x)
+/proc/e5_add_s(datum/h/h, list/l, i, x, datum/h/y)
 	h.c?.l[i] += x
-/proc/e5_add_sm(datum/h/h, list/l, i, datum/h/x)
+/proc/e5_add_sm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	h.c?.l[i] += x.v
-/proc/e5_add_v(datum/h/h, list/l, i, x)
+/proc/e5_add_v(datum/h/h, list/l, i, x, datum/h/y)
 	return (h.c?.l[i] += x)
-/proc/e5_add_vm(datum/h/h, list/l, i, datum/h/x)
+/proc/e5_add_vm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	return (h.c?.l[i] += x.v)
-/proc/e5_or_s(datum/h/h, list/l, i, x)
+/proc/e5_or_s(datum/h/h, list/l, i, x, datum/h/y)
 	h.c?.l[i] ||= x
-/proc/e5_or_sm(datum/h/h, list/l, i, datum/h/x)
+/proc/e5_or_sm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	h.c?.l[i] ||= x.v
-/proc/e5_or_v(datum/h/h, list/l, i, x)
+/proc/e5_or_v(datum/h/h, list/l, i, x, datum/h/y)
 	return (h.c?.l[i] ||= x)
-/proc/e5_or_vm(datum/h/h, list/l, i, datum/h/x)
+/proc/e5_or_vm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	return (h.c?.l[i] ||= x.v)
-/proc/e5_and_s(datum/h/h, list/l, i, x)
+/proc/e5_and_s(datum/h/h, list/l, i, x, datum/h/y)
 	h.c?.l[i] &&= x
-/proc/e5_and_sm(datum/h/h, list/l, i, datum/h/x)
+/proc/e5_and_sm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	h.c?.l[i] &&= x.v
-/proc/e5_and_v(datum/h/h, list/l, i, x)
+/proc/e5_and_v(datum/h/h, list/l, i, x, datum/h/y)
 	return (h.c?.l[i] &&= x)
-/proc/e5_and_vm(datum/h/h, list/l, i, datum/h/x)
+/proc/e5_and_vm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	return (h.c?.l[i] &&= x.v)
-/proc/c1_set_s(datum/h/h, list/l, i, x)
+/proc/c1_set_s(datum/h/h, list/l, i, x, datum/h/y)
 	h?.m().v = x
-/proc/c1_set_sm(datum/h/h, list/l, i, datum/h/x)
+/proc/c1_set_sm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	h?.m().v = x.v
-/proc/c1_set_v(datum/h/h, list/l, i, x)
+/proc/c1_set_v(datum/h/h, list/l, i, x, datum/h/y)
 	return (h?.m().v = x)
-/proc/c1_set_vm(datum/h/h, list/l, i, datum/h/x)
+/proc/c1_set_vm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	return (h?.m().v = x.v)
-/proc/c1_add_s(datum/h/h, list/l, i, x)
+/proc/c1_add_s(datum/h/h, list/l, i, x, datum/h/y)
 	h?.m().v += x
-/proc/c1_add_sm(datum/h/h, list/l, i, datum/h/x)
+/proc/c1_add_sm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	h?.m().v += x.v
-/proc/c1_add_v(datum/h/h, list/l, i, x)
+/proc/c1_add_v(datum/h/h, list/l, i, x, datum/h/y)
 	return (h?.m().v += x)
-/proc/c1_add_vm(datum/h/h, list/l, i, datum/h/x)
+/proc/c1_add_vm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	return (h?.m().v += x.v)
-/proc/c1_or_s(datum/h/h, list/l, i, x)
+/proc/c1_or_s(datum/h/h, list/l, i, x, datum/h/y)
 	h?.m().v ||= x
-/proc/c1_or_sm(datum/h/h, list/l, i, datum/h/x)
+/proc/c1_or_sm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	h?.m().v ||= x.v
-/proc/c1_or_v(datum/h/h, list/l, i, x)
+/proc/c1_or_v(datum/h/h, list/l, i, x, datum/h/y)
 	return (h?.m().v ||= x)
-/proc/c1_or_vm(datum/h/h, list/l, i, datum/h/x)
+/proc/c1_or_vm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	return (h?.m().v ||= x.v)
-/proc/c1_and_s(datum/h/h, list/l, i, x)
+/proc/c1_and_s(datum/h/h, list/l, i, x, datum/h/y)
 	h?.m().v &&= x
-/proc/c1_and_sm(datum/h/h, list/l, i, datum/h/x)
+/proc/c1_and_sm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	h?.m().v &&= x.v
-/proc/c1_and_v(datum/h/h, list/l, i, x)
+/proc/c1_and_v(datum/h/h, list/l, i, x, datum/h/y)
 	return (h?.m().v &&= x)
-/proc/c1_and_vm(datum/h/h, list/l, i, datum/h/x)
+/proc/c1_and_vm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	return (h?.m().v &&= x.v)
-/proc/c2_set_s(datum/h/h, list/l, i, x)
+/proc/c2_set_s(datum/h/h, list/l, i, x, datum/h/y)
 	h?.c?.m().v = x
-/proc/c2_set_sm(datum/h/h, list/l, i, datum/h/x)
+/proc/c2_set_sm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	h?.c?.m().v = x.v
-/proc/c2_set_v(datum/h/h, list/l, i, x)
+/proc/c2_set_v(datum/h/h, list/l, i, x, datum/h/y)
 	return (h?.c?.m().v = x)
-/proc/c2_set_vm(datum/h/h, list/l, i, datum/h/x)
+/proc/c2_set_vm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	return (h?.c?.m().v = x.v)
-/proc/c2_add_s(datum/h/h, list/l, i, x)
+/proc/c2_add_s(datum/h/h, list/l, i, x, datum/h/y)
 	h?.c?.m().v += x
-/proc/c2_add_sm(datum/h/h, list/l, i, datum/h/x)
+/proc/c2_add_sm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	h?.c?.m().v += x.v
-/proc/c2_add_v(datum/h/h, list/l, i, x)
+/proc/c2_add_v(datum/h/h, list/l, i, x, datum/h/y)
 	return (h?.c?.m().v += x)
-/proc/c2_add_vm(datum/h/h, list/l, i, datum/h/x)
+/proc/c2_add_vm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	return (h?.c?.m().v += x.v)
-/proc/c2_or_s(datum/h/h, list/l, i, x)
+/proc/c2_or_s(datum/h/h, list/l, i, x, datum/h/y)
 	h?.c?.m().v ||= x
-/proc/c2_or_sm(datum/h/h, list/l, i, datum/h/x)
+/proc/c2_or_sm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	h?.c?.m().v ||= x.v
-/proc/c2_or_v(datum/h/h, list/l, i, x)
+/proc/c2_or_v(datum/h/h, list/l, i, x, datum/h/y)
 	return (h?.c?.m().v ||= x)
-/proc/c2_or_vm(datum/h/h, list/l, i, datum/h/x)
+/proc/c2_or_vm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	return (h?.c?.m().v ||= x.v)
-/proc/c2_and_s(datum/h/h, list/l, i, x)
+/proc/c2_and_s(datum/h/h, list/l, i, x, datum/h/y)
 	h?.c?.m().v &&= x
-/proc/c2_and_sm(datum/h/h, list/l, i, datum/h/x)
+/proc/c2_and_sm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	h?.c?.m().v &&= x.v
-/proc/c2_and_v(datum/h/h, list/l, i, x)
+/proc/c2_and_v(datum/h/h, list/l, i, x, datum/h/y)
 	return (h?.c?.m().v &&= x)
-/proc/c2_and_vm(datum/h/h, list/l, i, datum/h/x)
+/proc/c2_and_vm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	return (h?.c?.m().v &&= x.v)
-/proc/c3_set_s(datum/h/h, list/l, i, x)
+/proc/c3_set_s(datum/h/h, list/l, i, x, datum/h/y)
 	h?.m()?.v = x
-/proc/c3_set_sm(datum/h/h, list/l, i, datum/h/x)
+/proc/c3_set_sm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	h?.m()?.v = x.v
-/proc/c3_set_v(datum/h/h, list/l, i, x)
+/proc/c3_set_v(datum/h/h, list/l, i, x, datum/h/y)
 	return (h?.m()?.v = x)
-/proc/c3_set_vm(datum/h/h, list/l, i, datum/h/x)
+/proc/c3_set_vm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	return (h?.m()?.v = x.v)
-/proc/c3_add_s(datum/h/h, list/l, i, x)
+/proc/c3_add_s(datum/h/h, list/l, i, x, datum/h/y)
 	h?.m()?.v += x
-/proc/c3_add_sm(datum/h/h, list/l, i, datum/h/x)
+/proc/c3_add_sm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	h?.m()?.v += x.v
-/proc/c3_add_v(datum/h/h, list/l, i, x)
+/proc/c3_add_v(datum/h/h, list/l, i, x, datum/h/y)
 	return (h?.m()?.v += x)
-/proc/c3_add_vm(datum/h/h, list/l, i, datum/h/x)
+/proc/c3_add_vm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	return (h?.m()?.v += x.v)
-/proc/c3_or_s(datum/h/h, list/l, i, x)
+/proc/c3_or_s(datum/h/h, list/l, i, x, datum/h/y)
 	h?.m()?.v ||= x
-/proc/c3_or_sm(datum/h/h, list/l, i, datum/h/x)
+/proc/c3_or_sm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	h?.m()?.v ||= x.v
-/proc/c3_or_v(datum/h/h, list/l, i, x)
+/proc/c3_or_v(datum/h/h, list/l, i, x, datum/h/y)
 	return (h?.m()?.v ||= x)
-/proc/c3_or_vm(datum/h/h, list/l, i, datum/h/x)
+/proc/c3_or_vm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	return (h?.m()?.v ||= x.v)
-/proc/c3_and_s(datum/h/h, list/l, i, x)
+/proc/c3_and_s(datum/h/h, list/l, i, x, datum/h/y)
 	h?.m()?.v &&= x
-/proc/c3_and_sm(datum/h/h, list/l, i, datum/h/x)
+/proc/c3_and_sm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	h?.m()?.v &&= x.v
-/proc/c3_and_v(datum/h/h, list/l, i, x)
+/proc/c3_and_v(datum/h/h, list/l, i, x, datum/h/y)
 	return (h?.m()?.v &&= x)
-/proc/c3_and_vm(datum/h/h, list/l, i, datum/h/x)
+/proc/c3_and_vm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	return (h?.m()?.v &&= x.v)
-/proc/c4_set_s(datum/h/h, list/l, i, x)
+/proc/c4_set_s(datum/h/h, list/l, i, x, datum/h/y)
 	h?.m().l[i] = x
-/proc/c4_set_sm(datum/h/h, list/l, i, datum/h/x)
+/proc/c4_set_sm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	h?.m().l[i] = x.v
-/proc/c4_set_v(datum/h/h, list/l, i, x)
+/proc/c4_set_v(datum/h/h, list/l, i, x, datum/h/y)
 	return (h?.m().l[i] = x)
-/proc/c4_set_vm(datum/h/h, list/l, i, datum/h/x)
+/proc/c4_set_vm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	return (h?.m().l[i] = x.v)
-/proc/c4_add_s(datum/h/h, list/l, i, x)
+/proc/c4_add_s(datum/h/h, list/l, i, x, datum/h/y)
 	h?.m().l[i] += x
-/proc/c4_add_sm(datum/h/h, list/l, i, datum/h/x)
+/proc/c4_add_sm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	h?.m().l[i] += x.v
-/proc/c4_add_v(datum/h/h, list/l, i, x)
+/proc/c4_add_v(datum/h/h, list/l, i, x, datum/h/y)
 	return (h?.m().l[i] += x)
-/proc/c4_add_vm(datum/h/h, list/l, i, datum/h/x)
+/proc/c4_add_vm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	return (h?.m().l[i] += x.v)
-/proc/c4_or_s(datum/h/h, list/l, i, x)
+/proc/c4_or_s(datum/h/h, list/l, i, x, datum/h/y)
 	h?.m().l[i] ||= x
-/proc/c4_or_sm(datum/h/h, list/l, i, datum/h/x)
+/proc/c4_or_sm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	h?.m().l[i] ||= x.v
-/proc/c4_or_v(datum/h/h, list/l, i, x)
+/proc/c4_or_v(datum/h/h, list/l, i, x, datum/h/y)
 	return (h?.m().l[i] ||= x)
-/proc/c4_or_vm(datum/h/h, list/l, i, datum/h/x)
+/proc/c4_or_vm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	return (h?.m().l[i] ||= x.v)
-/proc/c4_and_s(datum/h/h, list/l, i, x)
+/proc/c4_and_s(datum/h/h, list/l, i, x, datum/h/y)
 	h?.m().l[i] &&= x
-/proc/c4_and_sm(datum/h/h, list/l, i, datum/h/x)
+/proc/c4_and_sm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	h?.m().l[i] &&= x.v
-/proc/c4_and_v(datum/h/h, list/l, i, x)
+/proc/c4_and_v(datum/h/h, list/l, i, x, datum/h/y)
 	return (h?.m().l[i] &&= x)
-/proc/c4_and_vm(datum/h/h, list/l, i, datum/h/x)
+/proc/c4_and_vm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	return (h?.m().l[i] &&= x.v)
-/proc/c5_set_s(datum/h/h, list/l, i, x)
+/proc/c5_set_s(datum/h/h, list/l, i, x, datum/h/y)
 	h?.c.m().v = x
-/proc/c5_set_sm(datum/h/h, list/l, i, datum/h/x)
+/proc/c5_set_sm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	h?.c.m().v = x.v
-/proc/c5_set_v(datum/h/h, list/l, i, x)
+/proc/c5_set_v(datum/h/h, list/l, i, x, datum/h/y)
 	return (h?.c.m().v = x)
-/proc/c5_set_vm(datum/h/h, list/l, i, datum/h/x)
+/proc/c5_set_vm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	return (h?.c.m().v = x.v)
-/proc/c5_add_s(datum/h/h, list/l, i, x)
+/proc/c5_add_s(datum/h/h, list/l, i, x, datum/h/y)
 	h?.c.m().v += x
-/proc/c5_add_sm(datum/h/h, list/l, i, datum/h/x)
+/proc/c5_add_sm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	h?.c.m().v += x.v
-/proc/c5_add_v(datum/h/h, list/l, i, x)
+/proc/c5_add_v(datum/h/h, list/l, i, x, datum/h/y)
 	return (h?.c.m().v += x)
-/proc/c5_add_vm(datum/h/h, list/l, i, datum/h/x)
+/proc/c5_add_vm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	return (h?.c.m().v += x.v)
-/proc/c5_or_s(datum/h/h, list/l, i, x)
+/proc/c5_or_s(datum/h/h, list/l, i, x, datum/h/y)
 	h?.c.m().v ||= x
-/proc/c5_or_sm(datum/h/h, list/l, i, datum/h/x)
+/proc/c5_or_sm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	h?.c.m().v ||= x.v
-/proc/c5_or_v(datum/h/h, list/l, i, x)
+/proc/c5_or_v(datum/h/h, list/l, i, x, datum/h/y)
 	return (h?.c.m().v ||= x)
-/proc/c5_or_vm(datum/h/h, list/l, i, datum/h/x)
+/proc/c5_or_vm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	return (h?.c.m().v ||= x.v)
-/proc/c5_and_s(datum/h/h, list/l, i, x)
+/proc/c5_and_s(datum/h/h, list/l, i, x, datum/h/y)
 	h?.c.m().v &&= x
-/proc/c5_and_sm(datum/h/h, list/l, i, datum/h/x)
+/proc/c5_and_sm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	h?.c.m().v &&= x.v
-/proc/c5_and_v(datum/h/h, list/l, i, x)
+/proc/c5_and_v(datum/h/h, list/l, i, x, datum/h/y)
 	return (h?.c.m().v &&= x)
-/proc/c5_and_vm(datum/h/h, list/l, i, datum/h/x)
+/proc/c5_and_vm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
 	return (h?.c.m().v &&= x.v)
-/proc/f1_inc_s(datum/h/h, list/l, i, x)
+/proc/n1_set_s(datum/h/h, list/l, i, x, datum/h/y)
+	h?.m(y.m()).v = x
+/proc/n1_set_sm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
+	h?.m(y.m()).v = x.v
+/proc/n1_set_v(datum/h/h, list/l, i, x, datum/h/y)
+	return (h?.m(y.m()).v = x)
+/proc/n1_set_vm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
+	return (h?.m(y.m()).v = x.v)
+/proc/n1_add_s(datum/h/h, list/l, i, x, datum/h/y)
+	h?.m(y.m()).v += x
+/proc/n1_add_sm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
+	h?.m(y.m()).v += x.v
+/proc/n1_add_v(datum/h/h, list/l, i, x, datum/h/y)
+	return (h?.m(y.m()).v += x)
+/proc/n1_add_vm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
+	return (h?.m(y.m()).v += x.v)
+/proc/n1_or_s(datum/h/h, list/l, i, x, datum/h/y)
+	h?.m(y.m()).v ||= x
+/proc/n1_or_sm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
+	h?.m(y.m()).v ||= x.v
+/proc/n1_or_v(datum/h/h, list/l, i, x, datum/h/y)
+	return (h?.m(y.m()).v ||= x)
+/proc/n1_or_vm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
+	return (h?.m(y.m()).v ||= x.v)
+/proc/n1_and_s(datum/h/h, list/l, i, x, datum/h/y)
+	h?.m(y.m()).v &&= x
+/proc/n1_and_sm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
+	h?.m(y.m()).v &&= x.v
+/proc/n1_and_v(datum/h/h, list/l, i, x, datum/h/y)
+	return (h?.m(y.m()).v &&= x)
+/proc/n1_and_vm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
+	return (h?.m(y.m()).v &&= x.v)
+/proc/n2_set_s(datum/h/h, list/l, i, x, datum/h/y)
+	h?.l[y.m()] = x
+/proc/n2_set_sm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
+	h?.l[y.m()] = x.v
+/proc/n2_set_v(datum/h/h, list/l, i, x, datum/h/y)
+	return (h?.l[y.m()] = x)
+/proc/n2_set_vm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
+	return (h?.l[y.m()] = x.v)
+/proc/n2_add_s(datum/h/h, list/l, i, x, datum/h/y)
+	h?.l[y.m()] += x
+/proc/n2_add_sm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
+	h?.l[y.m()] += x.v
+/proc/n2_add_v(datum/h/h, list/l, i, x, datum/h/y)
+	return (h?.l[y.m()] += x)
+/proc/n2_add_vm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
+	return (h?.l[y.m()] += x.v)
+/proc/n2_or_s(datum/h/h, list/l, i, x, datum/h/y)
+	h?.l[y.m()] ||= x
+/proc/n2_or_sm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
+	h?.l[y.m()] ||= x.v
+/proc/n2_or_v(datum/h/h, list/l, i, x, datum/h/y)
+	return (h?.l[y.m()] ||= x)
+/proc/n2_or_vm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
+	return (h?.l[y.m()] ||= x.v)
+/proc/n2_and_s(datum/h/h, list/l, i, x, datum/h/y)
+	h?.l[y.m()] &&= x
+/proc/n2_and_sm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
+	h?.l[y.m()] &&= x.v
+/proc/n2_and_v(datum/h/h, list/l, i, x, datum/h/y)
+	return (h?.l[y.m()] &&= x)
+/proc/n2_and_vm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
+	return (h?.l[y.m()] &&= x.v)
+/proc/n3_set_s(datum/h/h, list/l, i, x, datum/h/y)
+	h?.m(y?.m()).v = x
+/proc/n3_set_sm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
+	h?.m(y?.m()).v = x.v
+/proc/n3_set_v(datum/h/h, list/l, i, x, datum/h/y)
+	return (h?.m(y?.m()).v = x)
+/proc/n3_set_vm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
+	return (h?.m(y?.m()).v = x.v)
+/proc/n3_add_s(datum/h/h, list/l, i, x, datum/h/y)
+	h?.m(y?.m()).v += x
+/proc/n3_add_sm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
+	h?.m(y?.m()).v += x.v
+/proc/n3_add_v(datum/h/h, list/l, i, x, datum/h/y)
+	return (h?.m(y?.m()).v += x)
+/proc/n3_add_vm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
+	return (h?.m(y?.m()).v += x.v)
+/proc/n3_or_s(datum/h/h, list/l, i, x, datum/h/y)
+	h?.m(y?.m()).v ||= x
+/proc/n3_or_sm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
+	h?.m(y?.m()).v ||= x.v
+/proc/n3_or_v(datum/h/h, list/l, i, x, datum/h/y)
+	return (h?.m(y?.m()).v ||= x)
+/proc/n3_or_vm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
+	return (h?.m(y?.m()).v ||= x.v)
+/proc/n3_and_s(datum/h/h, list/l, i, x, datum/h/y)
+	h?.m(y?.m()).v &&= x
+/proc/n3_and_sm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
+	h?.m(y?.m()).v &&= x.v
+/proc/n3_and_v(datum/h/h, list/l, i, x, datum/h/y)
+	return (h?.m(y?.m()).v &&= x)
+/proc/n3_and_vm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
+	return (h?.m(y?.m()).v &&= x.v)
+/proc/n4_set_s(datum/h/h, list/l, i, x, datum/h/y)
+	h?.c.m(y.c.m()).v = x
+/proc/n4_set_sm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
+	h?.c.m(y.c.m()).v = x.v
+/proc/n4_set_v(datum/h/h, list/l, i, x, datum/h/y)
+	return (h?.c.m(y.c.m()).v = x)
+/proc/n4_set_vm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
+	return (h?.c.m(y.c.m()).v = x.v)
+/proc/n4_add_s(datum/h/h, list/l, i, x, datum/h/y)
+	h?.c.m(y.c.m()).v += x
+/proc/n4_add_sm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
+	h?.c.m(y.c.m()).v += x.v
+/proc/n4_add_v(datum/h/h, list/l, i, x, datum/h/y)
+	return (h?.c.m(y.c.m()).v += x)
+/proc/n4_add_vm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
+	return (h?.c.m(y.c.m()).v += x.v)
+/proc/n4_or_s(datum/h/h, list/l, i, x, datum/h/y)
+	h?.c.m(y.c.m()).v ||= x
+/proc/n4_or_sm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
+	h?.c.m(y.c.m()).v ||= x.v
+/proc/n4_or_v(datum/h/h, list/l, i, x, datum/h/y)
+	return (h?.c.m(y.c.m()).v ||= x)
+/proc/n4_or_vm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
+	return (h?.c.m(y.c.m()).v ||= x.v)
+/proc/n4_and_s(datum/h/h, list/l, i, x, datum/h/y)
+	h?.c.m(y.c.m()).v &&= x
+/proc/n4_and_sm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
+	h?.c.m(y.c.m()).v &&= x.v
+/proc/n4_and_v(datum/h/h, list/l, i, x, datum/h/y)
+	return (h?.c.m(y.c.m()).v &&= x)
+/proc/n4_and_vm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
+	return (h?.c.m(y.c.m()).v &&= x.v)
+/proc/n5_set_s(datum/h/h, list/l, i, x, datum/h/y)
+	h?.m(l[y.m()]).v = x
+/proc/n5_set_sm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
+	h?.m(l[y.m()]).v = x.v
+/proc/n5_set_v(datum/h/h, list/l, i, x, datum/h/y)
+	return (h?.m(l[y.m()]).v = x)
+/proc/n5_set_vm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
+	return (h?.m(l[y.m()]).v = x.v)
+/proc/n5_add_s(datum/h/h, list/l, i, x, datum/h/y)
+	h?.m(l[y.m()]).v += x
+/proc/n5_add_sm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
+	h?.m(l[y.m()]).v += x.v
+/proc/n5_add_v(datum/h/h, list/l, i, x, datum/h/y)
+	return (h?.m(l[y.m()]).v += x)
+/proc/n5_add_vm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
+	return (h?.m(l[y.m()]).v += x.v)
+/proc/n5_or_s(datum/h/h, list/l, i, x, datum/h/y)
+	h?.m(l[y.m()]).v ||= x
+/proc/n5_or_sm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
+	h?.m(l[y.m()]).v ||= x.v
+/proc/n5_or_v(datum/h/h, list/l, i, x, datum/h/y)
+	return (h?.m(l[y.m()]).v ||= x)
+/proc/n5_or_vm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
+	return (h?.m(l[y.m()]).v ||= x.v)
+/proc/n5_and_s(datum/h/h, list/l, i, x, datum/h/y)
+	h?.m(l[y.m()]).v &&= x
+/proc/n5_and_sm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
+	h?.m(l[y.m()]).v &&= x.v
+/proc/n5_and_v(datum/h/h, list/l, i, x, datum/h/y)
+	return (h?.m(l[y.m()]).v &&= x)
+/proc/n5_and_vm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
+	return (h?.m(l[y.m()]).v &&= x.v)
+/proc/n6_set_s(datum/h/h, list/l, i, x, datum/h/y)
+	h?.m(y.m(y.m())).v = x
+/proc/n6_set_sm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
+	h?.m(y.m(y.m())).v = x.v
+/proc/n6_set_v(datum/h/h, list/l, i, x, datum/h/y)
+	return (h?.m(y.m(y.m())).v = x)
+/proc/n6_set_vm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
+	return (h?.m(y.m(y.m())).v = x.v)
+/proc/n6_add_s(datum/h/h, list/l, i, x, datum/h/y)
+	h?.m(y.m(y.m())).v += x
+/proc/n6_add_sm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
+	h?.m(y.m(y.m())).v += x.v
+/proc/n6_add_v(datum/h/h, list/l, i, x, datum/h/y)
+	return (h?.m(y.m(y.m())).v += x)
+/proc/n6_add_vm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
+	return (h?.m(y.m(y.m())).v += x.v)
+/proc/n6_or_s(datum/h/h, list/l, i, x, datum/h/y)
+	h?.m(y.m(y.m())).v ||= x
+/proc/n6_or_sm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
+	h?.m(y.m(y.m())).v ||= x.v
+/proc/n6_or_v(datum/h/h, list/l, i, x, datum/h/y)
+	return (h?.m(y.m(y.m())).v ||= x)
+/proc/n6_or_vm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
+	return (h?.m(y.m(y.m())).v ||= x.v)
+/proc/n6_and_s(datum/h/h, list/l, i, x, datum/h/y)
+	h?.m(y.m(y.m())).v &&= x
+/proc/n6_and_sm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
+	h?.m(y.m(y.m())).v &&= x.v
+/proc/n6_and_v(datum/h/h, list/l, i, x, datum/h/y)
+	return (h?.m(y.m(y.m())).v &&= x)
+/proc/n6_and_vm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
+	return (h?.m(y.m(y.m())).v &&= x.v)
+/proc/n7_set_s(datum/h/h, list/l, i, x, datum/h/y)
+	h?.l[y.m()].v = x
+/proc/n7_set_sm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
+	h?.l[y.m()].v = x.v
+/proc/n7_set_v(datum/h/h, list/l, i, x, datum/h/y)
+	return (h?.l[y.m()].v = x)
+/proc/n7_set_vm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
+	return (h?.l[y.m()].v = x.v)
+/proc/n7_add_s(datum/h/h, list/l, i, x, datum/h/y)
+	h?.l[y.m()].v += x
+/proc/n7_add_sm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
+	h?.l[y.m()].v += x.v
+/proc/n7_add_v(datum/h/h, list/l, i, x, datum/h/y)
+	return (h?.l[y.m()].v += x)
+/proc/n7_add_vm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
+	return (h?.l[y.m()].v += x.v)
+/proc/n7_or_s(datum/h/h, list/l, i, x, datum/h/y)
+	h?.l[y.m()].v ||= x
+/proc/n7_or_sm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
+	h?.l[y.m()].v ||= x.v
+/proc/n7_or_v(datum/h/h, list/l, i, x, datum/h/y)
+	return (h?.l[y.m()].v ||= x)
+/proc/n7_or_vm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
+	return (h?.l[y.m()].v ||= x.v)
+/proc/n7_and_s(datum/h/h, list/l, i, x, datum/h/y)
+	h?.l[y.m()].v &&= x
+/proc/n7_and_sm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
+	h?.l[y.m()].v &&= x.v
+/proc/n7_and_v(datum/h/h, list/l, i, x, datum/h/y)
+	return (h?.l[y.m()].v &&= x)
+/proc/n7_and_vm(datum/h/h, list/l, i, datum/h/x, datum/h/y)
+	return (h?.l[y.m()].v &&= x.v)
+/proc/f1_inc_s(datum/h/h, list/l, i, x, datum/h/y)
 	h?.v++
-/proc/f1_inc_v(datum/h/h, list/l, i, x)
+/proc/f1_inc_v(datum/h/h, list/l, i, x, datum/h/y)
 	return (h?.v++)
-/proc/f2_inc_s(datum/h/h, list/l, i, x)
+/proc/f2_inc_s(datum/h/h, list/l, i, x, datum/h/y)
 	h?.c?.v++
-/proc/f2_inc_v(datum/h/h, list/l, i, x)
+/proc/f2_inc_v(datum/h/h, list/l, i, x, datum/h/y)
 	return (h?.c?.v++)
-/proc/f3_inc_s(datum/h/h, list/l, i, x)
+/proc/f3_inc_s(datum/h/h, list/l, i, x, datum/h/y)
 	h?.c.v++
-/proc/f3_inc_v(datum/h/h, list/l, i, x)
+/proc/f3_inc_v(datum/h/h, list/l, i, x, datum/h/y)
 	return (h?.c.v++)
-/proc/f4_inc_s(datum/h/h, list/l, i, x)
+/proc/f4_inc_s(datum/h/h, list/l, i, x, datum/h/y)
 	h.c?.v++
-/proc/f4_inc_v(datum/h/h, list/l, i, x)
+/proc/f4_inc_v(datum/h/h, list/l, i, x, datum/h/y)
 	return (h.c?.v++)
-/proc/f5_inc_s(datum/h/h, list/l, i, x)
+/proc/f5_inc_s(datum/h/h, list/l, i, x, datum/h/y)
 	h?.c?.c?.v++
-/proc/f5_inc_v(datum/h/h, list/l, i, x)
+/proc/f5_inc_v(datum/h/h, list/l, i, x, datum/h/y)
 	return (h?.c?.c?.v++)
-/proc/e1_inc_s(datum/h/h, list/l, i, x)
+/proc/e1_inc_s(datum/h/h, list/l, i, x, datum/h/y)
 	h?.l[i]++
-/proc/e1_inc_v(datum/h/h, list/l, i, x)
+/proc/e1_inc_v(datum/h/h, list/l, i, x, datum/h/y)
 	return (h?.l[i]++)
-/proc/e2_inc_s(datum/h/h, list/l, i, x)
+/proc/e2_inc_s(datum/h/h, list/l, i, x, datum/h/y)
 	h?.c?.l[i]++
-/proc/e2_inc_v(datum/h/h, list/l, i, x)
+/proc/e2_inc_v(datum/h/h, list/l, i, x, datum/h/y)
 	return (h?.c?.l[i]++)
-/proc/e3_inc_s(datum/h/h, list/l, i, x)
+/proc/e3_inc_s(datum/h/h, list/l, i, x, datum/h/y)
 	h?.c.l[i]++
-/proc/e3_inc_v(datum/h/h, list/l, i, x)
+/proc/e3_inc_v(datum/h/h, list/l, i, x, datum/h/y)
 	return (h?.c.l[i]++)
-/proc/e4_inc_s(datum/h/h, list/l, i, x)
+/proc/e4_inc_s(datum/h/h, list/l, i, x, datum/h/y)
 	l?[i]++
-/proc/e4_inc_v(datum/h/h, list/l, i, x)
+/proc/e4_inc_v(datum/h/h, list/l, i, x, datum/h/y)
 	return (l?[i]++)
-/proc/e5_inc_s(datum/h/h, list/l, i, x)
+/proc/e5_inc_s(datum/h/h, list/l, i, x, datum/h/y)
 	h.c?.l[i]++
-/proc/e5_inc_v(datum/h/h, list/l, i, x)
+/proc/e5_inc_v(datum/h/h, list/l, i, x, datum/h/y)
 	return (h.c?.l[i]++)
-/proc/c1_inc_s(datum/h/h, list/l, i, x)
+/proc/c1_inc_s(datum/h/h, list/l, i, x, datum/h/y)
 	h?.m().v++
-/proc/c1_inc_v(datum/h/h, list/l, i, x)
+/proc/c1_inc_v(datum/h/h, list/l, i, x, datum/h/y)
 	return (h?.m().v++)
-/proc/c2_inc_s(datum/h/h, list/l, i, x)
+/proc/c2_inc_s(datum/h/h, list/l, i, x, datum/h/y)
 	h?.c?.m().v++
-/proc/c2_inc_v(datum/h/h, list/l, i, x)
+/proc/c2_inc_v(datum/h/h, list/l, i, x, datum/h/y)
 	return (h?.c?.m().v++)
-/proc/c3_inc_s(datum/h/h, list/l, i, x)
+/proc/c3_inc_s(datum/h/h, list/l, i, x, datum/h/y)
 	h?.m()?.v++
-/proc/c3_inc_v(datum/h/h, list/l, i, x)
+/proc/c3_inc_v(datum/h/h, list/l, i, x, datum/h/y)
 	return (h?.m()?.v++)
-/proc/c4_inc_s(datum/h/h, list/l, i, x)
+/proc/c4_inc_s(datum/h/h, list/l, i, x, datum/h/y)
 	h?.m().l[i]++
-/proc/c4_inc_v(datum/h/h, list/l, i, x)
+/proc/c4_inc_v(datum/h/h, list/l, i, x, datum/h/y)
 	return (h?.m().l[i]++)
-/proc/c5_inc_s(datum/h/h, list/l, i, x)
+/proc/c5_inc_s(datum/h/h, list/l, i, x, datum/h/y)
 	h?.c.m().v++
-/proc/c5_inc_v(datum/h/h, list/l, i, x)
+/proc/c5_inc_v(datum/h/h, list/l, i, x, datum/h/y)
 	return (h?.c.m().v++)
+/proc/n1_inc_s(datum/h/h, list/l, i, x, datum/h/y)
+	h?.m(y.m()).v++
+/proc/n1_inc_v(datum/h/h, list/l, i, x, datum/h/y)
+	return (h?.m(y.m()).v++)
+/proc/n2_inc_s(datum/h/h, list/l, i, x, datum/h/y)
+	h?.l[y.m()]++
+/proc/n2_inc_v(datum/h/h, list/l, i, x, datum/h/y)
+	return (h?.l[y.m()]++)
+/proc/n3_inc_s(datum/h/h, list/l, i, x, datum/h/y)
+	h?.m(y?.m()).v++
+/proc/n3_inc_v(datum/h/h, list/l, i, x, datum/h/y)
+	return (h?.m(y?.m()).v++)
+/proc/n4_inc_s(datum/h/h, list/l, i, x, datum/h/y)
+	h?.c.m(y.c.m()).v++
+/proc/n4_inc_v(datum/h/h, list/l, i, x, datum/h/y)
+	return (h?.c.m(y.c.m()).v++)
+/proc/n5_inc_s(datum/h/h, list/l, i, x, datum/h/y)
+	h?.m(l[y.m()]).v++
+/proc/n5_inc_v(datum/h/h, list/l, i, x, datum/h/y)
+	return (h?.m(l[y.m()]).v++)
+/proc/n6_inc_s(datum/h/h, list/l, i, x, datum/h/y)
+	h?.m(y.m(y.m())).v++
+/proc/n6_inc_v(datum/h/h, list/l, i, x, datum/h/y)
+	return (h?.m(y.m(y.m())).v++)
+/proc/n7_inc_s(datum/h/h, list/l, i, x, datum/h/y)
+	h?.l[y.m()].v++
+/proc/n7_inc_v(datum/h/h, list/l, i, x, datum/h/y)
+	return (h?.l[y.m()].v++)
 // Guards: a_scoped_chain_from_a_type_path_follows_the_declared_type_of_each_var (compile_proc.rs)
 /datum/config
 	var/datum/settings/settings

@@ -2291,10 +2291,31 @@ fn a_safe_write_calls_on_the_receiver_when_the_arguments_move_the_cache() {
             "holder?.make(counters[i]--).flag ||= 1",
             "Call dynamic_proc(\"make\") 1",
         ),
+        (
+            "holder?.make(other.get()).flag = 1",
+            "Call dynamic_proc(\"make\") 1",
+        ),
+        (
+            "holder?.make(other.o.get()).flag = 1",
+            "Call dynamic_proc(\"make\") 1",
+        ),
+        (
+            "holder?.make(counters[other.get()]).flag = 1",
+            "Call dynamic_proc(\"make\") 1",
+        ),
+        (
+            "holder?.make(other?.get()).flag = 1",
+            "Call dynamic_proc(\"make\") 1",
+        ),
+        (
+            "holder?.child.make(other.get(o.make(1))).flag = 1",
+            "Call cache = cache[\"child\"]; dynamic_proc(\"make\") 1",
+        ),
     ] {
         let code = compile(
             &format!(
-                "{types}/proc/g(datum/holder/holder, list/counters, i, datum/holder/o)\n\t{body}\n"
+                "{types}/datum/other\n\tvar/datum/other/o\n/datum/other/proc/get(x)\n\treturn 1\n\
+                 /proc/g(datum/holder/holder, list/counters, i, datum/holder/o, datum/other/other)\n\t{body}\n"
             ),
             "",
             "g",
