@@ -912,6 +912,24 @@ var/const/LIMIT = 10
 	return factory.make()?.LIMIT
 /proc/f16(datum/factory/factory)
 	return factory.make():LIMIT + 1
+// Guards: a_safe_write_calls_on_the_receiver_when_the_arguments_move_the_cache (compile_proc.rs)
+// Known: /proc/f1  DreamMaker calls make() on what the arguments left in the cache (a BYOND bug, which dmasm warns of); dmasm calls it on holder
+// Known: /proc/f2  DreamMaker calls make() on what the arguments left in the cache (a BYOND bug, which dmasm warns of); dmasm calls it on holder
+// Known: /proc/f3  DreamMaker calls make() on what the arguments left in the cache (a BYOND bug, which dmasm warns of); dmasm calls it on holder
+// Known: /proc/f4  DreamMaker calls make() on what the arguments left in the cache (a BYOND bug, which dmasm warns of); dmasm calls it on holder
+/datum/holder
+	var/flag
+	var/datum/holder/child
+/datum/holder/proc/make(x)
+	return src
+/proc/f1(datum/holder/holder, list/counters, i)
+	holder?.make(counters[i]++).flag = 1
+/proc/f2(datum/holder/holder, list/counters, i)
+	holder?.child.make(counters[i]++).flag = 1
+/proc/f3(datum/holder/holder, datum/holder/o)
+	holder?.make(o.flag).flag = 1
+/proc/f4(datum/holder/holder, list/counters, i)
+	holder?.make(counters[i]--).flag ||= 1
 // Guards: a_safe_write_calls_an_indexed_item_on_the_item (compile_proc.rs)
 // Known -516.1672: /proc/f3  before 516.1673 DreamMaker leaves out the null tests of `a?.b ||= v` and `&&=`; dmasm keeps them
 /datum/item

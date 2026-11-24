@@ -2271,6 +2271,39 @@ fn a_logical_assignment_to_a_safe_element_has_a_value() {
 }
 
 #[test]
+fn a_safe_write_calls_on_the_receiver_when_the_arguments_move_the_cache() {
+    let types = "/datum/holder\n\tvar/flag\n\tvar/datum/holder/child\n\
+                 /datum/holder/proc/make(x)\n\treturn src\n";
+    for (body, call) in [
+        (
+            "holder?.make(counters[i]++).flag = 1",
+            "Call dynamic_proc(\"make\") 1",
+        ),
+        (
+            "holder?.child.make(counters[i]++).flag = 1",
+            "Call cache = cache[\"child\"]; dynamic_proc(\"make\") 1",
+        ),
+        (
+            "holder?.make(o.flag).flag = 1",
+            "Call dynamic_proc(\"make\") 1",
+        ),
+        (
+            "holder?.make(counters[i]--).flag ||= 1",
+            "Call dynamic_proc(\"make\") 1",
+        ),
+    ] {
+        let code = compile(
+            &format!(
+                "{types}/proc/g(datum/holder/holder, list/counters, i, datum/holder/o)\n\t{body}\n"
+            ),
+            "",
+            "g",
+        );
+        assert_has(&code, &["PopCache", "PushCache", call]);
+    }
+}
+
+#[test]
 fn new_without_arguments_is_true_in_a_test() {
     let src = "/datum/t\n/proc/f(a, b)\n\treturn (new /datum/t ? a : b)\n";
     assert_eq!(compile(src, "", "f"), "GetVar arg(0)\nRet\nEnd");

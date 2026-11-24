@@ -285,13 +285,17 @@ pub(super) fn emit_after<'a>(
                         if parked {
                             compiler.emit_ins(Instruction::PushCache);
                         }
+                        let args_start = compiler.nodes.len();
                         let explicit_src = std::mem::take(&mut compiler.explicit_src);
                         let count = compiler.emit_call_args(args.into_vec())?;
                         compiler.explicit_src = explicit_src;
                         if parked {
                             compiler.emit_ins(Instruction::PopCache);
                         }
-                        compiler.emit_ins(Instruction::Call(builder.get_leaf(callee), count));
+                        let var = builder.get_leaf(callee);
+                        let receiver_in_cache = !parked && receiver_in_cache(&var);
+                        compiler.emit_ins(Instruction::Call(var, count));
+                        compiler.record_call(args_start, receiver_in_cache);
                     }
 
                     access @ (PropertyAccessKind::Dot
@@ -304,9 +308,11 @@ pub(super) fn emit_after<'a>(
                         compiler.emit_ins(Instruction::SetVar(Variable::Cache));
                         compiler.emit_ins(Instruction::PushCache);
 
+                        let args_start = compiler.nodes.len();
                         let count = compiler.emit_call_args(args.into_vec())?;
                         compiler.emit_ins(Instruction::PopCache);
                         compiler.emit_ins(Instruction::Call(callee, count));
+                        compiler.record_call(args_start, false);
                     }
 
                     PropertyAccessKind::SafeDot | PropertyAccessKind::SafeColon => {
@@ -319,12 +325,14 @@ pub(super) fn emit_after<'a>(
 
                         compiler.emit_ins(Instruction::PushCache);
 
+                        let args_start = compiler.nodes.len();
                         let count = compiler.emit_call_args(args.into_vec())?;
                         compiler.emit_ins(Instruction::PopCache);
                         compiler.emit_ins(Instruction::Call(
                             Variable::DynamicProc(super::dynamic_name(&ident)),
                             count,
                         ));
+                        compiler.record_call(args_start, false);
                     }
                 }
 
@@ -681,4 +689,14 @@ fn emit_safe_inner<'a>(
     }
     compiler.emit_label(end);
     Ok(EvalKind::Stack)
+}
+
+fn receiver_in_cache(var: &Variable) -> bool {
+    match var {
+        Variable::SetCache(base, _) => matches!(
+            **base,
+            Variable::Cache | Variable::CacheIndex | Variable::Field(_)
+        ),
+        _ => true,
+    }
 }

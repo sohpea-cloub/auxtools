@@ -58,6 +58,13 @@ fn dynamic_name(ident: &str) -> DMString {
 }
 
 #[derive(Clone)]
+struct CallSite {
+    args: usize,
+    call: usize,
+    receiver_in_cache: bool,
+}
+
+#[derive(Clone)]
 enum Implied {
     Type(String),
     Untyped(String),
@@ -751,6 +758,7 @@ struct Compiler<'a> {
     regroup_root: bool,
     regroup_chain: bool,
     global_field: bool,
+    call_sites: Vec<CallSite>,
     other_file: bool,
     line_pending: bool,
     pub(super) read_on_pending: bool,
@@ -789,6 +797,7 @@ impl<'a> Compiler<'a> {
             regroup_root: false,
             regroup_chain: false,
             global_field: false,
+            call_sites: vec![],
             other_file: false,
             line_pending: false,
             read_on_pending: false,
@@ -1366,6 +1375,14 @@ impl<'a> Compiler<'a> {
                 Ok(kind)
             }
         }
+    }
+
+    fn record_call(&mut self, args: usize, receiver_in_cache: bool) {
+        self.call_sites.push(CallSite {
+            args,
+            call: self.nodes.len() - 1,
+            receiver_in_cache,
+        });
     }
 
     fn speculate<T>(&mut self, look: impl FnOnce(&mut Self, usize) -> T) -> T {

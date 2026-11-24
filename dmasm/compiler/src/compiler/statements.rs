@@ -1616,23 +1616,18 @@ impl SafeChain {
 }
 
 fn call_after_cache_use(compiler: &Compiler, start: usize) -> Option<usize> {
-    let call = start
-        + compiler.nodes[start..]
-            .iter()
-            .position(|n| matches!(n, Node::Instruction(Instruction::Call(..), _)))?;
-    let computed = compiler.nodes[start..call].iter().any(|n| {
-        matches!(
-            n,
-            Node::Instruction(Instruction::SetVar(Variable::Cache), _)
-        )
-    });
-    if computed {
+    let site = compiler
+        .call_sites
+        .iter()
+        .filter(|site| site.args >= start)
+        .min_by_key(|site| site.args)?;
+    if !site.receiver_in_cache {
         return None;
     }
-    compiler.nodes[start..call]
+    compiler.nodes[site.args..site.call]
         .iter()
         .any(|n| matches!(n, Node::Instruction(i, _) if super::procs::touches_cache(i)))
-        .then_some(call)
+        .then_some(site.call)
 }
 
 fn restore_receiver(compiler: &mut Compiler, call: usize) {
