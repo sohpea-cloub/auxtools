@@ -563,7 +563,7 @@ pub(super) fn expr_type<'a>(
     compiler: &Compiler<'a>,
     expr: &dreammaker::ast::Expression,
 ) -> Option<TypeRef<'a>> {
-    use dreammaker::ast::{Expression, Follow, Term};
+    use dreammaker::ast::{Expression, Follow, PropertyAccessKind, Term};
     let Expression::Base { term, follow } = expr else {
         return None;
     };
@@ -583,20 +583,21 @@ pub(super) fn expr_type<'a>(
                 Follow::Field(_, name) => name.as_str(),
                 _ => unreachable!(),
             })?;
-        declared_type(compiler, &decl.get().var_type)?
+        declared_type(compiler, &decl.get().var_type)
     } else {
-        term_type(compiler, &term.elem)?
+        term_type(compiler, &term.elem)
     };
     for f in &follow[global as usize..] {
-        match &f.elem {
-            Follow::Field(_, name) => {
-                let decl = member_var(ty, name.as_str())?;
-                ty = declared_type(compiler, &decl.get().var_type)?;
+        let decl = match &f.elem {
+            Follow::Field(PropertyAccessKind::Colon | PropertyAccessKind::SafeColon, name) => {
+                colon_var(compiler, ty, name.as_str())?
             }
+            Follow::Field(_, name) => member_var(ty?, name.as_str())?,
             _ => return None,
-        }
+        };
+        ty = declared_type(compiler, &decl.get().var_type);
     }
-    Some(ty)
+    ty
 }
 
 pub(super) fn resolve_proc_path(compiler: &Compiler, path: &str) -> Option<String> {

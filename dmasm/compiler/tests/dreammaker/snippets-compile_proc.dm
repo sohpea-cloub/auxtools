@@ -734,6 +734,15 @@ var/const/LIMIT = 10
 	var/static/S = 4
 /proc/f(x, datum/q/y, list/z)
 	return list(x:LIMIT + 1, y:LIMIT + 1, z:LIMIT + 1, x:LIMIT, -y:LIMIT, x:S, x?:S)
+// Guards: colon_chain_reads_the_type_of_each_var_it_goes_through (compile_proc.rs)
+/datum/config
+	var/const/LIMIT = 5
+/datum/holder
+	var/datum/config/config
+/datum/other
+	var/const/LIMIT = 9
+/proc/f(x)
+	return list(x:config:LIMIT + 1, x:config.LIMIT + 2)
 // Guards: static_after_double_colon_chain (compile_proc.rs)
 /datum/a
 	var/datum/b/b

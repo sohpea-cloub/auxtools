@@ -94,6 +94,15 @@ fn colon_reads_the_last_type_that_declares_its_var() {
 }
 
 #[test]
+fn colon_chain_reads_the_type_of_each_var_it_goes_through() {
+    let src = "/datum/config\n\tvar/const/LIMIT = 5\n/datum/holder\n\tvar/datum/config/config\n\
+               /datum/other\n\tvar/const/LIMIT = 9\n\
+               /proc/f(x)\n\treturn list(x:config:LIMIT + 1, x:config.LIMIT + 2)\n";
+    let code = compile(src, "", "f");
+    assert_has(&code, &["PushInt 6", "PushInt 7", "NewList 2"]);
+}
+
+#[test]
 fn static_after_double_colon_chain() {
     let src = "/datum/a\n\tvar/datum/b/b\n/datum/b\n\tvar/const/C = 3\nvar/datum/a/A\n/proc/f()\n\treturn A::b::C\n";
     let code = compile(src, "", "f");
