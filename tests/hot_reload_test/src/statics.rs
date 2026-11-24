@@ -13,13 +13,13 @@ pub fn statics(built: Built) {
 	assert_eq!(eval(&mut client, "\"[st_add_total()] [st_total]\""), "\"1 1\"");
 	println!("ok: a new static local beside a global of its name gets a slot of its own");
 
-	let held = eval(&mut client, "#declared-refs /datum/st_holder");
+	let held = declared_references(&mut client, "/datum/st_holder");
 	let changes = source.edit("statics.dm", "ST_LIMIT = 5", "ST_LIMIT = 10");
 	reload(&mut watcher, &changes);
 	assert_eq!(eval(&mut client, "\"[st_limit()] [st_static_limit()] [st_const_limit()]\""), "\"10 7 8\"");
 	println!("ok: a global const changes beside a proc's static and const of its name");
 	assert_eq!(
-		eval(&mut client, "#declared-refs /datum/st_holder"),
+		declared_references(&mut client, "/datum/st_holder"),
 		held,
 		"the declared vars of a type that the change of a global doesn't touch"
 	);
@@ -49,4 +49,14 @@ pub fn statics(built: Built) {
 	reload(&mut watcher, &changes);
 	assert_eq!(eval(&mut client, both), "\"10 7 10\"");
 	println!("ok: a global const changes beside a proc that reads both it and a static of its name");
+}
+
+fn declared_references(client: &mut Client, path: &str) -> (u32, u32) {
+	let answer = eval(client, &format!("#declared-refs {}", path));
+	let parsed = answer
+		.strip_prefix("table ")
+		.and_then(|rest| rest.strip_suffix(" references"))
+		.and_then(|rest| rest.split_once(": "))
+		.and_then(|(table, references)| Some((table.parse().ok()?, references.parse().ok()?)));
+	parsed.unwrap_or_else(|| panic!("expected the declared vars of {} and their references, got {}", path, answer))
 }
