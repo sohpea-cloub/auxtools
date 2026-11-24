@@ -70,7 +70,8 @@ struct AddedVars {
 	in_lists_before: u32,
 	in_lists: Vec<(u32, ProcEntryWords)>,
 	instances: StagedInstances,
-	statics: HashMap<(StaticScope, Vec<u8>), u32>
+	statics: HashMap<(StaticScope, Vec<u8>), u32>,
+	const_values: Vec<(u32, (u32, u32), Option<StringRef>)>
 }
 
 #[derive(Default)]
@@ -501,7 +502,8 @@ pub fn prepare(request: &HotReloadRequest, warnings: &mut Vec<String>, skipped: 
 		in_lists_before: runtime_tables::in_list_count().unwrap_or(0),
 		in_lists: vec![],
 		instances: StagedInstances::default(),
-		statics: HashMap::new()
+		statics: HashMap::new(),
+		const_values: vec![]
 	};
 	for new in new_vars {
 		if let Err(e) = prepare_new_var(new, &mut added, &mut type_vars, &mut pending, warnings) {
@@ -683,6 +685,7 @@ pub fn prepare(request: &HotReloadRequest, warnings: &mut Vec<String>, skipped: 
 		warnings.push("verb and built-in changes apply only to new instances. Existing instances keep their values".to_owned());
 	}
 
+	prepared.global_values.append(&mut added.const_values);
 	prepared.new_vars = added.vars;
 	prepared.new_globals = pending
 		.globals
@@ -758,9 +761,10 @@ fn assemble_with(
 	let nodes = adapt_debug_info(&code.nodes, &original.map(original_code).unwrap_or_default());
 
 	let uses = original.map(|proc| world_globals.of(proc)).unwrap_or_default();
-	let new_statics = new_statics(code, pending, added).map_err(|e| format!("{}: {}", name, e))?;
+	let proc_globals = uses.by_name();
+	let new_statics = new_statics(code, &proc_globals, pending, added).map_err(|e| format!("{}: {}", name, e))?;
 	let mut env = ReloadEnv {
-		proc_globals: uses.by_name(),
+		proc_globals,
 		world_globals,
 		pending,
 		new_statics,
@@ -950,7 +954,8 @@ pub fn early_global_init(init: &dmasm::reload::GlobalInit, rest: &HotReloadReque
 		in_lists_before: 0,
 		in_lists: vec![],
 		instances: StagedInstances::default(),
-		statics: HashMap::new()
+		statics: HashMap::new(),
+		const_values: vec![]
 	};
 	let code = value_code(init.code.clone());
 	let known = global_slots(&code, &init.proc_statics, &Pending::default(), &added, &mut WorldGlobals::default());
@@ -1755,10 +1760,26 @@ fn world_keys(entry: &ProcEntryWords) -> Vec<u32> {
 	keys
 }
 
-fn new_statics(code: &ProcReload, pending: &Pending, added: &mut AddedVars) -> Result<HashMap<(StaticScope, Vec<u8>), u32>, String> {
+fn new_statics(
+	code: &ProcReload,
+	proc_globals: &HashMap<Vec<u8>, Vec<u32>>,
+	pending: &Pending,
+	added: &mut AddedVars
+) -> Result<HashMap<(StaticScope, Vec<u8>), u32>, String> {
 	let mut out = HashMap::new();
 	for local in &code.statics {
 		let name = local.name.as_bytes().to_vec();
+		let nth = match &local.scope {
+			StaticScope::Proc { nth, .. } => *nth as usize,
+			_ => 0
+		};
+		let existing = proc_globals.get(&name).and_then(|ids| ids.get(nth)).copied();
+		if let (true, Some(id), Some(value)) = (local.constant, existing, &local.value) {
+			let (value, text) = owned_value(value, pending).map_err(|e| format!("local const {}: {}", local.name, e))?;
+			added.const_values.push((id, value, text));
+			out.insert((local.scope.clone(), name), id);
+			continue;
+		}
 		let value = match (&local.value, &local.init) {
 			(Some(value), _) => owned_value(value, pending).map_err(|e| format!("static local {}: {}", local.name, e))?,
 			(None, Some(_)) => ((0, 0), None),

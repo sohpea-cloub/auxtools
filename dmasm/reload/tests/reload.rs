@@ -4305,6 +4305,43 @@ fn a_static_reading_a_changed_default_is_given_to_a_reboot() {
 }
 
 #[test]
+fn a_changed_local_const_is_sent_with_its_value() {
+    let before = "var/const/BASE = 5\n\n\
+                  /proc/limit()\n\tvar/const/LIMIT = 5\n\treturn \"[LIMIT] [LIMIT + 1]\"\n\n\
+                  /proc/based()\n\tvar/const/LIMIT = BASE + 1\n\treturn LIMIT\n\n\
+                  /proc/other()\n\tvar/static/count = 0\n\tvar/const/LIMIT = 5\n\treturn LIMIT\n";
+    let sent = |changes: &Changes, path: &str| -> Vec<String> {
+        let reload = changes.plan.reloads.iter().find(|r| r.proc.path == path);
+        let reload =
+            reload.unwrap_or_else(|| panic!("{path} isn't compiled again: {:?}", changes.plan));
+        reload
+            .statics
+            .iter()
+            .map(|s| format!("{} {:?} {}", s.name, s.value, s.constant))
+            .collect()
+    };
+    let after = before.replacen("LIMIT = 5\n\treturn \"", "LIMIT = 10\n\treturn \"", 1);
+    let edited = changes("local-const", before, &after);
+    assert_eq!(reloaded(&edited), [key("/limit", 0)]);
+    assert_eq!(sent(&edited, "/limit"), ["LIMIT Some(Number(10.0)) true"]);
+
+    let after = before.replace("BASE = 5", "BASE = 10");
+    let based = changes("local-const-based", before, &after);
+    assert_eq!(reloaded(&based), [key("/based", 0)]);
+    assert_eq!(sent(&based, "/based"), ["LIMIT Some(Number(11.0)) true"]);
+
+    let after = before.replace("\treturn LIMIT\n", "\treturn LIMIT + count\n");
+    let other = changes("local-const-other", before, &after);
+    assert_eq!(
+        sent(&other, "/other"),
+        [
+            "count Some(Number(0.0)) false",
+            "LIMIT Some(Number(5.0)) true"
+        ]
+    );
+}
+
+#[test]
 fn uncompiled_code_folding_a_changed_const_is_refused() {
     let uncompiled = "\tswitch(x)\n\t\tif(x)\n\t\t\treturn 0\n";
     let before = format!(

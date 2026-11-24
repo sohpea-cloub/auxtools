@@ -81,6 +81,8 @@ pub struct StaticVar {
     pub scope: StaticScope,
     pub value: Option<ConstValue>,
     pub init: Option<Box<ProcReload>>,
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub constant: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1187,6 +1189,7 @@ impl Snapshot {
                 value: constant,
                 scope: s.scope,
                 init,
+                constant: s.constant,
             });
         }
         Ok(ProcReload {
@@ -1830,6 +1833,7 @@ pub fn diff(old: &Snapshot, new: &Snapshot, changed_files: Option<&HashSet<PathB
     reparent::reparented_users(old, new, &realigned, &mut changes);
     moved::moved_users(old, new, &realigned, &mut changes);
     retargeted::path_users(&retargeted, &mut changes);
+    local_const_users(old, new, &realigned, &mut changes);
     global_init::compare(old, new, &retargeted, &mut changes);
     changes.collect_warnings();
     changes
@@ -1966,6 +1970,82 @@ fn const_users(old: &Snapshot, new: &Snapshot, realigned: &Realigned, changes: &
                 ..reload
             }),
             Err(e) => changes.refused.push(new.uncompiled(key, &e)),
+        }
+    }
+}
+
+fn local_consts<'a>(
+    s: &Snapshot,
+    ty: TypeRef,
+    value: &'a ProcValue,
+) -> Vec<(&'a str, usize, Option<crate::compiler::Folded>)> {
+    let mut found = vec![];
+    if let Some(code) = &value.code {
+        global_init::static_statements(code, None, &mut found);
+    }
+    let mut seen: Vec<&str> = vec![];
+    let mut out = vec![];
+    for (_, var) in found {
+        let name = var.name.as_str();
+        let number = seen.iter().filter(|n| **n == name).count();
+        if var.var_type.flags.is_const() {
+            let locals: Vec<(&str, &str)> = seen.iter().map(|n| (*n, "")).collect();
+            let folded = var.value.as_ref().and_then(|value| {
+                crate::compiler::fold_in_proc(&s.tree, ty, value, &locals, s.byond)
+            });
+            out.push((name, number, folded));
+        }
+        seen.push(name);
+    }
+    out
+}
+
+fn local_const_users(old: &Snapshot, new: &Snapshot, realigned: &Realigned, changes: &mut Changes) {
+    if changes.consts.is_empty() {
+        return;
+    }
+    let reloaded: HashSet<ProcKey> = changes
+        .plan
+        .reloads
+        .iter()
+        .map(|r| r.proc.clone())
+        .collect();
+    for key in new.procs.keys() {
+        let Some(old_key) = old_key(realigned, key) else {
+            continue;
+        };
+        if reloaded.contains(&old_key) {
+            continue;
+        }
+        let (Some((old_ty, old_value)), Some((new_ty, new_value))) =
+            (old.find(&old_key), new.find(key))
+        else {
+            continue;
+        };
+        let now = local_consts(new, new_ty, new_value);
+        if now.is_empty() || local_consts(old, old_ty, old_value) == now {
+            continue;
+        }
+        let reload = new.compile_code(key).and_then(|mut reload| {
+            new.compile_in_lists(key, &mut reload, |_, _| false)?;
+            Ok(reload)
+        });
+        changes.plan.line_moves.retain(|m| m.proc != old_key);
+        match reload {
+            Ok(reload) => changes.plan.reloads.push(ProcReload {
+                proc: old_key,
+                ..reload
+            }),
+            Err(e) => {
+                let refusal = new.uncompiled(key, &e);
+                changes.refused.push(Refusal {
+                    why: format!(
+                        "has a local const whose value changes, so it must be compiled again, but it {}",
+                        refusal.why
+                    ),
+                    ..refusal
+                });
+            }
         }
     }
 }

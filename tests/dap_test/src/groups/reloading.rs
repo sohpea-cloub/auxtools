@@ -769,6 +769,32 @@ fn static_reading_a_changed_default() {
 	world.end();
 }
 
+const LOCAL_LIMIT: &str = "/proc/rb_local_limit()
+	var/const/LIMIT = 5
+	return \"[LIMIT] [LIMIT + 1]\"
+";
+
+fn local_const_changed() {
+	let dir = copy_of_the_world("local_const_changed");
+	std::fs::write(dir.join("local_limit.dm"), LOCAL_LIMIT).unwrap();
+	let dme = dir.join("dap_test_host.dme");
+	let text = std::fs::read_to_string(&dme).unwrap() + "#include \"local_limit.dm\"\n";
+	std::fs::write(&dme, text).unwrap();
+	paths::compile(&dme);
+
+	let mut world = World::launch_in(dir.to_path_buf(), json!({ "hotReload": true }));
+	world.catch_runtimes(false);
+	world.configure();
+	world.wait_output("Hot reload active");
+	assert_eq!(world.eval_global("rb_local_limit()"), "\"5 6\"");
+	edit(&mut world, "local_limit.dm", "LIMIT = 5", "LIMIT = 10");
+	assert_eq!(world.eval_global("rb_local_limit()"), "\"10 11\"");
+	reboot(&mut world, 2);
+	assert_eq!(world.eval_global("rb_local_limit()"), "\"10 11\"");
+	ok("local const a reload changes, read alone and folded, after reboot");
+	world.end();
+}
+
 #[track_caller]
 fn finished_with(world: &mut World, what: &str) {
 	let deadline = std::time::Instant::now() + test_support::dap::TIMEOUT;
@@ -1011,6 +1037,7 @@ pub fn files() {
 	static_naming_a_retargeted_path();
 	static_folding_a_changed_const();
 	static_reading_a_changed_default();
+	local_const_changed();
 	file_named_by_a_reload();
 	resource_files();
 	nothing_to_run();

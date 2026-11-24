@@ -160,6 +160,14 @@ pub fn dependents(built: Built) {
 	reload(&mut watcher, &changes);
 	assert_eq!(eval(&mut client, "\"[dep_alone()] [dep_alone_sum()]\""), "\"10 11\"");
 	println!("ok: code dmasm can't compile that reads a changed const alone sees its new value");
+
+	assert_eq!(eval(&mut client, "\"[dep_local_limit()] [dep_local_based()]\""), "\"5 6 6\"");
+	let changes = source.edit("dependents.dm", "DEP_LOCAL = 5", "DEP_LOCAL = 10");
+	reload(&mut watcher, &changes);
+	let changes = source.edit("dependents.dm", "DEP_LOCAL_BASE = 5", "DEP_LOCAL_BASE = 10");
+	reload(&mut watcher, &changes);
+	assert_eq!(eval(&mut client, "\"[dep_local_limit()] [dep_local_based()]\""), "\"10 11 11\"");
+	println!("ok: a changed local const is read alone and folded with its new value");
 }
 
 fn refused_edit(source: &mut Source, file: &str, from: &str, to: &str) -> Vec<dmasm::reload::Refusal> {

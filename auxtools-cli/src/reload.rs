@@ -137,9 +137,28 @@ fn without_existing_statics(plan: &mut Plan, before: &Snapshot) {
 		let Ok(old) = before.compile(&code.proc) else {
 			continue;
 		};
-		code.statics
-			.retain(|local| !old.statics.iter().any(|had| had.name == local.name && had.scope == local.scope));
+		let nodes = &code.nodes;
+		code.statics.retain_mut(|local| {
+			let existing = old.statics.iter().any(|had| had.name == local.name && had.scope == local.scope);
+			if !existing {
+				local.constant = false;
+			}
+			!existing || local.constant && reads_static(nodes, &local.name, &local.scope)
+		});
 	}
+}
+
+fn reads_static(nodes: &[Node], name: &str, scope: &StaticScope) -> bool {
+	nodes.iter().any(|node| {
+		let Node::Instruction(ins, _) = node else {
+			return false;
+		};
+		ins.variables().iter().any(|var| {
+			var.globals()
+				.iter()
+				.any(|global| global.name.0 == name.as_bytes() && global.scope.as_ref() == Some(scope))
+		})
+	})
 }
 
 pub fn resource_names(request: &HotReloadRequest) -> Vec<String> {
@@ -338,6 +357,27 @@ mod tests {
 		let _ = std::fs::remove_dir_all(&dir);
 		assert!(changes.refused.is_empty(), "{:?}", changes.refused);
 		(old, changes)
+	}
+
+	#[test]
+	fn a_request_sends_the_local_consts_the_new_code_reads() {
+		let before = "var/LIMIT = 1\n/proc/f()\n\tvar/const/LIMIT = 5\n\tvar/const/UNREAD = 2\n\treturn LIMIT\n/proc/g()\n\treturn LIMIT\n";
+		let after = "var/LIMIT = 1\n/proc/f()\n\tvar/const/LIMIT = 10\n\tvar/const/UNREAD = 2\n\treturn LIMIT\n/proc/g()\n\tvar/const/LIMIT = \
+		             7\n\treturn LIMIT\n";
+		let (old, changes) = edited("consts", before, after);
+		let sent = request(&changes, &old, false);
+		let statics: Vec<String> = sent
+			.plan
+			.reloads
+			.iter()
+			.flat_map(|reload| {
+				reload
+					.statics
+					.iter()
+					.map(move |local| format!("{} {} {}", reload.proc, local.name, local.constant))
+			})
+			.collect();
+		assert_eq!(statics, ["/f LIMIT true", "/g LIMIT false"]);
 	}
 
 	#[test]

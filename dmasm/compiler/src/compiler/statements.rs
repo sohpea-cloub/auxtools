@@ -1152,6 +1152,7 @@ fn emit_var_statement(
         }
         _ => var,
     };
+    let mut folded = None;
     if var.var_type.flags.is_const() {
         use dreammaker::constants::Constant as C;
         let value = match var
@@ -1167,11 +1168,12 @@ fn emit_var_statement(
             }
             _ => None,
         };
-        if let Some(value) = value {
+        if let Some(value) = &value {
             ctx(compiler)
                 .local_consts
-                .insert(var.name.as_str().to_owned(), value);
+                .insert(var.name.as_str().to_owned(), value.clone());
         }
+        folded = value;
     }
     if var.var_type.flags.is_static() || var.var_type.flags.is_const() {
         let ty = var.var_type.type_path.to_string();
@@ -1183,10 +1185,11 @@ fn emit_var_statement(
                     line: 0,
                     column: 0,
                 };
-                value.simple_evaluate(nowhere).ok()
+                value.simple_evaluate(nowhere).ok().or(folded)
             }
         };
-        ctx(compiler).declare_static(var.name.as_str(), ty, value, var.value.clone());
+        let constant = var.var_type.flags.is_const();
+        ctx(compiler).declare_static(var.name.as_str(), ty, value, var.value.clone(), constant);
         return Ok(());
     }
     let ty = var.var_type.type_path.to_string();

@@ -152,3 +152,13 @@ var/const/DEP_ALONE = 5
 /proc/dep_alone()
 	var/last = /datum/dep_twice::f()
 	return last ? ::DEP_ALONE : 0
+
+/proc/dep_local_limit()
+	var/const/DEP_LOCAL = 5
+	return "[DEP_LOCAL] [DEP_LOCAL + 1]"
+
+var/const/DEP_LOCAL_BASE = 5
+
+/proc/dep_local_based()
+	var/const/DEP_LOCAL_SUM = DEP_LOCAL_BASE + 1
+	return DEP_LOCAL_SUM

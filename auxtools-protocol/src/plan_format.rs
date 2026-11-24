@@ -11,7 +11,7 @@ use dmasm::{
 
 use crate::{HotReloadRequest, HotReloadResource, ShadowingProc, PROTOCOL_VERSION};
 
-const RECORDED: (u32, u64) = (15, 0x6659_BF71_49B7_7982);
+const RECORDED: (u32, u64) = (15, 0x8D30_AA9F_D832_8B6C);
 
 fn key(path: &str, override_id: u32) -> ProcKey {
 	ProcKey {
@@ -102,7 +102,8 @@ fn code(path: &str) -> ProcReload {
 					nth: 0
 				},
 				value: Some(ConstValue::Number(2.0)),
-				init: None
+				init: None,
+				constant: true
 			},
 			StaticVar {
 				name: "seen".to_owned(),
@@ -111,7 +112,8 @@ fn code(path: &str) -> ProcReload {
 					nth: 1
 				},
 				value: None,
-				init: Some(Box::new(value("(static)")))
+				init: Some(Box::new(value("(static)"))),
+				constant: false
 			},
 		],
 		warnings: vec![Diagnostic::warning(Id::Text, "a warning")]

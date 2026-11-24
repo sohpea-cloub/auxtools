@@ -43,6 +43,7 @@ pub struct StaticLocal {
     pub value: Option<dreammaker::constants::Constant>,
     pub expression: Option<dreammaker::ast::Expression>,
     pub type_path: String,
+    pub constant: bool,
 }
 
 const STATIC_LOCAL: u32 = 1 << 31;
@@ -116,6 +117,7 @@ impl ProcCtx<'_> {
         ty: String,
         value: Option<dreammaker::constants::Constant>,
         expression: Option<dreammaker::ast::Expression>,
+        constant: bool,
     ) {
         let number = self.static_locals.iter().filter(|s| *s == name).count() as u32;
         self.static_locals.push(name.to_owned());
@@ -128,6 +130,7 @@ impl ProcCtx<'_> {
             value,
             expression,
             type_path: ty.clone(),
+            constant,
         });
         self.static_local_types
             .insert((name.to_owned(), number), ty);

@@ -1376,7 +1376,7 @@ pub(super) fn static_initializers(code: &[Spanned<Statement>]) -> Vec<(&str, Opt
         .collect()
 }
 
-fn static_statements<'a>(
+pub(super) fn static_statements<'a>(
     block: &'a [Spanned<Statement>],
     at: Option<Location>,
     out: &mut Vec<(Location, &'a VarStatement)>,
