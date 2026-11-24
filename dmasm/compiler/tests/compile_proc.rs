@@ -591,6 +591,33 @@ fn a_colon_call_finds_its_proc_as_the_last_type_made_declares_it() {
 }
 
 #[test]
+fn a_safe_colon_field_finds_its_var_as_on_an_untyped_value() {
+    let types = "/datum/base\n\tvar/LIMIT = 1\n\
+                 /datum/later\n\tvar/static/LIMIT = 2\n\
+                 /datum/base/sub\n";
+    for (body, var) in [
+        ("return base?:LIMIT", "GetVar global(\"LIMIT\""),
+        ("base?:LIMIT = 5", "SetVar global(\"LIMIT\""),
+        ("base?:LIMIT += 1", "global(\"LIMIT\""),
+        ("return base:LIMIT", "cache[\"LIMIT\"]"),
+        ("return base?.LIMIT", "GetVar cache[\"LIMIT\"]"),
+    ] {
+        let code = compile(
+            &format!("{types}/proc/f(datum/base/sub/base)\n\t{body}\n"),
+            "",
+            "f",
+        );
+        assert!(
+            code.contains(var),
+            "{}: expected {} in\n{}",
+            body,
+            var,
+            code
+        );
+    }
+}
+
+#[test]
 fn a_safe_place_after_a_call_is_typed_as_a_read_finds_it() {
     let types = "/datum/child\n/datum/child/special\n\
                  /datum/holder\n\tvar/datum/child/child\n\tvar/datum/holder/inner\n\

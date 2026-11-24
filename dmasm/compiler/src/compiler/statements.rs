@@ -1481,7 +1481,10 @@ pub(super) fn safe_chain(follow: &[Follow]) -> Option<SafeChain> {
     for (i, f) in follow.iter().enumerate() {
         let last = i + 1 == follow.len();
         if is_safe_follow(f) {
-            untyped.push(matches!(f, Follow::Call(K::SafeColon, _, _)));
+            untyped.push(matches!(
+                f,
+                Follow::Field(K::SafeColon, _) | Follow::Call(K::SafeColon, _, _)
+            ));
         }
         match f {
             Follow::Field(K::SafeDot, name) => {

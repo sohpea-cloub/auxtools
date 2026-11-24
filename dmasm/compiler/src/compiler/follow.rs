@@ -533,7 +533,8 @@ fn emit_safe_inner<'a>(
     compiler.emit_ins(Instruction::SetCacheJmpIfNull(Label::Named(end.clone())));
 
     let ty = match first {
-        Follow::Call(PropertyAccessKind::SafeColon, ..) => None,
+        Follow::Field(PropertyAccessKind::SafeColon, _)
+        | Follow::Call(PropertyAccessKind::SafeColon, ..) => None,
         _ => ty,
     };
     let mut follows = vec![match first {

@@ -1098,6 +1098,27 @@ var/const/LIMIT = 10
 	base?:own().x = 1
 /proc/f14(x)
 	x:make()?:own().x = 1
+// Guards: a_safe_colon_field_finds_its_var_as_on_an_untyped_value (compile_proc.rs)
+/datum/base
+	var/LIMIT = 1
+/datum/later
+	var/static/LIMIT = 2
+/datum/later2
+	var/const/COUNT = 3
+/datum/base/sub
+	var/const/COUNT = 4
+/proc/f1(datum/base/sub/base)
+	return base?:LIMIT
+/proc/f2(datum/base/sub/base)
+	base?:LIMIT = 5
+/proc/f3(datum/base/sub/base)
+	base?:LIMIT += 1
+/proc/f4(datum/base/sub/base)
+	return base:LIMIT
+/proc/f5(datum/base/sub/base)
+	return base?.LIMIT
+/proc/f6(datum/base/sub/base)
+	return base?:COUNT
 // Guards: a_safe_colon_call_finds_its_proc_and_value_as_a_colon_call_does (compile_proc.rs)
 /datum/a
 	var/const/LIMIT = 5

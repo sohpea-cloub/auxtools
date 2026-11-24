@@ -433,13 +433,9 @@ pub(super) fn field_var<'a>(
     use dreammaker::ast::PropertyAccessKind;
     match (kind, after) {
         (PropertyAccessKind::Scope, _) => ty.and_then(|t| member_var(t, name)),
-        (_, After::Index) => colon_var(compiler, None, name),
-        (PropertyAccessKind::Colon | PropertyAccessKind::SafeColon, After::Call) => {
-            colon_var(compiler, None, name)
-        }
-        (PropertyAccessKind::Colon | PropertyAccessKind::SafeColon, After::Typed) => {
-            colon_var(compiler, ty, name)
-        }
+        (_, After::Index) | (PropertyAccessKind::SafeColon, _) => colon_var(compiler, None, name),
+        (PropertyAccessKind::Colon, After::Call) => colon_var(compiler, None, name),
+        (PropertyAccessKind::Colon, After::Typed) => colon_var(compiler, ty, name),
         (PropertyAccessKind::Dot | PropertyAccessKind::SafeDot, After::Call) => match ty {
             Some(t) => member_var(t, name),
             None => colon_var(compiler, None, name),
