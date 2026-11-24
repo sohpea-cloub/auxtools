@@ -1541,14 +1541,15 @@ pub(super) fn compare(
     r: &Retargeted,
     changes: &mut super::Changes,
 ) {
-    let statics = changes
-        .plan
-        .reloads
-        .iter()
-        .map(|r| &r.proc)
-        .chain(changes.plan.new_procs.iter().map(|p| &p.code.proc))
-        .chain(changes.plan.removed_procs.iter().map(|r| &r.proc))
-        .any(|key| old.has_statics(key) || new.has_statics(key));
+    let statics = !changes.consts.is_empty()
+        || changes
+            .plan
+            .reloads
+            .iter()
+            .map(|r| &r.proc)
+            .chain(changes.plan.new_procs.iter().map(|p| &p.code.proc))
+            .chain(changes.plan.removed_procs.iter().map(|r| &r.proc))
+            .any(|key| old.has_statics(key) || new.has_statics(key));
     if !statics
         && differences(
             (old, &old.initializers(false)),

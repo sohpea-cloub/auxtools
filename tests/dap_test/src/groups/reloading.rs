@@ -710,6 +710,35 @@ fn static_naming_a_retargeted_path() {
 	world.end();
 }
 
+const STATIC_LIMIT: &str = "var/const/RB_STATIC_LIMIT = 5
+";
+
+const STATIC_LIMITS: &str = "/proc/rb_static_limits()
+	var/static/list/limits = list(RB_STATIC_LIMIT + 1)
+	return limits
+";
+
+fn static_folding_a_changed_const() {
+	let dir = copy_of_the_world("static_folding_a_changed_const");
+	std::fs::write(dir.join("static_limit.dm"), STATIC_LIMIT).unwrap();
+	std::fs::write(dir.join("static_limits.dm"), STATIC_LIMITS).unwrap();
+	let dme = dir.join("dap_test_host.dme");
+	let text = std::fs::read_to_string(&dme).unwrap() + "#include \"static_limit.dm\"\n#include \"static_limits.dm\"\n";
+	std::fs::write(&dme, text).unwrap();
+	paths::compile(&dme);
+
+	let mut world = World::launch_in(dir.to_path_buf(), json!({ "hotReload": true }));
+	world.catch_runtimes(false);
+	world.configure();
+	world.wait_output("Hot reload active");
+	assert_eq!(world.eval_global("rb_static_limits()[1]"), "6");
+	edit(&mut world, "static_limit.dm", "RB_STATIC_LIMIT = 5", "RB_STATIC_LIMIT = 10");
+	reboot(&mut world, 2);
+	assert_eq!(world.eval_global("rb_static_limits()[1]"), "11");
+	ok("proc static folding a const a reload changes, after reboot");
+	world.end();
+}
+
 #[track_caller]
 fn finished_with(world: &mut World, what: &str) {
 	let deadline = std::time::Instant::now() + test_support::dap::TIMEOUT;
@@ -950,6 +979,7 @@ pub fn files() {
 	initializer_added_to_a_world_without();
 	initializer_naming_a_retargeted_path();
 	static_naming_a_retargeted_path();
+	static_folding_a_changed_const();
 	file_named_by_a_reload();
 	resource_files();
 	nothing_to_run();

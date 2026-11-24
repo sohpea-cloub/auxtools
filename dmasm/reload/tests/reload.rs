@@ -4230,6 +4230,19 @@ fn a_static_naming_a_retargeted_path_is_given_to_a_reboot() {
 }
 
 #[test]
+fn a_static_folding_a_changed_const_is_given_to_a_reboot() {
+    let before = "var/const/LIMIT = 5\n\n\
+                  /proc/limits()\n\tvar/static/list/limits = list(LIMIT + 1)\n\treturn limits\n";
+    let after = before.replace("LIMIT = 5", "LIMIT = 10");
+    let changes = changes("static-folding-const", before, &after);
+    assert!(changes.refused.is_empty(), "{:?}", changes.refused);
+    assert!(changes.deferred.is_empty(), "{:?}", changes.deferred);
+    assert_eq!(global_init_sets(&changes), ["/proc/limits#0:limits @4"]);
+    let code = dmasm_bytecode::format(&changes.global_init.as_ref().unwrap().code.nodes);
+    assert!(code.contains("PushInt 11"), "{}", code);
+}
+
+#[test]
 fn uncompiled_code_folding_a_changed_const_is_refused() {
     let uncompiled = "\tswitch(x)\n\t\tif(x)\n\t\t\treturn 0\n";
     let before = format!(
