@@ -166,7 +166,7 @@ fn files_of_an_included_environment_are_named_as_it_names_them() {
         Some(Node::Instruction(Instruction::DbgFile(name), ())) => {
             String::from_utf8(name.0.clone()).unwrap()
         }
-        other => panic!("{proc} starts with {other:?}"),
+        other => panic!("{} starts with {:?}", proc, other),
     };
     assert_eq!(file_of(&old, "/a"), "code/code.dm");
     assert_eq!(file_of(&old, "/b"), "std.dm");
@@ -2207,7 +2207,7 @@ fn a_declaration_that_colon_lookup_finds_instead_recompiles_its_users() {
                 alone.unwrap().why.starts_with(
                     "reads a var by `x:name` that another type declares now, so it must be compiled again"
                 ),
-                "{name}: {alone:?}"
+                "{}: {:?}", name, alone
             );
         }
         let mut reloads: Vec<&str> = changes
@@ -2229,7 +2229,7 @@ fn a_declaration_that_colon_lookup_finds_instead_recompiles_its_users() {
             .iter()
             .find(|r| r.proc.path == "/colon");
         let code = dmasm_bytecode::format(&colon.unwrap().nodes);
-        assert!(code.contains(folded), "{name}: {code}");
+        assert!(code.contains(folded), "{}: {}", name, code);
     }
 }
 
@@ -2338,7 +2338,7 @@ fn a_declaration_that_colon_lookup_finds_after_a_call_recompiles_its_users() {
                 refusal.why.starts_with(
                     "reads a var by `x:name` that another type declares now, so it must be compiled again"
                 ),
-                "{name}: {refusal}"
+                "{}: {}", name, refusal
             );
         }
         let mut reloads: Vec<&str> = changes
@@ -2640,10 +2640,10 @@ fn a_declaration_that_colon_lookup_finds_instead_recompiles_initializers_and_in_
             panic!("{name}: {:?}", changes.plan.reloads[0].params[0].in_list);
         };
         let list = dmasm_bytecode::format(&list.nodes);
-        assert!(list.contains(folded), "{name}: {list}");
+        assert!(list.contains(folded), "{}: {}", name, list);
         assert_eq!(init_types(&changes), ["/datum/holder"], "{name}");
         let init = dmasm_bytecode::format(&changes.plan.init_procs[0].code.as_ref().unwrap().nodes);
-        assert!(init.contains(folded), "{name}: {init}");
+        assert!(init.contains(folded), "{}: {}", name, init);
         assert_eq!(
             global_init_sets(&changes)[..],
             [":global_limits @9"],
@@ -2716,7 +2716,8 @@ fn a_moved_default_read_with_scope_needs_the_full_read() {
         Ok(_) => panic!("reloaded on its own"),
         Err(e) => assert!(
             e.contains("/f reads a var default with :: that moved"),
-            "{e}"
+            "{}",
+            e
         ),
     }
     let world = World::new(
@@ -5250,10 +5251,10 @@ fn a_new_static_reads_the_statics_in_scope_where_it_is_declared() {
     assert_eq!(reads, ["/proc/open#0:seed", ":seed"]);
     for (path, read) in [("/ended", ":seed"), ("/open", "/proc/open#0:seed")] {
         let reload = changes.plan.reloads.iter().find(|r| r.proc.path == path);
-        let reload = reload.unwrap_or_else(|| panic!("{path} isn't compiled again"));
+        let reload = reload.unwrap_or_else(|| panic!("{} isn't compiled again", path));
         let cache = reload.statics.iter().find(|s| s.name == "cache");
         let init = cache.and_then(|cache| cache.init.as_ref());
-        let init = init.unwrap_or_else(|| panic!("{path}: no initializer for cache"));
+        let init = init.unwrap_or_else(|| panic!("{}: no initializer for cache", path));
         assert_eq!(reads_of(&init.nodes, "seed"), [read], "{path}");
     }
 }
@@ -5293,9 +5294,9 @@ fn a_static_made_by_new_changes_its_initializer_with_its_type() {
         let own = old.reload_file(&world.dir, std::path::Path::new("code/code.dm"));
         match (own, deferred.is_empty()) {
             (Ok(_), true) => {}
-            (Ok(_), false) => panic!("{name}: reloaded on its own"),
-            (Err(e), false) => assert!(e.contains("static initializers"), "{name}: {e}"),
-            (Err(e), true) => panic!("{name}: needs the full parse: {e}"),
+            (Ok(_), false) => panic!("{}: reloaded on its own", name),
+            (Err(e), false) => assert!(e.contains("static initializers"), "{}: {}", name, e),
+            (Err(e), true) => panic!("{}: needs the full parse: {}", name, e),
         }
     }
 }
@@ -5415,7 +5416,7 @@ fn a_static_moved_into_a_block_changes_what_a_later_initializer_reads() {
     world.write(&after);
     match old.reload_file(&world.dir, std::path::Path::new("code/code.dm")) {
         Ok(_) => panic!("reloaded on its own"),
-        Err(e) => assert!(e.contains("static initializers"), "{e}"),
+        Err(e) => assert!(e.contains("static initializers"), "{}", e),
     }
 }
 
@@ -5445,7 +5446,7 @@ fn a_retyped_static_changes_what_a_later_initializer_reads_through_it() {
     world.write(&after);
     match old.reload_file(&world.dir, std::path::Path::new("code/code.dm")) {
         Ok(_) => panic!("reloaded on its own"),
-        Err(e) => assert!(e.contains("static initializers"), "{e}"),
+        Err(e) => assert!(e.contains("static initializers"), "{}", e),
     }
 }
 
@@ -5490,7 +5491,7 @@ fn a_static_moved_into_a_block_changes_the_type_a_later_initializer_makes() {
     world.write(&after);
     match old.reload_file(&world.dir, std::path::Path::new("code/code.dm")) {
         Ok(_) => panic!("reloaded on its own"),
-        Err(e) => assert!(e.contains("static initializers"), "{e}"),
+        Err(e) => assert!(e.contains("static initializers"), "{}", e),
     }
 }
 
@@ -5509,7 +5510,7 @@ fn an_initializer_that_makes_a_computed_kind_waits_for_it() {
     let at = |name: &str| {
         sets.iter()
             .position(|set| set.contains(&format!(":{name} @")))
-            .unwrap_or_else(|| panic!("{name} isn't set: {sets:?}"))
+            .unwrap_or_else(|| panic!("{} isn't set: {:?}", name, sets))
     };
     assert!(at("kind") < at("item"), "item before its kind: {:?}", sets);
     assert!(
