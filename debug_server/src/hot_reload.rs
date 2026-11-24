@@ -3693,15 +3693,18 @@ impl GlobalUses {
 #[derive(Default)]
 struct ProcGlobals {
 	by_name: HashMap<Vec<u8>, Vec<u32>>,
-	locals: HashMap<Vec<u8>, HashMap<u32, u32>>
+	locals: HashMap<Vec<u8>, HashMap<u32, u32>>,
+	kept: HashMap<Vec<u8>, HashMap<u32, u32>>
 }
 
 impl ProcGlobals {
 	fn new(uses: &GlobalUses, local_reads: &[LocalReads]) -> Self {
 		let mut by_name = uses.by_name();
 		let mut locals = HashMap::new();
+		let mut kept = HashMap::new();
 		for reads in local_reads {
 			let name = reads.name.as_bytes().to_vec();
+			kept.insert(name.clone(), reads.kept.iter().copied().collect());
 			let ids = uses.ids_of(&name);
 			let told = match reads.parsed {
 				Some(ParsedReads::Only(nth)) => Self::only_local(&ids, nth),
@@ -3724,7 +3727,7 @@ impl ProcGlobals {
 				}
 			}
 		}
-		Self { by_name, locals }
+		Self { by_name, locals, kept }
 	}
 
 	fn only_local(ids: &[u32], nth: u32) -> Option<(HashMap<u32, u32>, Vec<u32>)> {
@@ -3758,7 +3761,8 @@ impl ProcGlobals {
 	}
 
 	fn local(&self, name: &[u8], nth: u32) -> Option<u32> {
-		self.locals.get(name)?.get(&nth).copied()
+		let old = self.kept.get(name)?.get(&nth)?;
+		self.locals.get(name)?.get(old).copied()
 	}
 }
 

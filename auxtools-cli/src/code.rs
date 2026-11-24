@@ -711,10 +711,12 @@ impl Code {
 		let defines = self
 			.defines_refusal()
 			.filter(|refusal| !applies_now(&refusal) && !(read_with.is_some() && changes_nothing));
-		if !changes.refused.is_empty() || !changes.deferred.iter().all(|d| applies_now(&d)) || defines.is_some() {
+		let unmatched = reload::unmatched_locals(changes, before);
+		if !changes.refused.is_empty() || !unmatched.is_empty() || !changes.deferred.iter().all(|d| applies_now(&d)) || defines.is_some() {
 			let refused = changes
 				.refused
 				.iter()
+				.chain(&unmatched)
 				.chain(&changes.deferred)
 				.map(|refusal| Refusal {
 					file: refusal.file.as_ref().map(|file| self.root.join(file).display().to_string()),

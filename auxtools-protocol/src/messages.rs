@@ -788,7 +788,9 @@ pub struct LocalReads {
 	pub name: String,
 	pub reads: Vec<Option<u32>>,
 	#[serde(default)]
-	pub parsed: Option<ParsedReads>
+	pub parsed: Option<ParsedReads>,
+	#[serde(default)]
+	pub kept: Vec<(u32, u32)>
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]

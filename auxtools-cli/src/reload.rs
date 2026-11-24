@@ -3,10 +3,9 @@ use std::path::PathBuf;
 use auxtools_protocol::{HotReloadRequest, LocalReads, ParsedReads, ShadowingProc};
 use dmasm::{
 	diagnostic::Id,
-	reload::{Changes, Plan, ProcKey, Refusal, Snapshot},
+	reload::{Changes, Plan, ProcKey, ProcReload, Refusal, Snapshot},
 	Node, StaticScope
 };
-use dreammaker::ast::{Spanned, Statement, VarStatement};
 
 mod locals;
 
@@ -14,7 +13,7 @@ pub const RESTART: &str = "Rebuild the .dmb, then restart the world to load all 
 
 pub fn request(changes: &Changes, before: &Snapshot, restarted: bool) -> HotReloadRequest {
 	let mut plan = changes.plan.clone();
-	let local_reads = without_existing_statics(&mut plan, before);
+	let local_reads = without_existing_statics(&mut plan, changes, before);
 	HotReloadRequest {
 		shadowing_procs: shadowing_procs(&plan, before),
 		local_reads,
@@ -23,6 +22,37 @@ pub fn request(changes: &Changes, before: &Snapshot, restarted: bool) -> HotRelo
 		resource_dirs: vec![],
 		global_init: changes.global_init.clone().filter(|_| restarted)
 	}
+}
+
+pub fn unmatched_locals(changes: &Changes, before: &Snapshot) -> Vec<Refusal> {
+	let mut refused = vec![];
+	for code in &changes.plan.reloads {
+		let (old, new) = old_and_new_locals(code, changes, before);
+		for unmatched in locals::matched(&old, &new).1 {
+			refused.push(Refusal {
+				file: before.proc_file(&code.proc),
+				line: Some(unmatched.line),
+				..Refusal::new(
+					Id::DuplicateDefinition,
+					code.proc.to_string(),
+					format!(
+						"the edit leaves {} static or const locals of this name where there were {}, in blocks of the same kinds. Which of them \
+						 keep their values can't be told. Rebuild to apply it",
+						unmatched.new, unmatched.old
+					)
+				)
+				.named(unmatched.name)
+			});
+		}
+	}
+	refused
+}
+
+fn old_and_new_locals<'a>(code: &ProcReload, changes: &'a Changes, before: &'a Snapshot) -> (Vec<locals::Declared<'a>>, Vec<locals::Declared<'a>>) {
+	let old = before.proc_code(&code.proc);
+	let new = changes.new_code(&code.proc).or(old);
+	let declared = |body: Option<&'a dreammaker::ast::Block>| body.map(|body| locals::declared(body)).unwrap_or_default();
+	(declared(old), declared(new))
 }
 
 fn shadowing_procs(plan: &Plan, before: &Snapshot) -> Vec<ShadowingProc> {
@@ -40,12 +70,11 @@ fn shadowing_procs(plan: &Plan, before: &Snapshot) -> Vec<ShadowingProc> {
 		let Some(code) = before.proc_code(key) else {
 			continue;
 		};
-		let mut declared = vec![];
-		static_locals(code, &mut declared);
+		let declared = locals::declared(code);
 		let shadowed: Vec<&str> = globals
 			.iter()
 			.copied()
-			.filter(|global| declared.iter().any(|name| name == global))
+			.filter(|global| declared.iter().any(|local| local.name == *global))
 			.collect();
 		if shadowed.is_empty() {
 			continue;
@@ -69,144 +98,80 @@ fn shadowing_procs(plan: &Plan, before: &Snapshot) -> Vec<ShadowingProc> {
 	found
 }
 
-fn static_locals(block: &[Spanned<Statement>], out: &mut Vec<String>) {
-	for statement in block {
-		statement_static_locals(&statement.elem, out);
-	}
-}
-
-fn statement_static_locals(statement: &Statement, out: &mut Vec<String>) {
-	let mut var = |var: &VarStatement| {
-		if var.var_type.flags.is_static() || var.var_type.flags.is_const() {
-			out.push(var.name.to_string());
-		}
-	};
-	match statement {
-		Statement::Var(one) => var(one),
-		Statement::Vars(all) => all.iter().for_each(var),
-		Statement::While { block, .. }
-		| Statement::DoWhile { block, .. }
-		| Statement::ForInfinite { block }
-		| Statement::Spawn { block, .. }
-		| Statement::Label { block, .. } => static_locals(block, out),
-		Statement::ForList(each) => static_locals(&each.block, out),
-		Statement::ForKeyValue(each) => static_locals(&each.block, out),
-		Statement::ForRange(each) => static_locals(&each.block, out),
-		Statement::ForLoop { init, inc, block, .. } => {
-			for part in init.iter().chain(inc) {
-				statement_static_locals(part, out);
-			}
-			static_locals(block, out);
-		}
-		Statement::If { arms, else_arm } => {
-			for (_, block) in arms {
-				static_locals(block, out);
-			}
-			if let Some(block) = else_arm {
-				static_locals(block, out);
-			}
-		}
-		Statement::Switch { cases, default, .. } => {
-			for (_, block) in cases.iter() {
-				static_locals(block, out);
-			}
-			if let Some(block) = default {
-				static_locals(block, out);
-			}
-		}
-		Statement::TryCatch { try_block, catch_block, .. } => {
-			static_locals(try_block, out);
-			static_locals(catch_block, out);
-		}
-		_ => {}
-	}
-}
-
-fn without_existing_statics(plan: &mut Plan, before: &Snapshot) -> Vec<LocalReads> {
+fn without_existing_statics(plan: &mut Plan, changes: &Changes, before: &Snapshot) -> Vec<LocalReads> {
 	let mut found = vec![];
 	for code in &mut plan.reloads {
 		if code.statics.is_empty() {
 			continue;
 		}
 		let old = OldLocals::of(before, &code.proc);
+		let (_, new_locals) = old_and_new_locals(code, changes, before);
+		let (matched, _) = locals::matched(&old.declared, &new_locals);
+		let was = |name: &str, nth: u32| matched.iter().find(|(had, new, _)| *had == name && *new == nth).map(|(.., old)| *old);
 		let nodes = &code.nodes;
 		code.statics.retain_mut(|local| {
 			let nth = local_number(&local.scope);
-			let kept = old.kept(&local.name, nth);
+			let old_nth = was(&local.name, nth);
 			let read_now = reads_static(nodes, &local.name, &local.scope);
-			let declared = old.declared(&local.name, nth);
 			let initialized = local.init.is_some() && local.value.is_none() && !local.constant;
-			if !kept {
+			if !old_nth.is_some_and(|old_nth| old.read_as(&local.name, old_nth)) {
 				local.constant = false;
-				return !declared || read_now && !initialized;
+				return old_nth.is_none() || read_now && !initialized;
 			}
 			local.constant && read_now
 		});
-		found.extend(old.reads.into_iter().map(|(name, reads, parsed)| LocalReads {
-			proc: code.proc.clone(),
-			name,
-			reads,
-			parsed
+		found.extend(old.reads.iter().map(|(name, reads, parsed)| {
+			LocalReads {
+				proc: code.proc.clone(),
+				name: name.clone(),
+				reads: reads.clone(),
+				parsed: *parsed,
+				kept: matched
+					.iter()
+					.filter(|(had, _, old_nth)| had == name && old.read_as(had, *old_nth))
+					.map(|(_, new, old)| (*new, *old))
+					.collect()
+			}
 		}));
 	}
 	found
 }
 
-struct OldLocals {
-	declared: Vec<(String, u32)>,
+struct OldLocals<'a> {
+	declared: Vec<locals::Declared<'a>>,
 	reads: Vec<(String, Vec<Option<u32>>, Option<ParsedReads>)>
 }
 
-impl OldLocals {
-	fn of(snapshot: &Snapshot, proc: &ProcKey) -> Self {
-		let declared = declared_locals(snapshot, proc);
+impl<'a> OldLocals<'a> {
+	fn of(snapshot: &'a Snapshot, proc: &ProcKey) -> Self {
+		let body = snapshot.proc_code(proc).map_or(&[][..], |code| &code[..]);
+		let declared = locals::declared(body);
+		let mut names: Vec<&str> = declared.iter().map(|local| local.name).collect();
+		names.sort_unstable();
+		names.dedup();
 		let reads = match snapshot.compile(proc) {
 			Ok(old) => local_reads(&old.nodes)
 				.into_iter()
-				.filter(|(name, _)| declared.iter().any(|(had, _)| had == name))
+				.filter(|(name, _)| names.contains(&name.as_str()))
 				.map(|(name, reads)| (name, reads, None))
 				.collect(),
-			Err(_) => {
-				let body = snapshot.proc_code(proc).map_or(&[][..], |code| &code[..]);
-				let mut names: Vec<&String> = declared.iter().map(|(name, _)| name).collect();
-				names.sort();
-				names.dedup();
-				names
-					.into_iter()
-					.filter_map(|name| Some((name.clone(), vec![], Some(locals::parsed_reads(body, name)?))))
-					.collect()
-			}
+			Err(_) => names
+				.into_iter()
+				.filter_map(|name| Some((name.to_owned(), vec![], Some(locals::parsed_reads(body, name)?))))
+				.collect()
 		};
 		Self { declared, reads }
 	}
 
-	fn declared(&self, name: &str, nth: u32) -> bool {
-		self.declared.iter().any(|(had, number)| had == name && *number == nth)
+	fn read_as(&self, name: &str, nth: u32) -> bool {
+		self.reads.iter().any(|(had, reads, parsed)| {
+			had == name
+				&& match parsed {
+					Some(parsed) => *parsed == ParsedReads::Only(nth),
+					None => reads.contains(&Some(nth))
+				}
+		})
 	}
-
-	fn kept(&self, name: &str, nth: u32) -> bool {
-		self.declared(name, nth)
-			&& self.reads.iter().any(|(had, reads, parsed)| {
-				had == name
-					&& match parsed {
-						Some(parsed) => *parsed == ParsedReads::Only(nth),
-						None => reads.contains(&Some(nth))
-					}
-			})
-	}
-}
-
-fn declared_locals(snapshot: &Snapshot, proc: &ProcKey) -> Vec<(String, u32)> {
-	let mut names = vec![];
-	if let Some(code) = snapshot.proc_code(proc) {
-		static_locals(code, &mut names);
-	}
-	let mut out: Vec<(String, u32)> = vec![];
-	for name in names {
-		let number = out.iter().filter(|(had, _)| *had == name).count() as u32;
-		out.push((name, number));
-	}
-	out
 }
 
 const fn local_number(scope: &StaticScope) -> u32 {
@@ -430,7 +395,9 @@ mod tests {
 
 	use dmasm::reload::{diff, Changes, ParseOptions, Snapshot};
 
-	use super::{merge, request};
+	use auxtools_protocol::HotReloadRequest;
+
+	use super::{merge, request, unmatched_locals};
 
 	fn edited(name: &str, before: &str, after: &str) -> (Snapshot, Changes) {
 		let dir = std::env::temp_dir().join(format!("auxtools-reload-{}-{}", name, std::process::id()));
@@ -542,6 +509,43 @@ mod tests {
 			.map(|reads| format!("{} {:?} {:?}", reads.name, reads.reads, reads.parsed))
 			.collect();
 		assert_eq!(reads, ["LIMIT [] Some(Unknown)", "count [] Some(Only(0))"]);
+	}
+
+	fn sent_statics(sent: &HotReloadRequest) -> Vec<String> {
+		sent.plan
+			.reloads
+			.iter()
+			.flat_map(|reload| reload.statics.iter().map(|local| format!("{} {:?}", local.name, local.scope)))
+			.collect()
+	}
+
+	#[test]
+	fn a_request_keeps_a_static_in_its_branch_when_a_branch_is_added_above() {
+		let before = "/proc/f(x)\n\tif (x == 1)\n\t\tvar/static/n = 0\n\t\tn++\n\t\treturn n\n";
+		let added = "\tif (x == 2)\n\t\tvar/static/n = 10\n\t\tn++\n\t\treturn n\n";
+		let after = before.replace("\tif (x == 1)", &format!("{added}\tif (x == 1)"));
+		let (old, changes) = edited("branch-added", before, &after);
+		let sent = request(&changes, &old, false);
+		assert_eq!(sent_statics(&sent), ["n Proc { path: \"/proc/f\", nth: 0 }"]);
+		let kept: Vec<String> = sent.local_reads.iter().map(|reads| format!("{} {:?}", reads.name, reads.kept)).collect();
+		assert_eq!(kept, ["n [(1, 0)]"]);
+
+		let (old, changes) = edited("branch-edited", before, &before.replace("x == 1", "x > 0"));
+		let sent = request(&changes, &old, false);
+		assert!(sent_statics(&sent).is_empty(), "expected no statics sent, got {:?}", sent_statics(&sent));
+		assert_eq!(sent.local_reads[0].kept, [(0, 0)]);
+	}
+
+	#[test]
+	fn a_request_is_refused_when_locals_of_a_name_cant_be_matched() {
+		let before = "/proc/f(x)\n\tif (x == 1)\n\t\tvar/static/n = 0\n\t\tn++\n\t\treturn n\n";
+		let added = "\tif (x == 2)\n\t\tvar/static/n = 10\n\t\tn++\n\t\treturn n\n";
+		let after = before.replace("\tif (x == 1)", &format!("{added}\tif (x == 3)"));
+		let (old, changes) = edited("branch-unmatched", before, &after);
+		let refused: Vec<String> = unmatched_locals(&changes, &old).iter().map(ToString::to_string).collect();
+		assert_eq!(refused, ["code.dm:3: /f: n: the edit leaves 2 static or const locals of this name \
+		                      where there were 1, in blocks of the same kinds. Which of them keep their \
+		                      values can't be told. Rebuild to apply it"]);
 	}
 
 	#[test]

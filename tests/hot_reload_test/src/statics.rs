@@ -69,6 +69,21 @@ pub fn statics(built: Built) {
 	reload(&mut watcher, &changes);
 	assert_eq!(eval(&mut client, "\"[st_unknown()] [st_unknown_global()]\""), "\"5 1\"");
 	println!("ok: a local const leaves the global of its name as it was when its proc's old code doesn't compile");
+
+	assert_eq!(eval(&mut client, "\"[st_branch(1)] [st_branch(1)]\""), "\"1 2\"");
+	let changes = source.edit(
+		"statics.dm",
+		"\tif (which == 1)\n\t\tvar/static/st_branch_count = 0",
+		"\tif (which == 2)\n\t\tvar/static/st_branch_count = 10\n\t\tst_branch_count++\n\t\treturn st_branch_count\n\tif (which == \
+		 1)\n\t\tvar/static/st_branch_count = 0"
+	);
+	reload(&mut watcher, &changes);
+	assert_eq!(
+		eval(&mut client, "\"[st_branch(1)] [st_branch(2)]\""),
+		"\"3 11\"",
+		"the counts of the old branch's static and of the added branch's"
+	);
+	println!("ok: a branch added above another with a static of the same name leaves the other's value with it");
 }
 
 fn declared_references(client: &mut Client, path: &str) -> (u32, u32) {

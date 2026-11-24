@@ -84,3 +84,10 @@ var/ST_UNKNOWN = 1
 
 /proc/st_unknown_global()
 	return ST_UNKNOWN
+
+/proc/st_branch(which)
+	if (which == 1)
+		var/static/st_branch_count = 0
+		st_branch_count++
+		return st_branch_count
+	return 0

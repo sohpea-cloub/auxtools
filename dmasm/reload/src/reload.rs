@@ -508,6 +508,7 @@ pub struct Changes {
     defaults_moved: Vec<String>,
     colon_names: Vec<String>,
     moved_procs: Vec<String>,
+    new_code: Vec<(ProcKey, Block)>,
 }
 
 impl Changes {
@@ -530,6 +531,21 @@ impl Changes {
             }
         }
         self.restart_settings = kept;
+    }
+
+    pub fn new_code(&self, key: &ProcKey) -> Option<&Block> {
+        let (_, code) = self.new_code.iter().find(|(had, _)| had == key)?;
+        Some(code)
+    }
+
+    fn keep_new_code<'a>(&mut self, code: impl Fn(&ProcKey) -> Option<&'a Block>) {
+        self.new_code = self
+            .plan
+            .reloads
+            .iter()
+            .filter(|reload| !reload.statics.is_empty())
+            .filter_map(|reload| Some((reload.proc.clone(), code(&reload.proc)?.clone())))
+            .collect();
     }
 
     fn collect_warnings(&mut self) {
@@ -778,6 +794,10 @@ impl Snapshot {
         if let Some(key) = reader {
             return Err(format!("{key} reads a var default with :: that moved"));
         }
+        changes.keep_new_code(|key| {
+            let (.., new_value) = pairs.iter().find(|(had, ..)| *had == key)?;
+            new_value.code.as_ref()
+        });
         changes.collect_warnings();
         let files = reparsed.iter().map(|file| file.file).collect();
         Ok(FileReload {
@@ -1840,6 +1860,7 @@ pub fn diff(old: &Snapshot, new: &Snapshot, changed_files: Option<&HashSet<PathB
     retargeted::path_users(&retargeted, &mut changes);
     local_const_users(old, new, &realigned, &mut changes);
     global_init::compare(old, new, &retargeted, &mut changes);
+    changes.keep_new_code(|key| new.proc_code(key));
     changes.collect_warnings();
     changes
 }
