@@ -3936,3 +3936,12 @@ fn unchanged_code_naming_a_types_last_definition_follows_it() {
         ]
     );
 }
+
+#[test]
+fn uncompiled_code_naming_a_declaration_that_stays_is_not_refused() {
+    let before = "/datum/t/proc/f()\n\treturn 0\n\n/datum/t/f()\n\treturn 1\n\n/datum/t/f()\n\treturn 2\n\n\
+                  /proc/declared(x)\n\tswitch(x)\n\t\tif(x)\n\t\t\treturn call(new /datum/t, /datum/t/proc/f)()\n";
+    let removed = before.replace("/datum/t/f()\n\treturn 1\n\n", "");
+    let changes = changes("declared-uncompiled", before, &removed);
+    assert_eq!(reloaded(&changes), []);
+}

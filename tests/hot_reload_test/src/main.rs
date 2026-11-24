@@ -2193,6 +2193,14 @@ fn definitions(built: Built) {
 	);
 	println!("ok: unchanged type::proc() names the last definition left after a removal");
 
+	let changes = source.edit("reload.dm", "/datum/kept/speak()\n\treturn \"kept first override\"\n", "");
+	reload(&mut watcher, &changes);
+	assert_eq!(
+		eval(&mut client, "calls_kept_declaration()"),
+		"\"kept declaration, then kept third override\""
+	);
+	println!("ok: code dmasm can't compile that names a declaration left in place stays");
+
 	let changes = source.edit("reload.dm", "/datum/lone/speak()\n\treturn \"lone override\"\n", "");
 	let result = expect_reload_result(watcher.request(reload_request(&changes)));
 	assert!(

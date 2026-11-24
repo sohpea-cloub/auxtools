@@ -182,3 +182,7 @@ var/datum/declared/declared_one = new
 
 /datum/names_last
 	var/said = /datum/last::speak()
+
+/proc/calls_kept_declaration()
+	var/last = /datum/kept::speak()
+	return "[call(new /datum/kept, /datum/kept/proc/speak)()], then [call(new /datum/kept, last)()]"

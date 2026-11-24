@@ -291,3 +291,15 @@ var/mob/helper/small/old_helper = new
 
 /datum/last/speak()
 	return "last override"
+
+/datum/kept/proc/speak()
+	return "kept declaration"
+
+/datum/kept/speak()
+	return "kept first override"
+
+/datum/kept/speak()
+	return "kept second override"
+
+/datum/kept/speak()
+	return "kept third override"

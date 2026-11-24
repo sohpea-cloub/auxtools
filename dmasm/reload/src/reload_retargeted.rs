@@ -68,6 +68,17 @@ fn last_definition(s: &Snapshot, ty: &str, name: &str) -> Option<ProcKey> {
     })
 }
 
+fn type_call(s: &Snapshot, ty: &str, name: &str) -> Option<ProcKey> {
+    let mut at = s.find_type(ty)?;
+    while !at.get().procs.contains_key(name) {
+        at = at.parent_type()?;
+    }
+    match at.is_root() {
+        true => resolve(s, &format!("/proc/{name}")),
+        false => last_definition(s, &at.get().path, name),
+    }
+}
+
 fn forms(ty: &str, name: &str) -> Vec<String> {
     let mut forms = vec![
         format!("{ty}/{name}"),
@@ -137,13 +148,20 @@ impl Retargeted<'_> {
     }
 
     fn after<'a>(&self, path: &'a str) -> Named<'a> {
-        let Some(key) = resolve(self.new, path) else {
-            return Named::NoProc(path);
-        };
+        resolve(self.new, path).map_or(Named::NoProc(path), |key| self.in_old(key))
+    }
+
+    fn in_old<'a>(&self, key: ProcKey) -> Named<'a> {
         match old_key(self.realigned, &key).filter(|old| self.old.procs.contains_key(old)) {
             Some(old) => Named::Old(old),
             None => Named::Added(key),
         }
+    }
+
+    fn type_call_changes(&self, ty: &str, name: &str) -> bool {
+        let before = type_call(self.old, ty, name).map(Named::Old);
+        let after = type_call(self.new, ty, name).map(|key| self.in_old(key));
+        before != after
     }
 
     fn find_defaults(&mut self) {
@@ -225,6 +243,10 @@ impl Retargeted<'_> {
             .iter()
             .position(|(_, part)| *part == "proc" || *part == "verb")
         {
+            Some(at) if at + 2 == parts.len() => {
+                let path = joined(&parts);
+                self.before(&path) != self.after(&path)
+            }
             Some(at) => self.reaches(&joined(&parts[..at]), name),
             None => self.paths.contains(&joined(&parts)),
         }
@@ -305,7 +327,7 @@ impl<'r, 's> Scan<'r, 's> {
                     {
                         self.resolved.insert(first);
                         let ty: String = prefab.path.iter().map(|(_, p)| format!("/{p}")).collect();
-                        r.reaches(&ty, name.as_str())
+                        r.names.contains(name.as_str()) && r.type_call_changes(&ty, name.as_str())
                     }
                     _ => false,
                 }
