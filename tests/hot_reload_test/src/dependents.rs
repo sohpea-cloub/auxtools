@@ -121,7 +121,13 @@ pub fn dependents(built: Built) {
 
 	let changes = source.edit("dependents.dm", "DEP_OWN = 5", "DEP_OWN = 10");
 	reload(&mut watcher, &changes);
-	assert_eq!(eval(&mut client, "\"[dep_own_global()] [(new /datum/dep_own).own()]\""), "\"11 3\"");
+	assert_eq!(
+		eval(
+			&mut client,
+			"\"[dep_own_global()] [(new /datum/dep_own).own()] [dep_own_global_alone()] [(new /datum/dep_own).own_alone()]\""
+		),
+		"\"11 3 10 2\""
+	);
 	println!("ok: a global const changes beside a member const of its name");
 	assert_eq!(eval(&mut client, "(new /datum/dep_own).next()"), "3");
 	println!("ok: a changed const leaves code dmasm can't compile that reads a member const of its name");

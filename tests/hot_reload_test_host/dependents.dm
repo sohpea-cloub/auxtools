@@ -126,6 +126,12 @@ var/const/DEP_OWN = 5
 /proc/dep_own_global()
 	return DEP_OWN + 1
 
+/datum/dep_own/proc/own_alone()
+	return DEP_OWN
+
+/proc/dep_own_global_alone()
+	return DEP_OWN
+
 /datum/dep_own/proc/next()
 	var/last = /datum/dep_twice::f()
 	return last ? DEP_OWN + 1 : 0
