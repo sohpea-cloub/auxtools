@@ -2417,7 +2417,13 @@ fn prepare_redeclared(
 	let fail = |e: String| format!("{}/var/{}: {}", var.type_path, var.var, e);
 
 	if var.type_path.is_empty() {
-		let ids = variable_ids(var.var.as_bytes());
+		let mut ids = variable_ids(var.var.as_bytes());
+		if ids.len() > 1 {
+			for type_id in 0..runtime_tables::type_count().map_err(fail)? {
+				let declared = type_vars.declared(type_id).map_err(fail)?;
+				ids.retain(|id| !declared.chunks(2).any(|pair| pair[0] == *id));
+			}
+		}
 		let [id] = ids[..] else {
 			return Err(fail(format!("expected one matching runtime variable, found {}", ids.len())));
 		};

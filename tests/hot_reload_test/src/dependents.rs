@@ -117,6 +117,11 @@ pub fn dependents(built: Built) {
 	);
 	reload(&mut watcher, &changes);
 	println!("ok: an `in` list that reads a static through a retyped var reads the new type's");
+
+	let changes = source.edit("dependents.dm", "DEP_OWN = 5", "DEP_OWN = 10");
+	reload(&mut watcher, &changes);
+	assert_eq!(eval(&mut client, "\"[dep_own_global()] [(new /datum/dep_own).own()]\""), "\"11 3\"");
+	println!("ok: a global const changes beside a member const of its name");
 }
 
 fn refused_edit(source: &mut Source, file: &str, from: &str, to: &str) -> Vec<dmasm::reload::Refusal> {

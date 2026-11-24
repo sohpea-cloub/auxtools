@@ -110,3 +110,14 @@ var/const/DEP_QUALIFIED = 5
 
 /mob/dep_targeted/verb/choose_dep_target(x as anything in target::choices)
 	return x
+
+var/const/DEP_OWN = 5
+
+/datum/dep_own
+	var/const/DEP_OWN = 2
+
+/datum/dep_own/proc/own()
+	return DEP_OWN + 1
+
+/proc/dep_own_global()
+	return DEP_OWN + 1
