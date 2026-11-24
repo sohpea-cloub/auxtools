@@ -72,6 +72,10 @@ fn completions(world: &mut World) {
 	assert_eq!(names(world, "nowhere_at_all."), Vec::<String>::new());
 	assert_eq!(names(world, "\"some te"), Vec::<String>::new());
 	assert_eq!(names(world, "local_list[1]."), Vec::<String>::new());
+	for _ in 0..3 {
+		names(world, "local_list[n++].");
+	}
+	assert_eq!(world.eval("n"), "1");
 	ok("completion rejects unsafe or invalid receivers");
 
 	let targets = world.request("completions", json!({ "frameId": frame, "text": "leaf(by) + n", "column": 8 }));

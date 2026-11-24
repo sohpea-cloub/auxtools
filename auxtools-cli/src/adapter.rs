@@ -2293,11 +2293,11 @@ fn completion_place(text: &str) -> Option<CompletionPlace<'_>> {
 		}
 		at = name;
 	}
-	Some(CompletionPlace {
-		start,
-		base: base_end.map(|end| &text[at..end]),
-		command: false
-	})
+	let base = base_end.map(|end| &text[at..end]);
+	if base.is_some_and(changes_things) {
+		return None;
+	}
+	Some(CompletionPlace { start, base, command: false })
 }
 
 fn hover_refuses(code: &str) -> Option<&'static str> {
@@ -2570,7 +2570,13 @@ mod tests {
 			"x + 3",
 			".na",
 			"a..b",
-			"]."
+			"].",
+			"items[i++].na",
+			"items[--i].",
+			"items[i = 2].",
+			"items[i += 1].",
+			"items[\"[i++]\"].",
+			"items[new /datum].na"
 		] {
 			assert_eq!(completion_place(text), None, "{}", text);
 		}
