@@ -1000,6 +1000,7 @@ impl Adapter {
 		for claim in find_again {
 			let _ = self.remove_breakpoint(claim);
 		}
+		self.retry_function_breakpoints();
 		for (id, removed) in instructions {
 			if removed {
 				self.removed_by_reload.insert(id);
