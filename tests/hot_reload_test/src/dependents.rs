@@ -103,6 +103,20 @@ pub fn dependents(built: Built) {
 	reload(&mut watcher, &changes);
 	assert_eq!(eval(&mut client, "/datum/dep_static_copier::copy"), "\"changed\"");
 	println!("ok: a new static that reads a static with :: takes its value at run time");
+
+	let changes = source.edit("dependents.dm", "var/datum/dep_choices_a/target", "var/datum/dep_choices_b/target");
+	let chooser = changes.plan.reloads.iter().find(|r| r.proc.path == "/mob/dep_targeted/choose_dep_target");
+	let Some(InList::New(choices)) = chooser.map(|r| &r.params[0].in_list) else {
+		panic!("the verb's unchanged `in` list isn't compiled again: {:?}", chooser);
+	};
+	let code = format!("{:?}", choices.nodes);
+	assert!(
+		code.contains("/datum/dep_choices_b") && !code.contains("/datum/dep_choices_a"),
+		"the verb's new `in` list doesn't read /datum/dep_choices_b's static: {}",
+		code
+	);
+	reload(&mut watcher, &changes);
+	println!("ok: an `in` list that reads a static through a retyped var reads the new type's");
 }
 
 fn refused_edit(source: &mut Source, file: &str, from: &str, to: &str) -> Vec<dmasm::reload::Refusal> {

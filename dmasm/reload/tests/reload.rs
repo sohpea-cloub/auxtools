@@ -4188,6 +4188,26 @@ fn a_changed_const_recompiles_the_initializers_and_in_lists_that_fold_it() {
 }
 
 #[test]
+fn a_retyped_var_recompiles_the_in_lists_that_read_a_static_through_it() {
+    let before = "/datum/a\n\tvar/static/list/choices = list(1)\n\n\
+                  /datum/b\n\tvar/static/list/choices = list(2)\n\n\
+                  /mob/holder\n\tvar/datum/a/target\n\n\
+                  /mob/holder/verb/choose(x in target::choices)\n\treturn x\n";
+    let after = before.replace("var/datum/a/target", "var/datum/b/target");
+    let changes = changes_of("retyped-in-list", before, &after);
+    assert_eq!(sorted_reloads(&changes), ["/mob/holder/choose"]);
+    let InList::New(code) = &changes.plan.reloads[0].params[0].in_list else {
+        panic!("{:?}", changes.plan.reloads[0].params[0].in_list);
+    };
+    let code = format!("{:?}", code.nodes);
+    assert!(
+        code.contains("/datum/b") && !code.contains("/datum/a"),
+        "{}",
+        code
+    );
+}
+
+#[test]
 fn a_default_read_from_a_type_proc_default_names_the_same_proc() {
     let before = "/datum/t/proc/f()\n/datum/t/f()\n\n\
                   /datum/config\n\tvar/handler = /datum/t::f()\n\n/datum/user\n";

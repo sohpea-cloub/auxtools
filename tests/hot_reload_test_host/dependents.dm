@@ -98,3 +98,15 @@ var/const/DEP_QUALIFIED = 5
 	var/datum/dep_static_config/config = new
 	config.handler = "changed"
 	return config.handler
+
+/datum/dep_choices_a
+	var/static/list/choices = list("a")
+
+/datum/dep_choices_b
+	var/static/list/choices = list("b")
+
+/mob/dep_targeted
+	var/datum/dep_choices_a/target
+
+/mob/dep_targeted/verb/choose_dep_target(x as anything in target::choices)
+	return x
