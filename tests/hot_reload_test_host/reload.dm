@@ -279,3 +279,6 @@ var/mob/helper/small/old_helper = new
 	return "override"
 
 /datum/holder
+
+/datum/gone/proc/speak()
+	return "gone declaration"

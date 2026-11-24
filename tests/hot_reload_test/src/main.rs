@@ -2200,6 +2200,21 @@ fn definitions(built: Built) {
 		"\"lone override\""
 	);
 	println!("ok: code that names a removed proc refuses the reload");
+
+	let changes = source.edit("reload.dm", "/datum/gone/proc/speak()\n\treturn \"gone declaration\"\n", "");
+	let result = expect_reload_result(watcher.request(reload_request(&changes)));
+	assert!(
+		!result.applied,
+		"a reload that leaves code naming a removed declaration was applied: {:?}",
+		result
+	);
+	assert_eq!(result.errors, [
+		"/calls_gone_unchanged: /datum/gone/proc/speak names a proc that this reload removes. Keep a definition of it, or change the code that \
+		 names it",
+		"var gone_said: /datum/gone/proc/speak names a proc that this reload removes. Keep a definition of it, or change the code that names it"
+	]);
+	assert_eq!(eval(&mut client, "calls_gone_unchanged()"), "\"gone declaration\"");
+	println!("ok: code that names a removed declaration refuses the reload");
 }
 
 fn types(built: Built) {

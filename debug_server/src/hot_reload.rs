@@ -242,6 +242,10 @@ fn removed_proc(path: &str) -> String {
 	)
 }
 
+fn removed_path_type(path: &str) -> Option<(u8, u32)> {
+	AssembleEnv::type_value(path).filter(|(tag, _)| *tag != raw_types::values::ValueTag::ProcRef.0)
+}
+
 fn new_proc_path(new: &NewProc) -> String {
 	match (new.type_path.as_str(), new.declared, new.verb) {
 		("", true, _) => format!("/proc/{}", new.name),
@@ -2209,7 +2213,7 @@ fn const_value(value: &ConstValue, pending: &Pending) -> Result<(u32, u32), Stri
 				(tag as u32, data)
 			}
 			Named::Removed => {
-				let (tag, data) = AssembleEnv::type_value(path).ok_or_else(|| removed_proc(path))?;
+				let (tag, data) = removed_path_type(path).ok_or_else(|| removed_proc(path))?;
 				(tag as u32, data)
 			}
 		},
@@ -3677,7 +3681,7 @@ impl dmasm::assembler::AssembleEnv for ReloadEnv<'_> {
 			Named::Proc(id) => Some((raw_types::values::ValueTag::ProcRef.0, id)),
 			Named::Unchanged => AssembleEnv.get_type(path),
 			Named::Removed => {
-				let found = AssembleEnv::type_value(path);
+				let found = removed_path_type(path);
 				if found.is_none() {
 					self.error = Some(removed_proc(path));
 				}

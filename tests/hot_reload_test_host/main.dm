@@ -168,3 +168,11 @@ var/datum/declared/declared_one = new
 
 /datum/names_lone
 	var/said = /datum/lone/speak
+
+/datum/gone
+
+/proc/calls_gone_unchanged()
+	return call(new /datum/gone, /datum/gone/proc/speak)()
+
+/datum/names_gone
+	var/gone_said = /datum/gone/proc/speak
