@@ -21,6 +21,7 @@ pub(super) struct Retargeted<'s> {
     global_names: HashSet<String>,
     defaults: HashSet<String>,
     consts: HashSet<String>,
+    member_vars: HashMap<String, Vec<String>>,
 }
 
 fn resolve(s: &Snapshot, path: &str) -> Option<ProcKey> {
@@ -106,6 +107,7 @@ pub(super) fn retargeted<'s>(
         global_names: HashSet::new(),
         defaults: HashSet::new(),
         consts: HashSet::new(),
+        member_vars: HashMap::new(),
     };
     let touched: BTreeSet<&str> = realigned
         .keys()
@@ -132,6 +134,38 @@ pub(super) fn retargeted<'s>(
             }
         }
     }
+    let is_global = |name: &str| {
+        [old, new]
+            .iter()
+            .any(|s| s.tree.root().get().vars.contains_key(name))
+    };
+    let declares = |t: TypeRef, name: &str| {
+        t.get()
+            .vars
+            .get(name)
+            .is_some_and(|v| v.declaration.is_some())
+    };
+    for n in new.tree.iter_types().filter(|n| !n.is_root()) {
+        let Some(o) = old.find_type(&n.get().path) else {
+            continue;
+        };
+        let names: BTreeSet<&str> = n
+            .get()
+            .vars
+            .keys()
+            .chain(o.get().vars.keys())
+            .map(|name| name.as_str())
+            .filter(|name| is_global(name))
+            .collect();
+        for name in names {
+            if declares(n, name) != declares(o, name) {
+                r.member_vars
+                    .entry(name.to_owned())
+                    .or_default()
+                    .push(n.get().path.clone());
+            }
+        }
+    }
     if !r.paths.is_empty() {
         r.find_defaults();
     }
@@ -140,7 +174,23 @@ pub(super) fn retargeted<'s>(
 
 impl Retargeted<'_> {
     pub(super) fn is_empty(&self) -> bool {
-        self.paths.is_empty()
+        self.paths.is_empty() && self.member_vars.is_empty()
+    }
+
+    fn rebinds(&self, members: &HashMap<String, Vec<String>>, ty: &str, name: &str) -> bool {
+        let Some(types) = members.get(name) else {
+            return false;
+        };
+        [self.old, self.new].iter().any(|s| {
+            let mut at = s.find_type(ty);
+            while let Some(t) = at {
+                if types.contains(&t.get().path) {
+                    return true;
+                }
+                at = t.parent_type();
+            }
+            false
+        })
     }
 
     fn before<'a>(&self, path: &'a str) -> Named<'a> {
@@ -178,7 +228,7 @@ impl Retargeted<'_> {
                             .is_some_and(|d| d.get().var_type.flags.is_const());
                         let known = self.defaults.contains(name.as_str())
                             && (!is_const || self.consts.contains(name.as_str()));
-                        if !known && self.expressions_might_name([expression]) {
+                        if !known && self.expressions_might_name([expression], None) {
                             found.push((name.as_str().to_owned(), is_const));
                         }
                     }
@@ -252,8 +302,8 @@ impl Retargeted<'_> {
         }
     }
 
-    fn proc_might_name(&self, value: &ProcValue, own: &str) -> bool {
-        let mut scan = Scan::new(self, Some(own));
+    fn proc_might_name(&self, value: &ProcValue, own: &str, ty: &str) -> bool {
+        let mut scan = Scan::new(self, Some(own), Some(ty));
         for parameter in value.parameters.iter() {
             if let Some(default) = &parameter.default {
                 syntax::walk_expression(default, &mut |node| scan.visit(node));
@@ -268,19 +318,38 @@ impl Retargeted<'_> {
     fn expressions_might_name<'e>(
         &self,
         expressions: impl IntoIterator<Item = &'e Expression>,
+        ty: Option<&str>,
     ) -> bool {
-        let mut scan = Scan::new(self, None);
+        let mut scan = Scan::new(self, None, ty);
         for expression in expressions {
             syntax::walk_expression(expression, &mut |node| scan.visit(node));
         }
         scan.found
     }
 
-    pub(super) fn inits_might_name(&self, inits: &[Init]) -> bool {
-        !self.is_empty() && self.expressions_might_name(inits.iter().map(|init| &init.value))
+    pub(super) fn inits_might_name(&self, inits: &[Init], ty: &str) -> bool {
+        !self.is_empty()
+            && self.expressions_might_name(inits.iter().map(|init| &init.value), Some(ty))
     }
 
-    pub(super) fn same_targets(&self, before: &ProcReload, after: &ProcReload) -> bool {
+    pub(super) fn same_code(&self, before: &ProcReload, after: &ProcReload) -> bool {
+        let same_statics = before.statics.len() == after.statics.len()
+            && before.statics.iter().zip(&after.statics).all(|(b, a)| {
+                b.name == a.name
+                    && b.scope == a.scope
+                    && b.value == a.value
+                    && match (&b.init, &a.init) {
+                        (Some(b), Some(a)) => same_instructions(&b.nodes, &a.nodes),
+                        (b, a) => b.is_none() && a.is_none(),
+                    }
+            });
+        same_instructions(&before.nodes, &after.nodes)
+            && before.locals == after.locals
+            && same_statics
+            && self.same_targets(before, after)
+    }
+
+    fn same_targets(&self, before: &ProcReload, after: &ProcReload) -> bool {
         let (mut old, mut new) = (vec![], vec![]);
         code_paths(before, &mut old);
         code_paths(after, &mut new);
@@ -291,23 +360,37 @@ impl Retargeted<'_> {
                 .all(|(old, new)| self.before(old) == self.after(new))
     }
 
-    fn retargets(&self, before: Result<ProcReload, Diagnostic>, after: &ProcReload) -> bool {
-        before.map_or(true, |before| !self.same_targets(&before, after))
+    fn changes_code(&self, before: Result<ProcReload, Diagnostic>, after: &ProcReload) -> bool {
+        before.map_or(true, |before| !self.same_code(&before, after))
     }
+}
+
+fn same_instructions(before: &[Node], after: &[Node]) -> bool {
+    fn code(nodes: &[Node]) -> impl Iterator<Item = &Node> {
+        nodes.iter().filter(|n| {
+            !matches!(
+                n,
+                Node::Instruction(Instruction::DbgLine(_) | Instruction::DbgFile(_), _)
+            )
+        })
+    }
+    code(before).eq(code(after))
 }
 
 struct Scan<'r, 's> {
     r: &'r Retargeted<'s>,
     own: Option<&'r str>,
+    ty: Option<&'r str>,
     resolved: HashSet<*const Follow>,
     found: bool,
 }
 
 impl<'r, 's> Scan<'r, 's> {
-    fn new(r: &'r Retargeted<'s>, own: Option<&'r str>) -> Self {
+    fn new(r: &'r Retargeted<'s>, own: Option<&'r str>, ty: Option<&'r str>) -> Self {
         Scan {
             r,
             own,
+            ty,
             resolved: HashSet::new(),
             found: false,
         }
@@ -338,6 +421,9 @@ impl<'r, 's> Scan<'r, 's> {
             }
             syntax::Node::Follow(Follow::StaticField(name)) => r.defaults.contains(name.as_str()),
             syntax::Node::Term(Term::Prefab(prefab)) => r.prefab_might_name(prefab),
+            syntax::Node::Term(Term::Ident(name)) => self
+                .ty
+                .is_some_and(|ty| r.rebinds(&r.member_vars, ty, name.as_str())),
             syntax::Node::Term(Term::__PROC__) => self.own.is_some_and(|own| r.names.contains(own)),
             syntax::Node::Name(name) => r.consts.contains(name) || r.global_names.contains(name),
             _ => false,
@@ -424,7 +510,7 @@ pub(super) fn path_users(r: &Retargeted, changes: &mut Changes) {
             else {
                 continue;
             };
-            if !r.expressions_might_name([after]) {
+            if !r.expressions_might_name([after], Some(&new_ty.get().path)) {
                 continue;
             }
             let after =
@@ -441,15 +527,15 @@ pub(super) fn path_users(r: &Retargeted, changes: &mut Changes) {
                 };
             let before =
                 old.compile_in_list(old_ty, before, value_location(before, old_value.location));
-            if r.retargets(before, &after) {
+            if r.changes_code(before, &after) {
                 lists.insert(parameter.name.as_str());
             }
         }
 
-        let body = if reloaded.is_none() && r.proc_might_name(value, name) {
+        let body = if reloaded.is_none() && r.proc_might_name(value, name, &new_ty.get().path) {
             match new.compile_code(key) {
                 Ok(after) => r
-                    .retargets(old.compile_code(&old_key), &after)
+                    .changes_code(old.compile_code(&old_key), &after)
                     .then_some(after),
                 Err(e) => {
                     refuse(changes, key, &e);
@@ -489,7 +575,7 @@ pub(super) fn path_users(r: &Retargeted, changes: &mut Changes) {
 }
 
 pub(super) fn path_defaults(r: &Retargeted, changes: &mut Changes) {
-    if r.is_empty() {
+    if r.paths.is_empty() {
         return;
     }
     let new = r.new;

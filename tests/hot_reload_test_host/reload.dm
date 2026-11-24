@@ -303,3 +303,5 @@ var/mob/helper/small/old_helper = new
 
 /datum/kept/speak()
 	return "kept third override"
+
+/datum/tallied

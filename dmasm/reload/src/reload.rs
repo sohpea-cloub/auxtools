@@ -2498,7 +2498,7 @@ fn compare_inits(
         let mut before = None;
         match old.find_type(&n.get().path) {
             Some(o) if inits(o, &mut old_memo) == new_inits.as_slice() => {
-                if !retargeted.inits_might_name(&new_inits) {
+                if !retargeted.inits_might_name(&new_inits, &n.get().path) {
                     continue;
                 }
                 let old_inits = inits(o, &mut old_memo).to_vec();
@@ -2526,7 +2526,7 @@ fn compare_inits(
             match new.compile_init(n, &new_inits) {
                 Ok(code)
                     if before.is_some_and(|before| {
-                        before.is_ok_and(|before| retargeted.same_targets(&before, &code))
+                        before.is_ok_and(|before| retargeted.same_code(&before, &code))
                     }) =>
                 {
                     continue

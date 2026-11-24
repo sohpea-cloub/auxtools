@@ -2201,6 +2201,12 @@ fn definitions(built: Built) {
 	);
 	println!("ok: code dmasm can't compile that names a declaration left in place stays");
 
+	assert_eq!(eval(&mut client, "tallies()"), "\"none 101\"");
+	let changes = source.edit("reload.dm", "/datum/tallied\n", "/datum/tallied\n\tvar/hr_tally = 0\n");
+	reload(&mut watcher, &changes);
+	assert_eq!(eval(&mut client, "tallies()"), "\"1 101\"");
+	println!("ok: a new member var takes an unchanged proc's use of a global's name");
+
 	let changes = source.edit("reload.dm", "/datum/lone/speak()\n\treturn \"lone override\"\n", "");
 	let result = expect_reload_result(watcher.request(reload_request(&changes)));
 	assert!(

@@ -3945,3 +3945,54 @@ fn uncompiled_code_naming_a_declaration_that_stays_is_not_refused() {
     let changes = changes("declared-uncompiled", before, &removed);
     assert_eq!(reloaded(&changes), []);
 }
+
+fn sorted_reloads(changes: &Changes) -> Vec<String> {
+    let mut reloads: Vec<String> = reloaded(changes).iter().map(ToString::to_string).collect();
+    reloads.sort();
+    reloads
+}
+
+fn init_types(changes: &Changes) -> Vec<&str> {
+    let mut types: Vec<&str> = changes
+        .plan
+        .init_procs
+        .iter()
+        .map(|i| i.type_path.as_str())
+        .collect();
+    types.sort();
+    types
+}
+
+#[test]
+fn a_member_var_added_or_removed_takes_unqualified_uses_from_a_global() {
+    let before = "var/count = 100\n\n\
+                  /datum/t\n\tvar/list/counts = list(count)\n\n\
+                  /datum/t/proc/bump()\n\tcount++\n\n\
+                  /datum/t/proc/local()\n\tvar/count = 1\n\treturn count\n\n\
+                  /datum/t/child/proc/bump_more()\n\tcount += 2\n\n\
+                  /datum/u/proc/bump()\n\tcount++\n";
+    let added = before.replace("/datum/t\n", "/datum/t\n\tvar/count = 0\n");
+    for (name, before, after) in [
+        ("member-var-added", before, added.as_str()),
+        ("member-var-removed", added.as_str(), before),
+    ] {
+        let changes = changes_of(name, before, after);
+        assert_eq!(
+            sorted_reloads(&changes),
+            ["/datum/t/bump", "/datum/t/child/bump_more"],
+            "{}",
+            name
+        );
+        assert_eq!(
+            init_types(&changes),
+            ["/datum/t", "/datum/t/child"],
+            "{}",
+            name
+        );
+    }
+
+    let unshadowed = before.replace("var/count = 100\n", "");
+    let added = unshadowed.replace("/datum/t\n", "/datum/t\n\tvar/count = 0\n");
+    let changes = changes_of("member-var-without-global", &unshadowed, &added);
+    assert_eq!(sorted_reloads(&changes), Vec::<String>::new());
+}
