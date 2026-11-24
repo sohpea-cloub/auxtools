@@ -2077,6 +2077,7 @@ fn local_consts<'a>(
 fn local_const_users(old: &Snapshot, new: &Snapshot, realigned: &Realigned, changes: &mut Changes) {
     if changes.consts.is_empty()
         && changes.defaults_changed.is_empty()
+        && changes.retyped.is_empty()
         && changes.colon_names.is_empty()
     {
         return;

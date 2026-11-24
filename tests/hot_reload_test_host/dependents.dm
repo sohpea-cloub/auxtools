@@ -217,3 +217,11 @@ var/const/DEP_PARENT = 5
 	var/const/DEP_COLON_ALONE = 5
 
 /datum/dep_colon_alone_later
+
+/datum/dep_retype_first
+	var/const/DEP_RETYPE = 5
+
+/datum/dep_retype_later
+	var/const/DEP_RETYPE = 9
+
+var/datum/dep_retype_first/dep_retype_target

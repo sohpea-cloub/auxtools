@@ -274,6 +274,16 @@ pub fn dependents(built: Built) {
 		"a proc dmasm can't compile that reads an untyped x:name alone from another type after the reload isn't refused"
 	);
 	println!("ok: a reload is refused for a proc dmasm can't compile that reads an untyped x:name alone from another type");
+
+	assert_eq!(eval(&mut client, "dep_retyped_local_const()"), "6");
+	let changes = source.edit(
+		"dependents.dm",
+		"var/datum/dep_retype_first/dep_retype_target",
+		"var/datum/dep_retype_later/dep_retype_target"
+	);
+	reload(&mut watcher, &changes);
+	assert_eq!(eval(&mut client, "dep_retyped_local_const()"), "10");
+	println!("ok: a local const in an unchanged file follows a var it reads through that is declared with another type");
 }
 
 fn refused_edit(source: &mut Source, file: &str, from: &str, to: &str) -> Vec<dmasm::reload::Refusal> {

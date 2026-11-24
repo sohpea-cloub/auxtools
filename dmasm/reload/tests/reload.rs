@@ -4485,6 +4485,28 @@ fn a_local_const_reads_the_names_in_scope_where_it_is_declared() {
 }
 
 #[test]
+fn a_local_const_follows_a_retyped_var_it_reads_through() {
+    let before = "/datum/a\n\tvar/const/LIMIT = 5\n\n/datum/b\n\tvar/const/LIMIT = 9\n\n\
+                  /datum/holder\n\tvar/datum/a/target\n\n\
+                  /datum/holder/proc/limit()\n\tvar/const/L = target.LIMIT + 1\n\treturn L\n\n\
+                  var/datum/a/global_target\n\n\
+                  /proc/global_limit()\n\tvar/const/L = global_target.LIMIT + 1\n\treturn L\n";
+    let after = before.replace("var/datum/a/", "var/datum/b/");
+    let changes = changes("local-const-retyped", before, &after);
+    assert_eq!(
+        sorted_reloads(&changes),
+        ["/datum/holder/limit", "/global_limit"]
+    );
+    for path in ["/datum/holder/limit", "/global_limit"] {
+        assert_eq!(
+            sent_statics(&changes, path),
+            ["L Some(Number(10.0)) true"],
+            "{path}"
+        );
+    }
+}
+
+#[test]
 fn uncompiled_code_folding_a_changed_const_is_refused() {
     let uncompiled = "\tswitch(x)\n\t\tif(x)\n\t\t\treturn 0\n";
     let before = format!(

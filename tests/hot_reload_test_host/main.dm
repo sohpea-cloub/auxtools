@@ -254,3 +254,7 @@ var/hr_tally = 100
 /proc/dep_colon_local_const(x)
 	var/const/DEP_COLON_LOCAL = x:DEP_COLON_LIST + 1
 	return DEP_COLON_LOCAL
+
+/proc/dep_retyped_local_const()
+	var/const/DEP_RETYPED_LOCAL = dep_retype_target.DEP_RETYPE + 1
+	return DEP_RETYPED_LOCAL
