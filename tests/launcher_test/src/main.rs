@@ -989,6 +989,28 @@ fn command_line_more(pid: u64, dir: &Path) {
 	reader.stop();
 	println!("ok: a world doesn't stay paused for a client that only reads its log");
 
+	let mut tracer = cli.start(&["trace", "/proc/tick", "--log", "{world.time}"]);
+	tracer.line_with("tracing /tick");
+	wait_without_hold();
+	carries_on(&cli, &pid);
+	let resumed: f64 = cli.run(&["eval", "world.time"], 0).trim().parse().unwrap();
+	loop {
+		let line = tracer.line_with("");
+		let time: f64 = line.parse().unwrap_or_else(|_| panic!("the trace printed {:?}, not a time", line));
+		if time > resumed {
+			break;
+		}
+	}
+	tracer.stop();
+	println!("ok: a world doesn't stay paused for a trace, and the trace goes on");
+
+	let mut profiler = cli.start(&["profile"]);
+	profiler.error_with("profiling until interrupted");
+	wait_without_hold();
+	carries_on(&cli, &pid);
+	profiler.stop();
+	println!("ok: a world doesn't stay paused for a profile");
+
 	let printed = cli.run(
 		&["wait", "pause", "--break", "/proc/value", "--if", "rounds.len > 0", "--timeout", "1"],
 		2

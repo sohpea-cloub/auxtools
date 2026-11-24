@@ -291,14 +291,20 @@ impl Server {
 			}),
 			_ => self.sessions.has_debuggers() || self.sessions.hold.is_some()
 		};
-		if !wanted || self.pause.ending() {
+		if self.pause.ending() {
+			return None;
+		}
+
+		let proc = unsafe { (*(*(*_ctx).proc_instance())).proc };
+		let offset = unsafe { *(*_ctx).bytecode_offset() };
+		if !wanted {
+			if matches!(reason, BreakpointReason::Breakpoint) && self.breakpoints.claims.contains_key(&(proc, offset)) {
+				self.log_without_pausing((proc, offset));
+			}
 			return None;
 		}
 
 		self.pause.state = Some(State::new());
-
-		let proc = unsafe { (*(*(*_ctx).proc_instance())).proc };
-		let offset = unsafe { *(*_ctx).bytecode_offset() };
 		let mut paused_by = vec![];
 		match reason {
 			BreakpointReason::Breakpoint => match self.breakpoint_hit((proc, offset)) {

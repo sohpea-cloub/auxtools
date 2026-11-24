@@ -270,6 +270,12 @@ impl Server {
 		message
 	}
 
+	pub(super) fn log_without_pausing(&mut self, key: (raw_types::procs::ProcId, u16)) {
+		self.pause.state = Some(State::new());
+		self.breakpoint_hit(key);
+		self.pause.state = None;
+	}
+
 	pub(super) fn breakpoint_hit(&mut self, key: (raw_types::procs::ProcId, u16)) -> Option<Vec<Claimant>> {
 		let (proc, offset) = key;
 		let clients: Vec<Claimant> = self

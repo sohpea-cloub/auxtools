@@ -272,7 +272,10 @@ fn proc_name(proc: &ProcRef) -> String {
 }
 
 const fn only_looks(command: &Command) -> bool {
-	matches!(command, Command::Status(_) | Command::Log(_) | Command::Proc(_) | Command::Disassemble(_))
+	matches!(
+		command,
+		Command::Status(_) | Command::Log(_) | Command::Proc(_) | Command::Disassemble(_) | Command::Trace(_) | Command::Profile(_)
+	)
 }
 
 fn cannot_connect(pid: u32, why: &io::Error) -> String {
