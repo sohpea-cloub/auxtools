@@ -254,7 +254,7 @@ pub(super) fn emit(compiler: &mut Compiler<'_>, term: Term) -> Result<EvalKind, 
         }
 
         Term::NewImplicit { args } if compiler.implicit_type.is_some() => {
-            let path = compiler.implicit_type.take().unwrap();
+            let path = compiler.implicit_type.clone().unwrap();
             compiler.emit_ins(Instruction::PushVal(Value::Path(path)));
             emit_new(compiler, args)
         }
@@ -294,7 +294,7 @@ pub(super) fn emit(compiler: &mut Compiler<'_>, term: Term) -> Result<EvalKind, 
 
             match args_len {
                 0 if compiler.implicit_type.is_some() => {
-                    let path = compiler.implicit_type.take().unwrap();
+                    let path = compiler.implicit_type.clone().unwrap();
                     compiler.emit_ins(Instruction::PushVal(Value::Path(path)));
                     match in_list {
                         Some(list) => {

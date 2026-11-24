@@ -1209,6 +1209,66 @@ var/const/LIMIT = 10
 	base?:named()?.S = 3
 /proc/f17(datum/base/base)
 	return base?:make():LIMIT
+// Guards: every_implicit_cast_in_a_value_takes_the_destinations_type (compile_proc.rs)
+// Builds: 516.1648-
+/datum/item
+/datum/other
+/datum/thing
+	var/datum/item/owner
+	var/datum/other/o
+/proc/g(x, y)
+	return x
+/proc/f1(flag, datum/other/a, datum/thing/b)
+	var/datum/item/r = flag ? astype(a) : astype(b)
+	return r
+/proc/f2(flag, datum/other/a, datum/thing/b)
+	var/datum/item/r = astype(a) ? astype(b) : astype(a)
+	return r
+/proc/f3(flag, datum/other/a, datum/thing/b)
+	var/datum/item/r
+	r = flag ? astype(a) : astype(b)
+	return r
+/proc/f4(flag, datum/other/a, datum/thing/b)
+	b.owner = flag ? astype(a) : astype(b)
+/proc/f5(flag, datum/other/a, datum/thing/b)
+	var/datum/item/r = astype(a) + astype(b)
+	return r
+/proc/f6(flag, datum/other/a, datum/thing/b)
+	var/datum/item/r = g(astype(a), astype(b))
+	return r
+/proc/f7(flag, datum/other/a, datum/thing/b)
+	var/datum/item/r = astype(astype(a))
+	return r
+/proc/f8(flag, datum/other/a, datum/thing/b)
+	var/datum/item/r = new(astype(a))
+	return r
+/proc/f9(flag, datum/other/a, datum/thing/b)
+	var/datum/item/r = (astype(a) || astype(b)) + astype(b)
+	return r
+/proc/f10(flag, datum/other/a, datum/thing/b)
+	var/datum/item/r
+	r ||= flag ? astype(a) : astype(b)
+	return r
+/proc/f11(flag, datum/other/a, datum/thing/b)
+	var/datum/item/r = (b.o = astype(b)) + astype(a)
+	return r
+/proc/f12(flag, datum/other/a, datum/thing/b)
+	var/datum/item/r = (b.o ||= astype(b)) + astype(a)
+	return r
+/proc/f13(flag, datum/other/a, datum/thing/b)
+	var/datum/item/r = (b?.o = astype(b)) + astype(a)
+	return r
+/proc/f14(flag, datum/other/a, datum/thing/b)
+	var/datum/item/r = (b?.o ||= astype(b)) + astype(a)
+	return r
+/proc/f15(flag, datum/other/a, datum/thing/b)
+	var/datum/item/r = 1
+	return astype(a)
+// Guards: every_implicit_cast_in_a_value_takes_the_destinations_type (compile_proc.rs)
+/datum/item
+/proc/f(flag)
+	var/datum/item/r = flag ? locate() : locate()
+	return r
 // Guards: a_for_loops_var_types_only_its_initial_value (compile_proc.rs)
 // Builds: 516.1648-
 /datum/item

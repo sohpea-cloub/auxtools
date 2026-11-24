@@ -1734,9 +1734,9 @@ pub(super) fn emit_safe_chain_write<'a>(
     let implicit = place.and_then(|p| compiler.place_type_name(p));
     let value_start = compiler.nodes.len();
     if let (Some(value), false) = (value, matches!(write, SafeWrite::Logical { .. })) {
-        compiler.implicit_type = implicit.clone();
+        let outer = std::mem::replace(&mut compiler.implicit_type, implicit.clone());
         emit_value(compiler, value)?;
-        compiler.implicit_type = None;
+        compiler.implicit_type = outer;
     }
     if fields.is_none() {
         let (computed, fields) = computed;
@@ -1829,9 +1829,9 @@ pub(super) fn emit_safe_chain_write<'a>(
                     }
                 }
                 let start = compiler.nodes.len();
-                compiler.implicit_type = implicit;
+                let outer = std::mem::replace(&mut compiler.implicit_type, implicit);
                 emit_value(compiler, value.expect("a value"))?;
-                compiler.implicit_type = None;
+                compiler.implicit_type = outer;
                 if compiler.nodes[start..]
                     .iter()
                     .any(|n| matches!(n, Node::Instruction(i, _) if super::procs::touches_cache(i)))
@@ -1934,9 +1934,9 @@ pub(super) fn emit_safe_chain_write<'a>(
                 Instruction::Jz(Label::Named(end.clone()))
             });
             let start = compiler.nodes.len();
-            compiler.implicit_type = implicit;
+            let outer = std::mem::replace(&mut compiler.implicit_type, implicit);
             emit_value(compiler, value.expect("a value"))?;
-            compiler.implicit_type = None;
+            compiler.implicit_type = outer;
             if compiler.nodes[start..]
                 .iter()
                 .any(|n| matches!(n, Node::Instruction(i, _) if super::procs::touches_cache(i)))
@@ -2556,9 +2556,10 @@ pub(super) fn emit_safe_logical_assign(
         Instruction::JmpAnd(Label::Named(end.clone()))
     });
     let start = compiler.nodes.len();
-    compiler.implicit_type = compiler.place_type_name(place);
+    let implicit = compiler.place_type_name(place);
+    let outer = std::mem::replace(&mut compiler.implicit_type, implicit);
     emit_value(compiler, rhs)?;
-    compiler.implicit_type = None;
+    compiler.implicit_type = outer;
     if compiler.nodes[start..]
         .iter()
         .any(|n| matches!(n, Node::Instruction(i, _) if super::procs::touches_cache(i)))

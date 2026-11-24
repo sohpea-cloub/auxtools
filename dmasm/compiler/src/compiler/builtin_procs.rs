@@ -391,7 +391,7 @@ fn emit_code(
         }
         "rgb" => return emit_rgb(compiler, args),
         "astype" if n == 1 && compiler.implicit_type.is_some() => {
-            let path = compiler.implicit_type.take().unwrap();
+            let path = compiler.implicit_type.clone().unwrap();
             push_args(compiler, args)?;
             compiler.emit_ins(Instruction::PushVal(operands::Value::Path(path)));
             compiler.emit_ins(Instruction::AsType);

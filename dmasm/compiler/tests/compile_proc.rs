@@ -645,6 +645,61 @@ fn a_call_after_a_safe_index_keeps_the_indexed_item_as_its_receiver() {
 }
 
 #[test]
+fn every_implicit_cast_in_a_value_takes_the_destinations_type() {
+    let types = "/datum/item\n/datum/other\n/datum/thing\n\tvar/datum/item/owner\n\
+                 \tvar/datum/other/o\n/proc/g(x, y)\n\treturn x\n";
+    for (body, casts) in [
+        ("var/datum/item/r = flag ? astype(a) : astype(b)", 2),
+        ("var/datum/item/r = astype(a) ? astype(b) : astype(a)", 3),
+        ("var/datum/item/r\n\tr = flag ? astype(a) : astype(b)", 2),
+        ("b.owner = flag ? astype(a) : astype(b)", 2),
+        ("var/datum/item/r = astype(a) + astype(b)", 2),
+        ("var/datum/item/r = g(astype(a), astype(b))", 2),
+        ("var/datum/item/r = astype(astype(a))", 2),
+        ("var/datum/item/r = new(astype(a))", 1),
+        ("var/datum/item/r = (astype(a) || astype(b)) + astype(b)", 3),
+        ("var/datum/item/r\n\tr ||= flag ? astype(a) : astype(b)", 2),
+        ("var/datum/item/r = (b.o = astype(b)) + astype(a)", 1),
+        ("var/datum/item/r = (b.o ||= astype(b)) + astype(a)", 1),
+        ("var/datum/item/r = (b?.o = astype(b)) + astype(a)", 1),
+        ("var/datum/item/r = (b?.o ||= astype(b)) + astype(a)", 1),
+    ] {
+        let code = compile(
+            &format!("{types}/proc/f(flag, datum/other/a, datum/thing/b)\n\t{body}\n"),
+            "",
+            "f",
+        );
+        assert_eq!(
+            code.matches("PushVal /datum/item\nAsType").count(),
+            casts,
+            "{body}\n{code}"
+        );
+    }
+    let code = compile(
+        &format!("{types}/proc/f(flag)\n\tvar/datum/item/r = flag ? locate() : locate()\n"),
+        "",
+        "f",
+    );
+    assert_eq!(
+        code.matches("PushVal /datum/item\nLocateRef").count(),
+        2,
+        "{code}"
+    );
+    let code = compile(
+        &format!("{types}/proc/f(datum/thing/b)\n\tvar/datum/item/r = (b.o = astype(b)) + 1\n"),
+        "",
+        "f",
+    );
+    assert_has(&code, &["PushVal /datum/other", "AsType"]);
+    let code = compile(
+        &format!("{types}/proc/f(datum/other/a)\n\tvar/datum/item/r = 1\n\treturn astype(a)\n"),
+        "",
+        "f",
+    );
+    assert_has(&code, &["PushVal /datum/other", "AsType"]);
+}
+
+#[test]
 fn a_for_loops_var_types_only_its_initial_value() {
     let code = compile(
         "/datum/item\n/datum/other\n/proc/f(datum/other/a)\n\

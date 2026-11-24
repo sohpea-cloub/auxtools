@@ -314,9 +314,10 @@ fn emit_value_assignment(
     };
     match op {
         AssignOp::Assign => {
-            compiler.implicit_type = compiler.place_type_name(lhs);
+            let implicit = compiler.place_type_name(lhs);
+            let outer = std::mem::replace(&mut compiler.implicit_type, implicit);
             let kind = compiler.emit_expr(rhs.clone());
-            compiler.implicit_type = None;
+            compiler.implicit_type = outer;
             compiler.emit_move_to_stack(kind?)?;
             store(compiler)?;
         }
@@ -342,10 +343,11 @@ fn emit_value_assignment(
             });
             compiler.end_assignment_statement();
             let start = compiler.nodes.len();
-            compiler.implicit_type = compiler.place_type_name(lhs);
-            let kind = compiler.emit_expr(rhs.clone())?;
-            compiler.emit_move_to_stack(kind)?;
-            compiler.implicit_type = None;
+            let implicit = compiler.place_type_name(lhs);
+            let outer = std::mem::replace(&mut compiler.implicit_type, implicit);
+            let kind = compiler.emit_expr(rhs.clone());
+            compiler.implicit_type = outer;
+            compiler.emit_move_to_stack(kind?)?;
             let touches = |compiler: &Compiler<'_>, start: usize| {
                 compiler.nodes[start..]
                     .iter()

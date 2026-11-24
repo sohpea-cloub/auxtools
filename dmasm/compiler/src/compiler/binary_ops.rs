@@ -209,15 +209,11 @@ pub(super) fn emit(
             let label = format!("LAB_{:0>4X}", compiler.label_count);
             compiler.label_count += 1;
             let count = operands.len();
-            let implicit = compiler.implicit_type.take();
             for (i, operand) in operands.into_iter().enumerate() {
                 if forget[i] {
                     compiler.cache = None;
                 }
-                compiler.implicit_type = implicit.clone();
-                let kind = compiler.emit_expr(operand);
-                compiler.implicit_type = None;
-                let kind = kind?;
+                let kind = compiler.emit_expr(operand)?;
                 compiler.emit_move_to_stack(kind)?;
                 if i + 1 < count {
                     compiler.emit_ins(match op {
