@@ -263,3 +263,9 @@ var/mob/helper/small/old_helper = new
 	return "parent override"
 
 /datum/kin/middle/child
+
+/datum/lone/proc/speak()
+	return "declaration"
+
+/datum/lone/speak()
+	return "lone override"

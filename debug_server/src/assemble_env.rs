@@ -3,6 +3,23 @@ use auxtools::*;
 pub struct AssembleEnv;
 
 impl AssembleEnv {
+	pub fn type_value(path: &str) -> Option<(u8, u32)> {
+		match path {
+			"/list" => return Some((raw_types::values::ValueTag::ListTypepath.0, 0)),
+			"/savefile" => return Some((raw_types::values::ValueTag::SaveFileTypepath.0, 0)),
+			"/client" => return Some((raw_types::values::ValueTag::ClientTypepath.0, 0)),
+			_ => {}
+		}
+
+		if let Some(res) = Self::eval_with_name("text2path(name)", path) {
+			return Some((res.raw.tag.0, unsafe { res.raw.data.id }));
+		}
+		if let Some(id) = crate::hot_reload::image_type(path) {
+			return Some((raw_types::values::ValueTag::ImageTypepath.0, id));
+		}
+		added_type(path)
+	}
+
 	fn eval_with_name(code: &str, arg: &str) -> Option<Value> {
 		let arg = Value::from_string(arg).ok()?;
 		Self::eval_with(code, &[("name", &arg)])
@@ -166,24 +183,7 @@ impl dmasm::assembler::AssembleEnv for AssembleEnv {
 	}
 
 	fn get_type(&mut self, path: &str) -> Option<(u8, u32)> {
-		match path {
-			"/list" => return Some((raw_types::values::ValueTag::ListTypepath.0, 0)),
-			"/savefile" => return Some((raw_types::values::ValueTag::SaveFileTypepath.0, 0)),
-			"/client" => return Some((raw_types::values::ValueTag::ClientTypepath.0, 0)),
-			_ => {}
-		}
-
-		if let Some(res) = Self::eval_with_name("text2path(name)", path) {
-			return Some((res.raw.tag.0, unsafe { res.raw.data.id }));
-		}
-		if let Some(id) = crate::hot_reload::image_type(path) {
-			return Some((raw_types::values::ValueTag::ImageTypepath.0, id));
-		}
-		if let Some(found) = added_type(path) {
-			return Some(found);
-		}
-
-		first_override(path).map(|proc| (raw_types::values::ValueTag::ProcRef.0, proc.id.0))
+		Self::type_value(path).or_else(|| first_override(path).map(|proc| (raw_types::values::ValueTag::ProcRef.0, proc.id.0)))
 	}
 
 	fn get_resource_index(&mut self, path: &str) -> Option<u32> {

@@ -162,3 +162,9 @@ var/datum/declared/declared_one = new
 
 /proc/calls_kin_child()
 	return call(new /datum/kin/middle/child, /datum/kin/middle/child::speak())()
+
+/proc/calls_lone_unchanged()
+	return call(new /datum/lone, /datum/lone/speak)()
+
+/datum/names_lone
+	var/said = /datum/lone/speak

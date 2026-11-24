@@ -2160,6 +2160,24 @@ fn definitions(built: Built) {
 	reload(&mut watcher, &changes);
 	assert_eq!(eval(&mut client, "calls_kin_child()"), "\"parent override\"");
 	println!("ok: unchanged code names a child's first override as it is added and removed");
+
+	let changes = source.edit("reload.dm", "/datum/lone/speak()\n\treturn \"lone override\"\n", "");
+	let result = expect_reload_result(watcher.request(reload_request(&changes)));
+	assert!(
+		!result.applied,
+		"a reload that leaves code naming a removed proc was applied: {:?}",
+		result
+	);
+	assert_eq!(result.errors, [
+		"/calls_lone_unchanged: /datum/lone/speak names a proc that this reload removes. Keep a definition of it, or change the code that names it",
+		"var said: /datum/lone/speak names a proc that this reload removes. Keep a definition of it, or change the code that names it"
+	]);
+	assert_eq!(eval(&mut client, "calls_lone_unchanged()"), "\"lone override\"");
+	assert_eq!(
+		eval(&mut client, "call(new /datum/lone, (new /datum/names_lone).said)()"),
+		"\"lone override\""
+	);
+	println!("ok: code that names a removed proc refuses the reload");
 }
 
 fn types(built: Built) {
