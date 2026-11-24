@@ -218,6 +218,11 @@ pub fn dependents(built: Built) {
 	reload(&mut watcher, &changes);
 	assert_eq!(eval(&mut client, PARENT), "\"10 10\"");
 	println!("ok: code dmasm can't compile that passes a changed const alone to ..() or .() sees its new value");
+
+	let changes = source.edit("dependents.dm", "/datum/dep_colon_later\n\tvar/const/DEP_COLON = 9\n", "");
+	reload(&mut watcher, &changes);
+	assert_eq!(eval(&mut client, "dep_colon()"), "\"6 5\"");
+	println!("ok: an untyped x:name in an unchanged file finds an earlier type's declaration when a later type is removed");
 }
 
 fn refused_edit(source: &mut Source, file: &str, from: &str, to: &str) -> Vec<dmasm::reload::Refusal> {

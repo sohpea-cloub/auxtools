@@ -3228,6 +3228,15 @@ fn compare_types(
         }
     }
     for path in old_types.keys().filter(|p| !new_types.contains_key(*p)) {
+        if let Some(o) = old.find_type(path) {
+            for (name, var) in o.get().vars.iter() {
+                if var.declaration.is_some()
+                    && !changes.colon_names.iter().any(|c| c == name.as_str())
+                {
+                    changes.colon_names.push(name.to_string());
+                }
+            }
+        }
         changes.warnings.push(note(
             Id::RemovedTypeRetained,
             path,

@@ -2175,6 +2175,7 @@ fn a_declaration_that_colon_lookup_finds_instead_recompiles_its_users() {
     for (name, before, after, folded) in [
         ("colon-added", without, with, "PushInt 10"),
         ("colon-removed", with, without, "PushInt 6"),
+        ("colon-type-removed", with, "", "PushInt 6"),
     ] {
         let changes = types_changes(name, &code, before, after);
         let refused: Vec<&str> = changes.refused.iter().map(|r| r.path.as_str()).collect();
