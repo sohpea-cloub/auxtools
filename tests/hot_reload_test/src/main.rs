@@ -2216,10 +2216,20 @@ fn definitions(built: Built) {
 
 	let changes = source.edit("reload.dm", "\tvar/limit = 5\n", "\tvar/limit = 10\n");
 	let chooser = changes.plan.reloads.iter().find(|r| r.proc.path == "/mob/limited/choose_limit");
+	let Some(InList::New(choices)) = chooser.map(|r| &r.params[0].in_list) else {
+		panic!("the verb's unchanged `in` list isn't compiled again: {:?}", chooser);
+	};
+	let code: Vec<_> = (choices.nodes.iter())
+		.filter_map(|node| match node {
+			dmasm::Node::Instruction(instruction, _) => Some(instruction),
+			_ => None
+		})
+		.collect();
 	assert!(
-		matches!(chooser.map(|r| &r.params[0].in_list), Some(InList::New(_))),
-		"the verb's unchanged `in` list isn't compiled again: {:?}",
-		chooser
+		code.windows(2)
+			.any(|pair| matches!(pair, [dmasm::Instruction::PushInt(10), dmasm::Instruction::NewList(1)])),
+		"the verb's new `in` list isn't list(10): {}",
+		dmasm::format(&choices.nodes)
 	);
 	reload(&mut watcher, &changes);
 	assert_eq!(eval(&mut client, "(new /datum/config_read).limits[1]"), "10");
