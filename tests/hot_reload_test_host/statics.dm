@@ -147,3 +147,7 @@ var/st_arm = 20
 		st_arm++
 		return st_arm
 	return 0
+
+/proc/st_sown()
+	var/const/ST_SOWN = 1
+	return ST_SOWN

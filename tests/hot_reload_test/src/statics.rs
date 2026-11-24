@@ -162,6 +162,16 @@ pub fn statics(built: Built) {
 		"the new static's value from the global, and the count of the static in the block before it"
 	);
 	println!("ok: a new static's initializer reads a global when a static of its name is in a block that has ended");
+
+	assert_eq!(eval(&mut client, "st_sown()"), "1");
+	let changes = source.edit(
+		"statics.dm",
+		"\tvar/const/ST_SOWN = 1\n\treturn ST_SOWN",
+		"\tvar/const/ST_SOWN = 2\n\tvar/static/list/st_sown_cache = list(ST_SOWN)\n\treturn st_sown_cache"
+	);
+	reload(&mut watcher, &changes);
+	assert_eq!(eval(&mut client, "st_sown()[1]"), "2", "the new static's value from the changed const");
+	println!("ok: a new static's initializer reads the new value of a local const that the edit changes");
 }
 
 fn declared_references(client: &mut Client, path: &str) -> (u32, u32) {

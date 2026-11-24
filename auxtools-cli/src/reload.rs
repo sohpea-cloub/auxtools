@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use auxtools_protocol::{HotReloadRequest, LocalReads, ParsedReads, ShadowingProc};
 use dmasm::{
 	diagnostic::Id,
-	reload::{locals, Changes, Plan, ProcKey, ProcReload, Refusal, Snapshot},
+	reload::{locals, Changes, Plan, ProcKey, ProcReload, Refusal, Snapshot, StaticVar},
 	Node, StaticScope
 };
 
@@ -113,17 +113,34 @@ fn without_existing_statics(plan: &mut Plan, changes: &Changes, before: &Snapsho
 		let (_, new_locals) = old_and_new_locals(code, changes, before);
 		let (matched, _) = locals::matched(&old.declared, &new_locals);
 		let was = |name: &str, nth: u32| matched.iter().find(|(had, new, _)| *had == name && *new == nth).map(|(.., old)| *old);
-		let nodes = &code.nodes;
-		code.statics.retain_mut(|local| {
-			let nth = local_number(&local.scope);
-			let old_nth = was(&local.name, nth);
-			let read_now = reads_static(nodes, &local.name, &local.scope);
+		let sent = |local: &StaticVar, read_now: bool| -> Option<bool> {
+			let old_nth = was(&local.name, local_number(&local.scope));
 			let initialized = local.init.is_some() && local.value.is_none() && !local.constant;
 			if !old_nth.is_some_and(|old_nth| old.read_as(&local.name, old_nth)) {
-				local.constant = false;
-				return old_nth.is_none() || read_now && !initialized;
+				return (old_nth.is_none() || read_now && !initialized).then_some(false);
 			}
-			local.constant && read_now
+			(local.constant && read_now).then_some(true)
+		};
+		let run_once: Vec<&[Node]> = (code.statics.iter())
+			.filter(|local| !local.constant && local.value.is_none())
+			.filter(|local| sent(local, reads_static(&code.nodes, &local.name, &local.scope)).is_some())
+			.filter_map(|local| Some(&local.init.as_ref()?.nodes[..]))
+			.collect();
+		let sending: Vec<Option<bool>> = (code.statics.iter())
+			.map(|local| {
+				let read_now = std::iter::once(&code.nodes[..])
+					.chain(run_once.iter().copied())
+					.any(|nodes| reads_static(nodes, &local.name, &local.scope));
+				sent(local, read_now)
+			})
+			.collect();
+		let mut sending = sending.into_iter();
+		code.statics.retain_mut(|local| {
+			let Some(constant) = sending.next().flatten() else {
+				return false;
+			};
+			local.constant = constant;
+			true
 		});
 		found.extend(old.reads.iter().map(|(name, reads, parsed)| {
 			LocalReads {
@@ -462,6 +479,20 @@ mod tests {
 			})
 			.collect();
 		assert_eq!(statics, ["/f LIMIT true", "/g LIMIT false"]);
+	}
+
+	#[test]
+	fn a_request_sends_the_local_consts_a_new_statics_initializer_reads() {
+		let before = "/proc/f()\n\tvar/const/SEED = 1\n\treturn SEED\n";
+		let after = "/proc/f()\n\tvar/const/SEED = 2\n\tvar/static/list/cache = list(SEED)\n\treturn cache\n";
+		let (old, changes) = edited("initializer-consts", before, after);
+		let sent = request(&changes, &old, false);
+		let statics: Vec<String> = sent.plan.reloads[0]
+			.statics
+			.iter()
+			.map(|local| format!("{} {}", local.name, local.constant))
+			.collect();
+		assert_eq!(statics, ["SEED true", "cache false"]);
 	}
 
 	#[test]
