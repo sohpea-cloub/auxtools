@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use auxtools_protocol::{HotReloadRequest, ShadowingProc};
+use auxtools_protocol::{HotReloadRequest, LocalReads, ShadowingProc};
 use dmasm::{
 	compiler::definition_order,
 	diagnostic::Id,
@@ -13,9 +13,10 @@ pub const RESTART: &str = "Rebuild the .dmb, then restart the world to load all 
 
 pub fn request(changes: &Changes, before: &Snapshot, restarted: bool) -> HotReloadRequest {
 	let mut plan = changes.plan.clone();
-	without_existing_statics(&mut plan, before);
+	let local_reads = without_existing_statics(&mut plan, before);
 	HotReloadRequest {
 		shadowing_procs: shadowing_procs(&plan, before),
+		local_reads,
 		plan,
 		resources: vec![],
 		resource_dirs: vec![],
@@ -129,7 +130,8 @@ fn reads_global(nodes: &[Node], name: &str) -> bool {
 	})
 }
 
-fn without_existing_statics(plan: &mut Plan, before: &Snapshot) {
+fn without_existing_statics(plan: &mut Plan, before: &Snapshot) -> Vec<LocalReads> {
+	let mut found = vec![];
 	for code in &mut plan.reloads {
 		if code.statics.is_empty() {
 			continue;
@@ -137,15 +139,62 @@ fn without_existing_statics(plan: &mut Plan, before: &Snapshot) {
 		let Ok(old) = before.compile(&code.proc) else {
 			continue;
 		};
+		let reads = local_reads(&old.nodes);
 		let nodes = &code.nodes;
 		code.statics.retain_mut(|local| {
-			let existing = old.statics.iter().any(|had| had.name == local.name && had.scope == local.scope);
+			let declared = old.statics.iter().any(|had| had.name == local.name && had.scope == local.scope);
+			let unread = reads
+				.iter()
+				.find(|(name, _)| *name == local.name)
+				.is_some_and(|(_, reads)| !reads.contains(&Some(local_number(&local.scope))));
+			let existing = declared && !unread;
 			if !existing {
 				local.constant = false;
 			}
 			!existing || local.constant && reads_static(nodes, &local.name, &local.scope)
 		});
+		found.extend(
+			reads
+				.into_iter()
+				.filter(|(name, _)| old.statics.iter().any(|had| had.name == *name))
+				.map(|(name, reads)| LocalReads {
+					proc: code.proc.clone(),
+					name,
+					reads
+				})
+		);
 	}
+	found
+}
+
+const fn local_number(scope: &StaticScope) -> u32 {
+	match scope {
+		StaticScope::Proc { nth, .. } => *nth,
+		_ => 0
+	}
+}
+
+fn local_reads(nodes: &[Node]) -> Vec<(String, Vec<Option<u32>>)> {
+	let mut out: Vec<(String, Vec<Option<u32>>)> = vec![];
+	for node in nodes {
+		let Node::Instruction(ins, _) = node else {
+			continue;
+		};
+		for var in ins.variables() {
+			for global in var.globals() {
+				let name = String::from_utf8_lossy(&global.name.0);
+				let read = match &global.scope {
+					Some(StaticScope::Proc { nth, .. }) => Some(*nth),
+					_ => None
+				};
+				match out.iter_mut().find(|(had, _)| *had == name) {
+					Some((_, reads)) => reads.push(read),
+					None => out.push((name.into_owned(), vec![read]))
+				}
+			}
+		}
+	}
+	out
 }
 
 fn reads_static(nodes: &[Node], name: &str, scope: &StaticScope) -> bool {
@@ -378,6 +427,33 @@ mod tests {
 			})
 			.collect();
 		assert_eq!(statics, ["/f LIMIT true", "/g LIMIT false"]);
+	}
+
+	#[test]
+	fn a_request_tells_a_procs_locals_from_globals_of_their_name() {
+		let before = "var/LIMIT = 1\n/proc/f()\n\tvar/const/LIMIT = 5\n\treturn global.LIMIT\n/proc/g()\n\tvar/static/LIMIT = \
+		              7\n\tLIMIT++\n\treturn list(LIMIT, global.LIMIT)\n";
+		let after = before.replace("return global.LIMIT", "return LIMIT").replace("LIMIT++", "LIMIT += 2");
+		let (old, changes) = edited("told-apart", before, &after);
+		let sent = request(&changes, &old, false);
+		let statics: Vec<String> = sent
+			.plan
+			.reloads
+			.iter()
+			.flat_map(|reload| {
+				reload
+					.statics
+					.iter()
+					.map(move |local| format!("{} {} {}", reload.proc, local.name, local.constant))
+			})
+			.collect();
+		assert_eq!(statics, ["/f LIMIT false"]);
+		let reads: Vec<String> = sent
+			.local_reads
+			.iter()
+			.map(|reads| format!("{} {} {:?}", reads.proc, reads.name, reads.reads))
+			.collect();
+		assert_eq!(reads, ["/f LIMIT [None]", "/g LIMIT [Some(0), Some(0), None]"]);
 	}
 
 	#[test]

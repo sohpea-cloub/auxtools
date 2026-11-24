@@ -777,7 +777,16 @@ pub struct HotReloadRequest {
 	pub resources: Vec<HotReloadResource>,
 	pub resource_dirs: Vec<String>,
 	pub global_init: Option<dmasm::reload::GlobalInit>,
-	pub shadowing_procs: Vec<ShadowingProc>
+	pub shadowing_procs: Vec<ShadowingProc>,
+	#[serde(default)]
+	pub local_reads: Vec<LocalReads>
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct LocalReads {
+	pub proc: dmasm::reload::ProcKey,
+	pub name: String,
+	pub reads: Vec<Option<u32>>
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]

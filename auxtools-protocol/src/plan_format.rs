@@ -9,9 +9,9 @@ use dmasm::{
 	DMString, GlobalVar, Instruction, Label, Node, StaticScope, Value, Variable
 };
 
-use crate::{HotReloadRequest, HotReloadResource, ShadowingProc, PROTOCOL_VERSION};
+use crate::{HotReloadRequest, HotReloadResource, LocalReads, ShadowingProc, PROTOCOL_VERSION};
 
-const RECORDED: (u32, u64) = (15, 0x8D30_AA9F_D832_8B6C);
+const RECORDED: (u32, u64) = (15, 0x261C_F0CA_2158_4DAC);
 
 fn key(path: &str, override_id: u32) -> ProcKey {
 	ProcKey {
@@ -219,6 +219,11 @@ fn sample() -> HotReloadRequest {
 		shadowing_procs: vec![ShadowingProc {
 			global: "total".to_owned(),
 			proc: key("/datum/a/f", 1)
+		}],
+		local_reads: vec![LocalReads {
+			proc: key("/datum/a/f", 1),
+			name: "seen".to_owned(),
+			reads: vec![Some(1), None]
 		}]
 	}
 }
