@@ -793,3 +793,40 @@ fn a_logical_assignment_saves_the_cache_by_its_values_source() {
     );
     assert!(!code("a.x ||= (b ? 2 : 3)").contains("PushCache"));
 }
+
+#[test]
+fn an_implicit_value_in_a_safe_logical_assignment_is_refused_before_516_1673() {
+    let types =
+        "/datum/item\n/datum/thing\n\tvar/datum/item/o\n\tvar/datum/thing/t\n\tvar/list/l\n";
+    let b516_1672 = ByondVersion::new(516, 1672);
+    for body in [
+        "b?.o ||= new",
+        "b?.o &&= new",
+        "b?.t.o ||= new",
+        "b.t?.o ||= new",
+        "b?.l[1] ||= new",
+        "return (b?.o ||= new)",
+        "b?.o ||= locate()",
+        "b?.o ||= list(new)",
+    ] {
+        let src = format!("{types}/proc/f(datum/thing/b)\n\t{body}\n");
+        for byond in [B515_1637, B516_1659, b516_1672] {
+            assert_eq!(
+                compile_for(byond, &src),
+                Err("line 7: ?.: unknown variable type".to_owned()),
+                "{} on {}",
+                body,
+                byond
+            );
+        }
+        assert!(
+            compile_for(ByondVersion::new(516, 1673), &src).is_ok(),
+            "{}",
+            body
+        );
+    }
+    for body in ["b?.o = new", "b?.o += new", "b.o ||= new"] {
+        let src = format!("{types}/proc/f(datum/thing/b)\n\t{body}\n");
+        assert!(compile_for(B515_1637, &src).is_ok(), "{}", body);
+    }
+}

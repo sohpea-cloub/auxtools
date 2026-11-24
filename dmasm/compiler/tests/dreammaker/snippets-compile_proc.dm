@@ -1313,12 +1313,21 @@ var/const/LIMIT = 10
 /proc/f13(flag, datum/other/a, datum/thing/b)
 	var/datum/item/r = (b?.o = astype(b)) + astype(a)
 	return r
-/proc/f14(flag, datum/other/a, datum/thing/b)
-	var/datum/item/r = (b?.o ||= astype(b)) + astype(a)
-	return r
 /proc/f15(flag, datum/other/a, datum/thing/b)
 	var/datum/item/r = 1
 	return astype(a)
+// Guards: every_implicit_cast_in_a_value_takes_the_destinations_type (compile_proc.rs)
+// Builds: 516.1673-
+/datum/item
+/datum/other
+/datum/thing
+	var/datum/item/owner
+	var/datum/other/o
+/proc/g(x, y)
+	return x
+/proc/f14(flag, datum/other/a, datum/thing/b)
+	var/datum/item/r = (b?.o ||= astype(b)) + astype(a)
+	return r
 // Guards: every_implicit_cast_in_a_value_takes_the_destinations_type (compile_proc.rs)
 /datum/item
 /proc/f(flag)

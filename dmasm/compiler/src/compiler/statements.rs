@@ -1475,7 +1475,7 @@ pub(super) enum SafeWrite<'w> {
     Logical { or: bool },
 }
 
-fn is_safe_follow(f: &Follow) -> bool {
+pub(super) fn is_safe_follow(f: &Follow) -> bool {
     use dreammaker::ast::{ListAccessKind as L, PropertyAccessKind as K};
     matches!(
         f,
@@ -2079,8 +2079,8 @@ fn emit_expr_statement(compiler: &mut Compiler, expr: &Expression) -> Result<(),
             return Ok(());
         }
     }
-    if let Expression::AssignOp { lhs, .. } = expr {
-        compiler.implicit_type = Some(compiler.destination(lhs));
+    if let Expression::AssignOp { op, lhs, .. } = expr {
+        compiler.implicit_type = Some(compiler.assignment_destination(*op, lhs));
     }
     let emitted = emit_expr_statement_inner(compiler, expr);
     compiler.implicit_type = None;

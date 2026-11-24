@@ -916,6 +916,19 @@ impl<'a> Compiler<'a> {
         }
     }
 
+    fn assignment_destination(&self, op: dreammaker::ast::AssignOp, place: &Expression) -> Implied {
+        use dreammaker::ast::AssignOp;
+        let safe = matches!(place, Expression::Base { follow, .. }
+            if follow.iter().any(|f| statements::is_safe_follow(&f.elem)));
+        if matches!(op, AssignOp::OrAssign | AssignOp::AndAssign)
+            && safe
+            && !self.byond.keeps_safe_logical_null_tests()
+        {
+            return Implied::Untyped("?.".to_owned());
+        }
+        self.destination(place)
+    }
+
     fn destination(&self, place: &Expression) -> Implied {
         match self.destination_type(place) {
             Some(path) => Implied::Type(path),
