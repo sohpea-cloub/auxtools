@@ -111,3 +111,8 @@ var/ST_DEFAULT = 1
 
 /proc/st_default_global()
 	return ST_DEFAULT
+
+/proc/st_seeded()
+	var/static/st_seed = 1
+	st_seed++
+	return st_seed

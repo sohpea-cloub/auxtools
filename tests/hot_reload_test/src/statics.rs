@@ -112,6 +112,16 @@ pub fn statics(built: Built) {
 	reload(&mut watcher, &changes);
 	assert_eq!(eval(&mut client, renamed), "\"10 8\"");
 	println!("ok: a global const changes after a static of its name was renamed");
+
+	assert_eq!(eval(&mut client, "\"[st_seeded()] [st_seeded()]\""), "\"2 3\"");
+	let changes = source.edit(
+		"statics.dm",
+		"\tst_seed++\n\treturn st_seed",
+		"\tvar/static/list/st_cache = list(st_seed)\n\tst_seed++\n\treturn \"[st_seed] [st_cache[1]]\""
+	);
+	reload(&mut watcher, &changes);
+	assert_eq!(eval(&mut client, "st_seeded()"), "\"4 3\"");
+	println!("ok: a new static's initializer reads an earlier static of its proc");
 }
 
 fn declared_references(client: &mut Client, path: &str) -> (u32, u32) {
