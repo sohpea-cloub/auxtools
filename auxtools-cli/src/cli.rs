@@ -272,16 +272,7 @@ fn proc_name(proc: &ProcRef) -> String {
 }
 
 const fn only_looks(command: &Command) -> bool {
-	matches!(
-		command,
-		Command::Status(_)
-			| Command::Log(_)
-			| Command::Proc(_)
-			| Command::Disassemble(_)
-			| Command::Wait(args::Wait {
-				event: Some(WaitFor::Reload(_) | WaitFor::Reboot(_))
-			})
-	)
+	matches!(command, Command::Status(_) | Command::Log(_) | Command::Proc(_) | Command::Disassemble(_))
 }
 
 fn cannot_connect(pid: u32, why: &io::Error) -> String {
@@ -363,7 +354,7 @@ impl World {
 
 	fn command(&mut self, command: Command) -> Result<()> {
 		if only_looks(&command) {
-			self.watch_only()?;
+			self.watch_only(None)?;
 		}
 		let output = |json: bool, depth: Option<u32>| json.then(|| depth.unwrap_or(json::DEFAULT_DEPTH));
 		match command {
@@ -567,13 +558,17 @@ impl World {
 		)
 	}
 
-	fn watch_only(&mut self) -> Result<()> {
-		match self.request(Request::Watcher)? {
-			Response::Ack => {
+	fn watch_only(&mut self, until: Option<Instant>) -> Result<bool> {
+		let patience = Instant::now() + self.patience;
+		let by = until.map_or(patience, |until| until.min(patience));
+		match self.request_by(&Request::Watcher, by)? {
+			Some(Response::Ack) => {
 				self.watcher = true;
-				Ok(())
+				Ok(true)
 			}
-			other => Err(unexpected(&other))
+			Some(other) => Err(unexpected(&other)),
+			None if by < patience => Ok(false),
+			None => Err(self.unresponsive("respond"))
 		}
 	}
 

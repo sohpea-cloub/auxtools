@@ -65,12 +65,13 @@ fn limit(timeout: Option<Duration>) -> String {
 
 pub fn wait_reload(world: &mut World, since: Option<u64>, timeout: Option<Duration>, json: bool) -> Result<()> {
 	let until = timeout.map(|timeout| Instant::now() + timeout);
+	let timed_out = || Failure(TIMED_OUT, format!("timed out{} waiting for a hot reload attempt.", limit(timeout)));
+	if !world.watch_only(until)? {
+		return Err(timed_out());
+	}
 	let mut follower = Follower::new(since.unwrap_or(u64::MAX), vec![JournalKind::Reload]);
 	let Some(entry) = follower.next(world, until)? else {
-		return Err(Failure(
-			TIMED_OUT,
-			format!("timed out{} waiting for a hot reload attempt.", limit(timeout))
-		));
+		return Err(timed_out());
 	};
 	print(&entry, json);
 	match entry.event {
@@ -82,13 +83,14 @@ pub fn wait_reload(world: &mut World, since: Option<u64>, timeout: Option<Durati
 
 pub fn wait_reboot(world: &mut World, since: Option<u64>, timeout: Option<Duration>, json: bool) -> Result<()> {
 	let until = timeout.map(|timeout| Instant::now() + timeout);
+	let timed_out = || Failure(TIMED_OUT, format!("timed out{} waiting for the world to reboot.", limit(timeout)));
+	if !world.watch_only(until)? {
+		return Err(timed_out());
+	}
 	let mut follower = Follower::new(since.unwrap_or(u64::MAX), vec![JournalKind::World]);
 	loop {
 		let Some(entry) = follower.next(world, until)? else {
-			return Err(Failure(
-				TIMED_OUT,
-				format!("timed out{} waiting for the world to reboot.", limit(timeout))
-			));
+			return Err(timed_out());
 		};
 		if let JournalEvent::Loaded { .. } = entry.event {
 			loop {
@@ -197,18 +199,22 @@ impl World {
 			Ok(client) => {
 				self.client = client;
 				self.events.clear();
-				if self.watcher {
-					self.watch_only()?;
+				if self.watcher && !self.watch_only(until)? {
+					return Err(reconnect_timed_out());
 				}
 				Ok(())
 			}
 			Err(NotListening::Gone) => Err(hung_up()),
-			Err(NotListening::TimedOut) => Err(Failure(
-				TIMED_OUT,
-				"timed out waiting for the world to respond after its connection ended.".to_owned()
-			))
+			Err(NotListening::TimedOut) => Err(reconnect_timed_out())
 		}
 	}
+}
+
+fn reconnect_timed_out() -> Failure {
+	Failure(
+		TIMED_OUT,
+		"timed out waiting for the world to respond after its connection ended.".to_owned()
+	)
 }
 
 impl World {
