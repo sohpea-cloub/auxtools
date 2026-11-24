@@ -125,8 +125,10 @@ fn bound_statics<'v>(
     let mut bound = vec![];
     if let Some(expression) = expression {
         syntax::walk_expression(expression, &mut |node| {
-            let syntax::Node::Term(Term::Ident(name)) = node else {
-                return;
+            let name = match node {
+                syntax::Node::Term(Term::Ident(name)) => name,
+                syntax::Node::Term(Term::NewMiniExpr { expr, .. }) => &expr.ident,
+                _ => return,
             };
             let found = visible.iter().rev().find(|(had, ..)| had == name.as_str());
             if let Some((had, nth, declared)) = found {
