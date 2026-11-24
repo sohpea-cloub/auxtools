@@ -395,6 +395,21 @@ pub fn dependents(built: Built) {
 		"recompiled make()?.name = value doesn't write the static that DreamMaker writes"
 	);
 	println!("ok: recompiled make()?.name = value writes the static that DreamMaker writes");
+
+	let read = "\"[dep_safe_colon(new /datum/dep_safe_colon_base/sub)] [isnull(dep_safe_colon(null))]\"";
+	assert_eq!(eval(&mut client, read), "\"5 1\"");
+	let changes = source.edit(
+		"dependents.dm",
+		"\treturn base?:make().DEP_SAFE_COLON",
+		"\treturn 0 || base?:make().DEP_SAFE_COLON"
+	);
+	reload(&mut watcher, &changes);
+	assert_eq!(
+		eval(&mut client, read),
+		"\"5 1\"",
+		"recompiled base?:make().name doesn't read the var DreamMaker reads"
+	);
+	println!("ok: recompiled base?:make().name reads the var DreamMaker reads, and null for a null base");
 }
 
 fn refused_edit(source: &mut Source, file: &str, from: &str, to: &str) -> Vec<dmasm::reload::Refusal> {

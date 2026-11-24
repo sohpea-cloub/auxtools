@@ -291,3 +291,17 @@ var/datum/dep_retype_alone_first/dep_retype_alone_target
 	var/datum/dep_safe_write_a/a = new
 	var/datum/dep_safe_write_b/b = new
 	return "[a.DEP_SAFE_WRITE] [b.DEP_SAFE_WRITE]"
+
+/datum/dep_safe_colon_a
+	var/const/DEP_SAFE_COLON = 5
+
+/datum/dep_safe_colon_b
+	var/const/DEP_SAFE_COLON = 9
+
+/datum/dep_safe_colon_base
+
+/datum/dep_safe_colon_base/sub/proc/make() as /datum/dep_safe_colon_a
+	return new /datum/dep_safe_colon_b
+
+/proc/dep_safe_colon(datum/dep_safe_colon_base/base)
+	return base?:make().DEP_SAFE_COLON

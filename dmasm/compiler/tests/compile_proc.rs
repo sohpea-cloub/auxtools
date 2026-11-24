@@ -331,6 +331,46 @@ fn a_safe_write_after_a_call_finds_its_static_as_a_read_does() {
 }
 
 #[test]
+fn a_safe_colon_call_finds_its_proc_and_value_as_a_colon_call_does() {
+    let types = "/datum/a\n\tvar/const/LIMIT = 5\n\tvar/static/S = 1\n\
+                 /datum/b\n\tvar/const/LIMIT = 9\n\tvar/static/S = 2\n\
+                 /datum/base\n\
+                 /datum/base/sub/proc/make() as /datum/a\n\treturn new /datum/a\n\
+                 /datum/base/sub/proc/plain()\n\treturn new /datum/a\n\
+                 /datum/base/sub/proc/named()\n\tset name = \"build\"\n\treturn new /datum/a\n\
+                 /datum/base/sub/verb/vmake()\n\treturn new /datum/a\n";
+    for (body, scope) in [
+        ("return base?:make().LIMIT", "/datum/a"),
+        ("return base?:plain().LIMIT", "/datum/b"),
+        ("return base?:make().S", "/datum/a"),
+        ("return base?:make()?.LIMIT", "/datum/a"),
+        ("base?:make().S = 3", "/datum/a"),
+    ] {
+        let src = format!("{types}/proc/f(datum/base/base)\n\t{body}\n");
+        assert_eq!(
+            global_scopes(&src),
+            [format!("Some(Type(\"{}\"))", scope)],
+            "{}",
+            body
+        );
+    }
+    for (body, call) in [
+        ("return base?:named()", "Call dynamic_proc(\"build\") 0"),
+        (
+            "return base?:vmake().LIMIT",
+            "Call dynamic_verb(\"vmake\") 0",
+        ),
+    ] {
+        let code = compile(
+            &format!("{types}/proc/f(datum/base/base)\n\t{body}\n"),
+            "",
+            "f",
+        );
+        assert_has(&code, &[call]);
+    }
+}
+
+#[test]
 fn a_var_after_an_index_is_found_as_untyped_colon_finds_it() {
     let types = "/datum/a\n\tvar/const/LIMIT = 5\n\tvar/datum/a/link\n\
                  /datum/b\n\tvar/const/LIMIT = 9\n\tvar/datum/b/link\n";

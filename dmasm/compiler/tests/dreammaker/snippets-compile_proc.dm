@@ -872,6 +872,51 @@ var/const/LIMIT = 10
 	return (factory.typed()?.S = 4)
 /proc/f12(datum/factory/factory)
 	return factory.make()?.S++
+// Guards: a_safe_colon_call_finds_its_proc_and_value_as_a_colon_call_does (compile_proc.rs)
+/datum/a
+	var/const/LIMIT = 5
+	var/static/S = 1
+/datum/b
+	var/const/LIMIT = 9
+	var/static/S = 2
+/datum/base
+/datum/base/sub/proc/make() as /datum/a
+	return new /datum/a
+/datum/base/sub/proc/plain()
+	return new /datum/a
+/datum/base/sub/proc/named()
+	set name = "build"
+	return new /datum/a
+/datum/base/sub/verb/vmake()
+	return new /datum/a
+/proc/f1(datum/base/base)
+	return base?:make().LIMIT
+/proc/f2(datum/base/base)
+	return base:make().LIMIT
+/proc/f3(datum/base/base)
+	return base?:plain().LIMIT
+/proc/f4(datum/base/base)
+	return base?:named()
+/proc/f5(datum/base/base)
+	return base?:named().LIMIT
+/proc/f6(datum/base/base)
+	return base?:vmake().LIMIT
+/proc/f7(datum/base/base)
+	return base?:make().S
+/proc/f8(datum/base/base)
+	return base?:make()
+/proc/f9(datum/base/base)
+	base?:make().S = 3
+/proc/f10(datum/base/base)
+	return base?:make()?.LIMIT
+/proc/f11(datum/base/base)
+	base?:named().S = 3
+/proc/f12(datum/base/base)
+	base?:vmake().S = 3
+/proc/f16(datum/base/base)
+	base?:named()?.S = 3
+/proc/f17(datum/base/base)
+	return base?:make():LIMIT
 // Guards: static_after_double_colon_chain (compile_proc.rs)
 /datum/a
 	var/datum/b/b

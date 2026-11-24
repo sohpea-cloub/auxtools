@@ -540,6 +540,9 @@ fn emit_safe_inner<'a>(
             Follow::Field(PropertyAccessKind::Colon, ident)
         }
         Follow::Field(_, ident) => Follow::Field(PropertyAccessKind::Dot, ident),
+        Follow::Call(PropertyAccessKind::SafeColon, ident, args) => {
+            Follow::Call(PropertyAccessKind::Colon, ident, args)
+        }
         Follow::Call(_, ident, args) => Follow::Call(PropertyAccessKind::Dot, ident, args),
         Follow::Index(_, expr) => Follow::Index(ListAccessKind::Normal, expr),
         other => other,
@@ -636,7 +639,15 @@ fn emit_safe_inner<'a>(
                     compiler.emit_ins(Instruction::PopCache);
                     popped = true;
                 }
-                let var = super::procs::call_var(receiver_ty, &ident);
+                let var = super::procs::call_var(
+                    match (receiver_ty, access) {
+                        (Some(t), PropertyAccessKind::Colon) => {
+                            Some(super::procs::colon_proc_type(t, &ident).unwrap_or(t))
+                        }
+                        _ => receiver_ty,
+                    },
+                    &ident,
+                );
                 compiler.emit_ins(Instruction::Call(builder.get_leaf(var), count));
                 kind = EvalKind::Stack;
             }
