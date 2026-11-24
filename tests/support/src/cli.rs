@@ -2,7 +2,7 @@ use std::{
 	ffi::OsStr,
 	io::{BufRead, BufReader, Read, Write},
 	process::{Child, Command, Stdio},
-	sync::mpsc,
+	sync::mpsc::{self, RecvTimeoutError},
 	time::{Duration, Instant}
 };
 
@@ -50,18 +50,21 @@ fn chunks_of(mut stream: impl Read + Send + 'static) -> mpsc::Receiver<Vec<u8>> 
 	chunks
 }
 
-fn text_of(chunks: &mpsc::Receiver<Vec<u8>>, deadline: Option<Instant>) -> String {
+fn text_of(chunks: &mpsc::Receiver<Vec<u8>>, deadline: Instant) -> (String, bool) {
 	let mut bytes = Vec::new();
-	loop {
-		let chunk = match deadline {
-			Some(deadline) => chunks.recv_timeout(deadline.saturating_duration_since(Instant::now())).ok(),
-			None => chunks.recv().ok()
-		};
-		match chunk {
-			Some(chunk) => bytes.extend(chunk),
-			None => return String::from_utf8_lossy(&bytes).into_owned()
+	let closed = loop {
+		match chunks.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
+			Ok(chunk) => bytes.extend(chunk),
+			Err(RecvTimeoutError::Timeout) => break false,
+			Err(RecvTimeoutError::Disconnected) => break true
 		}
-	}
+	};
+	(String::from_utf8_lossy(&bytes).into_owned(), closed)
+}
+
+fn command_line(command: &Command) -> String {
+	let args: Vec<_> = command.get_args().map(|arg| arg.to_string_lossy()).collect();
+	format!("{} {}", command.get_program().to_string_lossy(), args.join(" "))
 }
 
 #[track_caller]
@@ -91,18 +94,26 @@ fn ran_within(command: &mut Command, input: Option<&str>, limit: Duration) -> Ra
 		std::thread::sleep(Duration::from_millis(20));
 	};
 	let Some(status) = status else {
-		let read_until = Some(Instant::now() + Duration::from_secs(2));
-		let args: Vec<_> = command.get_args().map(|arg| arg.to_string_lossy()).collect();
+		let read_until = Instant::now() + Duration::from_secs(2);
 		panic!(
-			"`{} {}` was stopped after {:?}; it printed {}{}",
-			command.get_program().to_string_lossy(),
-			args.join(" "),
+			"`{}` was stopped after {:?}; it printed {}{}",
+			command_line(command),
 			limit,
-			text_of(&out, read_until),
-			text_of(&err, read_until)
+			text_of(&out, read_until).0,
+			text_of(&err, read_until).0
 		)
 	};
-	let (out, err) = (text_of(&out, None), text_of(&err, None));
+	let ((out, out_closed), (err, err_closed)) = (text_of(&out, deadline), text_of(&err, deadline));
+	if !(out_closed && err_closed) {
+		panic!(
+			"`{}` exited with {}, but a process it started still held its output open after {:?}; it printed {}{}",
+			command_line(command),
+			status,
+			limit,
+			out,
+			err
+		)
+	}
 	Ran {
 		code: status.code().unwrap_or(-1),
 		out,
@@ -344,6 +355,27 @@ mod tests {
 		assert!(
 			said.contains("was stopped after 1s") && said.contains("started"),
 			"the failure said {}",
+			said
+		);
+	}
+
+	#[cfg(unix)]
+	#[test]
+	fn a_command_whose_output_outlives_it_is_stopped_at_the_limit() {
+		let mut command = Command::new("sh");
+		command.args(["-c", "sleep 30 & echo $!"]);
+		let started = Instant::now();
+		let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| ran_within(&mut command, None, Duration::from_secs(1))));
+		let said = match &outcome {
+			Ok(ran) => ran.printed(),
+			Err(failed) => failed.downcast_ref::<String>().unwrap().clone()
+		};
+		let holder = said.rsplit_once("printed ").map_or("", |(_, printed)| printed.trim());
+		let _ = Command::new("kill").arg(holder).status();
+		assert!(started.elapsed() < Duration::from_secs(10), "the command ran for {:?}", started.elapsed());
+		assert!(
+			outcome.is_err() && said.contains("still held its output open after 1s"),
+			"the outcome was {}",
 			said
 		);
 	}
