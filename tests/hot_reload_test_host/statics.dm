@@ -38,3 +38,18 @@ var/ST_MIXED = 1
 
 /proc/st_mixed_global()
 	return ST_MIXED
+
+/datum/st_twice/proc/f()
+	return 0
+
+/datum/st_twice/f()
+	return 1
+
+/datum/st_twice/f()
+	return 2
+
+/proc/st_counter()
+	var/static/st_count = 0
+	st_count++
+	if (/datum/st_twice::f())
+		return st_count

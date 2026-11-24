@@ -1155,6 +1155,10 @@ impl Snapshot {
         Some(self.file_name(value.location.file))
     }
 
+    pub fn proc_code(&self, key: &ProcKey) -> Option<&Block> {
+        self.find(key)?.1.code.as_ref()
+    }
+
     pub fn compile_reload(&self, key: &ProcKey) -> Result<ProcReload, Diagnostic> {
         let mut reload = self.compile_code(key)?;
         reload.settings = Some(

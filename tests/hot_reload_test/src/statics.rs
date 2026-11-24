@@ -36,4 +36,10 @@ pub fn statics(built: Built) {
 	reload(&mut watcher, &changes);
 	assert_eq!(eval(&mut client, "\"[st_scoped()] [st_scoped_global()]\""), "\"5 1\"");
 	println!("ok: a local const that the old code didn't read leaves the global of its name as it was");
+
+	assert_eq!(eval(&mut client, "\"[st_counter()] [st_counter()]\""), "\"1 2\"");
+	let changes = source.edit("statics.dm", "\tif (/datum/st_twice::f())\n\t\treturn st_count", "\treturn st_count");
+	reload(&mut watcher, &changes);
+	assert_eq!(eval(&mut client, "st_counter()"), "3");
+	println!("ok: a static keeps its value when its proc's old code doesn't compile");
 }

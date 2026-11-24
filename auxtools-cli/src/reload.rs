@@ -136,13 +136,16 @@ fn without_existing_statics(plan: &mut Plan, before: &Snapshot) -> Vec<LocalRead
 		if code.statics.is_empty() {
 			continue;
 		}
-		let Ok(old) = before.compile(&code.proc) else {
-			continue;
+		let (old_locals, reads) = match before.compile(&code.proc) {
+			Ok(old) => (
+				old.statics.iter().map(|had| (had.name.clone(), local_number(&had.scope))).collect(),
+				local_reads(&old.nodes)
+			),
+			Err(_) => (declared_locals(before, &code.proc), vec![])
 		};
-		let reads = local_reads(&old.nodes);
 		let nodes = &code.nodes;
 		code.statics.retain_mut(|local| {
-			let declared = old.statics.iter().any(|had| had.name == local.name && had.scope == local.scope);
+			let declared = old_locals.contains(&(local.name.clone(), local_number(&local.scope)));
 			let unread = reads
 				.iter()
 				.find(|(name, _)| *name == local.name)
@@ -156,7 +159,7 @@ fn without_existing_statics(plan: &mut Plan, before: &Snapshot) -> Vec<LocalRead
 		found.extend(
 			reads
 				.into_iter()
-				.filter(|(name, _)| old.statics.iter().any(|had| had.name == *name))
+				.filter(|(name, _)| old_locals.iter().any(|(had, _)| had == name))
 				.map(|(name, reads)| LocalReads {
 					proc: code.proc.clone(),
 					name,
@@ -165,6 +168,19 @@ fn without_existing_statics(plan: &mut Plan, before: &Snapshot) -> Vec<LocalRead
 		);
 	}
 	found
+}
+
+fn declared_locals(snapshot: &Snapshot, proc: &ProcKey) -> Vec<(String, u32)> {
+	let mut names = vec![];
+	if let Some(code) = snapshot.proc_code(proc) {
+		static_locals(code, &mut names);
+	}
+	let mut out: Vec<(String, u32)> = vec![];
+	for name in names {
+		let number = out.iter().filter(|(had, _)| *had == name).count() as u32;
+		out.push((name, number));
+	}
+	out
 }
 
 const fn local_number(scope: &StaticScope) -> u32 {
@@ -454,6 +470,18 @@ mod tests {
 			.map(|reads| format!("{} {} {:?}", reads.proc, reads.name, reads.reads))
 			.collect();
 		assert_eq!(reads, ["/f LIMIT [None]", "/g LIMIT [Some(0), Some(0), None]"]);
+	}
+
+	#[test]
+	fn a_request_leaves_out_the_statics_of_old_code_dmasm_cant_compile() {
+		let twice = "/datum/t/proc/f()\n\treturn 0\n/datum/t/f()\n\treturn 1\n/datum/t/f()\n\treturn 2\n";
+		let before = format!("{twice}/proc/f()\n\tvar/static/count = 0\n\tcount++\n\tif (/datum/t::f())\n\t\treturn count\n");
+		let after = before.replace("\tif (/datum/t::f())\n\t\treturn count", "\tvar/static/added = 1\n\treturn count + added");
+		let (old, changes) = edited("uncompiled-statics", &before, &after);
+		assert!(old.compile(&changes.plan.reloads[0].proc).is_err(), "dmasm compiles the old code");
+		let sent = request(&changes, &old, false);
+		let statics: Vec<&str> = sent.plan.reloads[0].statics.iter().map(|local| local.name.as_str()).collect();
+		assert_eq!(statics, ["added"]);
 	}
 
 	#[test]
