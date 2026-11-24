@@ -139,6 +139,11 @@ impl ProcCtx<'_> {
         }
     }
 
+    pub fn fold_last_static(&mut self, name: &str, value: dreammaker::constants::Constant) {
+        let number = self.static_locals.iter().filter(|s| *s == name).count() as u32 - 1;
+        self.local_consts.insert((name.to_owned(), number), value);
+    }
+
     pub fn declare_typed_local(&mut self, name: &str, ty: String) -> u32 {
         let slot = self.locals.len() as u32;
         self.locals.push(name.to_owned());
@@ -797,6 +802,19 @@ pub fn labels_mut(ins: &mut Instruction) -> Vec<&mut crate::operands::Label> {
             .collect(),
         PickProb(p) => p.cases.iter_mut().collect(),
         _ => vec![],
+    }
+}
+
+pub(super) fn local_const_value(
+    folded: super::fold::Constant,
+) -> Option<dreammaker::constants::Constant> {
+    use dreammaker::constants::Constant as C;
+    match folded {
+        super::fold::Constant::Number(n) => Some(C::Float(n)),
+        super::fold::Constant::Text(t) if !t.iter().any(|b| matches!(b, 0xFF | b'\\' | b'[')) => {
+            String::from_utf8(t).ok().map(|t| C::String(t.into()))
+        }
+        _ => None,
     }
 }
 

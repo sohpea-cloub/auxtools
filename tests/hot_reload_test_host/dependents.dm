@@ -181,3 +181,17 @@ var/datum/dep_global_config/dep_global_config
 /proc/dep_global_chain()
 	var/last = /datum/dep_twice::f()
 	return last ? global.dep_global_config.DEP_GLOBAL_MEMBER + 1 : 0
+
+var/const/DEP_OFFSET_BASE = 5
+
+/proc/dep_local_offset()
+	var/const/DEP_OFFSET = 1
+	var/const/DEP_OFFSET_SUM = DEP_OFFSET_BASE + DEP_OFFSET
+	return DEP_OFFSET_SUM
+
+/datum/dep_local_config
+	var/dep_limit = 5
+
+/proc/dep_local_default()
+	var/const/DEP_DEFAULT_LIMIT = /datum/dep_local_config::dep_limit
+	return DEP_DEFAULT_LIMIT

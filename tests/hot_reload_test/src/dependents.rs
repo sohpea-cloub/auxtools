@@ -185,6 +185,14 @@ pub fn dependents(built: Built) {
 		refused
 	);
 	println!("ok: a reload is refused for a proc dmasm can't compile that folds a changed member const through a typed global");
+
+	assert_eq!(eval(&mut client, "\"[dep_local_offset()] [dep_local_default()]\""), "\"6 5\"");
+	let changes = source.edit("dependents.dm", "DEP_OFFSET_BASE = 5", "DEP_OFFSET_BASE = 10");
+	reload(&mut watcher, &changes);
+	let changes = source.edit("dependents.dm", "dep_limit = 5", "dep_limit = 10");
+	reload(&mut watcher, &changes);
+	assert_eq!(eval(&mut client, "\"[dep_local_offset()] [dep_local_default()]\""), "\"11 10\"");
+	println!("ok: a local const read alone follows the local consts and defaults it reads");
 }
 
 fn refused_edit(source: &mut Source, file: &str, from: &str, to: &str) -> Vec<dmasm::reload::Refusal> {

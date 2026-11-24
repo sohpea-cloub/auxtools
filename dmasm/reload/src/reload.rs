@@ -1987,25 +1987,25 @@ fn local_consts<'a>(
     if let Some(code) = &value.code {
         global_init::static_statements(code, None, &mut found);
     }
-    let mut seen: Vec<&str> = vec![];
+    let mut seen: Vec<(&str, Option<crate::compiler::Folded>)> = vec![];
     let mut out = vec![];
     for (_, var) in found {
         let name = var.name.as_str();
-        let number = seen.iter().filter(|n| **n == name).count();
+        let number = seen.iter().filter(|(n, _)| *n == name).count();
+        let mut folded = None;
         if var.var_type.flags.is_const() {
-            let locals: Vec<(&str, &str)> = seen.iter().map(|n| (*n, "")).collect();
-            let folded = var.value.as_ref().and_then(|value| {
-                crate::compiler::fold_in_proc(&s.tree, ty, value, &locals, s.byond)
+            folded = var.value.as_ref().and_then(|value| {
+                crate::compiler::fold_after_statics(&s.tree, ty, value, &[], &seen, s.byond)
             });
-            out.push((name, number, folded));
+            out.push((name, number, folded.clone()));
         }
-        seen.push(name);
+        seen.push((name, folded));
     }
     out
 }
 
 fn local_const_users(old: &Snapshot, new: &Snapshot, realigned: &Realigned, changes: &mut Changes) {
-    if changes.consts.is_empty() {
+    if changes.consts.is_empty() && changes.defaults_changed.is_empty() {
         return;
     }
     let reloaded: HashSet<ProcKey> = changes

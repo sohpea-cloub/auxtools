@@ -1152,24 +1152,12 @@ fn emit_var_statement(
         }
         _ => var,
     };
-    let mut folded = None;
-    if var.var_type.flags.is_const() {
-        use dreammaker::constants::Constant as C;
-        let value = match var
-            .value
-            .as_ref()
-            .and_then(|v| super::fold::value(compiler, v))
-        {
-            Some(super::fold::Constant::Number(n)) => Some(C::Float(n)),
-            Some(super::fold::Constant::Text(t))
-                if !t.iter().any(|b| matches!(b, 0xFF | b'\\' | b'[')) =>
-            {
-                String::from_utf8(t).ok().map(|t| C::String(t.into()))
-            }
-            _ => None,
-        };
-        folded = value;
-    }
+    let folded = match &var.value {
+        Some(value) if var.var_type.flags.is_const() => {
+            super::fold::value(compiler, value).and_then(super::procs::local_const_value)
+        }
+        _ => None,
+    };
     if var.var_type.flags.is_static() || var.var_type.flags.is_const() {
         let ty = var.var_type.type_path.to_string();
         let value = match &var.value {
@@ -1184,12 +1172,10 @@ fn emit_var_statement(
             }
         };
         let constant = var.var_type.flags.is_const();
-        let name = var.name.as_str();
         let ctx = ctx(compiler);
-        ctx.declare_static(name, ty, value, var.value.clone(), constant);
+        ctx.declare_static(var.name.as_str(), ty, value, var.value.clone(), constant);
         if let Some(folded) = folded {
-            let number = ctx.static_locals.iter().filter(|s| *s == name).count() as u32 - 1;
-            ctx.local_consts.insert((name.to_owned(), number), folded);
+            ctx.fold_last_static(var.name.as_str(), folded);
         }
         return Ok(());
     }

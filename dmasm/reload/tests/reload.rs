@@ -4304,22 +4304,24 @@ fn a_static_reading_a_changed_default_is_given_to_a_reboot() {
     assert!(code.contains("PushInt 10"), "{}", code);
 }
 
+fn sent_statics(changes: &Changes, path: &str) -> Vec<String> {
+    let reload = changes.plan.reloads.iter().find(|r| r.proc.path == path);
+    let reload =
+        reload.unwrap_or_else(|| panic!("{path} isn't compiled again: {:?}", changes.plan));
+    reload
+        .statics
+        .iter()
+        .map(|s| format!("{} {:?} {}", s.name, s.value, s.constant))
+        .collect()
+}
+
 #[test]
 fn a_changed_local_const_is_sent_with_its_value() {
     let before = "var/const/BASE = 5\n\n\
                   /proc/limit()\n\tvar/const/LIMIT = 5\n\treturn \"[LIMIT] [LIMIT + 1]\"\n\n\
                   /proc/based()\n\tvar/const/LIMIT = BASE + 1\n\treturn LIMIT\n\n\
                   /proc/other()\n\tvar/static/count = 0\n\tvar/const/LIMIT = 5\n\treturn LIMIT\n";
-    let sent = |changes: &Changes, path: &str| -> Vec<String> {
-        let reload = changes.plan.reloads.iter().find(|r| r.proc.path == path);
-        let reload =
-            reload.unwrap_or_else(|| panic!("{path} isn't compiled again: {:?}", changes.plan));
-        reload
-            .statics
-            .iter()
-            .map(|s| format!("{} {:?} {}", s.name, s.value, s.constant))
-            .collect()
-    };
+    let sent = sent_statics;
     let after = before.replacen("LIMIT = 5\n\treturn \"", "LIMIT = 10\n\treturn \"", 1);
     let edited = changes("local-const", before, &after);
     assert_eq!(reloaded(&edited), [key("/limit", 0)]);
@@ -4338,6 +4340,32 @@ fn a_changed_local_const_is_sent_with_its_value() {
             "count Some(Number(0.0)) false",
             "LIMIT Some(Number(5.0)) true"
         ]
+    );
+}
+
+#[test]
+fn a_local_const_follows_the_local_consts_and_defaults_it_reads() {
+    let before = "var/const/BASE = 5\n\n\
+                  /datum/config\n\tvar/limit = 5\n\n\
+                  /proc/offset()\n\tvar/const/OFFSET = 1\n\tvar/const/LIMIT = BASE + OFFSET\n\treturn LIMIT\n\n\
+                  /proc/configured()\n\tvar/const/LIMIT = /datum/config::limit\n\treturn LIMIT\n";
+    let after = before.replace("BASE = 5", "BASE = 10");
+    let based = changes("local-const-offset", before, &after);
+    assert_eq!(reloaded(&based), [key("/offset", 0)]);
+    assert_eq!(
+        sent_statics(&based, "/offset"),
+        [
+            "OFFSET Some(Number(1.0)) true",
+            "LIMIT Some(Number(11.0)) true"
+        ]
+    );
+
+    let after = before.replace("limit = 5", "limit = 10");
+    let configured = changes("local-const-default", before, &after);
+    assert_eq!(reloaded(&configured), [key("/configured", 0)]);
+    assert_eq!(
+        sent_statics(&configured, "/configured"),
+        ["LIMIT Some(Number(10.0)) true"]
     );
 }
 
