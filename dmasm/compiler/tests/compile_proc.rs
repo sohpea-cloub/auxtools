@@ -2207,6 +2207,41 @@ fn a_logical_assignment_to_an_element_keeps_its_key_across_the_value() {
 }
 
 #[test]
+fn a_safe_write_calls_an_indexed_item_on_the_item() {
+    let types =
+        "/datum/item\n\tvar/flag\n\tvar/datum/item/next\n/datum/item/proc/make(x)\n\treturn src\n\
+                 /datum/holder\n\tvar/list/items\n";
+    for (body, call) in [
+        (
+            "holder?.items[1]:make().flag = 1",
+            "Call dynamic_proc(\"make\") 0",
+        ),
+        (
+            "holder?.items[1]:make(other.next).flag = 1",
+            "Call dynamic_proc(\"make\") 1",
+        ),
+        (
+            "holder?.items[1].make().flag ||= 1",
+            "Call dynamic_proc(\"make\") 0",
+        ),
+    ] {
+        let code = compile(
+            &format!("{types}/proc/g(datum/holder/holder, datum/item/other)\n\t{body}\n"),
+            "",
+            "g",
+        );
+        assert_has(&code, &["ListGet", "SetVar cache", "PushCache"]);
+        assert_has(&code, &["PopCache", call]);
+        assert!(
+            !code.contains(&format!("PopCache\nPushCache\n{call}")),
+            "{}\n{}",
+            body,
+            code
+        );
+    }
+}
+
+#[test]
 fn new_without_arguments_is_true_in_a_test() {
     let src = "/datum/t\n/proc/f(a, b)\n\treturn (new /datum/t ? a : b)\n";
     assert_eq!(compile(src, "", "f"), "GetVar arg(0)\nRet\nEnd");

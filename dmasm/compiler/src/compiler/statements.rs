@@ -1620,6 +1620,15 @@ fn call_after_cache_use(compiler: &Compiler, start: usize) -> Option<usize> {
         + compiler.nodes[start..]
             .iter()
             .position(|n| matches!(n, Node::Instruction(Instruction::Call(..), _)))?;
+    let computed = compiler.nodes[start..call].iter().any(|n| {
+        matches!(
+            n,
+            Node::Instruction(Instruction::SetVar(Variable::Cache), _)
+        )
+    });
+    if computed {
+        return None;
+    }
     compiler.nodes[start..call]
         .iter()
         .any(|n| matches!(n, Node::Instruction(i, _) if super::procs::touches_cache(i)))
