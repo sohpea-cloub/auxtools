@@ -1,3 +1,4 @@
+use dmasm_bytecode::{Instruction, Node, Variable};
 use dmasm_compiler::compiler::{compile_proc, ProcSource};
 
 fn compile(code: &str, ty: &str, name: &str) -> String {
@@ -100,6 +101,71 @@ fn colon_chain_reads_the_type_of_each_var_it_goes_through() {
                /proc/f(x)\n\treturn list(x:config:LIMIT + 1, x:config.LIMIT + 2)\n";
     let code = compile(src, "", "f");
     assert_has(&code, &["PushInt 6", "PushInt 7", "NewList 2"]);
+}
+
+#[test]
+fn a_var_after_an_index_is_found_as_untyped_colon_finds_it() {
+    let types = "/datum/a\n\tvar/const/LIMIT = 5\n\tvar/datum/a/link\n\
+                 /datum/b\n\tvar/const/LIMIT = 9\n\tvar/datum/b/link\n";
+    for read in [
+        "var/list/datum/a/items = list()\n\treturn items[1]:LIMIT",
+        "var/list/datum/a/items = list()\n\treturn items[1].LIMIT",
+        "var/list/items = list()\n\treturn items[1].LIMIT",
+        "var/list/items = list()\n\treturn items[1]:link:LIMIT",
+        "var/list/items = list()\n\treturn items[1].link.LIMIT",
+    ] {
+        let src = format!("{types}/proc/f()\n\t{read}\n");
+        let ctx = dreammaker::Context::default();
+        let pp = dreammaker::Preprocessor::from_buffer(&ctx, "test.dm".into(), src);
+        let mut parser = dreammaker::Parser::new(&ctx, pp);
+        parser.enable_procs();
+        let tree = parser.parse_object_tree();
+        let value = tree
+            .root()
+            .get()
+            .procs
+            .get("f")
+            .unwrap()
+            .value
+            .last()
+            .unwrap();
+        let source = ProcSource {
+            tree: &tree,
+            ty: tree.root(),
+            name: "f",
+            value,
+            file: "test.dm",
+            debug_info: false,
+            index: None,
+            byond: dmasm_compiler::ByondVersion::LATEST,
+            file_names: None,
+        };
+        let nodes = compile_proc(&source).expect("compiles").nodes;
+        let code = dmasm_bytecode::format(&nodes);
+        let code: Vec<&str> = code.lines().map(str::trim).collect();
+        assert!(
+            code.ends_with(&[
+                "ListGet",
+                "SetVar cache",
+                "GetVar global(\"LIMIT\")",
+                "Ret",
+                "End"
+            ]),
+            "{}: {:?}",
+            read,
+            code
+        );
+        let read_from: Vec<String> = nodes
+            .iter()
+            .filter_map(|node| match node {
+                Node::Instruction(Instruction::GetVar(Variable::Global(g)), _) => {
+                    Some(format!("{:?}", g.scope))
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(read_from, ["Some(Type(\"/datum/b\"))"], "{}", read);
+    }
 }
 
 #[test]

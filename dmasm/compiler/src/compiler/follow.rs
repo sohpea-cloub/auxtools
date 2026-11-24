@@ -60,8 +60,10 @@ pub(super) fn emit_typed<'a>(
 
     let mut field_buffer = vec![];
 
+    let mut indexed = false;
     let mut follow = follow.into_iter();
     while let Some(sub_expr) = follow.next() {
+        let after_index = std::mem::replace(&mut indexed, matches!(sub_expr, Follow::Index(..)));
         let more_fields = matches!(
             follow.as_slice().first(),
             Some(
@@ -88,6 +90,10 @@ pub(super) fn emit_typed<'a>(
         match sub_expr {
             Follow::Field(access_kind, ident) => {
                 let field_ty = match access_kind {
+                    PropertyAccessKind::Scope => {
+                        ty.and_then(|t| super::procs::member_var(t, ident.as_str()))
+                    }
+                    _ if after_index => super::procs::colon_var(compiler, None, ident.as_str()),
                     PropertyAccessKind::Colon => {
                         super::procs::colon_var(compiler, ty, ident.as_str())
                     }
@@ -139,6 +145,7 @@ pub(super) fn emit_typed<'a>(
                     if is_static && matches!(kind, EvalKind::Stack | EvalKind::ListRef) {
                         compiler.emit_move_to_stack(kind)?;
                         compiler.emit_ins(Instruction::SetVar(Variable::Cache));
+                        field_buffer.clear();
                         kind = EvalKind::Var(Variable::Global(GlobalVar::named(
                             ident.as_str().as_bytes(),
                             Some(StaticScope::of_type(&scope)),
