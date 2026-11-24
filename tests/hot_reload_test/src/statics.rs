@@ -70,6 +70,16 @@ pub fn statics(built: Built) {
 	assert_eq!(eval(&mut client, "\"[st_unknown()] [st_unknown_global()]\""), "\"5 1\"");
 	println!("ok: a local const leaves the global of its name as it was when its proc's old code doesn't compile");
 
+	assert_eq!(eval(&mut client, "\"[st_defaulted()[1]] [st_defaulted()[2]]\""), "\"6 1\"");
+	let changes = source.edit(
+		"statics.dm",
+		"\tif (/datum/st_twice::f())\n\t\treturn list(ST_DEFAULT + 1, x)",
+		"\treturn ST_DEFAULT"
+	);
+	reload(&mut watcher, &changes);
+	assert_eq!(eval(&mut client, "\"[st_defaulted()] [st_default_global()]\""), "\"5 1\"");
+	println!("ok: a local const leaves the global of its name as it was when a parameter default reads the global");
+
 	assert_eq!(eval(&mut client, "\"[st_branch(1)] [st_branch(1)]\""), "\"1 2\"");
 	let changes = source.edit(
 		"statics.dm",

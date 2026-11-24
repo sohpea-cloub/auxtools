@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-use dreammaker::ast::{Block, Statement};
+use dreammaker::ast::{Block, Parameter, Statement};
 use dreammaker::objtree::{ObjectTree, ProcValue, TypeRef};
 use dreammaker::preprocessor::DefineHistory;
 use dreammaker::{Context, FileId, Severity};
@@ -1178,6 +1178,10 @@ impl Snapshot {
 
     pub fn proc_code(&self, key: &ProcKey) -> Option<&Block> {
         self.find(key)?.1.code.as_ref()
+    }
+
+    pub fn proc_parameters(&self, key: &ProcKey) -> Option<&[Parameter]> {
+        Some(&self.find(key)?.1.parameters)
     }
 
     pub fn compile_reload(&self, key: &ProcKey) -> Result<ProcReload, Diagnostic> {

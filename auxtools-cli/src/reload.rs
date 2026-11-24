@@ -162,10 +162,13 @@ impl<'a> OldLocals<'a> {
 				.filter(|(name, _)| names.contains(&name.as_str()))
 				.map(|(name, reads)| (name, reads, None))
 				.collect(),
-			Err(_) => names
-				.into_iter()
-				.filter_map(|name| Some((name.to_owned(), vec![], Some(locals::parsed_reads(body, name)?))))
-				.collect()
+			Err(_) => {
+				let params = snapshot.proc_parameters(proc).unwrap_or_default();
+				names
+					.into_iter()
+					.filter_map(|name| Some((name.to_owned(), vec![], Some(locals::parsed_reads(params, body, name)?))))
+					.collect()
+			}
 		};
 		Self { declared, reads }
 	}
@@ -516,6 +519,29 @@ mod tests {
 			.map(|reads| format!("{} {:?} {:?}", reads.name, reads.reads, reads.parsed))
 			.collect();
 		assert_eq!(reads, ["LIMIT [] Some(Unknown)", "count [] Some(Only(0))"]);
+	}
+
+	#[test]
+	fn a_request_sends_a_const_as_new_when_a_parameter_default_of_old_code_that_doesnt_compile_reads_a_global() {
+		let twice = "/datum/t/proc/f()\n\treturn 0\n/datum/t/f()\n\treturn 1\n/datum/t/f()\n\treturn 2\n";
+		let before =
+			format!("var/LIMIT = 1\n{twice}/proc/f(x = global.LIMIT)\n\tvar/const/LIMIT = 5\n\tif (/datum/t::f())\n\t\treturn list(LIMIT + 1, x)\n");
+		let after = before.replace("\tif (/datum/t::f())\n\t\treturn list(LIMIT + 1, x)", "\treturn LIMIT");
+		let (old, changes) = edited("uncompiled-default", &before, &after);
+		assert!(old.compile(&changes.plan.reloads[0].proc).is_err(), "dmasm compiles the old code");
+		let sent = request(&changes, &old, false);
+		let statics: Vec<String> = sent.plan.reloads[0]
+			.statics
+			.iter()
+			.map(|local| format!("{} {}", local.name, local.constant))
+			.collect();
+		assert_eq!(statics, ["LIMIT false"]);
+		let reads: Vec<String> = sent
+			.local_reads
+			.iter()
+			.map(|reads| format!("{} {:?}", reads.name, reads.parsed))
+			.collect();
+		assert_eq!(reads, ["LIMIT Some(Unknown)"]);
 	}
 
 	fn sent_statics(sent: &HotReloadRequest) -> Vec<String> {

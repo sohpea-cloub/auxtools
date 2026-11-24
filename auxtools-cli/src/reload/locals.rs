@@ -1,14 +1,22 @@
 use auxtools_protocol::ParsedReads;
 use dmasm::syntax::{walk_expression, Node};
-use dreammaker::ast::{Case, Expression, Follow, Spanned, Statement, Term, VarStatement};
+use dreammaker::ast::{Case, Expression, Follow, Parameter, Spanned, Statement, Term, VarStatement};
 
-pub fn parsed_reads(block: &[Spanned<Statement>], name: &str) -> Option<ParsedReads> {
+pub fn parsed_reads(params: &[Parameter], block: &[Spanned<Statement>], name: &str) -> Option<ParsedReads> {
 	let mut scan = Scan {
 		name,
 		visible: vec![],
 		statics: 0,
 		seen: None
 	};
+	for param in params {
+		if let Some(default) = &param.default {
+			scan.expression(default);
+		}
+		if param.name.as_str() == name {
+			scan.visible.push(Visible::Other);
+		}
+	}
 	scan.block(block);
 	scan.seen
 }
@@ -382,6 +390,10 @@ mod tests {
 	use super::parsed_reads;
 
 	fn reads(body: &str, name: &str) -> Option<ParsedReads> {
+		reads_with("x", body, name)
+	}
+
+	fn reads_with(params: &str, body: &str, name: &str) -> Option<ParsedReads> {
 		static PARSED: AtomicU32 = AtomicU32::new(0);
 		let dir = std::env::temp_dir().join(format!(
 			"auxtools-locals-{}-{}",
@@ -393,13 +405,13 @@ mod tests {
 		std::fs::write(dir.join("world.dme"), "#include \"code.dm\"\n").unwrap();
 		std::fs::write(
 			dir.join("code.dm"),
-			format!("var/{name} = 1\n/datum/a/var/{name} = 2\n/datum/a/proc/f(x)\n{body}")
+			format!("var/{name} = 1\n/datum/a/var/{name} = 2\n/datum/a/proc/f({params})\n{body}")
 		)
 		.unwrap();
 		let snapshot = Snapshot::parse(&dir.join("world.dme"), &ParseOptions::default()).unwrap();
 		let _ = std::fs::remove_dir_all(&dir);
 		let key = snapshot.procs().find(|key| key.path.ends_with("/f")).unwrap().clone();
-		parsed_reads(snapshot.proc_code(&key).unwrap(), name)
+		parsed_reads(snapshot.proc_parameters(&key).unwrap(), snapshot.proc_code(&key).unwrap(), name)
 	}
 
 	#[test]
@@ -424,6 +436,14 @@ mod tests {
 		] {
 			assert_eq!(reads(body, "n"), Some(ParsedReads::Unknown), "{}", body);
 		}
+	}
+
+	#[test]
+	fn a_parameter_default_reads_a_name_outside_the_body() {
+		let body = "\tvar/const/n = 5\n\treturn n + 1\n";
+		assert_eq!(reads_with("x = global.n", body, "n"), Some(ParsedReads::Unknown));
+		assert_eq!(reads_with("x = n", body, "n"), Some(ParsedReads::Unknown));
+		assert_eq!(reads_with("x = 2", body, "n"), Some(ParsedReads::Only(0)));
 	}
 
 	#[test]

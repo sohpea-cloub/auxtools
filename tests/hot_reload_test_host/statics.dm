@@ -101,3 +101,13 @@ var/const/ST_RENAMED = 5
 	var/static/ST_RENAMED = 7
 	ST_RENAMED++
 	return ST_RENAMED
+
+var/ST_DEFAULT = 1
+
+/proc/st_defaulted(x = global.ST_DEFAULT)
+	var/const/ST_DEFAULT = 5
+	if (/datum/st_twice::f())
+		return list(ST_DEFAULT + 1, x)
+
+/proc/st_default_global()
+	return ST_DEFAULT
