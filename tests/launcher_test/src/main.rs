@@ -900,8 +900,7 @@ fn command_line_more(pid: u64, dir: &Path) {
 	println!("ok: CLI proc-body evaluation");
 	cli.run(&["continue"], 0);
 
-	std::fs::write(dir.join("fail"), "yes").unwrap();
-	let printed = cli.run(&["wait", "pause", "--runtimes", "--timeout", "15"], 0);
+	let printed = while_failing(dir, || cli.run(&["wait", "pause", "--runtimes", "--timeout", "15"], 0));
 	assert!(
 		printed.starts_with(&format!("pid {}: paused on a runtime error: cannot read from list\n#0 /fail", pid)),
 		"wait --runtimes said {}",
@@ -910,11 +909,13 @@ fn command_line_more(pid: u64, dir: &Path) {
 	cli.run(&["continue"], 0);
 	println!("ok: CLI runtime wait");
 
-	std::fs::write(dir.join("fail"), "yes").unwrap();
-	let printed = cli.run(&["wait", "pause", "--runtime-filter", "!cannot read", "--timeout", "1.5"], 2);
+	let printed = while_failing(dir, || {
+		cli.run(&["wait", "pause", "--runtime-filter", "!cannot read", "--timeout", "1.5"], 2)
+	});
 	assert!(printed.contains("timed out"), "wait --runtime-filter said {}", printed);
-	std::fs::write(dir.join("fail"), "yes").unwrap();
-	let printed = cli.run(&["wait", "pause", "--runtime-filter", "bounds, FROM LIST", "--timeout", "15"], 0);
+	let printed = while_failing(dir, || {
+		cli.run(&["wait", "pause", "--runtime-filter", "bounds, FROM LIST", "--timeout", "15"], 0)
+	});
 	assert!(
 		printed.starts_with(&format!("pid {}: paused on a runtime error: cannot read from list", pid)),
 		"wait --runtime-filter said {}",
@@ -1653,6 +1654,14 @@ fn launcher_exit(started: &mut Started, output: &Mutex<String>) -> i32 {
 		assert!(Instant::now() < until, "timed out waiting for launcher exit:\n{}", output.lock().unwrap());
 		std::thread::sleep(Duration::from_millis(100));
 	}
+}
+
+fn while_failing(dir: &Path, wait: impl FnOnce() -> String) -> String {
+	let failing = dir.join("failing");
+	std::fs::write(&failing, "yes").unwrap();
+	let printed = wait();
+	std::fs::remove_file(&failing).unwrap();
+	printed
 }
 
 #[track_caller]
