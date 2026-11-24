@@ -3,7 +3,7 @@ use std::{
 	time::{Duration, Instant}
 };
 
-use auxtools_protocol::{Request, Response};
+use auxtools_protocol::{JournalEntry, JournalEvent, Request, Response};
 use test_support::standin::{Answer, Answers, StandIn};
 
 const LATE: Duration = Duration::from_secs(10);
@@ -88,4 +88,78 @@ fn a_wait_for_a_reboot_gives_up_at_its_timeout_while_the_next_world_doesnt_answe
 		printed(&output),
 		"error: timed out waiting for the world to respond after its connection ended.\n"
 	);
+}
+
+#[test]
+fn a_wait_for_a_reboot_from_a_journal_entry_survives_a_reboot_while_it_registers() {
+	let loaded = JournalEntry {
+		number: 8,
+		time: 0,
+		world_time: 0.0,
+		event: JournalEvent::Loaded { load: 2 }
+	};
+	let mut watchers = 0;
+	let mut stand_in = StandIn::new(Box::new(move |request| match request {
+		Request::Watcher => {
+			watchers += 1;
+			match watchers {
+				1 => Answer::ToTest,
+				_ => Answer::Reply(Response::Ack)
+			}
+		}
+		Request::Journal { after, .. } => Answer::Reply(Response::Journal {
+			entries: if *after == 5 { vec![loaded.clone()] } else { vec![] },
+			first: 1,
+			last: 8
+		}),
+		Request::Uptime => Answer::Reply(Response::Uptime {
+			loaded: 0,
+			up: 1.0,
+			world_time: 0.0,
+			loads: 2,
+			last_reload: None,
+			started: true
+		}),
+		_ => Answer::Nothing
+	}));
+	let pid = stand_in.spawn();
+	let started = Instant::now();
+	let waiting = command(pid, &["wait", "reboot", "--since", "5", "--timeout", "5"]);
+	let mut first = stand_in.world();
+	first.next("Watcher", |request| matches!(request, Request::Watcher));
+	first.event(Response::Disconnect);
+	first.close();
+	let output = waiting.wait_with_output().unwrap();
+	let took = started.elapsed();
+	assert!(
+		output.status.code() == Some(0) && printed(&output).starts_with("#8 ") && took < LATE,
+		"wait reboot --since 5 ended after {:?} with {:?}: {}",
+		took,
+		output.status.code(),
+		printed(&output)
+	);
+}
+
+#[test]
+fn a_wait_for_a_reboot_keeps_its_timeout_through_a_reboot_while_it_registers() {
+	let mut stand_in = StandIn::new(watchers_answered(0));
+	let pid = stand_in.spawn();
+	let started = Instant::now();
+	let waiting = command(pid, &["wait", "reboot", "--since", "5", "--timeout", "2"]);
+	let mut first = stand_in.world();
+	first.next("Watcher", |request| matches!(request, Request::Watcher));
+	first.event(Response::Disconnect);
+	first.close();
+	let mut next = stand_in.world();
+	next.next("Watcher again", |request| matches!(request, Request::Watcher));
+	let output = waiting.wait_with_output().unwrap();
+	let took = started.elapsed();
+	assert!(
+		output.status.code() == Some(2) && took < LATE,
+		"wait reboot --timeout 2 ended after {:?} with {:?}: {}",
+		took,
+		output.status.code(),
+		printed(&output)
+	);
+	assert_eq!(printed(&output), "error: timed out after 2 seconds waiting for the world to reboot.\n");
 }

@@ -66,7 +66,7 @@ fn limit(timeout: Option<Duration>) -> String {
 pub fn wait_reload(world: &mut World, since: Option<u64>, timeout: Option<Duration>, json: bool) -> Result<()> {
 	let until = timeout.map(|timeout| Instant::now() + timeout);
 	let timed_out = || Failure(TIMED_OUT, format!("timed out{} waiting for a hot reload attempt.", limit(timeout)));
-	if !world.watch_only(until)? {
+	if !world.watch_through_reboots(until)? {
 		return Err(timed_out());
 	}
 	let mut follower = Follower::new(since.unwrap_or(u64::MAX), vec![JournalKind::Reload]);
@@ -84,7 +84,7 @@ pub fn wait_reload(world: &mut World, since: Option<u64>, timeout: Option<Durati
 pub fn wait_reboot(world: &mut World, since: Option<u64>, timeout: Option<Duration>, json: bool) -> Result<()> {
 	let until = timeout.map(|timeout| Instant::now() + timeout);
 	let timed_out = || Failure(TIMED_OUT, format!("timed out{} waiting for the world to reboot.", limit(timeout)));
-	if !world.watch_only(until)? {
+	if !world.watch_through_reboots(until)? {
 		return Err(timed_out());
 	}
 	let mut follower = Follower::new(since.unwrap_or(u64::MAX), vec![JournalKind::World]);
@@ -194,6 +194,15 @@ impl Follower {
 }
 
 impl World {
+	fn watch_through_reboots(&mut self, until: Option<Instant>) -> Result<bool> {
+		loop {
+			match self.watch_only(until) {
+				Err(Failure(HUNG_UP, _)) => self.reconnect(until)?,
+				watching => return watching
+			}
+		}
+	}
+
 	pub fn reconnect(&mut self, until: Option<Instant>) -> Result<()> {
 		match when_listening(self.pid, until, Client::open) {
 			Ok(client) => {
