@@ -204,3 +204,10 @@ var/hr_tally = 100
 	return hr_asked()
 
 /datum/asking/child
+
+/datum/config_read
+	var/list/limits = list(/datum/config_limits::limit)
+	var/copied = /datum/config_limits::limit
+
+/mob/limited/verb/choose_limit(x in list(/datum/config_limits::limit))
+	return x

@@ -2214,6 +2214,18 @@ fn definitions(built: Built) {
 	assert_eq!(eval(&mut client, "hr_asked()"), "\"global\"");
 	println!("ok: a new member proc takes an unchanged proc's call of a global proc");
 
+	let changes = source.edit("reload.dm", "\tvar/limit = 5\n", "\tvar/limit = 10\n");
+	let chooser = changes.plan.reloads.iter().find(|r| r.proc.path == "/mob/limited/choose_limit");
+	assert!(
+		matches!(chooser.map(|r| &r.params[0].in_list), Some(InList::New(_))),
+		"the verb's unchanged `in` list isn't compiled again: {:?}",
+		chooser
+	);
+	reload(&mut watcher, &changes);
+	assert_eq!(eval(&mut client, "(new /datum/config_read).limits[1]"), "10");
+	assert_eq!(eval(&mut client, "(new /datum/config_read).copied"), "10");
+	println!("ok: initializers and `in` lists that read a changed default with :: follow it");
+
 	let changes = source.edit("reload.dm", "/datum/lone/speak()\n\treturn \"lone override\"\n", "");
 	let result = expect_reload_result(watcher.request(reload_request(&changes)));
 	assert!(

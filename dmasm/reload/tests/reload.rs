@@ -4021,3 +4021,30 @@ fn a_member_proc_added_or_removed_takes_unqualified_calls_from_a_global() {
     let changes = changes_of("member-proc-overridden", &added, &overridden);
     assert_eq!(sorted_reloads(&changes), Vec::<String>::new());
 }
+
+#[test]
+fn a_changed_default_recompiles_the_initializers_and_in_lists_that_read_it() {
+    let before = "/datum/config\n\tvar/limit = 5\n\n\
+                  /datum/holder\n\tvar/list/limits = list(/datum/config::limit)\n\tvar/copied = /datum/config::limit\n\n\
+                  /mob/verb/choose(x in list(/datum/config::limit))\n\treturn x\n";
+    let after = before.replace("limit = 5", "limit = 10");
+    let changes = changes("default-read", before, &after);
+    assert_eq!(sorted_reloads(&changes), ["/mob/choose"]);
+    let in_list = &changes.plan.reloads[0].params[0].in_list;
+    assert!(matches!(in_list, InList::New(_)), "{:?}", in_list);
+    assert_eq!(init_types(&changes), ["/datum/holder"]);
+    let mut defaults: Vec<(&str, &ConstValue)> = changes
+        .plan
+        .var_defaults
+        .iter()
+        .map(|d| (d.var.as_str(), &d.value))
+        .collect();
+    defaults.sort_by_key(|d| d.0);
+    assert_eq!(
+        defaults,
+        [
+            ("copied", &ConstValue::Number(10.0)),
+            ("limit", &ConstValue::Number(10.0))
+        ]
+    );
+}

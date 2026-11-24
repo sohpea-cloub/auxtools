@@ -23,6 +23,7 @@ pub(super) struct Retargeted<'s> {
     consts: HashSet<String>,
     member_vars: HashMap<String, Vec<String>>,
     member_procs: HashMap<String, Vec<String>>,
+    changed_defaults: HashSet<String>,
 }
 
 fn resolve(s: &Snapshot, path: &str) -> Option<ProcKey> {
@@ -110,6 +111,7 @@ pub(super) fn retargeted<'s>(
         consts: HashSet::new(),
         member_vars: HashMap::new(),
         member_procs: HashMap::new(),
+        changed_defaults: changes.defaults_changed.iter().cloned().collect(),
     };
     let touched: BTreeSet<&str> = realigned
         .keys()
@@ -200,6 +202,10 @@ pub(super) fn retargeted<'s>(
 
 impl Retargeted<'_> {
     pub(super) fn is_empty(&self) -> bool {
+        self.leaves_bodies() && self.changed_defaults.is_empty()
+    }
+
+    fn leaves_bodies(&self) -> bool {
         self.paths.is_empty() && self.member_vars.is_empty() && self.member_procs.is_empty()
     }
 
@@ -445,7 +451,10 @@ impl<'r, 's> Scan<'r, 's> {
                 !self.resolved.contains(&(follow as *const Follow))
                     && r.names.contains(name.as_str())
             }
-            syntax::Node::Follow(Follow::StaticField(name)) => r.defaults.contains(name.as_str()),
+            syntax::Node::Follow(Follow::StaticField(name)) => {
+                r.defaults.contains(name.as_str())
+                    || (self.own.is_none() && r.changed_defaults.contains(name.as_str()))
+            }
             syntax::Node::Term(Term::Prefab(prefab)) => r.prefab_might_name(prefab),
             syntax::Node::Term(Term::Ident(name)) => self
                 .ty
@@ -561,7 +570,10 @@ pub(super) fn path_users(r: &Retargeted, changes: &mut Changes) {
             }
         }
 
-        let body = if reloaded.is_none() && r.proc_might_name(value, name, &new_ty.get().path) {
+        let body = if reloaded.is_none()
+            && !r.leaves_bodies()
+            && r.proc_might_name(value, name, &new_ty.get().path)
+        {
             match new.compile_code(key) {
                 Ok(after) => r
                     .changes_code(old.compile_code(&old_key), &after)

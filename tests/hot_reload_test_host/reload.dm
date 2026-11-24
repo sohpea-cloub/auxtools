@@ -307,3 +307,6 @@ var/mob/helper/small/old_helper = new
 /datum/tallied
 
 /datum/asking
+
+/datum/config_limits
+	var/limit = 5
