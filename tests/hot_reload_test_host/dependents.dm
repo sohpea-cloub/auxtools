@@ -197,3 +197,8 @@ var/const/DEP_OFFSET_BASE = 5
 	return DEP_DEFAULT_LIMIT
 
 /datum/dep_colon_later
+
+var/const/DEP_SCOPED_BASE = 5
+
+/datum/dep_scoped_config
+	var/const/DEP_SCOPED = 5

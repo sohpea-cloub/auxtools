@@ -4403,6 +4403,31 @@ fn a_local_const_follows_the_local_consts_and_defaults_it_reads() {
 }
 
 #[test]
+fn a_local_const_reads_the_names_in_scope_where_it_is_declared() {
+    let before = "var/const/BASE = 5\n\n\
+                  /datum/config\n\tvar/const/LIMIT = 5\n\n\
+                  /proc/ended(x)\n\tif(x)\n\t\tvar/const/BASE = 2\n\t\tx = BASE\n\
+                  \tvar/const/LIMIT = BASE + 1\n\treturn LIMIT\n\n\
+                  /proc/parameter(datum/config/c)\n\tvar/const/LIMIT = c.LIMIT + 1\n\treturn LIMIT\n\n\
+                  /proc/local()\n\tvar/datum/config/c\n\tvar/const/LIMIT = c.LIMIT + 2\n\treturn LIMIT\n";
+    let after = before.replace("BASE = 5", "BASE = 10");
+    let ended = changes("local-const-ended-block", before, &after);
+    assert_eq!(reloaded(&ended), [key("/ended", 0)]);
+    assert_eq!(
+        sent_statics(&ended, "/ended"),
+        [
+            "BASE Some(Number(2.0)) true",
+            "LIMIT Some(Number(11.0)) true"
+        ]
+    );
+
+    let after = before.replace("LIMIT = 5", "LIMIT = 10");
+    let mut typed = reloaded(&changes("local-const-typed", before, &after));
+    typed.sort_by(|a, b| a.path.cmp(&b.path));
+    assert_eq!(typed, [key("/local", 0), key("/parameter", 0)]);
+}
+
+#[test]
 fn uncompiled_code_folding_a_changed_const_is_refused() {
     let uncompiled = "\tswitch(x)\n\t\tif(x)\n\t\t\treturn 0\n";
     let before = format!(

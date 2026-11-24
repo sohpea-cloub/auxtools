@@ -2006,24 +2006,45 @@ fn local_consts<'a>(
     ty: TypeRef,
     value: &'a ProcValue,
 ) -> Vec<(&'a str, usize, Option<crate::compiler::Folded>)> {
-    let mut found = vec![];
-    if let Some(code) = &value.code {
-        global_init::static_statements(code, None, &mut found);
-    }
-    let mut seen: Vec<(&str, Option<crate::compiler::Folded>)> = vec![];
+    use crate::compiler::InScope;
+    let mut statics: Vec<&str> = vec![];
+    let mut folded: HashMap<usize, crate::compiler::Folded> = HashMap::new();
     let mut out = vec![];
-    for (_, var) in found {
-        let name = var.name.as_str();
-        let number = seen.iter().filter(|(n, _)| *n == name).count();
-        let mut folded = None;
-        if var.var_type.flags.is_const() {
-            folded = var.value.as_ref().and_then(|value| {
-                crate::compiler::fold_after_statics(&s.tree, ty, value, &[], &seen, s.byond)
-            });
-            out.push((name, number, folded.clone()));
+    retargeted::walk_scopes(value, &mut |var, scopes| {
+        let flags = var.var_type.flags;
+        if !flags.is_static() && !flags.is_const() {
+            return;
         }
-        seen.push((name, folded));
-    }
+        let name = var.name.as_str();
+        let number = statics.iter().filter(|n| **n == name).count();
+        statics.push(name);
+        if !flags.is_const() {
+            return;
+        }
+        let in_scope: Vec<InScope> = scopes
+            .iter()
+            .enumerate()
+            .flat_map(|(depth, scope)| scope.iter().map(move |d| (depth, d)))
+            .map(|(depth, d)| match d.var {
+                None if depth == 0 => InScope::Param(d.name, &d.ty),
+                Some(v) if v.var_type.flags.is_static() || v.var_type.flags.is_const() => {
+                    let at = v as *const dreammaker::ast::VarStatement as usize;
+                    InScope::Static(d.name, &d.ty, folded.get(&at).cloned())
+                }
+                _ => InScope::Local(d.name, &d.ty),
+            })
+            .collect();
+        let value = var.value.as_ref().and_then(|value| {
+            crate::compiler::fold_in_scope(&s.tree, ty, value, &in_scope, s.byond)
+        });
+        if let Some(value) = &value {
+            folded.insert(
+                var as *const dreammaker::ast::VarStatement as usize,
+                value.clone(),
+            );
+        }
+        out.push((name, number, value));
+    });
     out
 }
 

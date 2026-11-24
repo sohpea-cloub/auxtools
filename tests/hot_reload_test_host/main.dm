@@ -217,3 +217,14 @@ var/hr_tally = 100
 
 /proc/dep_colon(x)
 	return "[x:DEP_COLON + 1] [x:DEP_COLON]"
+
+/proc/dep_scoped_limit(x)
+	if(x)
+		var/const/DEP_SCOPED_BASE = 2
+		x = DEP_SCOPED_BASE
+	var/const/DEP_SCOPED_LIMIT = DEP_SCOPED_BASE + 1
+	return DEP_SCOPED_LIMIT
+
+/proc/dep_typed_limit(datum/dep_scoped_config/config)
+	var/const/DEP_TYPED_LIMIT = config.DEP_SCOPED + 1
+	return DEP_TYPED_LIMIT

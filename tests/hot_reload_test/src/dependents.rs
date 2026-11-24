@@ -203,6 +203,14 @@ pub fn dependents(built: Built) {
 	reload(&mut watcher, &changes);
 	assert_eq!(eval(&mut client, "dep_colon()"), "\"10 9\"");
 	println!("ok: an untyped x:name in an unchanged file finds a later type's new declaration");
+
+	assert_eq!(eval(&mut client, "\"[dep_scoped_limit()] [dep_typed_limit()]\""), "\"6 6\"");
+	let changes = source.edit("dependents.dm", "DEP_SCOPED_BASE = 5", "DEP_SCOPED_BASE = 10");
+	reload(&mut watcher, &changes);
+	let changes = source.edit("dependents.dm", "DEP_SCOPED = 5", "DEP_SCOPED = 10");
+	reload(&mut watcher, &changes);
+	assert_eq!(eval(&mut client, "\"[dep_scoped_limit()] [dep_typed_limit()]\""), "\"11 11\"");
+	println!("ok: a local const in an unchanged file reads the names in scope where it is declared");
 }
 
 fn refused_edit(source: &mut Source, file: &str, from: &str, to: &str) -> Vec<dmasm::reload::Refusal> {
