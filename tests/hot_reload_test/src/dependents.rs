@@ -335,6 +335,24 @@ pub fn dependents(built: Built) {
 		"recompiled holder?.items[1].name doesn't read the var DreamMaker reads"
 	);
 	println!("ok: recompiled holder?.items[1].name reads the var DreamMaker reads, and null for a null holder");
+
+	assert_eq!(eval(&mut client, "dep_call_colon()"), "5");
+	let refused = refused_edit(
+		&mut source,
+		"dependents.dm",
+		"/datum/dep_call_colon_later\n",
+		"/datum/dep_call_colon_later\n\tvar/const/DEP_CALL_COLON = 9\n"
+	);
+	let shown: Vec<String> = refused.iter().map(|r| format!("{:#}", r)).collect();
+	assert_eq!(
+		shown,
+		[
+			"/dep_call_colon: reads a var by `x:name` that another type declares now, so it must be compiled again, but it doesn't compile: \
+			 unsupported statement: type::proc() that names a type's second or later override"
+		],
+		"a proc dmasm can't compile that reads make():name from another type after the reload isn't refused"
+	);
+	println!("ok: a reload is refused for a proc dmasm can't compile that reads make():name from another type");
 }
 
 fn refused_edit(source: &mut Source, file: &str, from: &str, to: &str) -> Vec<dmasm::reload::Refusal> {

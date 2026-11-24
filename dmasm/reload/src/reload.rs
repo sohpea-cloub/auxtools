@@ -1918,8 +1918,11 @@ pub(crate) fn colon_fields(
     follow: &[dreammaker::ast::Spanned<dreammaker::ast::Follow>],
 ) -> impl Iterator<Item = &str> {
     use dreammaker::ast::{Follow, PropertyAccessKind};
-    let after_index =
-        std::iter::once(false).chain(follow.iter().map(|f| matches!(f.elem, Follow::Index(..))));
+    let after_index = std::iter::once(false).chain(
+        follow
+            .iter()
+            .map(|f| matches!(f.elem, Follow::Index(..) | Follow::Call(..))),
+    );
     follow
         .iter()
         .zip(after_index)

@@ -2229,6 +2229,52 @@ fn a_declaration_that_colon_lookup_finds_instead_recompiles_its_users() {
 }
 
 #[test]
+fn a_declaration_that_colon_lookup_finds_after_a_call_recompiles_its_users() {
+    let uncompiled = "\tswitch(x)\n\t\tif(x)\n\t\t\treturn 0\n";
+    let code = format!(
+        "/datum/a\n\tvar/const/LIMIT = 5\n\n\
+         /datum/factory/proc/make()\n\treturn new /datum/a\n\n\
+         /datum/factory/proc/typed() as /datum/a\n\treturn new /datum/a\n\n\
+         /proc/colon(datum/factory/factory)\n\treturn factory.make():LIMIT\n\n\
+         /proc/dot(datum/factory/factory)\n\treturn factory.make().LIMIT\n\n\
+         /proc/uncompiled_colon(datum/factory/factory, x)\n{uncompiled}\treturn factory.make():LIMIT\n\n\
+         /proc/uncompiled_dot(datum/factory/factory, x)\n{uncompiled}\treturn factory.make().LIMIT\n\n\
+         /proc/uncompiled_typed(datum/factory/factory, x)\n{uncompiled}\treturn factory.typed().LIMIT\n\n"
+    );
+    let (without, with) = ("/datum/b\n", "/datum/b\n\tvar/const/LIMIT = 9\n");
+    for (name, before, after) in [
+        ("call-colon-added", without, with),
+        ("call-colon-removed", with, without),
+    ] {
+        let changes = types_changes(name, &code, before, after);
+        let mut refused: Vec<&str> = changes.refused.iter().map(|r| r.path.as_str()).collect();
+        refused.sort();
+        assert_eq!(
+            refused,
+            ["/uncompiled_colon", "/uncompiled_dot"],
+            "{name}: {:?}",
+            changes.refused
+        );
+        for refusal in &changes.refused {
+            assert!(
+                refusal.why.starts_with(
+                    "reads a var by `x:name` that another type declares now, so it must be compiled again"
+                ),
+                "{name}: {refusal}"
+            );
+        }
+        let mut reloads: Vec<&str> = changes
+            .plan
+            .reloads
+            .iter()
+            .map(|r| r.proc.path.as_str())
+            .collect();
+        reloads.sort();
+        assert_eq!(reloads, ["/colon", "/dot"], "{name}: {:?}", changes.plan);
+    }
+}
+
+#[test]
 fn a_declaration_that_colon_lookup_finds_instead_recompiles_initializers_and_in_lists() {
     let code = "/datum/a\n\tvar/const/LIMIT = 5\n\n\
                 /datum/holder\n\tvar/holder\n\tvar/list/limits = list(holder:LIMIT + 1)\n\n\

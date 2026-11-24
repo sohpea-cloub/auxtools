@@ -250,3 +250,11 @@ var/datum/dep_retype_alone_first/dep_retype_alone_target
 
 /proc/dep_safe_index(datum/dep_safe_index_holder/holder)
 	return holder?.items[1].DEP_SAFE_INDEX
+
+/datum/dep_call_colon_first
+	var/const/DEP_CALL_COLON = 5
+
+/datum/dep_call_colon_later
+
+/datum/dep_call_colon_factory/proc/make()
+	return new /datum/dep_call_colon_first

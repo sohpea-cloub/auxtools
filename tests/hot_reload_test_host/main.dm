@@ -266,3 +266,10 @@ var/hr_tally = 100
 /proc/dep_retyped_alone()
 	var/last = /datum/dep_twice::f()
 	return last ? dep_retype_alone_target.DEP_RETYPE_ALONE : 0
+
+/proc/dep_call_colon()
+	var/last = /datum/dep_twice::f()
+	var/datum/dep_call_colon_factory/factory = new
+	if(!last)
+		return 0
+	return factory.make():DEP_CALL_COLON

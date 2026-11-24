@@ -721,6 +721,15 @@ pub(super) fn field_globals(
                 ty = None;
                 continue;
             }
+            Follow::Call(access, name, _) => {
+                found.push(None);
+                let receiver = match global && i == 0 {
+                    true => Some(compiler.proc.tree.root()),
+                    false => ty,
+                };
+                (ty, after) = call_result(compiler, receiver, *access, name.as_str());
+                continue;
+            }
             _ => break,
         };
         let decl = match kind {
