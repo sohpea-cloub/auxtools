@@ -10,7 +10,7 @@ use auxtools::{
 	runtime_tables::{self, type_fields, ProcEntryWords, NONE},
 	shutdown, Proc, StringRef
 };
-use auxtools_protocol::{HotReloadRequest, Reloaded, ShadowingProc};
+use auxtools_protocol::{HotReloadRequest, LocalReads, ParsedReads, Reloaded, ShadowingProc};
 use dmasm::{
 	assembler::AssembleEnv as _,
 	reload::{
@@ -476,11 +476,7 @@ pub fn prepare(request: &HotReloadRequest, warnings: &mut Vec<String>, skipped: 
 	let mut world_globals = WorldGlobals::default();
 	for reads in local_reads {
 		if let Ok(proc) = find(&reads.proc) {
-			world_globals
-				.local_reads
-				.entry(proc.id.0)
-				.or_default()
-				.push((reads.name.as_bytes().to_vec(), reads.reads.clone()));
+			world_globals.local_reads.entry(proc.id.0).or_default().push(reads.clone());
 		}
 	}
 
@@ -3701,23 +3697,41 @@ struct ProcGlobals {
 }
 
 impl ProcGlobals {
-	fn new(uses: &GlobalUses, local_reads: &[(Vec<u8>, Vec<Option<u32>>)]) -> Self {
+	fn new(uses: &GlobalUses, local_reads: &[LocalReads]) -> Self {
 		let mut by_name = uses.by_name();
 		let mut locals = HashMap::new();
-		for (name, reads) in local_reads {
-			match Self::told_apart(&uses.ids_of(name), reads) {
+		for reads in local_reads {
+			let name = reads.name.as_bytes().to_vec();
+			let ids = uses.ids_of(&name);
+			let told = match reads.parsed {
+				Some(ParsedReads::Only(nth)) => Self::only_local(&ids, nth),
+				Some(ParsedReads::Unknown) => None,
+				None => Self::told_apart(&ids, &reads.reads).or_else(|| {
+					let [Some(nth), ..] = reads.reads[..] else {
+						return None;
+					};
+					reads.reads.iter().all(|read| *read == Some(nth)).then(|| Self::only_local(&ids, nth))?
+				})
+			};
+			match told {
 				Some((own, globals)) => {
 					by_name.insert(name.clone(), globals);
-					locals.insert(name.clone(), own);
+					locals.insert(name, own);
 				}
-				None if reads.contains(&None) => {
-					by_name.remove(name);
-					locals.insert(name.clone(), HashMap::new());
+				None => {
+					by_name.remove(&name);
+					locals.insert(name, HashMap::new());
 				}
-				None => {}
 			}
 		}
 		Self { by_name, locals }
+	}
+
+	fn only_local(ids: &[u32], nth: u32) -> Option<(HashMap<u32, u32>, Vec<u32>)> {
+		let [id, ..] = ids[..] else {
+			return None;
+		};
+		ids.iter().all(|other| *other == id).then(|| (HashMap::from([(nth, id)]), vec![]))
 	}
 
 	fn told_apart(ids: &[u32], reads: &[Option<u32>]) -> Option<(HashMap<u32, u32>, Vec<u32>)> {
@@ -3744,16 +3758,13 @@ impl ProcGlobals {
 	}
 
 	fn local(&self, name: &[u8], nth: u32) -> Option<u32> {
-		match self.locals.get(name) {
-			Some(own) => own.get(&nth).copied(),
-			None => self.by_name.get(name).and_then(|ids| ids.get(nth as usize)).copied()
-		}
+		self.locals.get(name)?.get(&nth).copied()
 	}
 }
 
 #[derive(Default)]
 struct WorldGlobals {
-	local_reads: HashMap<u32, Vec<(Vec<u8>, Vec<Option<u32>>)>>,
+	local_reads: HashMap<u32, Vec<LocalReads>>,
 	users: Option<HashMap<Vec<u8>, Vec<(u32, String)>>>,
 	initialized: Option<Vec<(Vec<u8>, Vec<u8>, u32, u32)>>,
 	procs: HashMap<u32, (usize, u16, Rc<GlobalUses>)>

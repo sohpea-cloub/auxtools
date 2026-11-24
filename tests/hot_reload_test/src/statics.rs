@@ -59,6 +59,16 @@ pub fn statics(built: Built) {
 		"the proc's result and the runs of the initializer of a static that neither code reads"
 	);
 	println!("ok: an edit leaves alone a static that neither the old nor the new code reads");
+
+	assert_eq!(eval(&mut client, "st_unknown()"), "1");
+	let changes = source.edit(
+		"statics.dm",
+		"\tif (/datum/st_twice::f())\n\t\treturn global.ST_UNKNOWN",
+		"\treturn ST_UNKNOWN"
+	);
+	reload(&mut watcher, &changes);
+	assert_eq!(eval(&mut client, "\"[st_unknown()] [st_unknown_global()]\""), "\"5 1\"");
+	println!("ok: a local const leaves the global of its name as it was when its proc's old code doesn't compile");
 }
 
 fn declared_references(client: &mut Client, path: &str) -> (u32, u32) {

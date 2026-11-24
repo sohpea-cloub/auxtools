@@ -74,3 +74,13 @@ var/st_state = 1
 /proc/st_stateful()
 	var/static/st_state = st_register()
 	return global.st_state + 1
+
+var/ST_UNKNOWN = 1
+
+/proc/st_unknown()
+	var/const/ST_UNKNOWN = 5
+	if (/datum/st_twice::f())
+		return global.ST_UNKNOWN
+
+/proc/st_unknown_global()
+	return ST_UNKNOWN

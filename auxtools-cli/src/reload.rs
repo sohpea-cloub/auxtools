@@ -1,12 +1,14 @@
 use std::path::PathBuf;
 
-use auxtools_protocol::{HotReloadRequest, LocalReads, ShadowingProc};
+use auxtools_protocol::{HotReloadRequest, LocalReads, ParsedReads, ShadowingProc};
 use dmasm::{
 	diagnostic::Id,
 	reload::{Changes, Plan, ProcKey, Refusal, Snapshot},
 	Node, StaticScope
 };
 use dreammaker::ast::{Spanned, Statement, VarStatement};
+
+mod locals;
 
 pub const RESTART: &str = "Rebuild the .dmb, then restart the world to load all of the new code.";
 
@@ -126,42 +128,72 @@ fn without_existing_statics(plan: &mut Plan, before: &Snapshot) -> Vec<LocalRead
 		if code.statics.is_empty() {
 			continue;
 		}
-		let (old_locals, reads) = match before.compile(&code.proc) {
-			Ok(old) => (
-				old.statics.iter().map(|had| (had.name.clone(), local_number(&had.scope))).collect(),
-				local_reads(&old.nodes)
-			),
-			Err(_) => (declared_locals(before, &code.proc), vec![])
-		};
+		let old = OldLocals::of(before, &code.proc);
 		let nodes = &code.nodes;
 		code.statics.retain_mut(|local| {
-			let declared = old_locals.contains(&(local.name.clone(), local_number(&local.scope)));
-			let unread = reads
-				.iter()
-				.find(|(name, _)| *name == local.name)
-				.is_some_and(|(_, reads)| !reads.contains(&Some(local_number(&local.scope))));
-			let existing = declared && !unread;
+			let nth = local_number(&local.scope);
+			let kept = old.kept(&local.name, nth);
 			let read_now = reads_static(nodes, &local.name, &local.scope);
-			if declared && unread && !read_now {
-				return false;
-			}
-			if !existing {
+			let declared = old.declared(&local.name, nth);
+			let initialized = local.init.is_some() && local.value.is_none() && !local.constant;
+			if !kept {
 				local.constant = false;
+				return !declared || read_now && !initialized;
 			}
-			!existing || local.constant && read_now
+			local.constant && read_now
 		});
-		found.extend(
-			reads
-				.into_iter()
-				.filter(|(name, _)| old_locals.iter().any(|(had, _)| had == name))
-				.map(|(name, reads)| LocalReads {
-					proc: code.proc.clone(),
-					name,
-					reads
-				})
-		);
+		found.extend(old.reads.into_iter().map(|(name, reads, parsed)| LocalReads {
+			proc: code.proc.clone(),
+			name,
+			reads,
+			parsed
+		}));
 	}
 	found
+}
+
+struct OldLocals {
+	declared: Vec<(String, u32)>,
+	reads: Vec<(String, Vec<Option<u32>>, Option<ParsedReads>)>
+}
+
+impl OldLocals {
+	fn of(snapshot: &Snapshot, proc: &ProcKey) -> Self {
+		let declared = declared_locals(snapshot, proc);
+		let reads = match snapshot.compile(proc) {
+			Ok(old) => local_reads(&old.nodes)
+				.into_iter()
+				.filter(|(name, _)| declared.iter().any(|(had, _)| had == name))
+				.map(|(name, reads)| (name, reads, None))
+				.collect(),
+			Err(_) => {
+				let body = snapshot.proc_code(proc).map_or(&[][..], |code| &code[..]);
+				let mut names: Vec<&String> = declared.iter().map(|(name, _)| name).collect();
+				names.sort();
+				names.dedup();
+				names
+					.into_iter()
+					.filter_map(|name| Some((name.clone(), vec![], Some(locals::parsed_reads(body, name)?))))
+					.collect()
+			}
+		};
+		Self { declared, reads }
+	}
+
+	fn declared(&self, name: &str, nth: u32) -> bool {
+		self.declared.iter().any(|(had, number)| had == name && *number == nth)
+	}
+
+	fn kept(&self, name: &str, nth: u32) -> bool {
+		self.declared(name, nth)
+			&& self.reads.iter().any(|(had, reads, parsed)| {
+				had == name
+					&& match parsed {
+						Some(parsed) => *parsed == ParsedReads::Only(nth),
+						None => reads.contains(&Some(nth))
+					}
+			})
+	}
 }
 
 fn declared_locals(snapshot: &Snapshot, proc: &ProcKey) -> Vec<(String, u32)> {
@@ -476,6 +508,40 @@ mod tests {
 		let sent = request(&changes, &old, false);
 		let statics: Vec<&str> = sent.plan.reloads[0].statics.iter().map(|local| local.name.as_str()).collect();
 		assert_eq!(statics, ["added"]);
+	}
+
+	#[test]
+	fn a_request_leaves_out_an_unread_static_whose_initializer_ran_at_the_start() {
+		let before = "/proc/register()\n\treturn 1\n/proc/f()\n\tvar/static/kept = register()\n\tvar/static/plain = 2\n\treturn 0\n";
+		let (old, changes) = edited("unread-initialized", before, &before.replace("return 0\n", "return kept + plain\n"));
+		let sent = request(&changes, &old, false);
+		let statics: Vec<&str> = sent.plan.reloads[0].statics.iter().map(|local| local.name.as_str()).collect();
+		assert_eq!(statics, ["plain"]);
+	}
+
+	#[test]
+	fn a_request_sends_a_const_as_new_when_old_code_that_doesnt_compile_reads_a_global() {
+		let twice = "/datum/t/proc/f()\n\treturn 0\n/datum/t/f()\n\treturn 1\n/datum/t/f()\n\treturn 2\n";
+		let before = format!(
+			"var/LIMIT = 1\n{twice}/proc/f()\n\tvar/const/LIMIT = 5\n\tvar/static/count = 0\n\tcount++\n\tif (/datum/t::f())\n\t\treturn \
+			 global.LIMIT + count\n"
+		);
+		let after = before.replace("\tif (/datum/t::f())\n\t\treturn global.LIMIT + count", "\treturn LIMIT + count");
+		let (old, changes) = edited("uncompiled-global", &before, &after);
+		assert!(old.compile(&changes.plan.reloads[0].proc).is_err(), "dmasm compiles the old code");
+		let sent = request(&changes, &old, false);
+		let statics: Vec<String> = sent.plan.reloads[0]
+			.statics
+			.iter()
+			.map(|local| format!("{} {}", local.name, local.constant))
+			.collect();
+		assert_eq!(statics, ["LIMIT false"]);
+		let reads: Vec<String> = sent
+			.local_reads
+			.iter()
+			.map(|reads| format!("{} {:?} {:?}", reads.name, reads.reads, reads.parsed))
+			.collect();
+		assert_eq!(reads, ["LIMIT [] Some(Unknown)", "count [] Some(Only(0))"]);
 	}
 
 	#[test]
