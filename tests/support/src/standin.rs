@@ -28,6 +28,8 @@ pub fn world_process() {
 	let Ok(name) = std::env::var(PROCESS_VAR) else {
 		return;
 	};
+	#[cfg(target_os = "linux")]
+	let _ = std::fs::write("/proc/self/comm", "standin-world");
 	let Ok(mut control) = Stream::connect(name.to_ns_name::<GenericNamespaced>().unwrap()) else {
 		std::process::exit(2);
 	};
