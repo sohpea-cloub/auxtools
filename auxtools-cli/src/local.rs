@@ -288,6 +288,12 @@ fn probe(stream: Stream, until: Instant) -> std::sync::mpsc::Receiver<io::Result
 }
 
 fn probed(client: &mut Client, until: Instant) -> Result<Option<Probed>, Lost> {
+	match client.tell(&Request::Watcher, Some(until)) {
+		Ok(true) => {}
+		Ok(false) => return Ok(None),
+		Err(Lost::Incompatible(theirs)) => return Ok(Some(Probed::Incompatible(theirs))),
+		Err(lost) => return Err(lost)
+	}
 	let asked = match client.ask(&Request::WorldInfo, Some(until)) {
 		Ok(Some(asked)) => asked,
 		Ok(None) => return Ok(None),
@@ -430,7 +436,8 @@ mod tests {
 	struct Connections {
 		accepted: AtomicUsize,
 		open: AtomicUsize,
-		asked_for_info: AtomicUsize
+		asked_for_info: AtomicUsize,
+		requests: Mutex<Vec<String>>
 	}
 
 	fn world(pid: u32, serve: fn(&mut Stream, &Connections)) -> Arc<Connections> {
@@ -464,11 +471,14 @@ mod tests {
 		if auxtools_protocol::write(stream, &Hello::new("4.0.0")).is_err() {
 			return;
 		}
-		let Ok(asked) = auxtools_protocol::read::<ClientMessage>(stream) else {
-			return;
-		};
-		if matches!(asked.request, Request::WorldInfo) {
-			connections.asked_for_info.fetch_add(1, Ordering::SeqCst);
+		loop {
+			let Ok(asked) = auxtools_protocol::read::<ClientMessage>(stream) else {
+				return;
+			};
+			if matches!(asked.request, Request::WorldInfo) {
+				connections.asked_for_info.fetch_add(1, Ordering::SeqCst);
+				break;
+			}
 		}
 		let mut writer = &*stream;
 		std::thread::scope(|scope| {
@@ -481,6 +491,36 @@ mod tests {
 				std::thread::sleep(Duration::from_millis(1));
 			}
 		});
+	}
+
+	fn answering(stream: &mut Stream, connections: &Connections) {
+		if auxtools_protocol::write(stream, &Hello::new(env!("CARGO_PKG_VERSION"))).is_err() {
+			return;
+		}
+		while let Ok(asked) = auxtools_protocol::read::<ClientMessage>(stream) {
+			let name = format!("{:?}", asked.request);
+			connections
+				.requests
+				.lock()
+				.unwrap()
+				.push(name.split([' ', '(', '{']).next().unwrap_or_default().to_owned());
+			let response = match asked.request {
+				Request::WorldInfo => Response::WorldInfo {
+					args: vec!["DreamDaemon".to_owned(), "probed.dmb".to_owned()],
+					cwd: String::new(),
+					port: 0
+				},
+				Request::Disconnect => return,
+				_ => Response::Ack
+			};
+			let answer = ServerMessage {
+				reply_to: Some(asked.id),
+				response
+			};
+			if auxtools_protocol::write(stream, &answer).is_err() {
+				return;
+			}
+		}
 	}
 
 	fn unused_pid(offset: u32) -> u32 {
@@ -551,5 +591,17 @@ mod tests {
 		);
 		assert_eq!(connections.asked_for_info.load(Ordering::SeqCst), 1, "WorldInfo requests");
 		released(&connections, 1, &["world probe", "world reader"]);
+	}
+
+	#[test]
+	fn a_probe_says_it_only_watches_before_it_asks() {
+		let _probing = PROBES.lock().unwrap_or_else(|e| e.into_inner());
+		let pid = unused_pid(4);
+		let connections = world(pid, answering);
+		let worlds = worlds_among(vec![(pid, "DreamDaemon".to_owned())]);
+		let responsive: Vec<_> = worlds.iter().map(|world| (world.pid, world.responsive)).collect();
+		assert_eq!(responsive, [(pid, Some(true))]);
+		released(&connections, 1, &["world probe"]);
+		assert_eq!(*connections.requests.lock().unwrap(), ["Watcher", "WorldInfo", "Disconnect"]);
 	}
 }

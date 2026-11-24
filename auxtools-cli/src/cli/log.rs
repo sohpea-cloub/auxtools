@@ -197,6 +197,9 @@ impl World {
 			Ok(client) => {
 				self.client = client;
 				self.events.clear();
+				if self.watcher {
+					self.watch_only()?;
+				}
 				Ok(())
 			}
 			Err(NotListening::Gone) => Err(hung_up()),

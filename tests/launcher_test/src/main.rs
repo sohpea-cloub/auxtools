@@ -970,17 +970,24 @@ fn command_line_more(pid: u64, dir: &Path) {
 	);
 	println!("ok: CLI wait passes over another client's stop at its instruction");
 
-	let printed = cli.run(&["wait", "pause", "--break", "/proc/value", "--no-hold", "--timeout", "15"], 0);
-	assert!(
-		printed.starts_with(&format!("pid {}: paused at a breakpoint\n#0 /value", pid)),
-		"wait --no-hold said {}",
-		printed
-	);
-	assert_eq!(
-		cli.run(&["status"], 0).lines().next().unwrap_or_default(),
-		format!("pid {}: running", pid)
-	);
+	let wait_without_hold = || {
+		let printed = cli.run(&["wait", "pause", "--break", "/proc/value", "--no-hold", "--timeout", "15"], 0);
+		assert!(
+			printed.starts_with(&format!("pid {}: paused at a breakpoint\n#0 /value", pid)),
+			"wait --no-hold said {}",
+			printed
+		);
+	};
+	wait_without_hold();
+	carries_on(&cli, &pid);
 	println!("ok: wait without retained pause");
+
+	let mut reader = cli.start(&["log", "--follow"]);
+	reader.line_with("#");
+	wait_without_hold();
+	carries_on(&cli, &pid);
+	reader.stop();
+	println!("ok: a world doesn't stay paused for a client that only reads its log");
 
 	let printed = cli.run(
 		&["wait", "pause", "--break", "/proc/value", "--if", "rounds.len > 0", "--timeout", "1"],
@@ -1538,6 +1545,24 @@ fn gone_within(pid: u64, seconds: u64) -> bool {
 		std::thread::sleep(Duration::from_millis(100));
 	}
 	true
+}
+
+#[track_caller]
+fn carries_on(cli: &Cli, pid: &str) {
+	let running = format!("pid {}: running", pid);
+	let until = Instant::now() + Duration::from_secs(10);
+	loop {
+		let printed = cli.run(&["status"], 0);
+		if printed.lines().next() == Some(running.as_str()) {
+			return;
+		}
+		assert!(
+			Instant::now() < until,
+			"the world is still paused after its last debugging client left: {}",
+			printed
+		);
+		std::thread::sleep(Duration::from_millis(100));
+	}
 }
 
 #[track_caller]

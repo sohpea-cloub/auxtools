@@ -271,6 +271,19 @@ fn proc_name(proc: &ProcRef) -> String {
 	}
 }
 
+const fn only_looks(command: &Command) -> bool {
+	matches!(
+		command,
+		Command::Status(_)
+			| Command::Log(_)
+			| Command::Proc(_)
+			| Command::Disassemble(_)
+			| Command::Wait(args::Wait {
+				event: Some(WaitFor::Reload(_) | WaitFor::Reboot(_))
+			})
+	)
+}
+
 fn cannot_connect(pid: u32, why: &io::Error) -> String {
 	format!("cannot connect to process {}: {}.", pid, why)
 }
@@ -325,7 +338,8 @@ pub struct World {
 	waited: Map<String, Value>,
 	patience: Duration,
 	unavailable: Option<String>,
-	breakpoints_set: u32
+	breakpoints_set: u32,
+	watcher: bool
 }
 
 impl World {
@@ -342,11 +356,15 @@ impl World {
 			waited: Map::new(),
 			patience: args::DEFAULT_RESPONSE_TIMEOUT,
 			unavailable: None,
-			breakpoints_set: 0
+			breakpoints_set: 0,
+			watcher: false
 		})
 	}
 
 	fn command(&mut self, command: Command) -> Result<()> {
+		if only_looks(&command) {
+			self.watch_only()?;
+		}
 		let output = |json: bool, depth: Option<u32>| json.then(|| depth.unwrap_or(json::DEFAULT_DEPTH));
 		match command {
 			Command::Status(args) => {
@@ -547,6 +565,16 @@ impl World {
 				act
 			)
 		)
+	}
+
+	fn watch_only(&mut self) -> Result<()> {
+		match self.request(Request::Watcher)? {
+			Response::Ack => {
+				self.watcher = true;
+				Ok(())
+			}
+			other => Err(unexpected(&other))
+		}
 	}
 
 	fn paused(&mut self) -> Result<Option<BreakpointReason>> {
