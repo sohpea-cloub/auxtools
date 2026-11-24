@@ -2063,7 +2063,7 @@ fn const_users(old: &Snapshot, new: &Snapshot, realigned: &Realigned, changes: &
                     "reads a var through a proc that is declared to return another type now"
                 } else if !retyped.is_empty()
                     && implicit_type_changes(old, new, path, new_value, |term, follow| {
-                        matches!(term, Term::Ident(name) | Term::Call(name, _) | Term::GlobalCall(name, _)
+                        matches!(term, Term::Ident(name) | Term::GlobalIdent(name) | Term::Call(name, _) | Term::GlobalCall(name, _)
                             if retyped.contains(name.as_str()))
                             || follow.iter().any(|f| {
                                 matches!(&f.elem, Follow::Field(_, name) | Follow::Call(_, name, _)

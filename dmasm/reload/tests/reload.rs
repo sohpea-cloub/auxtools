@@ -2543,6 +2543,46 @@ fn a_changed_implicit_type_refuses_the_callers_dmasm_cant_compile() {
 }
 
 #[test]
+fn a_retyped_global_refuses_the_callers_dmasm_cant_compile_that_make_it_by_global_name() {
+    let uncompiled = "\tswitch(x)\n\t\tif(x)\n\t\t\treturn 0\n";
+    let code = format!(
+        "/datum/child\n\n/datum/child/special\n\n/datum/child/other\n\n\
+         /datum/thing/proc/compiled()\n\t::current = new\n\n\
+         /datum/thing/proc/uncompiled_global(x)\n{uncompiled}\t::current = new\n\n\
+         /datum/thing/proc/uncompiled_member(x)\n{uncompiled}\tcurrent = new\n\n"
+    );
+    let declared = "var/datum/child/current\n\n/datum/thing\n\tvar/datum/child/other/current\n";
+    for (name, after, refused_path) in [
+        (
+            "global-retyped",
+            declared.replace("var/datum/child/current", "var/datum/child/special/current"),
+            "/datum/thing/uncompiled_global",
+        ),
+        (
+            "member-retyped",
+            declared.replace("child/other/current", "child/special/current"),
+            "/datum/thing/uncompiled_member",
+        ),
+    ] {
+        let changes = types_changes(name, &code, declared, &after);
+        let refused: Vec<String> = changes
+            .refused
+            .iter()
+            .map(|r| format!("{}: {}", r.path, r.why))
+            .collect();
+        assert_eq!(refused.len(), 1, "{}: {:?}", name, refused);
+        assert!(
+            refused[0].starts_with(&format!(
+                "{refused_path}: takes the type of a `new`, `locate()`, `astype()` or `istype()` from a var whose type changes"
+            )),
+            "{}: {:?}",
+            name,
+            refused
+        );
+    }
+}
+
+#[test]
 fn a_declaration_that_colon_lookup_finds_instead_recompiles_initializers_and_in_lists() {
     let code = "/datum/a\n\tvar/const/LIMIT = 5\n\n\
                 /datum/holder\n\tvar/holder\n\tvar/list/limits = list(holder:LIMIT + 1)\n\n\
