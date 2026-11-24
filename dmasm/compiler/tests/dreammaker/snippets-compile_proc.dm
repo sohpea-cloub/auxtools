@@ -1284,6 +1284,46 @@ var/const/LIMIT = 10
 /proc/f(flag)
 	var/datum/item/r = flag ? locate() : locate()
 	return r
+// Guards: an_augmented_assignments_implicit_cast_takes_the_destinations_type (compile_proc.rs)
+// Builds: 516.1648-
+/datum/item
+/datum/other
+/datum/thing
+	var/datum/item/o
+	var/list/l
+/proc/f1(datum/other/a, datum/thing/q)
+	var/datum/item/x
+	x += astype(a)
+	return x
+/proc/f2(datum/other/a, datum/thing/q)
+	q.o -= astype(a)
+/proc/f3(datum/other/a, datum/thing/q)
+	var/datum/item/x
+	x |= astype(a)
+	return x
+/proc/f4(datum/other/a, datum/thing/q)
+	return (q.o += astype(a))
+/proc/f5(datum/other/a, datum/thing/q)
+	var/datum/other/r = (q.o += astype(a))
+	return r
+/proc/f6(datum/other/a, datum/thing/q)
+	var/list/l = list()
+	l += astype(a)
+	return l
+/proc/f7(datum/other/a, datum/thing/q)
+	q.l[1] += astype(a)
+/proc/f8(datum/other/a, datum/thing/q)
+	q?.o += astype(a)
+// Guards: an_augmented_assignments_implicit_cast_takes_the_destinations_type (compile_proc.rs)
+/datum/item
+/datum/other
+/datum/thing
+	var/datum/item/o
+	var/list/l
+/proc/f()
+	var/datum/item/x = 1
+	x += new
+	return x
 // Guards: a_named_arguments_place_key_types_its_value (compile_proc.rs)
 // Builds: 516.1648-
 /datum/item

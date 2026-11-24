@@ -185,12 +185,7 @@ pub(super) fn emit(
     lhs: Expression,
     rhs: Expression,
 ) -> Result<EvalKind, CompileError> {
-    let implicit = match op {
-        AssignOp::Assign | AssignOp::OrAssign | AssignOp::AndAssign => {
-            compiler.destination_type(&lhs)
-        }
-        _ => compiler.implicit_type.clone(),
-    };
+    let implicit = compiler.destination_type(&lhs);
     let outer = std::mem::replace(&mut compiler.implicit_type, implicit);
     let kind = emit_assignment(compiler, op, lhs, rhs);
     compiler.implicit_type = outer;

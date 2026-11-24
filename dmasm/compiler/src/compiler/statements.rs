@@ -2082,12 +2082,7 @@ fn emit_expr_statement(compiler: &mut Compiler, expr: &Expression) -> Result<(),
             return Ok(());
         }
     }
-    if let Expression::AssignOp {
-        op: AssignOp::Assign | AssignOp::OrAssign | AssignOp::AndAssign,
-        lhs,
-        ..
-    } = expr
-    {
+    if let Expression::AssignOp { lhs, .. } = expr {
         compiler.implicit_type = compiler.destination_type(lhs);
     }
     let emitted = emit_expr_statement_inner(compiler, expr);

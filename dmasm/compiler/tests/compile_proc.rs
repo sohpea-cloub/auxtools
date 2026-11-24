@@ -720,6 +720,34 @@ fn every_implicit_cast_in_a_value_takes_the_destinations_type() {
 }
 
 #[test]
+fn an_augmented_assignments_implicit_cast_takes_the_destinations_type() {
+    let types = "/datum/item\n/datum/other\n/datum/thing\n\tvar/datum/item/o\n\tvar/list/l\n";
+    for (body, cast) in [
+        ("var/datum/item/x\n\tx += astype(a)", "/datum/item"),
+        ("q.o -= astype(a)", "/datum/item"),
+        ("var/datum/item/x\n\tx |= astype(a)", "/datum/item"),
+        ("return (q.o += astype(a))", "/datum/item"),
+        ("var/datum/other/r = (q.o += astype(a))", "/datum/item"),
+        ("var/list/l = list()\n\tl += astype(a)", "/list"),
+        ("q.l[1] += astype(a)", "/list"),
+        ("q?.o += astype(a)", "/datum/item"),
+    ] {
+        let code = compile(
+            &format!("{types}/proc/f(datum/other/a, datum/thing/q)\n\t{body}\n"),
+            "",
+            "f",
+        );
+        assert_has(&code, &[&format!("PushVal {cast}"), "AsType"]);
+    }
+    let code = compile(
+        &format!("{types}/proc/f()\n\tvar/datum/item/x = 1\n\tx += new\n"),
+        "",
+        "f",
+    );
+    assert_has(&code, &["PushVal /datum/item", "New 0"]);
+}
+
+#[test]
 fn a_named_arguments_place_key_types_its_value() {
     let types = "/datum/item\n/datum/other\n/datum/thing\n\tvar/datum/other/o\n\tvar/list/l\n\
                  \tvar/datum/item/i\n/proc/g(x, y)\n\treturn x\n";
