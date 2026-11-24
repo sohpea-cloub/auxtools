@@ -2130,6 +2130,35 @@ fn a_logical_assignment_through_a_safe_chain_writes_the_var_its_test_read() {
 }
 
 #[test]
+fn a_logical_assignment_through_a_safe_chain_writes_its_last_var_after_a_branching_value() {
+    let types = "/datum/item\n\tvar/datum/item/a\n\tvar/datum/item/b\n\tvar/datum/item/c\n";
+    for (body, write) in [
+        ("i?.a.b ||= (flag ? x : y)", "SetVar cache[\"b\"]"),
+        ("i?.a.b &&= (x || y)", "SetVar cache[\"b\"]"),
+        ("i?.a.b.c ||= (flag ? x : y)", "SetVar cache[\"c\"]"),
+        ("i?.f().a.b ||= (flag ? x : y)", "SetVar cache[\"b\"]"),
+        ("return (i?.a.b &&= (x || y))", "SetVarExpr cache[\"b\"]"),
+        ("i?.a.b ||= (flag ? x.f() : y)", "SetVar cache[\"b\"]"),
+        ("i?.a.b ||= x?.a", "SetVar cache[\"b\"]"),
+        ("i?.a.b ||= (x.a ||= y)", "SetVar cache[\"b\"]"),
+    ] {
+        let code = compile(
+            &format!(
+                "{types}/datum/item/proc/f()\n\treturn src\n\
+                 /proc/g(datum/item/i, flag, datum/item/x, y)\n\t{body}\n"
+            ),
+            "",
+            "g",
+        );
+        let last = code
+            .lines()
+            .filter(|l| l.starts_with("SetVar") || l.starts_with("SetVarExpr"))
+            .last();
+        assert_eq!(last, Some(write), "{}\n{}", body, code);
+    }
+}
+
+#[test]
 fn new_without_arguments_is_true_in_a_test() {
     let src = "/datum/t\n/proc/f(a, b)\n\treturn (new /datum/t ? a : b)\n";
     assert_eq!(compile(src, "", "f"), "GetVar arg(0)\nRet\nEnd");

@@ -2488,16 +2488,15 @@ pub(super) fn aug_instruction(op: AssignOp, var: Variable) -> Instruction {
 }
 
 fn keep_tested_place(compiler: &mut Compiler, start: usize, var: &Variable) -> Variable {
-    if !compiler.nodes[start..]
+    if compiler.nodes[start..]
         .iter()
         .any(|n| matches!(n, Node::Instruction(i, _) if super::procs::touches_cache(i)))
     {
-        return var.clone();
+        compiler
+            .nodes
+            .insert(start, Node::Instruction(Instruction::PushCache, ()));
+        compiler.emit_ins(Instruction::PopCache);
     }
-    compiler
-        .nodes
-        .insert(start, Node::Instruction(Instruction::PushCache, ()));
-    compiler.emit_ins(Instruction::PopCache);
     let mut last = var;
     while let Variable::SetCache(_, rest) = last {
         last = rest;

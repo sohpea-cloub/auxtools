@@ -118,6 +118,16 @@ var/const/gc = 7
 	if(a.m.x)
 		var/c = ("s")
 		return a.m.y
+// Guards: a_logical_assignment_through_a_safe_chain_writes_its_last_var_after_a_branching_value (compile_proc.rs)
+// Known: /proc/f1  DreamMaker writes `a?.b.c ||= v` through the object its test read, a.b.b.c (a BYOND bug, which dmasm warns of); dmasm writes a.b.c
+// Known: /proc/f2  DreamMaker writes `a?.b.c ||= v` through the object its test read, a.b.b.c (a BYOND bug, which dmasm warns of); dmasm writes a.b.c
+/datum/item
+	var/datum/item/a
+	var/datum/item/b
+/proc/f1(datum/item/i, flag, x, y)
+	i?.a.b ||= (flag ? x : y)
+/proc/f2(datum/item/i, x, y)
+	return (i?.a.b &&= (x || y))
 // Guards: a_logical_assignment_through_a_safe_chain_warns_where_dreammaker_writes_another_var (compile_proc.rs)
 // Known: /proc/f1  DreamMaker writes `a?.b.c ||= v` through the object its test read, a.b.b.c (a BYOND bug, which dmasm warns of); dmasm writes a.b.c
 // Known: /proc/f2  DreamMaker writes `a?.b.c ||= v` through the object its test read, a.b.b.c (a BYOND bug, which dmasm warns of); dmasm writes a.b.c
