@@ -922,6 +922,45 @@ fn static_reading_through_a_typed_static() {
 	world.end();
 }
 
+const STATIC_MOVED: &str = "var/rb_static_seed = 20
+
+/proc/rb_static_seeded(x)
+	var/static/rb_static_seed = 1
+	if (x)
+		rb_static_seed++
+	var/static/list/cache = list(rb_static_seed)
+	return cache[1]
+";
+
+fn static_read_by_an_initializer_moved_into_a_block() {
+	let dir = copy_of_the_world("static_read_by_an_initializer_moved_into_a_block");
+	std::fs::write(dir.join("static_moved.dm"), STATIC_MOVED).unwrap();
+	let dme = dir.join("dap_test_host.dme");
+	let text = std::fs::read_to_string(&dme).unwrap() + "#include \"static_moved.dm\"\n";
+	std::fs::write(&dme, text).unwrap();
+	paths::compile(&dme);
+
+	let mut world = World::launch_in(dir.to_path_buf(), json!({ "hotReload": true }));
+	world.catch_runtimes(false);
+	world.configure();
+	world.wait_output("Hot reload active");
+	assert_eq!(world.eval_global("rb_static_seeded(0)"), "1");
+	let held = |output: &str| output.matches("Hot reload requires a reboot:").count();
+	let settled = |output: &str| reloads(output) + held(output);
+	let (reloaded, waiting) = (reloads(&world.output), held(&world.output));
+	world.marks.edit(
+		"static_moved.dm",
+		"\tvar/static/rb_static_seed = 1\n\tif (x)\n\t\trb_static_seed++",
+		"\tif (x)\n\t\tvar/static/rb_static_seed = 1\n\t\trb_static_seed++"
+	);
+	world.wait_until("the edit's reload", |output| settled(output) > reloaded + waiting);
+	assert!(held(&world.output) > waiting, "the edit was reloaded without a reboot:\n{}", world.output);
+	reboot(&mut world, 2);
+	assert_eq!(world.eval_global("\"[rb_static_seeded(0)] [rb_static_seeded(1)]\""), "\"20 20\"");
+	ok("proc static whose initializer reads a global once a static of its name moves into a block, after reboot");
+	world.end();
+}
+
 const LOCAL_LIMIT: &str = "/proc/rb_local_limit()
 	var/const/LIMIT = 5
 	return \"[LIMIT] [LIMIT + 1]\"
@@ -1194,6 +1233,7 @@ pub fn files() {
 	static_made_by_new_of_a_changed_type();
 	static_reading_through_a_retyped_var();
 	static_reading_through_a_typed_static();
+	static_read_by_an_initializer_moved_into_a_block();
 	local_const_changed();
 	file_named_by_a_reload();
 	resource_files();

@@ -910,10 +910,15 @@ impl Snapshot {
                 if settings(old_value.code.as_ref()) != settings(new_value.code.as_ref()) {
                     return Err(format!("{key}: `set`s changed"));
                 }
+                #[allow(clippy::type_complexity)]
                 fn statics(
                     v: &ProcValue,
-                ) -> Vec<(&str, Option<String>, Option<&dreammaker::ast::Expression>)>
-                {
+                ) -> Vec<(
+                    &str,
+                    Option<String>,
+                    Option<&dreammaker::ast::Expression>,
+                    Vec<(String, u32)>,
+                )> {
                     v.code
                         .as_deref()
                         .map(global_init::static_initializers)

@@ -5016,3 +5016,36 @@ fn a_new_static_reads_through_a_typed_static_by_its_type() {
     assert!(field_reads(reboot).is_empty(), "{:?}", reboot);
     assert_eq!(reads_of(reboot, "LIMIT"), ["/datum/config:LIMIT"]);
 }
+
+#[test]
+fn a_static_moved_into_a_block_changes_what_a_later_initializer_reads() {
+    let before = "var/seed = 20\n\n\
+                  /proc/seeded(x)\n\tvar/static/seed = 1\n\tif (x)\n\t\tseed++\n\
+                  \tvar/static/list/cache = list(seed)\n\treturn cache[1]\n";
+    let after = before.replace(
+        "\tvar/static/seed = 1\n\tif (x)\n\t\tseed++\n",
+        "\tif (x)\n\t\tvar/static/seed = 1\n\t\tseed++\n",
+    );
+    let changes = changes("static-moved-into-a-block", before, &after);
+    assert!(changes.refused.is_empty(), "{:?}", changes.refused);
+    let deferred: Vec<String> = changes.deferred.iter().map(ToString::to_string).collect();
+    assert_eq!(
+        deferred,
+        ["code/code.dm:7: /proc/seeded: cache: changed initializer"]
+    );
+    let reboot = &changes
+        .global_init
+        .as_ref()
+        .expect("no global init")
+        .code
+        .nodes;
+    assert_eq!(reads_of(reboot, "seed"), [":seed"]);
+
+    let world = World::new("static-moved-into-a-block-file", before);
+    let mut old = world.parse();
+    world.write(&after);
+    match old.reload_file(&world.dir, std::path::Path::new("code/code.dm")) {
+        Ok(_) => panic!("reloaded on its own"),
+        Err(e) => assert!(e.contains("static initializers"), "{e}"),
+    }
+}
