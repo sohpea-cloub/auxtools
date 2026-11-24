@@ -1602,11 +1602,11 @@ impl SafeChain {
         (self.last[..split].to_vec(), self.last[split..].to_vec())
     }
 
-    pub fn writable(&self, write: &SafeWrite, value_form: bool) -> bool {
+    pub fn writable(&self, write: &SafeWrite) -> bool {
         match (self.fields(), write) {
             (Some(_), SafeWrite::Assign) => self.index.is_some(),
             (Some(_), SafeWrite::Change(_)) => true,
-            (Some(_), SafeWrite::Logical { .. }) => !value_form || self.index.is_some(),
+            (Some(_), SafeWrite::Logical { .. }) => true,
             (None, SafeWrite::Assign) => self.index.is_some(),
             (None, _) => {
                 self.index.is_some() || matches!(self.last.last(), Some(Follow::Field(..)))
@@ -2093,7 +2093,7 @@ pub(super) fn emit_safe_write(
     let Some((base, chain)) = safe_place(place) else {
         return Ok(false);
     };
-    if !chain.writable(&write, value_form) {
+    if !chain.writable(&write) {
         return Ok(false);
     }
     emit_value(compiler, &base)?;
@@ -2223,9 +2223,7 @@ fn emit_expr_statement_inner(
             op: op @ (AssignOp::OrAssign | AssignOp::AndAssign),
             lhs,
             rhs,
-        } if safe_place(lhs)
-            .is_some_and(|(_, c)| c.writable(&SafeWrite::Logical { or: true }, false)) =>
-        {
+        } if safe_place(lhs).is_some_and(|(_, c)| c.writable(&SafeWrite::Logical { or: true })) => {
             let write = SafeWrite::Logical {
                 or: *op == AssignOp::OrAssign,
             };

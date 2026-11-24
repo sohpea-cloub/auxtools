@@ -501,7 +501,7 @@ fn emit_safe<'a>(
         };
         let write = super::statements::SafeWrite::Change(&step);
         if let Some(chain) = super::statements::safe_chain(&follows) {
-            if chain.writable(&write, true) {
+            if chain.writable(&write) {
                 let static_var = super::statements::static_member(
                     compiler,
                     ty,

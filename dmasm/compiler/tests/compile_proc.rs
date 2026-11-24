@@ -2304,6 +2304,25 @@ fn a_safe_write_calls_on_the_receiver_when_the_arguments_move_the_cache() {
 }
 
 #[test]
+fn a_logical_assignment_through_two_safe_accesses_has_a_value() {
+    let types = "/datum/h\n\tvar/v\n\tvar/datum/h/c\n/datum/h/proc/m()\n\treturn src\n";
+    for (body, jump) in [
+        ("return (h?.c?.v ||= x)", "JmpOr"),
+        ("return (h?.c?.c?.v &&= x)", "JmpAnd"),
+        ("return (h?.m()?.v ||= x)", "JmpOr"),
+        ("return (h?.c?.v ||= x.v)", "JmpOr"),
+    ] {
+        let code = compile(
+            &format!("{types}/proc/g(datum/h/h, datum/h/x)\n\t{body}\n"),
+            "",
+            "g",
+        );
+        assert_has(&code, &["GetVar cache[\"v\"]", jump]);
+        assert_has(&code, &["SetVarExpr cache[\"v\"]"]);
+    }
+}
+
+#[test]
 fn new_without_arguments_is_true_in_a_test() {
     let src = "/datum/t\n/proc/f(a, b)\n\treturn (new /datum/t ? a : b)\n";
     assert_eq!(compile(src, "", "f"), "GetVar arg(0)\nRet\nEnd");
