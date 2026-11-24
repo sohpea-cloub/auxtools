@@ -305,3 +305,5 @@ var/mob/helper/small/old_helper = new
 	return "kept third override"
 
 /datum/tallied
+
+/datum/asking

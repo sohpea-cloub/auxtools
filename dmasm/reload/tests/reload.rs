@@ -3996,3 +3996,28 @@ fn a_member_var_added_or_removed_takes_unqualified_uses_from_a_global() {
     let changes = changes_of("member-var-without-global", &unshadowed, &added);
     assert_eq!(sorted_reloads(&changes), Vec::<String>::new());
 }
+
+#[test]
+fn a_member_proc_added_or_removed_takes_unqualified_calls_from_a_global() {
+    let before = "/proc/helper()\n\treturn 1\n\n\
+                  /datum/t/proc/ask()\n\treturn helper()\n\n\
+                  /datum/t/child/proc/ask_more()\n\treturn helper() + 1\n\n\
+                  /datum/u/proc/ask()\n\treturn helper()\n";
+    let added = format!("{before}\n/datum/t/proc/helper()\n\treturn 2\n");
+    for (name, before, after) in [
+        ("member-proc-added", before, added.as_str()),
+        ("member-proc-removed", added.as_str(), before),
+    ] {
+        let changes = changes_of(name, before, after);
+        assert_eq!(
+            sorted_reloads(&changes),
+            ["/datum/t/ask", "/datum/t/child/ask_more"],
+            "{}",
+            name
+        );
+    }
+
+    let overridden = format!("{added}\n/datum/t/child/helper()\n\treturn 3\n");
+    let changes = changes_of("member-proc-overridden", &added, &overridden);
+    assert_eq!(sorted_reloads(&changes), Vec::<String>::new());
+}

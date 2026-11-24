@@ -22,6 +22,7 @@ pub(super) struct Retargeted<'s> {
     defaults: HashSet<String>,
     consts: HashSet<String>,
     member_vars: HashMap<String, Vec<String>>,
+    member_procs: HashMap<String, Vec<String>>,
 }
 
 fn resolve(s: &Snapshot, path: &str) -> Option<ProcKey> {
@@ -108,6 +109,7 @@ pub(super) fn retargeted<'s>(
         defaults: HashSet::new(),
         consts: HashSet::new(),
         member_vars: HashMap::new(),
+        member_procs: HashMap::new(),
     };
     let touched: BTreeSet<&str> = realigned
         .keys()
@@ -120,10 +122,34 @@ pub(super) fn retargeted<'s>(
                 .map(|r| r.proc.path.as_str()),
         )
         .collect();
+    let has_member_proc = |s: &Snapshot, ty: &str, name: &str| {
+        let mut at = s.find_type(ty);
+        while let Some(t) = at.filter(|t| !t.is_root()) {
+            if t.get().procs.contains_key(name) {
+                return true;
+            }
+            at = t.parent_type();
+        }
+        false
+    };
+    let is_global_proc = |name: &str| {
+        [old, new]
+            .iter()
+            .any(|s| s.tree.root().get().procs.contains_key(name))
+    };
     for path in touched {
         let Some((ty, name)) = path.rsplit_once('/') else {
             continue;
         };
+        if !ty.is_empty()
+            && is_global_proc(name)
+            && has_member_proc(old, ty, name) != has_member_proc(new, ty, name)
+        {
+            r.member_procs
+                .entry(name.to_owned())
+                .or_default()
+                .push(ty.to_owned());
+        }
         for form in forms(ty, name) {
             if r.before(&form) != r.after(&form) {
                 r.names.insert(name.to_owned());
@@ -174,7 +200,7 @@ pub(super) fn retargeted<'s>(
 
 impl Retargeted<'_> {
     pub(super) fn is_empty(&self) -> bool {
-        self.paths.is_empty() && self.member_vars.is_empty()
+        self.paths.is_empty() && self.member_vars.is_empty() && self.member_procs.is_empty()
     }
 
     fn rebinds(&self, members: &HashMap<String, Vec<String>>, ty: &str, name: &str) -> bool {
@@ -424,6 +450,9 @@ impl<'r, 's> Scan<'r, 's> {
             syntax::Node::Term(Term::Ident(name)) => self
                 .ty
                 .is_some_and(|ty| r.rebinds(&r.member_vars, ty, name.as_str())),
+            syntax::Node::Term(Term::Call(name, _)) => self
+                .ty
+                .is_some_and(|ty| r.rebinds(&r.member_procs, ty, name.as_str())),
             syntax::Node::Term(Term::__PROC__) => self.own.is_some_and(|own| r.names.contains(own)),
             syntax::Node::Name(name) => r.consts.contains(name) || r.global_names.contains(name),
             _ => false,

@@ -2207,6 +2207,13 @@ fn definitions(built: Built) {
 	assert_eq!(eval(&mut client, "tallies()"), "\"1 101\"");
 	println!("ok: a new member var takes an unchanged proc's use of a global's name");
 
+	assert_eq!(eval(&mut client, "(new /datum/asking/child).ask()"), "\"global\"");
+	let changes = source.edit("reload.dm", "/datum/asking\n", "/datum/asking/proc/hr_asked()\n\treturn \"member\"\n");
+	reload(&mut watcher, &changes);
+	assert_eq!(eval(&mut client, "(new /datum/asking/child).ask()"), "\"member\"");
+	assert_eq!(eval(&mut client, "hr_asked()"), "\"global\"");
+	println!("ok: a new member proc takes an unchanged proc's call of a global proc");
+
 	let changes = source.edit("reload.dm", "/datum/lone/speak()\n\treturn \"lone override\"\n", "");
 	let result = expect_reload_result(watcher.request(reload_request(&changes)));
 	assert!(

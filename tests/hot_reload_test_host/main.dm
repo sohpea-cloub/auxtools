@@ -196,3 +196,11 @@ var/hr_tally = 100
 	var/datum/tallied/T = new
 	T.bump()
 	return "[("hr_tally" in T.vars) ? T.vars["hr_tally"] : "none"] [global.hr_tally]"
+
+/proc/hr_asked()
+	return "global"
+
+/datum/asking/proc/ask()
+	return hr_asked()
+
+/datum/asking/child
