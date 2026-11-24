@@ -151,3 +151,16 @@ var/st_arm = 20
 /proc/st_sown()
 	var/const/ST_SOWN = 1
 	return ST_SOWN
+
+/datum/st_pair/proc/f()
+	return 0
+
+/datum/st_pair/f()
+	var/static/st_pair_count = 0
+	st_pair_count++
+	return st_pair_count
+
+/datum/st_pair/f()
+	var/static/st_pair_count = 5
+	st_pair_count++
+	return ..() + st_pair_count

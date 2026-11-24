@@ -62,8 +62,8 @@ struct Initializer<'a> {
 }
 
 impl Initializer<'_> {
-    fn key(&self) -> (&StaticScope, &str) {
-        (&self.scope, &self.name)
+    fn key(&self) -> (Option<&super::ProcKey>, &StaticScope, &str) {
+        (self.proc.as_ref(), &self.scope, &self.name)
     }
 
     fn constructed(&self) -> Option<&str> {
@@ -411,10 +411,12 @@ fn renumber_old_statics(
     before: &mut [Initializer<'_>],
 ) {
     let mut numbers: HashMap<super::ProcKey, Vec<(String, u32, u32)>> = HashMap::new();
+    let mut new_keys: HashMap<super::ProcKey, super::ProcKey> = HashMap::new();
     for key in new.procs() {
         let Some(old_key) = r.old_key(key) else {
             continue;
         };
+        new_keys.insert(old_key.clone(), key.clone());
         let (Some(was), Some(now)) = (old.proc_code(&old_key), new.proc_code(key)) else {
             continue;
         };
@@ -433,7 +435,11 @@ fn renumber_old_statics(
         proc, scope, name, ..
     } in before
     {
-        let Some(pairs) = proc.as_ref().and_then(|proc| numbers.get(proc)) else {
+        let Some(old_key) = proc.take() else {
+            continue;
+        };
+        *proc = new_keys.get(&old_key).cloned();
+        let Some(pairs) = numbers.get(&old_key) else {
             continue;
         };
         let StaticScope::Proc { nth, .. } = scope else {

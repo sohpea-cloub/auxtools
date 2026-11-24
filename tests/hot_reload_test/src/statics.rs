@@ -172,6 +172,18 @@ pub fn statics(built: Built) {
 	reload(&mut watcher, &changes);
 	assert_eq!(eval(&mut client, "st_sown()[1]"), "2", "the new static's value from the changed const");
 	println!("ok: a new static's initializer reads the new value of a local const that the edit changes");
+
+	let pair = "(new /datum/st_pair).f()";
+	assert_eq!(eval(&mut client, &format!("\"[{pair}] [{pair}]\"")), "\"7 9\"");
+	let changes = source.edit(
+		"statics.dm",
+		"\n/datum/st_pair/proc/f()\n",
+		"\nvar/st_rolled = rand(1, 2)\n\n/datum/st_pair/proc/f()\n"
+	);
+	assert!(changes.deferred.is_empty(), "the edit waits for a reboot: {:?}", changes.deferred);
+	reload(&mut watcher, &changes);
+	assert_eq!(eval(&mut client, &format!("\"[{pair}] [st_rolled in list(1, 2)]\"")), "\"11 1\"");
+	println!("ok: an added global leaves alone the statics of two overrides with the same name");
 }
 
 fn declared_references(client: &mut Client, path: &str) -> (u32, u32) {

@@ -4823,3 +4823,38 @@ fn a_static_made_by_new_changes_its_initializer_with_its_type() {
         }
     }
 }
+
+#[test]
+fn the_statics_of_two_overrides_are_compared_with_their_own() {
+    let before = "/datum/t/proc/f()\n\treturn 0\n\n\
+                  /datum/t/f()\n\tvar/static/count = 0\n\tcount++\n\treturn count\n\n\
+                  /datum/t/f()\n\tvar/static/count = 5\n\tcount++\n\treturn ..() + count\n";
+    let after = format!("{before}\nvar/rolled = rand(1, 2)\n");
+    let changes = changes("override-statics", before, &after);
+    assert!(changes.refused.is_empty(), "{:?}", changes.refused);
+    assert!(changes.deferred.is_empty(), "{:?}", changes.deferred);
+    assert!(
+        changes.global_init.is_some(),
+        "no global init for the new global"
+    );
+
+    let inserted = before.replace(
+        "/datum/t/f()\n\tvar/static/count = 0",
+        "/datum/t/f()\n\tvar/static/count = 9\n\treturn count\n\n/datum/t/f()\n\tvar/static/count = 0",
+    );
+    let changes = changes_of(
+        "override-statics-inserted",
+        before,
+        &format!("{inserted}\nvar/rolled = rand(1, 2)\n"),
+    );
+    assert!(changes.refused.is_empty(), "{:?}", changes.refused);
+    assert!(changes.deferred.is_empty(), "{:?}", changes.deferred);
+
+    let changed = before.replacen("count = 5", "count = 6", 1);
+    let changes = changes_of("override-statics-changed", before, &changed);
+    let deferred: Vec<String> = changes.deferred.iter().map(ToString::to_string).collect();
+    assert_eq!(
+        deferred,
+        ["code/code.dm:10: /datum/t/f: count: changed initializer"]
+    );
+}
