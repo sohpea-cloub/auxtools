@@ -738,10 +738,9 @@ fn assemble_with(
 	let nodes = adapt_debug_info(&code.nodes, &original.map(original_code).unwrap_or_default());
 
 	let uses = original.map(|proc| world_globals.of(proc)).unwrap_or_default();
-	let proc_globals = uses.by_name();
-	let new_statics = new_statics(code, &proc_globals, pending, added).map_err(|e| format!("{}: {}", name, e))?;
+	let new_statics = new_statics(code, pending, added).map_err(|e| format!("{}: {}", name, e))?;
 	let mut env = ReloadEnv {
-		proc_globals,
+		proc_globals: uses.by_name(),
 		world_globals,
 		pending,
 		new_statics,
@@ -1736,25 +1735,10 @@ fn world_keys(entry: &ProcEntryWords) -> Vec<u32> {
 	keys
 }
 
-const fn static_number(scope: &StaticScope) -> usize {
-	match scope {
-		StaticScope::Proc { nth, .. } => *nth as usize,
-		_ => 0
-	}
-}
-
-fn new_statics(
-	code: &ProcReload,
-	proc_globals: &HashMap<Vec<u8>, Vec<u32>>,
-	pending: &Pending,
-	added: &mut AddedVars
-) -> Result<HashMap<(StaticScope, Vec<u8>), u32>, String> {
+fn new_statics(code: &ProcReload, pending: &Pending, added: &mut AddedVars) -> Result<HashMap<(StaticScope, Vec<u8>), u32>, String> {
 	let mut out = HashMap::new();
 	for local in &code.statics {
 		let name = local.name.as_bytes().to_vec();
-		if proc_globals.get(&name).is_some_and(|ids| ids.len() > static_number(&local.scope)) {
-			continue;
-		}
 		let value = match (&local.value, &local.init) {
 			(Some(value), _) => owned_value(value, pending).map_err(|e| format!("static local {}: {}", local.name, e))?,
 			(None, Some(_)) => ((0, 0), None),
@@ -3737,8 +3721,8 @@ impl dmasm::assembler::AssembleEnv for ReloadEnv<'_> {
 		}
 
 		if let Some(StaticScope::Proc { nth, .. }) = scope {
-			let id = self.proc_globals.get(name).and_then(|ids| ids.get(*nth as usize)).copied();
-			let id = id.or_else(|| self.new_statics.get(&key).copied());
+			let id = self.new_statics.get(&key).copied();
+			let id = id.or_else(|| self.proc_globals.get(name).and_then(|ids| ids.get(*nth as usize)).copied());
 			let id = id.or_else(|| {
 				let (file, first, last) = self.place.as_ref()?;
 				let set: Vec<u32> = self

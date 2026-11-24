@@ -14,6 +14,7 @@ use test_support::{
 };
 
 mod dependents;
+mod statics;
 
 struct Source {
 	dir: TempDir,
@@ -39,6 +40,7 @@ impl Source {
 			"main.dm",
 			"reload.dm",
 			"dependents.dm",
+			"statics.dm",
 			"resources.dm",
 			"lamp.dmi",
 			"lamp_edited.dmi",
@@ -282,6 +284,7 @@ const SECTIONS: &[(&str, fn(Built))] = &[
 	("types", types),
 	("declarations", declarations),
 	("dependents", dependents::dependents),
+	("statics", statics::statics),
 	("resources", resources)
 ];
 

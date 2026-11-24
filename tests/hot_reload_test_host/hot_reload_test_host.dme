@@ -13,6 +13,7 @@
 #include "main.dm"
 #include "reload.dm"
 #include "dependents.dm"
+#include "statics.dm"
 #include "resources.dm"
 // END_INCLUDE
 #define AFTER_THE_CODE
