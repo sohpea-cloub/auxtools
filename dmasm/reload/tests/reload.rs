@@ -2543,6 +2543,46 @@ fn a_changed_implicit_type_refuses_the_callers_dmasm_cant_compile() {
 }
 
 #[test]
+fn a_cast_to_its_destinations_type_ignores_the_values_type() {
+    let uncompiled = "\tswitch(x)\n\t\tif(x)\n\t\t\treturn 0\n";
+    let code = format!(
+        "/datum/base\n\n/datum/base/sub\n\n/datum/other\n\n/datum/other/sub\n\n\
+         /proc/declared(datum/holder/h, x)\n{uncompiled}\tvar/datum/base/result = astype(h.source)\n\treturn result\n\n\
+         /proc/or_declared(datum/holder/h, x)\n{uncompiled}\tvar/datum/base/result = x || astype(h.source)\n\treturn result\n\n\
+         /proc/ternary(datum/holder/h, x)\n{uncompiled}\tvar/datum/base/result = x ? astype(h.source) : null\n\treturn result\n\n\
+         /proc/assigned(datum/holder/h, x)\n{uncompiled}\tvar/datum/base/result\n\tresult = astype(h.source)\n\treturn result\n\n\
+         /proc/field(datum/holder/h, x)\n{uncompiled}\th.target = astype(h.source)\n\n\
+         /proc/field_ternary(datum/holder/h, x)\n{uncompiled}\th.target = x ? astype(h.source) : null\n\n\
+         /proc/value(datum/holder/h, x)\n{uncompiled}\treturn astype(h.source)\n\n"
+    );
+    let before = "/datum/holder\n\tvar/datum/other/source\n\tvar/datum/base/target\n";
+    for (name, after, refused_paths) in [
+        (
+            "cast-value-retyped",
+            before.replace("other/source", "other/sub/source"),
+            vec!["/value"],
+        ),
+        (
+            "cast-destination-retyped",
+            before.replace("base/target", "base/sub/target"),
+            vec!["/field", "/field_ternary"],
+        ),
+    ] {
+        let changes = types_changes(name, &code, before, &after);
+        let refused: Vec<&str> = changes.refused.iter().map(|r| r.path.as_str()).collect();
+        assert_eq!(refused, refused_paths, "{}: {:?}", name, changes.refused);
+        assert!(
+            changes.refused[0]
+                .why
+                .starts_with("takes the type of a `new`"),
+            "{}: {}",
+            name,
+            changes.refused[0]
+        );
+    }
+}
+
+#[test]
 fn a_retyped_global_refuses_the_callers_dmasm_cant_compile_that_make_it_by_global_name() {
     let uncompiled = "\tswitch(x)\n\t\tif(x)\n\t\t\treturn 0\n";
     let code = format!(
