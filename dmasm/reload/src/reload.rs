@@ -910,7 +910,10 @@ impl Snapshot {
                 if settings(old_value.code.as_ref()) != settings(new_value.code.as_ref()) {
                     return Err(format!("{key}: `set`s changed"));
                 }
-                fn statics(v: &ProcValue) -> Vec<(&str, Option<&dreammaker::ast::Expression>)> {
+                fn statics(
+                    v: &ProcValue,
+                ) -> Vec<(&str, Option<String>, Option<&dreammaker::ast::Expression>)>
+                {
                     v.code
                         .as_deref()
                         .map(global_init::static_initializers)
@@ -1296,13 +1299,9 @@ impl Snapshot {
     ) -> Result<ProcReload, Diagnostic> {
         use dreammaker::ast::{Expression, Ident, PathOp, Prefab, RelativePath, Spanned, Term};
         let mut expression = expression.clone();
-        if let Expression::Base { term, .. } = &mut expression {
+        let made = constructed_type(declared, &expression);
+        if let (Some(declared), Expression::Base { term, .. }) = (made, &mut expression) {
             if let Term::NewImplicit { args } = &term.elem {
-                let declared = if declared.trim_start_matches('/').starts_with("list/") {
-                    "list"
-                } else {
-                    declared
-                };
                 let mut parts = declared.split('/').filter(|part| !part.is_empty());
                 let Some(first) = parts.next() else {
                     return Err(Diagnostic::error(
@@ -3830,6 +3829,25 @@ fn static_proc_path(scope: &StaticScope) -> Option<&str> {
     match scope {
         StaticScope::Proc { path, .. } => Some(path),
         _ => None,
+    }
+}
+
+pub(crate) fn constructed_type<'d>(
+    declared: &'d str,
+    expression: &dreammaker::ast::Expression,
+) -> Option<&'d str> {
+    use dreammaker::ast::{Expression, Term};
+    let Expression::Base { term, .. } = expression else {
+        return None;
+    };
+    if !matches!(term.elem, Term::NewImplicit { .. }) {
+        return None;
+    }
+    let path = declared.trim_start_matches('/');
+    if path == "list" || path.starts_with("list/") {
+        Some("list")
+    } else {
+        Some(declared)
     }
 }
 

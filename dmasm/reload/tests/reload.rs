@@ -4781,3 +4781,45 @@ fn a_new_static_reads_the_statics_in_scope_where_it_is_declared() {
         assert_eq!(reads_of(&init.nodes, "seed"), [read], "{path}");
     }
 }
+
+#[test]
+fn a_static_made_by_new_changes_its_initializer_with_its_type() {
+    let before = "/datum/a\n/datum/b\n\n/proc/item()\n\tvar/static/datum/a/item = new\n\
+                  \tvar/static/list/made = new\n\tvar/static/datum/a/held = null\n\
+                  \treturn list(item, made, held)\n";
+    let edited: HashSet<PathBuf> = vec![PathBuf::from("code/code.dm")].into_iter().collect();
+    for (name, from, to, deferred) in [
+        (
+            "static-new-retyped",
+            "datum/a/item",
+            "datum/b/item",
+            &["code/code.dm:5: /proc/item: item: changed initializer"][..],
+        ),
+        (
+            "static-list-retyped",
+            "list/made",
+            "list/datum/a/made",
+            &[][..],
+        ),
+        (
+            "static-null-retyped",
+            "datum/a/held",
+            "datum/b/held",
+            &[][..],
+        ),
+    ] {
+        let world = World::new(name, before);
+        let mut old = world.parse();
+        world.write(&before.replace(from, to));
+        let full = diff(&old, &world.parse(), Some(&edited));
+        let shown: Vec<String> = full.deferred.iter().map(ToString::to_string).collect();
+        assert_eq!(shown, deferred, "{name}");
+        let own = old.reload_file(&world.dir, std::path::Path::new("code/code.dm"));
+        match (own, deferred.is_empty()) {
+            (Ok(_), true) => {}
+            (Ok(_), false) => panic!("{name}: reloaded on its own"),
+            (Err(e), false) => assert!(e.contains("static initializers"), "{name}: {e}"),
+            (Err(e), true) => panic!("{name}: needs the full parse: {e}"),
+        }
+    }
+}

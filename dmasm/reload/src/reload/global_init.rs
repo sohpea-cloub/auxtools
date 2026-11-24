@@ -66,6 +66,10 @@ impl Initializer<'_> {
         (&self.scope, &self.name)
     }
 
+    fn constructed(&self) -> Option<&str> {
+        super::constructed_type(&self.declared, self.expression?)
+    }
+
     fn computed(&self) -> Option<(&StaticScope, &str, &str, Option<&Expression>)> {
         if self.constant.is_some() {
             return None;
@@ -448,7 +452,9 @@ fn changed(new: &Snapshot, before: &[Initializer<'_>], after: &[Initializer<'_>]
         .iter()
         .filter(|init| {
             was.get(&init.key()).is_some_and(|was| {
-                was.constant != init.constant || was.expression != init.expression
+                was.constant != init.constant
+                    || was.expression != init.expression
+                    || was.constructed() != init.constructed()
             })
         })
         .map(|init| {
@@ -1408,12 +1414,20 @@ fn normal(path: &Path) -> String {
     parts.join("/").to_ascii_lowercase()
 }
 
-pub(super) fn static_initializers(code: &[Spanned<Statement>]) -> Vec<(&str, Option<&Expression>)> {
+pub(super) fn static_initializers(
+    code: &[Spanned<Statement>],
+) -> Vec<(&str, Option<String>, Option<&Expression>)> {
     let mut found = vec![];
     static_statements(code, None, &mut found);
     found
         .into_iter()
-        .map(|(_, var)| (var.name.as_str(), var.value.as_ref()))
+        .map(|(_, var)| {
+            let declared = var.var_type.type_path.to_string();
+            let made = (var.value.as_ref())
+                .and_then(|value| super::constructed_type(&declared, value))
+                .map(str::to_owned);
+            (var.name.as_str(), made, var.value.as_ref())
+        })
         .collect()
 }
 
