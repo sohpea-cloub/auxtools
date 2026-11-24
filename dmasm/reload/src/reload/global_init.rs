@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 
 use dreammaker::{FileId, Location};
 
+use super::retargeted::Retargeted;
 use super::{const_value, value_location, var_constant, ConstValue, ProcReload, Refusal, Snapshot};
 use crate::diagnostic::{Diagnostic, Id};
 use crate::operands::{DMString, GlobalVar, Label, StaticScope, Variable};
@@ -304,23 +305,71 @@ impl Snapshot {
     }
 }
 
+fn retargeted(
+    (old, was): (&Snapshot, &Initializer<'_>),
+    (new, init): (&Snapshot, &Initializer<'_>),
+    r: &Retargeted,
+) -> bool {
+    if r.is_empty() {
+        return false;
+    }
+    match (&was.constant, &init.constant) {
+        (Some(ConstValue::Path(path)), Some(_)) => r.retargets(path),
+        (None, None) => {
+            let Some(expression) = init.expression else {
+                return false;
+            };
+            if !r.expression_might_name(expression, &init.ty.get().path) {
+                return false;
+            }
+            let compiled = |s: &Snapshot, init: &Initializer<'_>| {
+                let expression = init.expression?;
+                s.compile_value(
+                    init.ty,
+                    expression,
+                    &init.declared,
+                    value_location(expression, init.location),
+                    init.proc_path.as_deref(),
+                    &init.earlier,
+                )
+                .ok()
+            };
+            match (compiled(old, was), compiled(new, init)) {
+                (Some(before), Some(after)) => !r.same_code(&before, &after),
+                (None, None) => false,
+                _ => true,
+            }
+        }
+        _ => false,
+    }
+}
+
 #[allow(clippy::type_complexity)]
 fn differences<'a, 'b>(
-    before: &'b [Initializer<'a>],
-    after: &'b [Initializer<'a>],
+    (old, before): (&Snapshot, &'b [Initializer<'a>]),
+    (new, after): (&Snapshot, &'b [Initializer<'a>]),
+    r: &Retargeted,
 ) -> Option<Vec<(&'b Initializer<'a>, Option<&'a Expression>)>> {
     let was: std::collections::HashMap<_, _> = before.iter().map(|i| (i.key(), i)).collect();
     let mut table = vec![];
+    let mut recompiled = false;
     for init in after {
         let Some(was) = was.get(&init.key()) else {
             continue;
         };
+        let same_expression = was.expression == init.expression;
         match (&was.constant, &init.constant) {
-            (Some(was), Some(now)) if was == now => {}
+            (Some(was_value), Some(now)) if was_value == now => {
+                if same_expression && retargeted((old, was), (new, init), r) {
+                    table.push((init, init.expression));
+                }
+            }
             (_, Some(_)) => table.push((init, init.expression)),
             (Some(ConstValue::Null), None) => {}
             (Some(_), None) => table.push((init, None)),
-            (None, None) => {}
+            (None, None) => {
+                recompiled |= same_expression && retargeted((old, was), (new, init), r);
+            }
         }
     }
     let computed = |list: &'b [Initializer<'a>]| {
@@ -328,7 +377,7 @@ fn differences<'a, 'b>(
             .filter_map(Initializer::computed)
             .collect::<Vec<_>>()
     };
-    if table.is_empty() && computed(before) == computed(after) {
+    if table.is_empty() && !recompiled && computed(before) == computed(after) {
         return None;
     }
     Some(table)
@@ -1486,7 +1535,12 @@ where
     Ok((nodes, locals))
 }
 
-pub(super) fn compare(old: &Snapshot, new: &Snapshot, changes: &mut super::Changes) {
+pub(super) fn compare(
+    old: &Snapshot,
+    new: &Snapshot,
+    r: &Retargeted,
+    changes: &mut super::Changes,
+) {
     let statics = changes
         .plan
         .reloads
@@ -1495,11 +1549,18 @@ pub(super) fn compare(old: &Snapshot, new: &Snapshot, changes: &mut super::Chang
         .chain(changes.plan.new_procs.iter().map(|p| &p.code.proc))
         .chain(changes.plan.removed_procs.iter().map(|r| &r.proc))
         .any(|key| old.has_statics(key) || new.has_statics(key));
-    if !statics && differences(&old.initializers(false), &new.initializers(false)).is_none() {
+    if !statics
+        && differences(
+            (old, &old.initializers(false)),
+            (new, &new.initializers(false)),
+            r,
+        )
+        .is_none()
+    {
         return;
     }
     let (before, after) = (old.initializers(true), new.initializers(true));
-    let Some(table) = differences(&before, &after) else {
+    let Some(table) = differences((old, &before), (new, &after), r) else {
         return;
     };
     let deferred = changed(new, &before, &after);

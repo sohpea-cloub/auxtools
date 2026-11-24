@@ -1830,7 +1830,7 @@ pub fn diff(old: &Snapshot, new: &Snapshot, changed_files: Option<&HashSet<PathB
     reparent::reparented_users(old, new, &realigned, &mut changes);
     moved::moved_users(old, new, &realigned, &mut changes);
     retargeted::path_users(&retargeted, &mut changes);
-    global_init::compare(old, new, &mut changes);
+    global_init::compare(old, new, &retargeted, &mut changes);
     changes.collect_warnings();
     changes
 }

@@ -4048,3 +4048,30 @@ fn a_changed_default_recompiles_the_initializers_and_in_lists_that_read_it() {
         ]
     );
 }
+
+#[test]
+fn a_global_initializer_naming_a_retargeted_path_is_given_to_a_reboot() {
+    let before = "/datum/t/proc/f()\n\treturn 0\n\n/datum/t/f()\n\treturn 1\n\n/datum/t/f()\n\treturn 2\n\n\
+                  var/list/handlers = list(/datum/t/f)\nvar/handler = /datum/t/f\nvar/other = list(1)\n\n\
+                  /datum/s\n\tvar/static/list/more = list(/datum/t/f)\n\n\
+                  /proc/kept()\n\tvar/static/list/l = list(/datum/t/f)\n\treturn l\n";
+    let removed = before.replace("/datum/t/f()\n\treturn 1\n\n", "");
+    let changes = changes("global-init-retargeted", before, &removed);
+    assert!(changes.refused.is_empty(), "{:?}", changes.refused);
+    assert!(changes.deferred.is_empty(), "{:?}", changes.deferred);
+    assert_eq!(
+        global_init_sets(&changes),
+        [
+            ":handler @8",
+            ":other @9",
+            "/datum/s:more @12",
+            ":handlers @7",
+            "/proc/kept#0:l @15"
+        ]
+    );
+    assert_eq!(changes.global_init.as_ref().unwrap().table, 1);
+
+    let appended = format!("{before}\n/datum/t/f()\n\treturn 3\n");
+    let changes = changes_of("global-init-appended", before, &appended);
+    assert!(changes.global_init.is_none());
+}

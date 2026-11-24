@@ -359,6 +359,14 @@ impl Retargeted<'_> {
         scan.found
     }
 
+    pub(super) fn expression_might_name(&self, expression: &Expression, ty: &str) -> bool {
+        self.expressions_might_name([expression], Some(ty))
+    }
+
+    pub(super) fn retargets(&self, path: &str) -> bool {
+        self.before(path) != self.after(path)
+    }
+
     pub(super) fn inits_might_name(&self, inits: &[Init], ty: &str) -> bool {
         !self.is_empty()
             && self.expressions_might_name(inits.iter().map(|init| &init.value), Some(ty))
