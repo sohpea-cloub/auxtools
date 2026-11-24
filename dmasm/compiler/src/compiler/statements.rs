@@ -1479,11 +1479,17 @@ pub(super) fn safe_chain(follow: &[Follow]) -> Option<SafeChain> {
     for (i, f) in follow.iter().enumerate() {
         let last = i + 1 == follow.len();
         match f {
-            Follow::Field(K::SafeDot | K::SafeColon, name) => {
+            Follow::Field(K::SafeDot, name) => {
                 segments.push(vec![Follow::Field(K::Dot, name.clone())])
             }
-            Follow::Call(K::SafeDot | K::SafeColon, name, args) => {
+            Follow::Field(K::SafeColon, name) => {
+                segments.push(vec![Follow::Field(K::Colon, name.clone())])
+            }
+            Follow::Call(K::SafeDot, name, args) => {
                 segments.push(vec![Follow::Call(K::Dot, name.clone(), args.clone())])
+            }
+            Follow::Call(K::SafeColon, name, args) => {
+                segments.push(vec![Follow::Call(K::Colon, name.clone(), args.clone())])
             }
             Follow::Field(K::Dot | K::Colon, _) | Follow::Call(K::Dot | K::Colon, _, _) => {
                 segments.last_mut()?.push(f.clone())
@@ -1535,20 +1541,13 @@ impl SafeChain {
             .collect()
     }
 
-    fn computed(&self) -> (Vec<Follow>, Vec<String>) {
+    fn computed(&self) -> (Vec<Follow>, Vec<Follow>) {
         let split = self
             .last
             .iter()
             .rposition(|f| !matches!(f, Follow::Field(..)))
             .map_or(0, |i| i + 1);
-        let fields = self.last[split..]
-            .iter()
-            .map(|f| match f {
-                Follow::Field(_, name) => name.to_string(),
-                _ => unreachable!(),
-            })
-            .collect();
-        (self.last[..split].to_vec(), fields)
+        (self.last[..split].to_vec(), self.last[split..].to_vec())
     }
 
     pub fn writable(&self, write: &SafeWrite, value_form: bool) -> bool {
@@ -1589,9 +1588,76 @@ fn restore_receiver(compiler: &mut Compiler, call: usize) {
         .insert(call, Node::Instruction(Instruction::PopCache, ()));
 }
 
-pub(super) fn emit_safe_chain_write(
-    compiler: &mut Compiler,
+fn chain_type<'a>(
+    compiler: &Compiler<'a>,
+    ty: Option<dreammaker::objtree::TypeRef<'a>>,
+    after: super::procs::After,
+    follow: &[Follow],
+) -> (
+    Option<dreammaker::objtree::TypeRef<'a>>,
+    super::procs::After,
+) {
+    use super::procs::After;
+    let (mut ty, mut after) = (ty, after);
+    for f in follow {
+        (ty, after) = match f {
+            Follow::Field(kind, name) => (
+                super::procs::field_var(compiler, ty, *kind, name.as_str(), after)
+                    .and_then(|d| super::procs::declared_type(compiler, &d.get().var_type)),
+                After::Typed,
+            ),
+            Follow::Index(..) => (None, After::Index),
+            Follow::Call(access, name, _) => {
+                super::procs::call_result(compiler, ty, *access, name.as_str())
+            }
+            _ => (None, After::Typed),
+        };
+    }
+    (ty, after)
+}
+
+fn fields_var<'a>(
+    compiler: &Compiler<'a>,
+    ty: Option<dreammaker::objtree::TypeRef<'a>>,
+    after: super::procs::After,
+    fields: &[Follow],
+) -> Variable {
+    use dreammaker::ast::PropertyAccessKind;
+    let Some((Follow::Field(_, last), path)) = fields.split_last() else {
+        return Variable::Cache;
+    };
+    let mut builder = super::chain_builder::ChainBuilder::begin(Variable::Cache);
+    let (mut ty, mut after) = (ty, after);
+    for f in path {
+        let Follow::Field(kind, name) = f else {
+            unreachable!("only fields")
+        };
+        let decl = super::procs::field_var(compiler, ty, *kind, name.as_str(), after);
+        let mut field = name.as_str().as_bytes().to_vec();
+        if let Some(decl) = decl.filter(|d| {
+            super::procs::is_global_member(d)
+                && matches!(kind, PropertyAccessKind::Dot | PropertyAccessKind::Colon)
+        }) {
+            field = super::chain_builder::STATIC_MARKER.to_vec();
+            field.extend_from_slice(name.as_str().as_bytes());
+            field.push(0);
+            field.extend_from_slice(decl.ty().get().path.as_bytes());
+        }
+        builder.append(crate::operands::DMString(field));
+        ty = decl.and_then(|d| super::procs::declared_type(compiler, &d.get().var_type));
+        after = super::procs::After::Typed;
+    }
+    builder.get_field(crate::operands::DMString(last.as_str().as_bytes().to_vec()))
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn emit_safe_chain_write<'a>(
+    compiler: &mut Compiler<'a>,
     chain: SafeChain,
+    start: (
+        Option<dreammaker::objtree::TypeRef<'a>>,
+        super::procs::After,
+    ),
     place: Option<&Expression>,
     static_var: Option<Variable>,
     value: Option<&Expression>,
@@ -1600,6 +1666,22 @@ pub(super) fn emit_safe_chain_write(
 ) -> Result<(), CompileError> {
     let fields = chain.fields();
     let computed = chain.computed();
+    let (mut ty, mut after) = start;
+    let segment_types: Vec<_> = chain
+        .segments
+        .iter()
+        .map(|segment| {
+            let at = (ty, after);
+            (ty, after) = chain_type(compiler, ty, after, segment);
+            at
+        })
+        .collect();
+    let computed_type = (ty, after);
+    let (ty, after) = chain_type(compiler, ty, after, &computed.0);
+    let last_var = match &static_var {
+        Some(var) => var.clone(),
+        None => fields_var(compiler, ty, after, &computed.1),
+    };
     let jump = |end: &str| {
         let end = Label::Named(end.to_owned());
         if value_form {
@@ -1609,6 +1691,7 @@ pub(super) fn emit_safe_chain_write(
         }
     };
     let mut ends = vec![];
+    let mut segment_types = segment_types.into_iter();
     for segment in chain.segments.into_iter().chain([vec![]]) {
         let end = compiler.new_label();
         compiler.emit_ins(jump(&end));
@@ -1617,9 +1700,15 @@ pub(super) fn emit_safe_chain_write(
         if segment.is_empty() {
             break;
         }
+        let (ty, after) = segment_types.next().expect("a segment's type");
         let start = compiler.nodes.len();
-        let kind =
-            super::follow::emit_typed(compiler, segment, EvalKind::Var(Variable::Cache), None)?;
+        let kind = super::follow::emit_after(
+            compiler,
+            segment,
+            EvalKind::Var(Variable::Cache),
+            ty,
+            after,
+        )?;
         compiler.emit_move_to_stack(kind)?;
         if let Some(call) = call_after_cache_use(compiler, start) {
             restore_receiver(compiler, call);
@@ -1632,22 +1721,7 @@ pub(super) fn emit_safe_chain_write(
         emit_value(compiler, value)?;
         compiler.implicit_type = None;
     }
-    let field_var = |fields: &[String]| {
-        if let Some(var) = &static_var {
-            return var.clone();
-        }
-        if fields.is_empty() {
-            return Variable::Cache;
-        }
-        let mut builder = super::chain_builder::ChainBuilder::begin(Variable::Cache);
-        for f in &fields[..fields.len() - 1] {
-            builder.append(crate::operands::DMString(f.clone().into_bytes()));
-        }
-        builder.get_field(crate::operands::DMString(
-            fields[fields.len() - 1].clone().into_bytes(),
-        ))
-    };
-    let Some(fields) = fields else {
+    if fields.is_none() {
         let (computed, fields) = computed;
         let value_used_cache = compiler.nodes[value_start..]
             .iter()
@@ -1672,8 +1746,13 @@ pub(super) fn emit_safe_chain_write(
             compiler.emit_ins(Instruction::PushCache);
         }
         let start = compiler.nodes.len();
-        let kind =
-            super::follow::emit_typed(compiler, computed, EvalKind::Var(Variable::Cache), None)?;
+        let kind = super::follow::emit_after(
+            compiler,
+            computed,
+            EvalKind::Var(Variable::Cache),
+            computed_type.0,
+            computed_type.1,
+        )?;
         compiler.emit_move_to_stack(kind)?;
         if let Some(call) = call_after_cache_use(compiler, start) {
             restore_receiver(compiler, call);
@@ -1681,7 +1760,7 @@ pub(super) fn emit_safe_chain_write(
         let mut var = None;
         if !fields.is_empty() {
             compiler.emit_ins(Instruction::SetVar(Variable::Cache));
-            var = Some(field_var(&fields));
+            var = Some(last_var);
         }
         let mut holder_saved = true;
         if let Some(index) = chain.index {
@@ -1764,26 +1843,26 @@ pub(super) fn emit_safe_chain_write(
             compiler.emit_label(end);
         }
         return Ok(());
-    };
-    match (fields, write, chain.index) {
-        (fields, SafeWrite::Change(write), None) => {
+    }
+    match (write, chain.index) {
+        (SafeWrite::Change(write), None) => {
             compiler.emit_ins(Instruction::PopCache);
-            for ins in write(field_var(&fields)) {
+            for ins in write(last_var.clone()) {
                 compiler.emit_ins(ins);
             }
             ends.pop().map(|end| compiler.emit_label(end));
         }
-        (fields, SafeWrite::Assign, Some(index)) => {
+        (SafeWrite::Assign, Some(index)) => {
             compiler.emit_ins(Instruction::PopCache);
             if value_form {
                 compiler.emit_ins(Instruction::PushTop);
             }
-            compiler.emit_ins(Instruction::GetVar(field_var(&fields)));
+            compiler.emit_ins(Instruction::GetVar(last_var.clone()));
             emit_value(compiler, &index)?;
             compiler.emit_ins(Instruction::ListSet);
             ends.pop().map(|end| compiler.emit_label(end));
         }
-        (fields, SafeWrite::Change(write), Some(index)) => {
+        (SafeWrite::Change(write), Some(index)) => {
             let restore_first = compiler.byond.restores_cache_for_safe_element();
             if !restore_first {
                 warn_list_from_cache(compiler);
@@ -1791,7 +1870,7 @@ pub(super) fn emit_safe_chain_write(
             if restore_first {
                 compiler.emit_ins(Instruction::PopCache);
             }
-            compiler.emit_ins(Instruction::GetVar(field_var(&fields)));
+            compiler.emit_ins(Instruction::GetVar(last_var.clone()));
             emit_value(compiler, &index)?;
             if !restore_first {
                 compiler.emit_ins(Instruction::PopCache);
@@ -1803,7 +1882,7 @@ pub(super) fn emit_safe_chain_write(
             }
             ends.pop().map(|end| compiler.emit_label(end));
         }
-        (fields, SafeWrite::Logical { or }, index) => {
+        (SafeWrite::Logical { or }, index) => {
             if !compiler.byond.keeps_safe_logical_null_tests() {
                 compiler.warn_bug(
                     Id::ByondSafeLogicalAssign,
@@ -1818,7 +1897,7 @@ pub(super) fn emit_safe_chain_write(
             if restore_first {
                 compiler.emit_ins(Instruction::PopCache);
             }
-            let mut var = field_var(&fields);
+            let mut var = last_var.clone();
             if let Some(index) = index {
                 compiler.emit_ins(Instruction::GetVar(var));
                 emit_value(compiler, &index)?;
@@ -1862,6 +1941,46 @@ pub(super) fn emit_safe_chain_write(
     Ok(())
 }
 
+fn safe_start<'a>(
+    compiler: &Compiler<'a>,
+    base: &Expression,
+) -> (
+    Option<dreammaker::objtree::TypeRef<'a>>,
+    super::procs::After,
+) {
+    let Expression::Base { term, follow } = base else {
+        return (None, super::procs::After::Typed);
+    };
+    let (ty, after) = place_start(compiler, term);
+    let follow: Vec<Follow> = follow.iter().map(|f| f.elem.clone()).collect();
+    chain_type(compiler, ty, after, &follow)
+}
+
+fn place_start<'a>(
+    compiler: &Compiler<'a>,
+    term: &Spanned<Term>,
+) -> (
+    Option<dreammaker::objtree::TypeRef<'a>>,
+    super::procs::After,
+) {
+    match &term.elem {
+        Term::Call(..) | Term::GlobalCall(..) => super::procs::start_type(compiler, &term.elem),
+        Term::Ident(name) if name.as_str() == "global" => {
+            (Some(compiler.proc.tree.root()), super::procs::After::Typed)
+        }
+        _ => {
+            let base = Expression::Base {
+                term: Box::new(term.clone()),
+                follow: Default::default(),
+            };
+            (
+                super::procs::expr_type(compiler, &base),
+                super::procs::After::Typed,
+            )
+        }
+    }
+}
+
 pub(super) fn static_place(
     compiler: &Compiler,
     place: &Expression,
@@ -1870,21 +1989,8 @@ pub(super) fn static_place(
     let Expression::Base { term, follow } = place else {
         return None;
     };
-    let base = Expression::Base {
-        term: term.clone(),
-        follow: Default::default(),
-    };
     let follow: Vec<Follow> = follow.iter().map(|f| f.elem.clone()).collect();
-    let (ty, after) = match &term.elem {
-        Term::Call(..) | Term::GlobalCall(..) => super::procs::start_type(compiler, &term.elem),
-        Term::Ident(name) if name.as_str() == "global" => {
-            (Some(compiler.proc.tree.root()), super::procs::After::Typed)
-        }
-        _ => (
-            super::procs::expr_type(compiler, &base),
-            super::procs::After::Typed,
-        ),
-    };
+    let (ty, after) = place_start(compiler, term);
     static_member(compiler, ty, &follow, indexed, after)
 }
 
@@ -1940,9 +2046,11 @@ pub(super) fn emit_safe_write(
     }
     emit_value(compiler, &base)?;
     let static_var = static_place(compiler, place, chain.index.is_some());
+    let start = safe_start(compiler, &base);
     emit_safe_chain_write(
         compiler,
         chain,
+        start,
         Some(place),
         static_var,
         value,
@@ -2412,13 +2520,13 @@ pub(super) fn emit_safe_logical_assign(
             "; dmasm keeps them",
         );
     }
-    let mut builder = super::chain_builder::ChainBuilder::begin(Variable::Cache);
-    for f in &fields[..fields.len() - 1] {
-        builder.append(crate::operands::DMString(f.clone().into_bytes()));
-    }
-    let var = builder.get_field(crate::operands::DMString(
-        fields[fields.len() - 1].clone().into_bytes(),
-    ));
+    let var = match static_place(compiler, place, false) {
+        Some(var) => var,
+        None => {
+            let (ty, after) = safe_start(compiler, &base);
+            fields_var(compiler, ty, after, &chain.last)
+        }
+    };
     emit_value(compiler, &base)?;
     let end = compiler.new_label();
     compiler.emit_ins(Instruction::SetCacheJmpIfNull(Label::Named(end.clone())));

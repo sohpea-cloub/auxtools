@@ -512,7 +512,14 @@ fn emit_safe<'a>(
                     after,
                 );
                 super::statements::emit_safe_chain_write(
-                    compiler, chain, None, static_var, None, write, true,
+                    compiler,
+                    chain,
+                    (ty, after),
+                    None,
+                    static_var,
+                    None,
+                    write,
+                    true,
                 )?;
                 return Ok(EvalKind::Stack);
             }

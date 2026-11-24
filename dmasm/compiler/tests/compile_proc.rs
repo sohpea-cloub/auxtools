@@ -287,12 +287,17 @@ fn global_scopes_in(src: &str, ty: &str) -> Vec<String> {
         let Node::Instruction(ins, _) = node else {
             continue;
         };
-        for var in ins.variables() {
-            if let Variable::Global(g) = var {
-                let scope = format!("{:?}", g.scope);
-                if !scopes.contains(&scope) {
-                    scopes.push(scope);
+        let mut vars = ins.variables();
+        while let Some(var) = vars.pop() {
+            match var {
+                Variable::Global(g) => {
+                    let scope = format!("{:?}", g.scope);
+                    if !scopes.contains(&scope) {
+                        scopes.push(scope);
+                    }
                 }
+                Variable::SetCache(holder, field) => vars.extend([&**field, &**holder]),
+                _ => {}
             }
         }
     }
@@ -422,6 +427,47 @@ fn a_safe_chain_finds_each_calls_proc_and_value_by_the_type_before_it() {
             "f",
         );
         assert_has(&code, &[call]);
+    }
+}
+
+#[test]
+fn a_safe_write_finds_the_statics_it_goes_through_as_a_read_does() {
+    let types = "/datum/counter\n\tvar/count = 0\n\tvar/datum/counter/next\n\
+                 \tvar/static/datum/counter/INNER\n\
+                 /datum/a\n\tvar/static/datum/counter/SHARED = new\n\
+                 \tvar/datum/counter/plain\n\tvar/static/S = 1\n\
+                 /datum/b\n\tvar/static/datum/counter/SHARED = new\n\
+                 \tvar/datum/counter/plain\n\tvar/static/S = 2\n\
+                 /datum/holder\n\tvar/datum/a/a\n\
+                 /proc/make()\n\treturn new /datum/a\n\
+                 /proc/typed() as /datum/a\n\treturn new /datum/b\n";
+    for (body, scopes) in [
+        ("make()?.SHARED.count += 1", &["/datum/b"][..]),
+        ("typed()?.SHARED.count += 1", &["/datum/a"]),
+        ("make()?.SHARED.count = 1", &["/datum/b"]),
+        ("make()?.SHARED?.count = 1", &["/datum/b"]),
+        ("make()?.SHARED?.count += 1", &["/datum/b"]),
+        ("make()?.SHARED.next.count++", &["/datum/b"]),
+        ("make()?.SHARED.count ||= 2", &["/datum/b"]),
+        ("return (make()?.SHARED.count ||= 2)", &["/datum/b"]),
+        ("return (typed()?.S ||= 2)", &["/datum/a"]),
+        ("x?.SHARED.count += 1", &["/datum/a"]),
+        ("x?.SHARED.count++", &["/datum/a"]),
+        ("return x?.SHARED.count++", &["/datum/a"]),
+        ("return (x?.SHARED.count += 1)", &["/datum/a"]),
+        ("x?.SHARED.next?.count = 3", &["/datum/a"]),
+        ("h?.a.SHARED.count += 1", &["/datum/a"]),
+        ("h?.a?.SHARED.count = 1", &["/datum/a"]),
+        ("x?.plain.INNER.count = 3", &["/datum/counter"]),
+        ("x?.SHARED.INNER.count = 3", &["/datum/a", "/datum/counter"]),
+        ("y?:SHARED.count = 3", &["/datum/b"]),
+    ] {
+        let src = format!("{types}/proc/f(datum/a/x, datum/holder/h, y)\n\t{body}\n");
+        let want: Vec<String> = scopes
+            .iter()
+            .map(|s| format!("Some(Type(\"{s}\"))"))
+            .collect();
+        assert_eq!(global_scopes(&src), want, "{}", body);
     }
 }
 

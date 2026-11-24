@@ -369,3 +369,21 @@ var/datum/dep_retype_alone_first/dep_retype_alone_target
 
 /proc/dep_chain(datum/dep_chain_factory/factory)
 	return factory?.builder().dep_chain_make().DEP_CHAIN_LIMIT
+
+/datum/dep_shared_counter
+	var/count = 0
+
+/datum/dep_shared_a
+	var/static/datum/dep_shared_counter/DEP_SHARED = new
+
+/datum/dep_shared_b
+	var/static/datum/dep_shared_counter/DEP_SHARED = new
+
+/proc/dep_shared_make()
+	return new /datum/dep_shared_a
+
+/proc/dep_shared_bump()
+	dep_shared_make()?.DEP_SHARED.count += 1
+	var/datum/dep_shared_a/a = new
+	var/datum/dep_shared_b/b = new
+	return "[a.DEP_SHARED.count] [b.DEP_SHARED.count]"

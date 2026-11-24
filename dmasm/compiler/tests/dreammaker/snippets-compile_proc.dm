@@ -949,6 +949,70 @@ var/const/LIMIT = 10
 	return factory?.builder():make().LIMIT
 /proc/f11(datum/factory/factory)
 	return factory?.builder().make().LIMIT + 1
+// Guards: a_safe_write_finds_the_statics_it_goes_through_as_a_read_does (compile_proc.rs)
+// Known -516.1672: /proc/f7  before 516.1673 DreamMaker leaves out the null tests of `a?.b ||= v` and `&&=`; dmasm keeps them
+// Known -516.1672: /proc/f10  before 516.1673 DreamMaker leaves out the null tests of `a?.b ||= v` and `&&=`; dmasm keeps them
+// Known -516.1672: /proc/f11  before 516.1673 DreamMaker leaves out the null tests of `a?.b ||= v` and `&&=`; dmasm keeps them
+/datum/counter
+	var/count = 0
+	var/datum/counter/next
+	var/static/datum/counter/INNER
+/datum/a
+	var/static/datum/counter/SHARED = new
+	var/datum/counter/plain
+	var/static/S = 1
+/datum/b
+	var/static/datum/counter/SHARED = new
+	var/datum/counter/plain
+	var/static/S = 2
+/datum/holder
+	var/datum/a/a
+/proc/make()
+	return new /datum/a
+/proc/typed() as /datum/a
+	return new /datum/b
+/proc/f1()
+	make()?.SHARED.count += 1
+/proc/f2()
+	typed()?.SHARED.count += 1
+/proc/f3()
+	make()?.SHARED.count = 1
+/proc/f4()
+	make()?.SHARED?.count = 1
+/proc/f5()
+	make()?.SHARED.next.count++
+/proc/f6()
+	return make()?.SHARED.count
+/proc/f7()
+	make()?.SHARED.count ||= 2
+/proc/f8(datum/a/x)
+	x?.SHARED.count += 1
+/proc/f9()
+	make()?.SHARED?.count += 1
+/proc/f10()
+	return (make()?.SHARED.count ||= 2)
+/proc/f11()
+	return (typed()?.S ||= 2)
+/proc/f12(datum/holder/h)
+	h?.a.SHARED.count += 1
+/proc/f13(datum/a/x)
+	x?.plain.INNER.count = 3
+/proc/f14(datum/a/x)
+	x?.SHARED.INNER.count = 3
+/proc/f15(datum/a/x)
+	x?.SHARED.count++
+/proc/f16(datum/a/x)
+	return x?.SHARED.count++
+/proc/f17(datum/a/x)
+	x?.SHARED.next?.count = 3
+/proc/f18(datum/holder/h)
+	h?.a?.SHARED.count = 1
+/proc/f19(datum/a/x, i)
+	x?.SHARED.next.count = 3
+/proc/f20(x)
+	x?:SHARED.count = 3
+/proc/f21(datum/a/x)
+	return (x?.SHARED.count += 1)
 // Guards: a_safe_colon_call_finds_its_proc_and_value_as_a_colon_call_does (compile_proc.rs)
 /datum/a
 	var/const/LIMIT = 5

@@ -473,6 +473,20 @@ pub fn dependents(built: Built) {
 		"recompiled factory?.builder().make().name doesn't read the var DreamMaker reads"
 	);
 	println!("ok: recompiled factory?.builder().make().name reads the var DreamMaker reads, and null for a null factory");
+
+	assert_eq!(eval(&mut client, "dep_shared_bump()"), "\"0 1\"");
+	let changes = source.edit(
+		"dependents.dm",
+		"\tdep_shared_make()?.DEP_SHARED.count += 1\n",
+		"\tdep_shared_make()?.DEP_SHARED.count += 2\n"
+	);
+	reload(&mut watcher, &changes);
+	assert_eq!(
+		eval(&mut client, "dep_shared_bump()"),
+		"\"0 3\"",
+		"recompiled make()?.STATIC.name += value doesn't change the object that DreamMaker changes"
+	);
+	println!("ok: recompiled make()?.STATIC.name += value changes the object that DreamMaker changes");
 }
 
 fn refused_edit(source: &mut Source, file: &str, from: &str, to: &str) -> Vec<dmasm::reload::Refusal> {
