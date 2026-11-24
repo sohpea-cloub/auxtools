@@ -128,6 +128,16 @@ var/const/gc = 7
 	i?.a.b ||= (flag ? x : y)
 /proc/f2(datum/item/i, x, y)
 	return (i?.a.b &&= (x || y))
+// Guards: a_logical_assignment_to_a_safe_element_keeps_its_key_across_the_value (compile_proc.rs)
+// Known -516.1672: /proc/f1  before 516.1673 DreamMaker leaves out the null tests of `a?.b ||= v` and `&&=`; dmasm keeps them
+// Known -516.1672: /proc/f2  before 516.1673 DreamMaker leaves out the null tests of `a?.b ||= v` and `&&=`; dmasm keeps them
+/datum/item
+	var/list/items
+	var/list/counters
+/proc/f1(datum/item/holder, i, j, list/counters)
+	holder?.items[i] ||= counters[j]++
+/proc/f2(datum/item/holder, i, j)
+	holder?.items[i] &&= holder.counters[j]++
 // Guards: a_logical_assignment_through_a_safe_chain_warns_where_dreammaker_writes_another_var (compile_proc.rs)
 // Known: /proc/f1  DreamMaker writes `a?.b.c ||= v` through the object its test read, a.b.b.c (a BYOND bug, which dmasm warns of); dmasm writes a.b.c
 // Known: /proc/f2  DreamMaker writes `a?.b.c ||= v` through the object its test read, a.b.b.c (a BYOND bug, which dmasm warns of); dmasm writes a.b.c

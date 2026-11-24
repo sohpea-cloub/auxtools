@@ -2159,6 +2159,33 @@ fn a_logical_assignment_through_a_safe_chain_writes_its_last_var_after_a_branchi
 }
 
 #[test]
+fn a_logical_assignment_to_a_safe_element_keeps_its_key_across_the_value() {
+    let types = "/datum/item\n\tvar/datum/item/a\n\tvar/list/items\n\tvar/list/counters\n";
+    for body in [
+        "holder?.items[i] ||= counters[j]++",
+        "holder?.items[i] &&= holder.counters[j]++",
+        "holder?.a.items[i] ||= (counters[j] += 1)",
+        "holder?.items[i] ||= (counters[j] ||= 1)",
+        "holder?.items[i] ||= f(counters[j]++)",
+        "holder?.items[i] ||= holder?.counters[j]++",
+    ] {
+        let code = compile(
+            &format!(
+                "{types}/proc/f(x)\n\treturn x\n\
+                 /proc/g(datum/item/holder, i, j, list/counters)\n\t{body}\n"
+            ),
+            "",
+            "g",
+        );
+        assert_has(&code, &["PushCache", "PushCacheKey"]);
+        assert_has(
+            &code,
+            &["PopCacheKey", "PopCache", "SetVar cache[cache_key]"],
+        );
+    }
+}
+
+#[test]
 fn new_without_arguments_is_true_in_a_test() {
     let src = "/datum/t\n/proc/f(a, b)\n\treturn (new /datum/t ? a : b)\n";
     assert_eq!(compile(src, "", "f"), "GetVar arg(0)\nRet\nEnd");

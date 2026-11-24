@@ -2488,13 +2488,25 @@ pub(super) fn aug_instruction(op: AssignOp, var: Variable) -> Instruction {
 }
 
 fn keep_tested_place(compiler: &mut Compiler, start: usize, var: &Variable) -> Variable {
-    if compiler.nodes[start..]
-        .iter()
-        .any(|n| matches!(n, Node::Instruction(i, _) if super::procs::touches_cache(i)))
-    {
+    let value = &compiler.nodes[start..];
+    let touches = |f: fn(&Instruction) -> bool| {
+        value
+            .iter()
+            .any(|n| matches!(n, Node::Instruction(i, _) if f(i)))
+    };
+    let key = *var == Variable::CacheIndex && touches(touches_cache_key);
+    if touches(super::procs::touches_cache) {
+        if key {
+            compiler
+                .nodes
+                .insert(start, Node::Instruction(Instruction::PushCacheKey, ()));
+        }
         compiler
             .nodes
             .insert(start, Node::Instruction(Instruction::PushCache, ()));
+        if key {
+            compiler.emit_ins(Instruction::PopCacheKey);
+        }
         compiler.emit_ins(Instruction::PopCache);
     }
     let mut last = var;
@@ -2502,6 +2514,23 @@ fn keep_tested_place(compiler: &mut Compiler, start: usize, var: &Variable) -> V
         last = rest;
     }
     last.clone()
+}
+
+fn touches_cache_key(ins: &Instruction) -> bool {
+    fn uses(var: &Variable) -> bool {
+        match var {
+            Variable::CacheKey | Variable::CacheIndex => true,
+            Variable::SetCache(a, b) => uses(a) || uses(b),
+            Variable::Initial(v)
+            | Variable::IsSaved(v)
+            | Variable::PtrRef(v)
+            | Variable::PtrDeref(v) => uses(v),
+            _ => false,
+        }
+    }
+    let mut ins = ins.clone();
+    matches!(ins, Instruction::PushCacheKey | Instruction::PopCacheKey)
+        || super::procs::var_operand(&mut ins).is_some_and(|v| uses(v))
 }
 
 pub(super) fn emit_safe_logical_assign(
