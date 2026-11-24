@@ -3,7 +3,7 @@ use std::{
 	time::{Duration, Instant}
 };
 
-use test_support::cli::{Background, Cli, TIMEOUT};
+use test_support::cli::{self, Background, Cli, TIMEOUT};
 
 #[track_caller]
 pub fn run(pid: u64, args: &[&str], code: i32) -> String {
@@ -481,8 +481,8 @@ pub fn hold_max(pid: u64) {
 	);
 	println!("ok: held-pause expiry journal");
 
-	let out = Cli::new(pid).command(&["pause"]).env("AUXTOOLS_HOLD_MAX", "0.5").output().unwrap();
-	assert!(out.status.success(), "unexpected pause output: {}", String::from_utf8_lossy(&out.stderr));
+	let paused = cli::ran(Cli::new(pid).command(&["pause"]).env("AUXTOOLS_HOLD_MAX", "0.5"), None);
+	assert_eq!(paused.code, 0, "unexpected pause output: {}", paused.err);
 	until_running(pid);
 	run(pid, &["pause"], 0);
 	std::thread::sleep(Duration::from_secs(2));

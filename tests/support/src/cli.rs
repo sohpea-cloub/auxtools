@@ -35,27 +35,82 @@ impl Ran {
 	}
 }
 
-pub fn ran(command: &mut Command, input: Option<&str>) -> Ran {
-	let out = match input {
-		Some(input) => {
-			let mut child = command
-				.stdin(Stdio::piped())
-				.stdout(Stdio::piped())
-				.stderr(Stdio::piped())
-				.spawn()
-				.unwrap();
-			child.stdin.take().unwrap().write_all(input.as_bytes()).unwrap();
-			child.wait_with_output().unwrap()
+pub const COMMAND_LIMIT: Duration = Duration::from_secs(60);
+
+fn chunks_of(mut stream: impl Read + Send + 'static) -> mpsc::Receiver<Vec<u8>> {
+	let (sender, chunks) = mpsc::channel();
+	std::thread::spawn(move || {
+		let mut chunk = [0; 4096];
+		while let Ok(read @ 1..) = stream.read(&mut chunk) {
+			if sender.send(chunk[..read].to_vec()).is_err() {
+				return;
+			}
 		}
-		None => command.output().unwrap()
-	};
-	Ran {
-		code: out.status.code().unwrap_or(-1),
-		out: String::from_utf8_lossy(&out.stdout).into_owned(),
-		err: String::from_utf8_lossy(&out.stderr).into_owned()
+	});
+	chunks
+}
+
+fn text_of(chunks: &mpsc::Receiver<Vec<u8>>, deadline: Option<Instant>) -> String {
+	let mut bytes = Vec::new();
+	loop {
+		let chunk = match deadline {
+			Some(deadline) => chunks.recv_timeout(deadline.saturating_duration_since(Instant::now())).ok(),
+			None => chunks.recv().ok()
+		};
+		match chunk {
+			Some(chunk) => bytes.extend(chunk),
+			None => return String::from_utf8_lossy(&bytes).into_owned()
+		}
 	}
 }
 
+#[track_caller]
+pub fn ran(command: &mut Command, input: Option<&str>) -> Ran {
+	ran_within(command, input, COMMAND_LIMIT)
+}
+
+#[track_caller]
+fn ran_within(command: &mut Command, input: Option<&str>, limit: Duration) -> Ran {
+	let stdin = if input.is_some() { Stdio::piped() } else { Stdio::null() };
+	let mut child = command.stdin(stdin).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().unwrap();
+	if let Some(input) = input {
+		let (mut stdin, input) = (child.stdin.take().unwrap(), input.to_owned());
+		std::thread::spawn(move || stdin.write_all(input.as_bytes()));
+	}
+	let (out, err) = (chunks_of(child.stdout.take().unwrap()), chunks_of(child.stderr.take().unwrap()));
+	let deadline = Instant::now() + limit;
+	let status = loop {
+		if let Some(status) = child.try_wait().unwrap() {
+			break Some(status);
+		}
+		if Instant::now() >= deadline {
+			let _ = child.kill();
+			let _ = child.wait();
+			break None;
+		}
+		std::thread::sleep(Duration::from_millis(20));
+	};
+	let Some(status) = status else {
+		let read_until = Some(Instant::now() + Duration::from_secs(2));
+		let args: Vec<_> = command.get_args().map(|arg| arg.to_string_lossy()).collect();
+		panic!(
+			"`{} {}` was stopped after {:?}; it printed {}{}",
+			command.get_program().to_string_lossy(),
+			args.join(" "),
+			limit,
+			text_of(&out, read_until),
+			text_of(&err, read_until)
+		)
+	};
+	let (out, err) = (text_of(&out, None), text_of(&err, None));
+	Ran {
+		code: status.code().unwrap_or(-1),
+		out,
+		err
+	}
+}
+
+#[track_caller]
 pub fn launcher_command(args: &[&str]) -> (i32, String) {
 	let ran = ran(&mut auxtools(args), None);
 	(ran.code, ran.printed())
@@ -74,6 +129,7 @@ impl Cli {
 		command
 	}
 
+	#[track_caller]
 	pub fn ran(&self, args: &[&str], input: Option<&str>) -> Ran {
 		ran(&mut self.command(args), input)
 	}
@@ -217,8 +273,8 @@ impl Background {
 }
 
 pub fn listed_worlds() -> Vec<Value> {
-	let list = auxtools(["list", "--json"]).output().unwrap();
-	let worlds: Value = serde_json::from_slice(&list.stdout).unwrap();
+	let list = ran(&mut auxtools(["list", "--json"]), None);
+	let worlds: Value = serde_json::from_str(&list.out).unwrap();
 	let plain = |path: &str| path.replace('\\', "/").to_lowercase();
 	let here = plain(&std::env::current_dir().unwrap().to_string_lossy());
 	let made = format!("-{}/", std::process::id());
@@ -268,6 +324,28 @@ mod tests {
 		let ran = ran(&mut printing(&[("said", true), ("printed", false)], 4), None);
 		assert_eq!((ran.code, ran.out.trim(), ran.err.trim()), (4, "printed", "said"));
 		assert_eq!(ran.printed().split_whitespace().collect::<Vec<_>>(), ["printed", "said"]);
+	}
+
+	#[test]
+	fn a_command_past_its_limit_is_stopped_and_named() {
+		let mut command = if cfg!(windows) {
+			let mut command = Command::new("cmd");
+			command.args(["/C", "echo started&& ping -n 30 127.0.0.1 >NUL"]);
+			command
+		} else {
+			let mut command = Command::new("sh");
+			command.args(["-c", "echo started; exec sleep 30"]);
+			command
+		};
+		let started = Instant::now();
+		let failed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| ran_within(&mut command, None, Duration::from_secs(1)))).unwrap_err();
+		let said = failed.downcast_ref::<String>().unwrap();
+		assert!(started.elapsed() < Duration::from_secs(10), "the command ran for {:?}", started.elapsed());
+		assert!(
+			said.contains("was stopped after 1s") && said.contains("started"),
+			"the failure said {}",
+			said
+		);
 	}
 
 	#[test]
