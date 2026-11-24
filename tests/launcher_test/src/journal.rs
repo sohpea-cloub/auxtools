@@ -294,6 +294,37 @@ pub fn reloads(pid: u64, code: &Path) {
 	std::fs::write(code, &source).unwrap();
 	run(pid, &["wait", "reload", "--since", &since, "--timeout", "15"], 0);
 	println!("ok: wait pause keeps its breakpoint on a statement moved into the next block");
+
+	let before = "/proc/looped()\n\tvar/total = 1\n\tfor (var/i in list(1, 2))\n\t\ttotal += i * 2 // notify\n\t\tif \
+	              (fexists(\"guard\"))\n\t\t\ttotal *= 3\n\treturn total\n\n/proc/two_loops()\n";
+	let after = "/proc/looped()\n\tvar/total = 1\n\tfor (var/i in list(1, 2))\n\t\tif (fexists(\"guard\"))\n\t\t\ttotal *= 3\n\t\t\ttotal += i * 2 \
+	             // notify\n\treturn total\n\n/proc/two_loops()\n";
+	let since = newest(pid).to_string();
+	std::fs::write(code, source.replace("/proc/two_loops()\n", before)).unwrap();
+	run(pid, &["wait", "reload", "--since", &since, "--timeout", "15"], 0);
+	let place = format!("attach_host.dm:{}", crate::line_of(code, "\t\ttotal += i * 2 // notify"));
+	let waiting = wait_at(pid, &place);
+	let since = newest(pid).to_string();
+	std::fs::write(code, source.replace("/proc/two_loops()\n", after)).unwrap();
+	run(pid, &["wait", "reload", "--since", &since, "--timeout", "15"], 0);
+	run(pid, &["eval", "--spawn", "looped()"], 0);
+	rounds_pass(pid, 2);
+	std::fs::write(&guard, "yes").unwrap();
+	run(pid, &["eval", "--spawn", "looped()"], 0);
+	let (exit, printed) = waiting.finish();
+	let line = crate::line_of(code, "\t\t\ttotal += i * 2 // notify");
+	assert!(
+		exit == 0 && printed.contains(&format!("#0 /looped  attach_host.dm:{}\n", line)),
+		"wait pause on a statement moved to the end of a loop's body gave {}: {}",
+		exit,
+		printed
+	);
+	run(pid, &["continue"], 0);
+	std::fs::remove_file(&guard).unwrap();
+	let since = newest(pid).to_string();
+	std::fs::write(code, &source).unwrap();
+	run(pid, &["wait", "reload", "--since", &since, "--timeout", "15"], 0);
+	println!("ok: wait pause keeps its breakpoint on a statement moved to the end of a loop's body");
 }
 
 pub fn reboot(pid: u64, dir: &Path) {
