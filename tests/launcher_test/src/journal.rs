@@ -263,6 +263,37 @@ pub fn reloads(pid: u64, code: &Path) {
 	std::fs::write(code, &source).unwrap();
 	run(pid, &["wait", "reload", "--since", &since, "--timeout", "15"], 0);
 	println!("ok: wait pause keeps its breakpoint on a statement put under a condition");
+
+	let before =
+		"/proc/notified()\n\tvar/total = 1\n\ttotal += 2 // notify\n\tif (fexists(\"guard\"))\n\t\ttotal *= 3\n\treturn total\n\n/proc/two_loops()\n";
+	let after = "/proc/notified()\n\tvar/total = 1\n\tif (fexists(\"guard\"))\n\t\ttotal *= 3\n\t\ttotal += 2 // notify\n\treturn \
+	             total\n\n/proc/two_loops()\n";
+	let since = newest(pid).to_string();
+	std::fs::write(code, source.replace("/proc/two_loops()\n", before)).unwrap();
+	run(pid, &["wait", "reload", "--since", &since, "--timeout", "15"], 0);
+	let place = format!("attach_host.dm:{}", crate::line_of(code, "\ttotal += 2 // notify"));
+	let waiting = wait_at(pid, &place);
+	let since = newest(pid).to_string();
+	std::fs::write(code, source.replace("/proc/two_loops()\n", after)).unwrap();
+	run(pid, &["wait", "reload", "--since", &since, "--timeout", "15"], 0);
+	run(pid, &["eval", "--spawn", "notified()"], 0);
+	rounds_pass(pid, 2);
+	std::fs::write(&guard, "yes").unwrap();
+	run(pid, &["eval", "--spawn", "notified()"], 0);
+	let (exit, printed) = waiting.finish();
+	let line = crate::line_of(code, "\t\ttotal += 2 // notify");
+	assert!(
+		exit == 0 && printed.contains(&format!("#0 /notified  attach_host.dm:{}\n", line)),
+		"wait pause on a statement moved into the next block gave {}: {}",
+		exit,
+		printed
+	);
+	run(pid, &["continue"], 0);
+	std::fs::remove_file(&guard).unwrap();
+	let since = newest(pid).to_string();
+	std::fs::write(code, &source).unwrap();
+	run(pid, &["wait", "reload", "--since", &since, "--timeout", "15"], 0);
+	println!("ok: wait pause keeps its breakpoint on a statement moved into the next block");
 }
 
 pub fn reboot(pid: u64, dir: &Path) {

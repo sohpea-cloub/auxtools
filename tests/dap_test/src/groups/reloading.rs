@@ -183,6 +183,23 @@ fn behind_the_clients_back() {
 	world.break_on(&[]);
 	ok("breakpoint on a statement put under a condition");
 
+	world.break_on(&["notify_add"]);
+	edit(
+		&mut world,
+		"stepping.dm",
+		"\tn += 5 // @notify_add\n\tif (notify_ready)\n\t\tn *= 2\n",
+		"\tif (notify_ready)\n\t\tn *= 2\n\t\tn += 5 // @notify_add\n"
+	);
+	assert_eq!(moved(&mut world), (at.line("notify_add"), true));
+	world.run_through("notify");
+	assert_eq!(world.eval_global("notify_ready = 1"), "1");
+	world.run("notify");
+	world.stop_on("breakpoint", "/sc_notify", "notify_add");
+	assert_eq!(world.local("n"), "2");
+	world.resume_through("notify");
+	world.break_on(&[]);
+	ok("breakpoint on a statement moved into the next block");
+
 	let stepping = at.file("stepping.dm");
 	world.break_on(&["leaf_1", "middle_2"]);
 	let middle_2 = at.line("middle_2");

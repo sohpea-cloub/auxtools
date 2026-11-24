@@ -42,9 +42,17 @@ impl LineMap {
 			}
 		}
 		let (old_unique, new_unique) = (unique_lines(old.iter().map(String::as_str)), unique_lines(new.iter().map(String::as_str)));
+		let (old_trimmed, new_trimmed) = (
+			unique_lines(old.iter().map(|line| line.trim())),
+			unique_lines(new.iter().map(|line| line.trim()))
+		);
 		for (i, text) in old_mid.iter().enumerate() {
-			let moved = matches[i].is_none() && old_unique.get(text.as_str()) == Some(&Some(prefix + i));
-			if let Some(&Some(now)) = new_unique.get(text.as_str()).filter(|_| moved) {
+			if matches[i].is_some() {
+				continue;
+			}
+			let trimmed = Some(text.trim()).filter(|text| !text.is_empty());
+			let now = moved_to(&old_unique, &new_unique, text, prefix + i).or_else(|| moved_to(&old_trimmed, &new_trimmed, trimmed?, prefix + i));
+			if let Some(now) = now {
 				mid[i] = now as u32;
 			}
 		}
@@ -111,6 +119,10 @@ fn unique_lines<'a>(lines: impl Iterator<Item = &'a str>) -> HashMap<&'a str, Op
 		found.entry(line).and_modify(|at| *at = None).or_insert(Some(i));
 	}
 	found
+}
+
+fn moved_to(old: &HashMap<&str, Option<usize>>, new: &HashMap<&str, Option<usize>>, text: &str, at: usize) -> Option<usize> {
+	(old.get(text) == Some(&Some(at))).then(|| new.get(text).copied().flatten()).flatten()
 }
 
 fn reindented_lines(old: &[String], new: &[String]) -> Vec<Option<usize>> {
@@ -208,6 +220,14 @@ mod tests {
 		assert_eq!(moved(new, old, &[2, 3, 4]), [2, 2, 3]);
 		let trimmed = "/proc/f()\n\tif (enabled)\n\t\tdo_work()\n\treturn\n";
 		assert_eq!(moved("/proc/f()\n\tdo_work()  \n\treturn\n", trimmed, &[2, 3]), [3, 4]);
+	}
+
+	#[test]
+	fn a_statement_moved_into_the_next_block_goes_with_its_text() {
+		let old = "/proc/f()\n\tnotify()\n\tif (ready)\n\t\tdo_work()\n\treturn\n";
+		let new = "/proc/f()\n\tif (ready)\n\t\tdo_work()\n\t\tnotify()\n\treturn\n";
+		assert_eq!(moved(old, new, &[2, 3, 4, 5]), [4, 2, 3, 5]);
+		assert_eq!(moved(new, old, &[2, 3, 4, 5]), [3, 4, 2, 5]);
 	}
 
 	#[test]
