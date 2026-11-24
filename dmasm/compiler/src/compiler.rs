@@ -1326,6 +1326,33 @@ impl<'a> Compiler<'a> {
                         }
                     }
                 }
+                if unspanned_follows
+                    .iter()
+                    .any(|f| matches!(f, Follow::StaticField(_)))
+                {
+                    let chain = Expression::Base {
+                        term: term.clone(),
+                        follow: follow.clone(),
+                    };
+                    if let Some((at, decl)) = procs::last_scoped_static(self, &chain) {
+                        let Follow::StaticField(name) = &unspanned_follows[at] else {
+                            unreachable!()
+                        };
+                        let scope = decl.ty().get().path.clone();
+                        let kind = EvalKind::Var(Variable::Global(GlobalVar::named(
+                            name.as_str().as_bytes(),
+                            Some(StaticScope::of_type(&scope)),
+                        )));
+                        let ty = procs::declared_type(self, &decl.get().var_type);
+                        self.global_field = true;
+                        return follow::emit_typed(
+                            self,
+                            unspanned_follows[at + 1..].to_vec(),
+                            kind,
+                            ty,
+                        );
+                    }
+                }
                 let (ty, after) = procs::start_type(self, &term.elem);
                 let elem_ty = match &term.elem {
                     dreammaker::ast::Term::Ident(_) | dreammaker::ast::Term::GlobalIdent(_) => {

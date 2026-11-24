@@ -3742,3 +3742,34 @@ fn a_scoped_chain_from_a_type_path_follows_the_declared_type_of_each_var() {
         code
     );
 }
+
+#[test]
+fn a_scoped_static_after_a_computed_value_is_read_alone() {
+    let types = "/datum/config\n\tvar/datum/settings/settings\n\tvar/static/own_type = 4\n\
+                 /datum/config/proc/get()\n\treturn src\n\
+                 /datum/settings\n\tvar/static/item_type = 5\n\
+                 var/datum/config/config\nvar/list/configs = list(null)\n\
+                 /proc/get_config() as /datum/config\n\treturn config\n\
+                 /proc/get_untyped()\n\treturn null\n";
+    for (body, read) in [
+        ("return get_config()::settings::item_type", "item_type"),
+        ("return configs[1]:settings::item_type", "item_type"),
+        ("return get_untyped()::item_type", "item_type"),
+        ("return config.get()::own_type", "own_type"),
+        ("return config.get()::settings::item_type", "item_type"),
+    ] {
+        let code = compile(&format!("{types}/proc/f()\n\t{body}\n"), "", "f");
+        assert!(
+            code.starts_with(&format!("GetVar global(\"{read}\")\nRet")),
+            "{}: reads more than the static:\n{}",
+            body,
+            code
+        );
+    }
+    let body = "return get_config()?.settings::item_type";
+    let code = compile(&format!("{types}/proc/f()\n\t{body}\n"), "", "f");
+    assert_has(
+        &code,
+        &["PushCache", "GetVar global(\"item_type\")", "PopCache"],
+    );
+}

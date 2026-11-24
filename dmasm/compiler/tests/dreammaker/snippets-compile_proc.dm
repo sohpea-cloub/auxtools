@@ -2578,3 +2578,31 @@ var/datum/config/config
 	return /datum/config::settings.item_type
 /proc/f3()
 	return config::settings::item_type
+// Guards: a_scoped_static_after_a_computed_value_is_read_alone (compile_proc.rs)
+/datum/config
+	var/datum/settings/settings
+	var/static/own_type = 4
+/datum/config/proc/get()
+	return src
+/datum/settings
+	var/static/item_type = 5
+var/datum/config/config
+var/list/configs = list(null)
+/proc/get_config() as /datum/config
+	return config
+/proc/get_untyped()
+	return null
+/proc/f1()
+	return get_config()::settings::item_type
+/proc/f2()
+	return configs[1]:settings::item_type
+/proc/f3()
+	return get_untyped()::item_type
+/proc/f4()
+	return config.get()::own_type
+/proc/f5()
+	return config.get()::settings::item_type
+/proc/f6()
+	return get_config()?.settings::item_type
+/proc/f7()
+	return config.settings::item_type

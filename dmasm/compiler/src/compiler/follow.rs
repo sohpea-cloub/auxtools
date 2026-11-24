@@ -346,7 +346,7 @@ pub(super) fn emit_after<'a>(
             }
 
             Follow::StaticField(ident) => {
-                let decl = ty.and_then(|t| super::procs::member_var(t, ident.as_str()));
+                let decl = super::procs::scope_var(compiler, ty, ident.as_str());
                 let static_scope = decl
                     .filter(super::procs::is_global_member)
                     .map(|d| d.ty().get().path.clone());
@@ -675,6 +675,11 @@ fn emit_safe_inner<'a>(
                     receiver_ty,
                     before,
                 )?;
+            }
+            Follow::StaticField(ident) => {
+                kind = commit_field_buffer(compiler, kind, &mut field_buffer)?;
+                let rest = std::iter::once(Follow::StaticField(ident)).chain(it.by_ref());
+                kind = emit_after(compiler, rest.collect(), kind, receiver_ty, before)?;
             }
             other => {
                 kind = commit_field_buffer(compiler, kind, &mut field_buffer)?;

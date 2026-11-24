@@ -651,6 +651,17 @@ pub(super) fn is_global_member(decl: &dreammaker::objtree::VarDeclarationRef) ->
         || (flags.is_const() && decl.get().location.file != dreammaker::FileId::BUILTINS)
 }
 
+pub(super) fn scope_var<'a>(
+    compiler: &Compiler<'a>,
+    ty: Option<TypeRef<'a>>,
+    name: &str,
+) -> Option<dreammaker::objtree::VarDeclarationRef<'a>> {
+    match ty {
+        Some(t) => member_var(t, name),
+        None => colon_var(compiler, None, name),
+    }
+}
+
 pub(super) fn static_chain<'a>(
     compiler: &Compiler<'a>,
     mut ty: Option<TypeRef<'a>>,
@@ -658,10 +669,48 @@ pub(super) fn static_chain<'a>(
 ) -> Option<dreammaker::objtree::VarDeclarationRef<'a>> {
     let (last, path) = names.split_last()?;
     for name in path {
-        let decl = member_var(ty?, name)?;
+        let decl = scope_var(compiler, ty, name)?;
         ty = declared_type(compiler, &decl.get().var_type);
     }
-    member_var(ty?, last)
+    scope_var(compiler, ty, last)
+}
+
+pub(super) fn last_scoped_static<'a>(
+    compiler: &Compiler<'a>,
+    expr: &dreammaker::ast::Expression,
+) -> Option<(usize, dreammaker::objtree::VarDeclarationRef<'a>)> {
+    use dreammaker::ast::{Expression, Follow, ListAccessKind, PropertyAccessKind};
+    let Expression::Base { follow, .. } = expr else {
+        return None;
+    };
+    let safe = follow.iter().position(|f| {
+        matches!(
+            f.elem,
+            Follow::Field(
+                PropertyAccessKind::SafeDot | PropertyAccessKind::SafeColon,
+                _
+            ) | Follow::Call(
+                PropertyAccessKind::SafeDot | PropertyAccessKind::SafeColon,
+                ..
+            ) | Follow::Index(ListAccessKind::Safe, _)
+        )
+    });
+    let (_, targets) = chain_parts(compiler, expr);
+    targets
+        .into_iter()
+        .zip(follow.iter())
+        .take(safe.unwrap_or(follow.len()))
+        .enumerate()
+        .filter_map(|(at, (target, f))| {
+            let (Some(path), Follow::StaticField(name)) = (target, &f.elem) else {
+                return None;
+            };
+            Some((
+                at,
+                compiler.proc.tree.find(&path)?.get_var_declaration(name)?,
+            ))
+        })
+        .last()
 }
 
 pub(super) fn declared_type<'a>(
@@ -799,9 +848,25 @@ pub(super) fn chain_targets(
     compiler: &Compiler,
     expr: &dreammaker::ast::Expression,
 ) -> Vec<Option<String>> {
+    use dreammaker::ast::{Expression, Follow};
+    let (head, follows) = chain_parts(compiler, expr);
+    let scoped = match expr {
+        Expression::Base { follow, .. } => follow
+            .iter()
+            .position(|f| matches!(f.elem, Follow::StaticField(_))),
+        _ => None,
+    };
+    let follows = follows.into_iter().take(scoped.unwrap_or(usize::MAX));
+    head.map(Some).into_iter().chain(follows).collect()
+}
+
+fn chain_parts(
+    compiler: &Compiler,
+    expr: &dreammaker::ast::Expression,
+) -> (Option<String>, Vec<Option<String>>) {
     use dreammaker::ast::{Expression, Follow, Term};
     let Expression::Base { term, follow } = expr else {
-        return vec![];
+        return (None, vec![]);
     };
     let global = matches!(&term.elem, Term::Ident(i) if i.as_str() == "global");
     let (mut ty, mut after) = match global {
@@ -809,6 +874,7 @@ pub(super) fn chain_targets(
         false => start_type(compiler, &term.elem),
     };
     let mut found = vec![];
+    let mut head = None;
     if let Term::Call(name, _) = &term.elem {
         let ty = compiler.proc.ty;
         if !ty.is_root()
@@ -816,7 +882,7 @@ pub(super) fn chain_targets(
                 .get_proc(name.as_str())
                 .is_some_and(|p| !p.ty().is_root())
         {
-            found.push(Some(format!("{:?}", call_var(Some(ty), name.as_str()))));
+            head = Some(format!("{:?}", call_var(Some(ty), name.as_str())));
         }
     }
     for (i, f) in follow.iter().enumerate() {
@@ -826,6 +892,15 @@ pub(super) fn chain_targets(
             Follow::Index(..) => {
                 found.push(None);
                 ty = None;
+                continue;
+            }
+            Follow::StaticField(name) => {
+                let decl = scope_var(compiler, ty, name.as_str());
+                found.push(
+                    decl.filter(is_global_member)
+                        .map(|d| d.ty().get().path.clone()),
+                );
+                ty = decl.and_then(|d| declared_type(compiler, &d.get().var_type));
                 continue;
             }
             Follow::Call(access, name, _) => {
@@ -850,7 +925,7 @@ pub(super) fn chain_targets(
         );
         ty = decl.and_then(|d| declared_type(compiler, &d.get().var_type));
     }
-    found
+    (head, found)
 }
 
 pub(super) fn resolve_proc_path(compiler: &Compiler, path: &str) -> Option<String> {
