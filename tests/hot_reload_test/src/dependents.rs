@@ -81,6 +81,18 @@ pub fn dependents(built: Built) {
 	reload(&mut watcher, &changes);
 	assert_eq!(eval(&mut client, "(new /datum/dep_counted).add(5)"), "6");
 	println!("ok: a new member var leaves code dmasm can't compile that reads a parameter of its name");
+
+	assert_eq!(eval(&mut client, "dep_qualified() + dep_dotted()"), "12");
+	let refused = refused_edit(&mut source, "dependents.dm", "DEP_QUALIFIED = 5", "DEP_QUALIFIED = 10");
+	let mut paths: Vec<&str> = refused.iter().map(|r| r.path.as_str()).collect();
+	paths.sort();
+	assert_eq!(
+		paths,
+		["/dep_dotted", "/dep_qualified"],
+		"a proc dmasm can't compile that folds a changed const as ::name or global.name isn't refused: {:?}",
+		refused
+	);
+	println!("ok: a reload is refused for a proc dmasm can't compile that folds a changed const as ::name or global.name");
 }
 
 fn refused_edit(source: &mut Source, file: &str, from: &str, to: &str) -> Vec<dmasm::reload::Refusal> {

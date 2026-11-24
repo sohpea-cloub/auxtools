@@ -1988,6 +1988,15 @@ fn folds_changed(
         }
         false
     };
+    let global_value = |s: &Snapshot, name: &str| {
+        let root = s.tree.root();
+        root.get_var_declaration(name)
+            .filter(|d| d.get().var_type.flags.is_const())
+            .and_then(|_| root.get_value(name))
+            .and_then(|v| v.constant.clone())
+    };
+    let global_changed =
+        |name: &str| consts.contains(name) && global_value(old, name) != global_value(new, name);
     let locals = retargeted::local_reads(value);
     let mut found = false;
     syntax::walk_proc(value, &mut |node| {
@@ -1998,8 +2007,14 @@ fn folds_changed(
                         && !locals.contains(&(term as *const Term as usize, name.to_string()))
                         && (binds_const(old, name) || binds_const(new, name))
                 }
+                syntax::Node::Term(Term::GlobalIdent(name)) => global_changed(name),
                 syntax::Node::Expression(Expression::Base { term, follow }) => {
                     match (&term.elem, follow.first().map(|f| &f.elem)) {
+                        (Term::Ident(global), Some(Follow::Field(_, name)))
+                            if global.as_str() == "global" =>
+                        {
+                            global_changed(name)
+                        }
                         (Term::Prefab(prefab), Some(Follow::StaticField(name)))
                             if prefab.vars.is_empty() =>
                         {

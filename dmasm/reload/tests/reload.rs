@@ -4239,6 +4239,9 @@ fn uncompiled_code_folding_a_changed_const_is_refused() {
          /proc/local(x)\n\tvar/LIMIT = 3\n{uncompiled}\treturn LIMIT + 1\n\n\
          /datum/m\n\tvar/LIMIT = 2\n\n\
          /datum/m/proc/member(x)\n{uncompiled}\treturn LIMIT + 1\n\n\
+         /datum/m/proc/qualified_member(x)\n{uncompiled}\treturn ::LIMIT + 1\n\n\
+         /proc/qualified(x)\n{uncompiled}\treturn ::LIMIT + 1\n\n\
+         /proc/dotted(x)\n{uncompiled}\treturn global.LIMIT + 1\n\n\
          /datum/c\n\tvar/const/CAP = 3\n\n\
          /datum/c/proc/capped(x)\n{uncompiled}\treturn CAP * 2\n\n\
          /proc/scoped(x)\n{uncompiled}\treturn /datum/c::CAP\n\n\
@@ -4248,7 +4251,12 @@ fn uncompiled_code_folding_a_changed_const_is_refused() {
         (
             "uncompiled-const-limit",
             before.replace("LIMIT = 5", "LIMIT = 10"),
-            &["/next"][..],
+            &[
+                "/datum/m/qualified_member",
+                "/dotted",
+                "/next",
+                "/qualified",
+            ][..],
         ),
         (
             "uncompiled-const-cap",
