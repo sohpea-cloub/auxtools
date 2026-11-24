@@ -55,3 +55,18 @@ var/const/DEP_STEP = 5
 /proc/dep_next()
 	var/last = /datum/dep_twice::f()
 	return last ? DEP_STEP + 1 : 0
+
+/datum/dep_searched/proc/speak()
+	return "searched declaration"
+
+/datum/dep_searched/speak()
+	return "searched first override"
+
+/datum/dep_searched/speak()
+	return "searched second override"
+
+/datum/dep_searched/child
+
+/proc/dep_calls_searched()
+	var/last = /datum/dep_twice::f()
+	return last ? call(new /datum/dep_searched, /datum/dep_searched/child.proc/speak)() : null

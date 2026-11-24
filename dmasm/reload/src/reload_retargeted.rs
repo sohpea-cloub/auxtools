@@ -83,6 +83,31 @@ fn type_call(s: &Snapshot, ty: &str, name: &str) -> Option<ProcKey> {
     }
 }
 
+fn declared_from(s: &Snapshot, ty: &str, kind: &str, name: &str) -> Option<String> {
+    let mut at = s.find_type(ty)?;
+    loop {
+        if at
+            .get()
+            .procs
+            .get(name)
+            .is_some_and(|p| p.declaration.is_some())
+        {
+            let ty = if at.is_root() { "" } else { &at.get().path };
+            return Some(format!("{ty}/{kind}/{name}"));
+        }
+        match at.parent_type() {
+            Some(parent) => at = parent,
+            None => break,
+        }
+    }
+    s.tree
+        .root()
+        .get()
+        .procs
+        .contains_key(name)
+        .then(|| format!("/{kind}/{name}"))
+}
+
 fn forms(ty: &str, name: &str) -> Vec<String> {
     let mut forms = vec![
         format!("{ty}/{name}"),
@@ -305,7 +330,7 @@ impl Retargeted<'_> {
         forms("", name).iter().any(|form| self.paths.contains(form))
     }
 
-    fn prefab_might_name(&self, prefab: &Prefab) -> bool {
+    fn prefab_might_name(&self, prefab: &Prefab, ty: Option<&str>) -> bool {
         let parts: Vec<(PathOp, &str)> = prefab
             .path
             .iter()
@@ -317,12 +342,26 @@ impl Retargeted<'_> {
         if !prefab.vars.is_empty() || !self.names.contains(name) {
             return false;
         }
-        if parts.iter().any(|(op, _)| *op != PathOp::Slash) {
-            return true;
-        }
         let joined = |parts: &[(PathOp, &str)]| -> String {
             parts.iter().map(|(_, part)| format!("/{part}")).collect()
         };
+        if let [types @ .., (op, kind @ ("proc" | "verb")), _] = &parts[..] {
+            if *op != PathOp::Slash && types.iter().all(|(op, _)| *op == PathOp::Slash) {
+                let from = match (types, ty) {
+                    ([], Some(ty)) => ty.to_owned(),
+                    ([], None) => return true,
+                    (types, _) => joined(types),
+                };
+                let found = |s: &Snapshot| declared_from(s, &from, kind, name);
+                return match (found(self.old), found(self.new)) {
+                    (Some(before), Some(after)) => self.before(&before) != self.after(&after),
+                    (before, after) => before != after,
+                };
+            }
+        }
+        if parts.iter().any(|(op, _)| *op != PathOp::Slash) {
+            return true;
+        }
         match parts
             .iter()
             .position(|(_, part)| *part == "proc" || *part == "verb")
@@ -475,7 +514,7 @@ impl<'r, 's> Scan<'r, 's> {
                 r.defaults.contains(name.as_str())
                     || (self.own.is_none() && r.changed_defaults.contains(name.as_str()))
             }
-            syntax::Node::Term(Term::Prefab(prefab)) => r.prefab_might_name(prefab),
+            syntax::Node::Term(Term::Prefab(prefab)) => r.prefab_might_name(prefab, self.ty),
             syntax::Node::Term(Term::Ident(name)) => self.rebinds_var(name),
             syntax::Node::Term(Term::NewMiniExpr { expr, .. }) => self.rebinds_var(&expr.ident),
             syntax::Node::Statement(statement) => {

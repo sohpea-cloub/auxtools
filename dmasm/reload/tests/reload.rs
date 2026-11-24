@@ -4257,3 +4257,18 @@ fn uncompiled_code_folding_a_changed_const_is_refused() {
         );
     }
 }
+
+#[test]
+fn uncompiled_code_naming_a_declaration_by_ancestor_search_is_not_refused() {
+    let uncompiled = "\tswitch(x)\n\t\tif(x)\n\t\t\treturn 0\n";
+    let before = format!(
+        "/datum/t/proc/f()\n\treturn 0\n\n/datum/t/f()\n\treturn 1\n\n/datum/t/f()\n\treturn 2\n\n\
+         /datum/t/child\n\n\
+         /proc/searched(x)\n{uncompiled}\treturn call(new /datum/t, /datum/t.proc/f)()\n\n\
+         /proc/from_child(x)\n{uncompiled}\treturn call(new /datum/t, /datum/t/child.proc/f)()\n\n\
+         /datum/t/child/proc/relative(x)\n{uncompiled}\treturn call(src, .proc/f)()\n"
+    );
+    let removed = before.replace("/datum/t/f()\n\treturn 1\n\n", "");
+    let changes = changes("searched-uncompiled", &before, &removed);
+    assert_eq!(reloaded(&changes), []);
+}

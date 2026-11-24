@@ -61,6 +61,11 @@ pub fn dependents(built: Built) {
 		"a proc dmasm can't compile that folds a changed const isn't refused"
 	);
 	println!("ok: a reload is refused for a proc dmasm can't compile that folds a changed const");
+
+	let changes = source.edit("dependents.dm", "/datum/dep_searched/speak()\n\treturn \"searched first override\"\n", "");
+	reload(&mut watcher, &changes);
+	assert_eq!(eval(&mut client, "dep_calls_searched()"), "\"searched declaration\"");
+	println!("ok: code dmasm can't compile that names a declaration by ancestor search stays");
 }
 
 fn refused_edit(source: &mut Source, file: &str, from: &str, to: &str) -> Vec<dmasm::reload::Refusal> {
