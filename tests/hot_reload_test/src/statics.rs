@@ -148,6 +148,20 @@ pub fn statics(built: Built) {
 	reload(&mut watcher, &changes);
 	assert_eq!(eval(&mut client, tick), "7");
 	println!("ok: an override added above another that a changed const recompiles keeps the other's static");
+
+	assert_eq!(eval(&mut client, "st_armed(1)"), "2");
+	let changes = source.edit(
+		"statics.dm",
+		"\t\treturn st_arm\n\treturn 0",
+		"\t\treturn st_arm\n\tvar/static/list/st_arm_cache = list(st_arm)\n\treturn st_arm_cache[1]"
+	);
+	reload(&mut watcher, &changes);
+	assert_eq!(
+		eval(&mut client, "\"[st_armed(0)] [st_armed(1)]\""),
+		"\"20 3\"",
+		"the new static's value from the global, and the count of the static in the block before it"
+	);
+	println!("ok: a new static's initializer reads a global when a static of its name is in a block that has ended");
 }
 
 fn declared_references(client: &mut Client, path: &str) -> (u32, u32) {

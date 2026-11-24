@@ -787,6 +787,7 @@ fn assemble_with(
 		pending,
 		new_statics,
 		known,
+		proc_locals: &added.proc_locals,
 		instances: &mut added.instances,
 		place: uses.place(),
 		error: None
@@ -3860,6 +3861,7 @@ struct ReloadEnv<'a> {
 	pending: &'a Pending,
 	new_statics: HashMap<(StaticScope, Vec<u8>), u32>,
 	known: HashMap<(StaticScope, Vec<u8>), u32>,
+	proc_locals: &'a [u32],
 	instances: &'a mut StagedInstances,
 	place: Option<(Vec<u8>, u32, u32)>,
 	error: Option<String>
@@ -3983,7 +3985,16 @@ impl dmasm::assembler::AssembleEnv for ReloadEnv<'_> {
 			return Some(id);
 		}
 
-		let candidates = variable_ids(name);
+		let mut candidates = variable_ids(name);
+		if candidates.len() > 1 {
+			let proc_locals = PROC_LOCALS.lock().unwrap();
+			let globals: Vec<u32> = (candidates.iter().copied())
+				.filter(|id| !proc_locals.contains(id) && !self.proc_locals.contains(id))
+				.collect();
+			if !globals.is_empty() {
+				candidates = globals;
+			}
+		}
 		match candidates.len() {
 			0 => {
 				self.error = Some(format!("there's no global var {} in the running world", shown));

@@ -4737,3 +4737,47 @@ fn uncompiled_code_naming_a_declaration_by_ancestor_search_is_not_refused() {
     let changes = changes("searched-uncompiled", &before, &removed);
     assert_eq!(reloaded(&changes), []);
 }
+
+fn reads_of(nodes: &[Node], name: &str) -> Vec<String> {
+    nodes
+        .iter()
+        .filter_map(|node| match node {
+            Node::Instruction(ins, ()) => Some(ins),
+            _ => None,
+        })
+        .flat_map(|ins| ins.variables())
+        .flat_map(|var| var.globals())
+        .filter(|global| global.name.0 == name.as_bytes())
+        .map(|global| format!("{}:{name}", scope(global)))
+        .collect()
+}
+
+#[test]
+fn a_new_static_reads_the_statics_in_scope_where_it_is_declared() {
+    let before = "var/seed = 20\n\n\
+                  /proc/ended(x)\n\tif (x)\n\t\tvar/static/seed = 1\n\t\tseed++\n\t\treturn seed\n\treturn 0\n\n\
+                  /proc/open(x)\n\tvar/static/seed = 1\n\tif (x)\n\t\treturn seed\n\treturn 0\n";
+    let after = before.replace(
+        "\treturn 0\n",
+        "\tvar/static/list/cache = list(seed)\n\treturn cache[1]\n",
+    );
+    let changes = changes("static-after-a-block", before, &after);
+    assert!(changes.refused.is_empty(), "{:?}", changes.refused);
+    let reboot = &changes
+        .global_init
+        .as_ref()
+        .expect("no global init")
+        .code
+        .nodes;
+    let mut reads = reads_of(reboot, "seed");
+    reads.sort();
+    assert_eq!(reads, ["/proc/open#0:seed", ":seed"]);
+    for (path, read) in [("/ended", ":seed"), ("/open", "/proc/open#0:seed")] {
+        let reload = changes.plan.reloads.iter().find(|r| r.proc.path == path);
+        let reload = reload.unwrap_or_else(|| panic!("{path} isn't compiled again"));
+        let cache = reload.statics.iter().find(|s| s.name == "cache");
+        let init = cache.and_then(|cache| cache.init.as_ref());
+        let init = init.unwrap_or_else(|| panic!("{path}: no initializer for cache"));
+        assert_eq!(reads_of(&init.nodes, "seed"), [read], "{path}");
+    }
+}

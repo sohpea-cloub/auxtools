@@ -1198,8 +1198,12 @@ impl Snapshot {
         let (_, value) = self.find(key).ok_or_else(|| no_proc(key))?;
         let compiled = self.compile(key)?;
         let (ty, _) = self.find(key).ok_or_else(|| no_proc(key))?;
+        let declared = value
+            .code
+            .as_deref()
+            .map(locals::declared)
+            .unwrap_or_default();
         let mut statics = vec![];
-        let mut earlier = vec![];
         for s in compiled.statics {
             let constant = s.value.as_ref().and_then(const_value);
             let init = match (&constant, &s.expression) {
@@ -1209,11 +1213,10 @@ impl Snapshot {
                     &s.type_path,
                     value_location(expression, value.location),
                     static_proc_path(&s.scope),
-                    &earlier,
+                    &visible_statics(&declared, &s.name, static_number(&s.scope)),
                 )?)),
                 _ => None,
             };
-            earlier.push((s.name.clone(), static_number(&s.scope)));
             statics.push(StaticVar {
                 name: s.name,
                 value: constant,
@@ -3828,6 +3831,14 @@ fn static_proc_path(scope: &StaticScope) -> Option<&str> {
         StaticScope::Proc { path, .. } => Some(path),
         _ => None,
     }
+}
+
+fn visible_statics(declared: &[locals::Declared], name: &str, nth: u32) -> Vec<(String, u32)> {
+    declared
+        .iter()
+        .position(|local| local.name == name && local.nth == nth)
+        .map(|at| locals::visible_at(declared, at))
+        .unwrap_or_default()
 }
 
 fn static_number(scope: &StaticScope) -> u32 {

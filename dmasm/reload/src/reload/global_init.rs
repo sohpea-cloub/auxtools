@@ -54,7 +54,7 @@ struct Initializer<'a> {
     constant: Option<ConstValue>,
     proc_path: Option<String>,
     proc_static_names: Vec<String>,
-    earlier: Vec<(String, u32)>,
+    visible: Vec<(String, u32)>,
     sized_list: bool,
     params: Vec<(String, String)>,
     scoped_late: bool,
@@ -99,15 +99,13 @@ impl Snapshot {
                 .iter()
                 .map(|(_, var)| var.name.as_str().to_owned())
                 .collect();
+            let declared = super::locals::declared(code);
             let mut seen: Vec<&str> = vec![];
-            let mut earlier: Vec<(String, u32)> = vec![];
             let proc_name = name;
             for (location, var) in found {
                 let name = var.name.as_str();
                 let number = seen.iter().filter(|n| **n == name).count();
                 seen.push(name);
-                let before = earlier.clone();
-                earlier.push((name.to_owned(), number as u32));
                 if var.var_type.flags.is_const() {
                     continue;
                 }
@@ -141,7 +139,7 @@ impl Snapshot {
                         constant,
                         proc_path: Some(proc_path.clone()),
                         proc_static_names: proc_static_names.clone(),
-                        earlier: before,
+                        visible: super::visible_statics(&declared, name, number as u32),
                         sized_list: false,
                         params: params.clone(),
                         scoped_late: false,
@@ -349,7 +347,7 @@ fn retargeted(
                     &init.declared,
                     value_location(expression, init.location),
                     init.proc_path.as_deref(),
-                    &init.earlier,
+                    &init.visible,
                 )
                 .ok()
             };
@@ -724,7 +722,7 @@ impl<'a> Walk<'a> {
                             constant: var_constant(var),
                             proc_path: None,
                             proc_static_names: vec![],
-                            earlier: vec![],
+                            visible: vec![],
                             sized_list: false,
                             params: vec![],
                             scoped_late: false,
@@ -865,7 +863,7 @@ impl<'a> Walk<'a> {
             constant: None,
             proc_path: None,
             proc_static_names: vec![],
-            earlier: vec![],
+            visible: vec![],
             sized_list: false,
             params: vec![],
             scoped_late: false,
@@ -993,7 +991,7 @@ impl<'a> Walk<'a> {
         let t = init.ty;
         if !global {
             if let Some(proc_path) = &init.proc_path {
-                if let Some((_, number)) = init.earlier.iter().rev().find(|(n, _)| n == name) {
+                if let Some((_, number)) = init.visible.iter().rev().find(|(n, _)| n == name) {
                     let scope = StaticScope::Proc {
                         path: proc_path.clone(),
                         nth: *number,
@@ -1523,7 +1521,7 @@ where
             &init.declared,
             location,
             init.proc_path.as_deref(),
-            &init.earlier,
+            &init.visible,
         ) {
             Ok(code) => code,
             Err(e) => {

@@ -4,6 +4,7 @@ pub struct Declared<'a> {
     pub name: &'a str,
     pub nth: u32,
     place: Vec<Step<'a>>,
+    blocks: Vec<u32>,
     pub line: u32,
 }
 
@@ -36,139 +37,149 @@ enum Step<'a> {
 }
 
 pub fn declared(block: &[Spanned<Statement>]) -> Vec<Declared<'_>> {
-    let mut out = vec![];
-    declared_in(block, &mut vec![], &mut out);
-    out
+    let mut walk = Walk::default();
+    walk.block(block);
+    walk.out
 }
 
-fn declared_in<'a>(
-    block: &'a [Spanned<Statement>],
-    place: &mut Vec<Step<'a>>,
-    out: &mut Vec<Declared<'a>>,
-) {
-    for statement in block {
-        declared_by(&statement.elem, statement.location.line, place, out);
+pub fn visible_at(declared: &[Declared], at: usize) -> Vec<(String, u32)> {
+    let here = &declared[at].blocks;
+    declared[..at]
+        .iter()
+        .filter(|local| here.starts_with(&local.blocks))
+        .map(|local| (local.name.to_owned(), local.nth))
+        .collect()
+}
+
+#[derive(Default)]
+struct Walk<'a> {
+    place: Vec<Step<'a>>,
+    blocks: Vec<u32>,
+    opened: u32,
+    out: Vec<Declared<'a>>,
+}
+
+impl<'a> Walk<'a> {
+    fn block(&mut self, block: &'a [Spanned<Statement>]) {
+        for statement in block {
+            self.statement(&statement.elem, statement.location.line);
+        }
     }
-}
 
-fn nested<'a>(
-    step: Step<'a>,
-    block: &'a [Spanned<Statement>],
-    place: &mut Vec<Step<'a>>,
-    out: &mut Vec<Declared<'a>>,
-) {
-    place.push(step);
-    declared_in(block, place, out);
-    place.pop();
-}
+    fn open(&mut self) {
+        self.blocks.push(self.opened);
+        self.opened += 1;
+    }
 
-fn declared_by<'a>(
-    statement: &'a Statement,
-    line: u32,
-    place: &mut Vec<Step<'a>>,
-    out: &mut Vec<Declared<'a>>,
-) {
-    let mut var = |var: &'a VarStatement, place: &[Step<'a>]| {
+    fn nested(&mut self, step: Step<'a>, block: &'a [Spanned<Statement>]) {
+        self.place.push(step);
+        self.open();
+        self.block(block);
+        self.blocks.pop();
+        self.place.pop();
+    }
+
+    fn var(&mut self, var: &'a VarStatement, line: u32) {
         if var.var_type.flags.is_static() || var.var_type.flags.is_const() {
             let name = var.name.as_str();
-            out.push(Declared {
+            self.out.push(Declared {
                 name,
-                nth: out.iter().filter(|had| had.name == name).count() as u32,
-                place: place.to_vec(),
+                nth: self.out.iter().filter(|had| had.name == name).count() as u32,
+                place: self.place.clone(),
+                blocks: self.blocks.clone(),
                 line,
             });
         }
-    };
-    match statement {
-        Statement::Var(one) => var(one, place),
-        Statement::Vars(all) => all.iter().for_each(|one| var(one, place)),
-        Statement::While { condition, block } => {
-            nested(Step::While(&condition.elem), block, place, out)
-        }
-        Statement::DoWhile { block, condition } => {
-            nested(Step::DoWhile(&condition.elem), block, place, out)
-        }
-        Statement::ForInfinite { block } => nested(Step::ForInfinite, block, place, out),
-        Statement::Spawn { delay, block } => nested(Step::Spawn(delay.as_ref()), block, place, out),
-        Statement::Label { name, block } => nested(Step::Label(name.as_str()), block, place, out),
-        Statement::ForList(each) => nested(
-            Step::ForList(each.name.as_str(), each.in_list.as_ref()),
-            &each.block,
-            place,
-            out,
-        ),
-        Statement::ForKeyValue(each) => nested(
-            Step::ForKeyValue(
-                each.key.as_str(),
-                each.value.as_str(),
-                each.in_list.as_ref(),
+    }
+
+    fn statement(&mut self, statement: &'a Statement, line: u32) {
+        match statement {
+            Statement::Var(one) => self.var(one, line),
+            Statement::Vars(all) => all.iter().for_each(|one| self.var(one, line)),
+            Statement::While { condition, block } => {
+                self.nested(Step::While(&condition.elem), block)
+            }
+            Statement::DoWhile { block, condition } => {
+                self.nested(Step::DoWhile(&condition.elem), block)
+            }
+            Statement::ForInfinite { block } => self.nested(Step::ForInfinite, block),
+            Statement::Spawn { delay, block } => self.nested(Step::Spawn(delay.as_ref()), block),
+            Statement::Label { name, block } => self.nested(Step::Label(name.as_str()), block),
+            Statement::ForList(each) => self.nested(
+                Step::ForList(each.name.as_str(), each.in_list.as_ref()),
+                &each.block,
             ),
-            &each.block,
-            place,
-            out,
-        ),
-        Statement::ForRange(each) => nested(
-            Step::ForRange(
-                each.name.as_str(),
-                &each.start,
-                &each.end,
-                each.step.as_ref(),
+            Statement::ForKeyValue(each) => self.nested(
+                Step::ForKeyValue(
+                    each.key.as_str(),
+                    each.value.as_str(),
+                    each.in_list.as_ref(),
+                ),
+                &each.block,
             ),
-            &each.block,
-            place,
-            out,
-        ),
-        Statement::ForLoop {
-            init,
-            test,
-            inc,
-            block,
-        } => {
-            place.push(Step::ForLoop(
-                init.as_deref(),
-                test.as_deref(),
-                inc.as_deref(),
-            ));
-            for part in init.iter().chain(inc) {
-                declared_by(part, line, place, out);
+            Statement::ForRange(each) => self.nested(
+                Step::ForRange(
+                    each.name.as_str(),
+                    &each.start,
+                    &each.end,
+                    each.step.as_ref(),
+                ),
+                &each.block,
+            ),
+            Statement::ForLoop {
+                init,
+                test,
+                inc,
+                block,
+            } => {
+                self.place.push(Step::ForLoop(
+                    init.as_deref(),
+                    test.as_deref(),
+                    inc.as_deref(),
+                ));
+                self.open();
+                for part in init.iter().chain(inc) {
+                    self.statement(part, line);
+                }
+                self.open();
+                self.block(block);
+                self.blocks.pop();
+                self.blocks.pop();
+                self.place.pop();
             }
-            declared_in(block, place, out);
-            place.pop();
+            Statement::If { arms, else_arm } => {
+                for (condition, block) in arms {
+                    self.nested(Step::If(&condition.elem), block);
+                }
+                if let Some(block) = else_arm {
+                    self.nested(
+                        Step::Else(arms.iter().map(|(condition, _)| &condition.elem).collect()),
+                        block,
+                    );
+                }
+            }
+            Statement::Switch {
+                input,
+                cases,
+                default,
+            } => {
+                for (values, block) in cases.iter() {
+                    self.nested(Step::Case(input, &values.elem), block);
+                }
+                if let Some(block) = default {
+                    self.nested(Step::Default(input), block);
+                }
+            }
+            Statement::TryCatch {
+                try_block,
+                catch_block,
+                ..
+            } => {
+                self.nested(Step::Try, try_block);
+                self.nested(Step::Catch, catch_block);
+            }
+            _ => {}
         }
-        Statement::If { arms, else_arm } => {
-            for (condition, block) in arms {
-                nested(Step::If(&condition.elem), block, place, out);
-            }
-            if let Some(block) = else_arm {
-                nested(
-                    Step::Else(arms.iter().map(|(condition, _)| &condition.elem).collect()),
-                    block,
-                    place,
-                    out,
-                );
-            }
-        }
-        Statement::Switch {
-            input,
-            cases,
-            default,
-        } => {
-            for (values, block) in cases.iter() {
-                nested(Step::Case(input, &values.elem), block, place, out);
-            }
-            if let Some(block) = default {
-                nested(Step::Default(input), block, place, out);
-            }
-        }
-        Statement::TryCatch {
-            try_block,
-            catch_block,
-            ..
-        } => {
-            nested(Step::Try, try_block, place, out);
-            nested(Step::Catch, catch_block, place, out);
-        }
-        _ => {}
     }
 }
 
