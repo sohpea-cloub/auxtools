@@ -93,6 +93,16 @@ pub fn dependents(built: Built) {
 		refused
 	);
 	println!("ok: a reload is refused for a proc dmasm can't compile that folds a changed const as ::name or global.name");
+
+	assert_eq!(eval(&mut client, "dep_change_static_handler()"), "\"changed\"");
+	let changes = source.edit(
+		"dependents.dm",
+		"/datum/dep_static_copier\n",
+		"/datum/dep_static_copier\n\tvar/static/copy = /datum/dep_static_config::handler\n"
+	);
+	reload(&mut watcher, &changes);
+	assert_eq!(eval(&mut client, "/datum/dep_static_copier::copy"), "\"changed\"");
+	println!("ok: a new static that reads a static with :: takes its value at run time");
 }
 
 fn refused_edit(source: &mut Source, file: &str, from: &str, to: &str) -> Vec<dmasm::reload::Refusal> {

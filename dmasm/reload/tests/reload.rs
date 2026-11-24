@@ -4216,6 +4216,35 @@ fn a_default_read_from_a_type_proc_default_names_the_same_proc() {
 }
 
 #[test]
+fn a_new_static_reads_a_static_s_value_at_run_time() {
+    let before = "/datum/t/proc/f()\n/datum/t/f()\n\n\
+                  /datum/config\n\tvar/static/handler = /datum/t::f()\n\tvar/plain = /datum/t::f()\n\n\
+                  /datum/user\n";
+    let after = format!(
+        "{before}\tvar/static/copy = /datum/config::handler\n\tvar/static/plain_copy = /datum/config::plain\n"
+    );
+    let changes = changes("new-static-reading-static", before, &after);
+    assert!(changes.refused.is_empty(), "{:?}", changes.refused);
+    let added = |name: &str| {
+        changes
+            .plan
+            .new_vars
+            .iter()
+            .find(|v| v.var == name)
+            .unwrap_or_else(|| panic!("{} isn't added: {:?}", name, changes.plan.new_vars))
+    };
+    let copy = added("copy");
+    let init = copy.init.as_ref().expect("copy has no code to run");
+    let code = dmasm_bytecode::format(&init.nodes);
+    assert!(code.contains("handler"), "{}", code);
+    let plain_copy = added("plain_copy");
+    assert_eq!(
+        (&plain_copy.value, plain_copy.init.is_none()),
+        (&ConstValue::Path("/datum/t/f".to_owned()), true)
+    );
+}
+
+#[test]
 fn a_static_naming_a_retargeted_path_is_given_to_a_reboot() {
     let before =
         "/datum/t/proc/f()\n\treturn 0\n\n/datum/t/f()\n\treturn 1\n\n/datum/t/f()\n\treturn 2\n\n\

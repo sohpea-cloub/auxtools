@@ -88,3 +88,13 @@ var/const/DEP_QUALIFIED = 5
 /proc/dep_dotted()
 	var/last = /datum/dep_twice::f()
 	return last ? global.DEP_QUALIFIED + 1 : 0
+
+/datum/dep_static_config
+	var/static/handler = /datum/dep_called::f()
+
+/datum/dep_static_copier
+
+/proc/dep_change_static_handler()
+	var/datum/dep_static_config/config = new
+	config.handler = "changed"
+	return config.handler

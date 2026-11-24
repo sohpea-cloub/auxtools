@@ -972,12 +972,19 @@ pub fn resolve_proc_references(tree: &mut ObjectTree) {
                     });
                     found.push((ty.index(), var_name.clone(), constant));
                 }
-                Follow::StaticField(name) => reads.push((
-                    ty.index(),
-                    var_name.clone(),
-                    on.get().path.clone(),
-                    name.clone(),
-                )),
+                Follow::StaticField(name)
+                    if !on.get_var_declaration(name.as_str()).is_some_and(|d| {
+                        let flags = d.get().var_type.flags;
+                        flags.is_static() && !flags.is_const()
+                    }) =>
+                {
+                    reads.push((
+                        ty.index(),
+                        var_name.clone(),
+                        on.get().path.clone(),
+                        name.clone(),
+                    ))
+                }
                 _ => {}
             }
         }
