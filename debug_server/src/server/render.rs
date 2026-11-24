@@ -19,7 +19,7 @@ impl Pausing {
 				let locals = values::frame_locals(frame).into_iter();
 				Ok(locals.map(|(name, value)| (name, value.clone())).collect())
 			}
-			Variables::Globals | Variables::Builtins => {
+			Variables::Globals { .. } | Variables::Builtins => {
 				let builtin = matches!(container, Variables::Builtins);
 				let builtins = values::builtin_constants();
 				let names = List::from_value(&unsafe { Value::new(ValueTag::GlobalVars, ValueData { id: 0 }) }).map_err(|e| e.message)?;
@@ -37,7 +37,7 @@ impl Pausing {
 				values.sort_by_key(|(name, _)| name.to_lowercase());
 				Ok(values)
 			}
-			Variables::ObjectVars(object, _) => Ok(object_values(&object)),
+			Variables::ObjectVars(object, ..) => Ok(object_values(&object)),
 			_ => Err("rendering supports frame variables, globals and object variables".to_owned())
 		}
 	}

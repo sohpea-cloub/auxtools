@@ -268,6 +268,27 @@ fn setting(world: &mut World, version: u64) {
 	ok("stale assignment references");
 }
 
+fn setting_in_a_caller(world: &mut World) {
+	let caller = world.frames(0)[1]["id"].clone();
+	let locals = world.scope(&caller, "Locals");
+	let locals = world.variables(&locals);
+	let s = locals.iter().find(|v| v["name"] == "s").unwrap()["variablesReference"].clone();
+	assert_eq!(set(world, &s, "n", "amount")["value"], "2");
+	assert_eq!(world.eval("n"), "2");
+	let fields = world.variables(&s);
+	let items = fields.iter().find(|v| v["name"] == "items").unwrap()["variablesReference"].clone();
+	assert_eq!(set(world, &items, "[1]", "amount")["value"], "2");
+	assert_eq!(world.eval("items[1]"), "2");
+	let evaluated = world.evaluate_in(&caller, "s", "repl")["variablesReference"].clone();
+	assert_eq!(set(world, &evaluated, "n", "amount + 10")["value"], "12");
+	let globals = world.scope(&caller, "Globals");
+	assert_eq!(set(world, &globals, "global_number", "amount")["value"], "2");
+	assert_eq!(world.eval("global_number"), "2");
+	set(world, &globals, "global_number", "5");
+	set(world, &s, "n", "1");
+	ok("assignment in a caller's frame");
+}
+
 fn byond_version(world: &mut World) -> u64 {
 	world.eval_global("world.byond_version").parse().unwrap()
 }
@@ -552,7 +573,9 @@ pub fn run() {
 	let list = world.variable("Locals", "local_list");
 	assert_eq!(list["value"], "/list {len = 4}");
 	assert_eq!(world.children(&list)[3], ("[4]".to_owned(), "40".to_owned()));
-	world.resume_through("inside");
 	ok("list mutation reflected in inspection");
+
+	setting_in_a_caller(&mut world);
+	world.resume_through("inside");
 	world.end();
 }

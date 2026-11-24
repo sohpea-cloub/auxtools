@@ -662,7 +662,7 @@ impl Server {
 		let response = value
 			.map(|result| EvalResponse {
 				value: values::stringify(&result),
-				variables: self.pause.value_to_variables_ref(&result, reached),
+				variables: self.pause.value_to_variables_ref(&result, reached, frame_id),
 				kind: values::kind(&result),
 				entries: values::entries(&result)
 			})
@@ -689,7 +689,7 @@ impl Server {
 				value
 					.map(|result| EvalResponse {
 						value: values::stringify(&result),
-						variables: self.pause.value_to_variables_ref(&result, None),
+						variables: self.pause.value_to_variables_ref(&result, None, None),
 						kind: values::kind(&result),
 						entries: values::entries(&result)
 					})

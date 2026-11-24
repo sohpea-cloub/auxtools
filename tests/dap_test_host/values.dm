@@ -69,6 +69,7 @@
 
 /datum/thing/proc/inside(by)
 	var/list/local_list = list(10, 20, 30)
+	var/amount = 1
 	n += by // @inside_stop
 	return local_list
 
@@ -76,6 +77,7 @@
 	var/datum/thing/sub/s = new("S")
 	s.items = list("x", "y")
 	var/in_caller = 77
+	var/amount = 2
 	s.inside(4)
 	return in_caller
 

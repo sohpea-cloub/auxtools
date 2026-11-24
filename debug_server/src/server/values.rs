@@ -10,16 +10,30 @@ pub(super) enum Variables {
 	Locals {
 		frame: u32
 	},
-	Globals,
+	Globals {
+		frame: u32
+	},
 	Builtins,
-	ObjectVars(Value, Option<String>),
-	ListContents(Value, Option<String>),
+	ObjectVars(Value, Option<String>, Option<u32>),
+	ListContents(Value, Option<String>, Option<u32>),
 	ListPair {
 		key: Value,
 		of: Value,
-		entry: Option<String>
+		entry: Option<String>,
+		frame: Option<u32>
 	},
-	Pointee(Value, Option<String>)
+	Pointee(Value, Option<String>, Option<u32>)
+}
+
+impl Variables {
+	const fn frame(&self) -> Option<u32> {
+		match self {
+			Variables::Arguments { frame } | Variables::Locals { frame } | Variables::Globals { frame } => Some(*frame),
+			Variables::ObjectVars(.., frame) | Variables::ListContents(.., frame) | Variables::Pointee(.., frame) => *frame,
+			Variables::ListPair { frame, .. } => *frame,
+			Variables::Builtins => None
+		}
+	}
 }
 
 pub(crate) fn visible_locals(frame: &debug::StackFrame) -> Vec<Option<String>> {
@@ -309,7 +323,7 @@ impl Server {
 			Some(state) => Response::Scopes {
 				arguments: Some(state.get_ref(Variables::Arguments { frame: frame_id })),
 				locals: Some(state.get_ref(Variables::Locals { frame: frame_id })),
-				globals: Some(state.get_ref(Variables::Globals))
+				globals: Some(state.get_ref(Variables::Globals { frame: frame_id }))
 			},
 			None => Response::Scopes {
 				arguments: None,
@@ -405,11 +419,7 @@ impl Server {
 			.as_ref()
 			.and_then(|state| state.get_variables(vars))
 			.ok_or("variable reference expired after execution resumed")?;
-		let frame = match &container {
-			Variables::Arguments { frame } | Variables::Locals { frame } => *frame,
-			_ => 0
-		};
-		let outcome = self.eval_expr(EvalRequest::new(Some(frame), value));
+		let outcome = self.eval_expr(EvalRequest::new(container.frame(), value));
 		*notes = outcome.notes;
 		self.pause.state.as_mut().unwrap().invalidate_stacks();
 		let value = outcome.value?;
@@ -427,7 +437,7 @@ impl Server {
 		written?;
 
 		if let Variables::ListPair { entry, .. } = &container {
-			return Ok(self.pause.value_to_variable(name.to_owned(), &value, entry.clone()));
+			return Ok(self.pause.value_to_variable(name.to_owned(), &value, entry.clone(), container.frame()));
 		}
 
 		let (start, count) = match &container {
@@ -443,25 +453,25 @@ impl Server {
 }
 
 impl Pausing {
-	pub(super) fn value_to_variable(&self, name: String, value: &Value, expr: Option<String>) -> Variable {
+	pub(super) fn value_to_variable(&self, name: String, value: &Value, expr: Option<String>, frame: Option<u32>) -> Variable {
 		Variable {
 			name,
 			value: stringify(value),
-			variables: self.value_to_variables_ref(value, expr.clone()),
+			variables: self.value_to_variables_ref(value, expr.clone(), frame),
 			kind: kind(value),
 			entries: entries(value),
 			expr
 		}
 	}
 
-	pub(super) fn value_to_variables_ref(&self, value: &Value, expr: Option<String>) -> Option<VariablesRef> {
+	pub(super) fn value_to_variables_ref(&self, value: &Value, expr: Option<String>, frame: Option<u32>) -> Option<VariablesRef> {
 		match self.state.as_ref() {
-			Some(state) if List::is_list(value) => Some(state.get_ref(Variables::ListContents(value.clone(), expr))),
+			Some(state) if List::is_list(value) => Some(state.get_ref(Variables::ListContents(value.clone(), expr, frame))),
 
-			Some(state) if is_object(value) => Some(state.get_ref(Variables::ObjectVars(value.clone(), expr))),
+			Some(state) if is_object(value) => Some(state.get_ref(Variables::ObjectVars(value.clone(), expr, frame))),
 
 			Some(state) if value.raw.tag == ValueTag::Pointer && auxtools::pointer::read_raw(value).is_some() => {
-				Some(state.get_ref(Variables::Pointee(value.clone(), expr)))
+				Some(state.get_ref(Variables::Pointee(value.clone(), expr, frame)))
 			}
 
 			_ => None
@@ -472,6 +482,7 @@ impl Pausing {
 		&mut self,
 		value: &Value,
 		expr: Option<&str>,
+		frame: Option<u32>,
 		start: Option<u32>,
 		count: Option<u32>
 	) -> Result<Vec<Variable>, Runtime> {
@@ -493,7 +504,8 @@ impl Pausing {
 				variables: Some(state.get_ref(Variables::ListPair {
 					key,
 					of: Value::from(&list),
-					entry
+					entry,
+					frame
 				}))
 			}
 		};
@@ -519,19 +531,19 @@ impl Pausing {
 				continue;
 			}
 
-			variables.push(self.value_to_variable(format!("[{}]", i), &key, expr.map(|list| format!("{}[{}]", list, i))));
+			variables.push(self.value_to_variable(format!("[{}]", i), &key, expr.map(|list| format!("{}[{}]", list, i)), frame));
 		}
 
 		Ok(variables)
 	}
 
-	pub(super) fn object_to_variables(&mut self, value: &Value, expr: Option<&str>) -> Result<Vec<Variable>, Runtime> {
+	pub(super) fn object_to_variables(&mut self, value: &Value, expr: Option<&str>, frame: Option<u32>) -> Result<Vec<Variable>, Runtime> {
 		let member = |name: &str| expr.map(|object| format!("{}.{}", object, name));
 
 		if let Some(fields) = primitive_fields(value) {
 			return fields
 				.iter()
-				.map(|&name| Ok(self.value_to_variable(name.to_owned(), &value.get(StringRef::new(name)?)?, member(name))))
+				.map(|&name| Ok(self.value_to_variable(name.to_owned(), &value.get(StringRef::new(name)?)?, member(name), frame)))
 				.collect();
 		}
 
@@ -544,7 +556,7 @@ impl Pausing {
 			let name = vars.get(i)?.as_string()?;
 			let value = value.get(StringRef::new(name.as_str())?)?;
 			let expr = member(&name);
-			let variable = self.value_to_variable(name, &value, expr);
+			let variable = self.value_to_variable(name, &value, expr, frame);
 			if variable.name == "type" {
 				listed_first.push(variable);
 			} else {
@@ -558,7 +570,7 @@ impl Pausing {
 		Ok(listed_first)
 	}
 
-	pub(super) fn globals_to_variables(&mut self, builtin: bool) -> Result<Vec<Variable>, Runtime> {
+	pub(super) fn globals_to_variables(&mut self, builtin: bool, frame: Option<u32>) -> Result<Vec<Variable>, Runtime> {
 		let names = List::from_value(&unsafe { Value::new(ValueTag::GlobalVars, ValueData { id: 0 }) })?;
 		let builtins = builtin_constants();
 
@@ -572,7 +584,7 @@ impl Pausing {
 			}
 			let value = Value::GLOBAL.get(StringRef::new(name.as_str())?)?;
 			let expr = format!("global.{}", name);
-			variables.push(self.value_to_variable(name, &value, Some(expr)));
+			variables.push(self.value_to_variable(name, &value, Some(expr), frame));
 		}
 		variables.sort_by_key(|a| a.name.to_lowercase());
 
@@ -595,7 +607,7 @@ impl Pausing {
 		};
 		frame_arguments(frame)
 			.into_iter()
-			.map(|(name, expr, value)| self.value_to_variable(name, value, Some(expr)))
+			.map(|(name, expr, value)| self.value_to_variable(name, value, Some(expr), Some(frame_index)))
 			.collect()
 	}
 
@@ -605,7 +617,7 @@ impl Pausing {
 		};
 		frame_locals(frame)
 			.into_iter()
-			.map(|(name, value)| self.value_to_variable(name.clone(), value, Some(name)))
+			.map(|(name, value)| self.value_to_variable(name.clone(), value, Some(name), Some(frame_index)))
 			.collect()
 	}
 
@@ -613,19 +625,19 @@ impl Pausing {
 		match container {
 			Variables::Arguments { frame } => Ok(self.get_args(frame)),
 			Variables::Locals { frame } => Ok(self.get_locals(frame)),
-			Variables::Globals => self.globals_to_variables(false),
-			Variables::Builtins => self.globals_to_variables(true),
-			Variables::ObjectVars(value, expr) => self.object_to_variables(&value, expr.as_deref()),
-			Variables::ListContents(value, expr) => self.list_to_variables(&value, expr.as_deref(), start, count),
-			Variables::ListPair { key, of, entry } => {
+			Variables::Globals { frame } => self.globals_to_variables(false, Some(frame)),
+			Variables::Builtins => self.globals_to_variables(true, None),
+			Variables::ObjectVars(value, expr, frame) => self.object_to_variables(&value, expr.as_deref(), frame),
+			Variables::ListContents(value, expr, frame) => self.list_to_variables(&value, expr.as_deref(), frame, start, count),
+			Variables::ListPair { key, of, entry, frame } => {
 				let value = List::from_value(&of)?.get(&key)?;
 				Ok(vec![
-					self.value_to_variable("key".to_owned(), &key, None),
-					self.value_to_variable("value".to_owned(), &value, entry),
+					self.value_to_variable("key".to_owned(), &key, None, frame),
+					self.value_to_variable("value".to_owned(), &value, entry, frame),
 				])
 			}
-			Variables::Pointee(pointer, expr) => Ok(match auxtools::pointer::read(&pointer) {
-				Some(named) => vec![self.value_to_variable("*".to_owned(), &named, expr.map(|pointer| format!("*{}", pointer)))],
+			Variables::Pointee(pointer, expr, frame) => Ok(match auxtools::pointer::read(&pointer) {
+				Some(named) => vec![self.value_to_variable("*".to_owned(), &named, expr.map(|pointer| format!("*{}", pointer)), frame)],
 				None => vec![]
 			})
 		}
@@ -674,11 +686,11 @@ impl Pausing {
 				Ok(())
 			}
 
-			Variables::Globals => Value::GLOBAL.set(StringRef::new(name).map_err(runtime)?, value).map_err(runtime),
+			Variables::Globals { .. } => Value::GLOBAL.set(StringRef::new(name).map_err(runtime)?, value).map_err(runtime),
 			Variables::Builtins => Err("BYOND's constants can't be changed".to_owned()),
-			Variables::ObjectVars(object, _) => object.set(StringRef::new(name).map_err(runtime)?, value).map_err(runtime),
+			Variables::ObjectVars(object, ..) => object.set(StringRef::new(name).map_err(runtime)?, value).map_err(runtime),
 
-			Variables::ListContents(list, _) => {
+			Variables::ListContents(list, ..) => {
 				let list = List::from_value(list).map_err(runtime)?;
 				let number = entry_number(name)
 					.filter(|&n| n <= list.len())

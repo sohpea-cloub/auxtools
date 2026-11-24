@@ -400,16 +400,16 @@ impl Server {
 						let (place, now) = Watches::slot_place(frame, slot)?;
 						Ok((place, name.clone(), now))
 					}
-					Variables::Globals => {
+					Variables::Globals { .. } => {
 						let pointer = self.pointer_to(None, &format!("global.{}", name), vec![])?;
 						pointed(pointer, name.clone())
 					}
 					Variables::Builtins => Err("BYOND's constants don't change".to_owned()),
-					Variables::ObjectVars(object, holder) => {
+					Variables::ObjectVars(object, holder, _) => {
 						let pointer = self.pointer_to(None, &format!("{}.{}", HOLDER, name), vec![(HOLDER.to_owned(), object)])?;
 						pointed(pointer, within(&holder, format!(".{}", name)))
 					}
-					Variables::ListContents(list, holder) => {
+					Variables::ListContents(list, holder, _) => {
 						let number = values::entry_number(name).ok_or_else(|| format!("the list has no entry {}", name))?;
 						let runtime = |e: Runtime| format!("runtime error: {}", e.message);
 						let entries = List::from_value(&list).map_err(runtime)?;
@@ -445,7 +445,7 @@ impl Server {
 						])?;
 						pointed(pointer, entry.unwrap_or_else(|| name.clone()))
 					}
-					Variables::Pointee(pointer, holder) => pointed(pointer, within(&holder, String::new()).trim_start_matches('*').to_owned())
+					Variables::Pointee(pointer, holder, _) => pointed(pointer, within(&holder, String::new()).trim_start_matches('*').to_owned())
 				}
 			}
 		}
