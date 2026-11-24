@@ -80,6 +80,7 @@ pub fn dependents(built: Built) {
 	let changes = source.edit("dependents.dm", "/datum/dep_counted\n\n", "/datum/dep_counted\n\tvar/dep_total = 0\n\n");
 	reload(&mut watcher, &changes);
 	assert_eq!(eval(&mut client, "(new /datum/dep_counted).add(5)"), "6");
+	assert_eq!(eval(&mut client, "(new /datum/dep_counted).add_default(5)"), "6");
 	println!("ok: a new member var leaves code dmasm can't compile that reads a parameter of its name");
 
 	assert_eq!(eval(&mut client, "dep_qualified() + dep_dotted()"), "12");

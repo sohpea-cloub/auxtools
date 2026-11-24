@@ -739,6 +739,9 @@ pub(super) fn local_reads(value: &ProcValue) -> HashSet<(usize, String)> {
         scopes: vec![parameters],
         reads: HashSet::new(),
     };
+    for parameter in value.parameters.iter() {
+        locals.optional(&parameter.default);
+    }
     if let Some(code) = &value.code {
         locals.block(code);
     }

@@ -79,6 +79,10 @@ var/dep_total = 100
 	var/last = /datum/dep_twice::f()
 	return last ? dep_total + 1 : 0
 
+/datum/dep_counted/proc/add_default(dep_total, limit = dep_total)
+	var/last = /datum/dep_twice::f()
+	return last ? limit + 1 : 0
+
 var/const/DEP_QUALIFIED = 5
 
 /proc/dep_qualified()

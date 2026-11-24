@@ -3972,6 +3972,7 @@ fn a_member_var_added_or_removed_takes_unqualified_uses_from_a_global() {
          /datum/t/proc/bump()\n\tcount++\n\n\
          /datum/t/proc/local()\n\tvar/count = 1\n\treturn count\n\n\
          /datum/t/proc/parameter(count, x)\n{uncompiled}\treturn count\n\n\
+         /datum/t/proc/defaulted(count, x, limit = count)\n{uncompiled}\treturn limit\n\n\
          /datum/t/proc/local_uncompiled(x)\n\tvar/count = 1\n{uncompiled}\treturn count\n\n\
          /datum/t/proc/inner(x)\n\tif(x)\n\t\tvar/count = 1\n\t\tcount++\n\tfor(var/count in list(1))\n\t\tcount++\n{uncompiled}\n\
          /datum/t/proc/outer(x)\n\tif(x)\n\t\tvar/count = 1\n\t\tcount++\n\treturn count\n\n\
