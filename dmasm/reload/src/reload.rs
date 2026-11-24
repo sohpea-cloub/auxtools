@@ -2342,13 +2342,17 @@ fn value_location(
 struct Init {
     var: String,
     on: String,
+    declared: String,
     value: dreammaker::ast::Expression,
     location: dreammaker::Location,
 }
 
 impl PartialEq for Init {
     fn eq(&self, other: &Self) -> bool {
-        self.var == other.var && self.on == other.on && self.value == other.value
+        self.var == other.var
+            && self.on == other.on
+            && self.declared == other.declared
+            && self.value == other.value
     }
 }
 
@@ -2365,8 +2369,8 @@ fn inits<'a>(t: TypeRef, memo: &'a mut HashMap<usize, Vec<Init>>) -> &'a [Init] 
                 if var.value.location.file == FileId::BUILTINS {
                     continue;
                 }
-                let flags = t
-                    .get_var_declaration(name.as_str())
+                let declaration = t.get_var_declaration(name.as_str());
+                let flags = declaration
                     .map(|d| d.get().var_type.flags)
                     .unwrap_or_default();
                 if flags.is_static() || flags.is_const() {
@@ -2379,6 +2383,9 @@ fn inits<'a>(t: TypeRef, memo: &'a mut HashMap<usize, Vec<Init>>) -> &'a [Init] 
                         list.push(Init {
                             var: name.as_str().to_owned(),
                             on: t.get().path.clone(),
+                            declared: declaration
+                                .map(|d| d.get().var_type.type_path.to_string())
+                                .unwrap_or_default(),
                             value,
                             location: var.value.location,
                         });

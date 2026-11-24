@@ -4075,3 +4075,22 @@ fn a_global_initializer_naming_a_retargeted_path_is_given_to_a_reboot() {
     let changes = changes_of("global-init-appended", before, &appended);
     assert!(changes.global_init.is_none());
 }
+
+#[test]
+fn an_implicit_new_follows_the_vars_declared_type() {
+    let before = "/datum/a\n/datum/b\n\n\
+                  /datum/holder\n\tvar/datum/a/item = new\n\n\
+                  /datum/holder/child\n\n\
+                  /datum/other\n\tvar/datum/a/item = new\n";
+    let after = before.replacen("var/datum/a/item", "var/datum/b/item", 1);
+    let changes = changes("implicit-new-retyped", before, &after);
+    assert!(changes.refused.is_empty(), "{:?}", changes.refused);
+    assert_eq!(
+        init_types(&changes),
+        ["/datum/holder", "/datum/holder/child"]
+    );
+    for init in &changes.plan.init_procs {
+        let code = dmasm_bytecode::format(&init.code.as_ref().unwrap().nodes);
+        assert!(code.contains("/datum/b"), "{}: {}", init.type_path, code);
+    }
+}

@@ -13,6 +13,8 @@ use test_support::{
 	temp::TempDir
 };
 
+mod dependents;
+
 struct Source {
 	dir: TempDir,
 	options: ParseOptions,
@@ -36,6 +38,7 @@ impl Source {
 			"hot_reload_test_host.dme",
 			"main.dm",
 			"reload.dm",
+			"dependents.dm",
 			"resources.dm",
 			"lamp.dmi",
 			"lamp_edited.dmi",
@@ -278,6 +281,7 @@ const SECTIONS: &[(&str, fn(Built))] = &[
 	("definitions", definitions),
 	("types", types),
 	("declarations", declarations),
+	("dependents", dependents::dependents),
 	("resources", resources)
 ];
 
