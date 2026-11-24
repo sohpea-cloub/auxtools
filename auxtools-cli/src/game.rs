@@ -3,7 +3,8 @@ use std::{
 	io::{BufRead, BufReader, Read},
 	path::{Path, PathBuf},
 	process::{Command, Stdio},
-	sync::Arc
+	sync::Arc,
+	thread::JoinHandle
 };
 
 pub const DEBUG_VAR: &str = "AUXTOOLS_DEBUG";
@@ -18,6 +19,7 @@ pub struct Launch<'a> {
 
 pub struct Game {
 	pid: u32,
+	threads: Vec<JoinHandle<()>>,
 	#[cfg(windows)]
 	job: windows::Job
 }
@@ -110,22 +112,22 @@ impl Game {
 				pid
 			)
 		);
-		if let Some(stdout) = child.stdout.take() {
-			relay(stdout, output.clone(), "stdout");
-		}
-		if let Some(stderr) = child.stderr.take() {
-			relay(stderr, output.clone(), "stderr");
-		}
-		std::thread::Builder::new()
-			.name("game".to_owned())
-			.spawn(move || {
-				let code = child.wait().ok().and_then(|status| status.code());
-				exited(code);
-			})
-			.map_err(|e| e.to_string())?;
+		let mut threads = vec![];
+		threads.extend(child.stdout.take().and_then(|stdout| relay(stdout, output.clone(), "stdout")));
+		threads.extend(child.stderr.take().and_then(|stderr| relay(stderr, output.clone(), "stderr")));
+		threads.push(
+			std::thread::Builder::new()
+				.name("game".to_owned())
+				.spawn(move || {
+					let code = child.wait().ok().and_then(|status| status.code());
+					exited(code);
+				})
+				.map_err(|e| e.to_string())?
+		);
 
 		Ok(Self {
 			pid,
+			threads,
 			#[cfg(windows)]
 			job
 		})
@@ -146,19 +148,28 @@ impl Game {
 	pub const fn pid(&self) -> u32 {
 		self.pid
 	}
+
+	pub fn wait(&mut self) {
+		for thread in self.threads.drain(..) {
+			let _ = thread.join();
+		}
+	}
 }
 
 type Output = Arc<dyn Fn(&'static str, String) + Send + Sync>;
 
-fn relay(stream: impl Read + Send + 'static, output: Output, category: &'static str) {
-	let _ = std::thread::Builder::new().name(format!("{} relay", category)).spawn(move || {
-		let mut reader = BufReader::new(stream);
-		let mut line = vec![];
-		while matches!(reader.read_until(b'\n', &mut line), Ok(n) if n > 0) {
-			output(category, String::from_utf8_lossy(&line).into_owned());
-			line.clear();
-		}
-	});
+fn relay(stream: impl Read + Send + 'static, output: Output, category: &'static str) -> Option<JoinHandle<()>> {
+	std::thread::Builder::new()
+		.name(format!("{} relay", category))
+		.spawn(move || {
+			let mut reader = BufReader::new(stream);
+			let mut line = vec![];
+			while matches!(reader.read_until(b'\n', &mut line), Ok(n) if n > 0) {
+				output(category, String::from_utf8_lossy(&line).into_owned());
+				line.clear();
+			}
+		})
+		.ok()
 }
 
 #[cfg(windows)]

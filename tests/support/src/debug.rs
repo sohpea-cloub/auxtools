@@ -1,7 +1,8 @@
 use std::{
-	io::{Read, Write},
+	io::Write,
 	path::Path,
 	sync::{mpsc, Arc, Mutex},
+	thread::JoinHandle,
 	time::{Duration, Instant}
 };
 
@@ -85,8 +86,7 @@ impl World {
 		loop {
 			assert!(start.elapsed() < START_TIMEOUT, "timed out connecting to debug server");
 			if let Ok(stream) = local::connect(self.game.pid()) {
-				let stream = Shared::new(stream);
-				return Client::new(Box::new(stream.clone()), Box::new(stream), false);
+				return Client::new(Shared::new(stream), false);
 			}
 			std::thread::sleep(Duration::from_millis(100));
 		}
@@ -101,8 +101,7 @@ impl World {
 				std::thread::sleep(Duration::from_millis(100));
 				continue;
 			};
-			let stream = Shared::new(stream);
-			let mut client = Client::new(Box::new(stream.clone()), Box::new(stream), watcher);
+			let mut client = Client::new(Shared::new(stream), watcher);
 			if client.try_send(&Request::Configured).is_err() {
 				std::thread::sleep(Duration::from_millis(100));
 				continue;
@@ -125,21 +124,24 @@ impl World {
 impl Drop for World {
 	fn drop(&mut self) {
 		self.game.kill();
+		self.game.wait();
 	}
 }
 
 pub struct Client {
-	writer: Box<dyn Write + Send>,
+	writer: Shared,
 	messages: mpsc::Receiver<ServerMessage>,
+	reader: Option<JoinHandle<()>>,
 	requests: Pending,
 	pub late: usize,
 	watcher: bool
 }
 
 impl Client {
-	fn new(mut reader: Box<dyn Read + Send>, writer: Box<dyn Write + Send>, watcher: bool) -> Self {
+	fn new(stream: Shared, watcher: bool) -> Self {
 		let (sender, messages) = mpsc::channel();
-		std::thread::spawn(move || {
+		let mut reader = stream.clone();
+		let reader = std::thread::spawn(move || {
 			while let Ok(message) = auxtools_protocol::read(&mut reader) {
 				if sender.send(message).is_err() {
 					return;
@@ -147,8 +149,9 @@ impl Client {
 			}
 		});
 		Self {
-			writer,
+			writer: stream,
 			messages,
+			reader: Some(reader),
 			requests: Pending::new(),
 			late: 0,
 			watcher
@@ -241,6 +244,15 @@ impl Client {
 				Ok(_) => {}
 				Err(mpsc::RecvTimeoutError::Timeout) => panic!("timed out waiting for debug server disconnect")
 			}
+		}
+	}
+}
+
+impl Drop for Client {
+	fn drop(&mut self) {
+		self.writer.hang_up();
+		if let Some(reader) = self.reader.take() {
+			let _ = reader.join();
 		}
 	}
 }
