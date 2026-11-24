@@ -246,3 +246,7 @@ var/hr_tally = 100
 /datum/dep_colon_inits
 	var/dep_colon_holder
 	var/list/limits = list(dep_colon_holder:DEP_COLON_LIST + 1)
+
+/proc/dep_colon_alone(x)
+	var/last = /datum/dep_twice::f()
+	return last ? x:DEP_COLON_ALONE : 0

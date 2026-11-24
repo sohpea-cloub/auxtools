@@ -2169,7 +2169,10 @@ fn a_declaration_that_colon_lookup_finds_instead_recompiles_its_users() {
     let code = format!(
         "/datum/a\n\tvar/const/LIMIT = 5\n\n\
          /proc/colon(x)\n\treturn x:LIMIT + 1\n\n\
-         /proc/uncompiled_colon(x)\n{uncompiled}\treturn x:LIMIT + 1\n\n"
+         /proc/uncompiled_colon(x)\n{uncompiled}\treturn x:LIMIT + 1\n\n\
+         /proc/alone(x)\n\treturn x:LIMIT\n\n\
+         /proc/uncompiled_alone(x)\n{uncompiled}\treturn x:LIMIT\n\n\
+         /proc/uncompiled_typed(datum/a/x)\n{uncompiled}\treturn x:LIMIT\n\n"
     );
     let (without, with) = ("/datum/b\n", "/datum/b\n\tvar/const/LIMIT = 9\n");
     for (name, before, after, folded) in [
@@ -2178,21 +2181,38 @@ fn a_declaration_that_colon_lookup_finds_instead_recompiles_its_users() {
         ("colon-type-removed", with, "", "PushInt 6"),
     ] {
         let changes = types_changes(name, &code, before, after);
-        let refused: Vec<&str> = changes.refused.iter().map(|r| r.path.as_str()).collect();
+        let mut refused: Vec<&str> = changes.refused.iter().map(|r| r.path.as_str()).collect();
+        refused.sort();
         assert_eq!(
             refused,
-            ["/uncompiled_colon"],
+            ["/uncompiled_alone", "/uncompiled_colon"],
             "{name}: {:?}",
             changes.refused
         );
-        let reloads: Vec<&str> = changes
+        let alone = changes
+            .refused
+            .iter()
+            .find(|r| r.path == "/uncompiled_alone");
+        assert!(
+            alone.unwrap().why.starts_with(
+                "reads a var by `x:name` that another type declares now, so it must be compiled again"
+            ),
+            "{name}: {alone:?}"
+        );
+        let mut reloads: Vec<&str> = changes
             .plan
             .reloads
             .iter()
             .map(|r| r.proc.path.as_str())
             .collect();
-        assert_eq!(reloads, ["/colon"], "{name}: {:?}", changes.plan);
-        let code = dmasm_bytecode::format(&changes.plan.reloads[0].nodes);
+        reloads.sort();
+        assert_eq!(reloads, ["/alone", "/colon"], "{name}: {:?}", changes.plan);
+        let colon = changes
+            .plan
+            .reloads
+            .iter()
+            .find(|r| r.proc.path == "/colon");
+        let code = dmasm_bytecode::format(&colon.unwrap().nodes);
         assert!(code.contains(folded), "{name}: {code}");
     }
 }

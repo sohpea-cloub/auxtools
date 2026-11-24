@@ -1584,6 +1584,34 @@ pub fn fold_in_scope(
     scope: &[InScope],
     byond: ByondVersion,
 ) -> Option<Folded> {
+    in_scope(tree, ty, scope, byond, |compiler| {
+        fold::value(compiler, expr).filter(|v| *v != Folded::New)
+    })
+}
+
+pub fn field_globals_in_proc(
+    tree: &dreammaker::objtree::ObjectTree,
+    ty: dreammaker::objtree::TypeRef,
+    expr: &Expression,
+    locals: &[(&str, &str)],
+    byond: ByondVersion,
+) -> Vec<Option<String>> {
+    let scope: Vec<InScope> = locals
+        .iter()
+        .map(|(name, path)| InScope::Local(name, path))
+        .collect();
+    in_scope(tree, ty, &scope, byond, |compiler| {
+        procs::field_globals(compiler, expr)
+    })
+}
+
+fn in_scope<R>(
+    tree: &dreammaker::objtree::ObjectTree,
+    ty: dreammaker::objtree::TypeRef,
+    scope: &[InScope],
+    byond: ByondVersion,
+    f: impl FnOnce(&Compiler) -> R,
+) -> R {
     let value = proc_value(vec![]);
     let source = procs::ProcSource {
         tree,
@@ -1620,5 +1648,5 @@ pub fn fold_in_scope(
     }
     let mut compiler = Compiler::new(params, ctx);
     compiler.byond = byond;
-    fold::value(&compiler, expr).filter(|v| *v != Folded::New)
+    f(&compiler)
 }

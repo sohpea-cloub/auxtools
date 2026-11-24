@@ -1938,14 +1938,19 @@ fn const_users(old: &Snapshot, new: &Snapshot, realigned: &Realigned, changes: &
         let compiled = match (old.compile(&old_key), new.compile(key)) {
             (Ok(before), Ok(after)) => Some((before, after)),
             (_, after) => {
-                if !folds_changed(old, new, &new_ty.get().path, new_value, &consts) {
+                let path = &new_ty.get().path;
+                let why = if folds_changed(old, new, path, new_value, &consts) {
+                    "folds a const whose value changes"
+                } else if colon_rebinds(old, new, path, new_value, &colon_names) {
+                    "reads a var by `x:name` that another type declares now"
+                } else {
                     continue;
-                }
+                };
                 if let Err(e) = after {
                     let refusal = new.uncompiled(key, &e);
                     changes.refused.push(Refusal {
                         why: format!(
-                            "folds a const whose value changes, so it must be compiled again, but it {}",
+                            "{why}, so it must be compiled again, but it {}",
                             refusal.why
                         ),
                         ..refusal
@@ -2315,6 +2320,49 @@ fn folds_changed(
                 }
                 _ => false,
             };
+    });
+    found
+}
+
+fn colon_rebinds(
+    old: &Snapshot,
+    new: &Snapshot,
+    ty: &str,
+    value: &ProcValue,
+    names: &HashSet<&str>,
+) -> bool {
+    use dreammaker::ast::{Expression, Follow, PropertyAccessKind, Term};
+    if names.is_empty() {
+        return false;
+    }
+    let local_types = retargeted::local_read_types(value);
+    let mut found = false;
+    syntax::walk_proc(value, &mut |node| {
+        let syntax::Node::Expression(expression @ Expression::Base { term, follow }) = node else {
+            return;
+        };
+        let colon = |f: &dreammaker::ast::Spanned<Follow>| {
+            matches!(&f.elem, Follow::Field(
+                PropertyAccessKind::Colon | PropertyAccessKind::SafeColon,
+                name,
+            ) if names.contains(name.as_str()))
+        };
+        if found || !follow.iter().any(colon) {
+            return;
+        }
+        let locals: Vec<(&str, &str)> = match &term.elem {
+            Term::Ident(head) => local_types
+                .get(&(&term.elem as *const Term as usize, head.to_string()))
+                .map(|path| vec![(head.as_str(), path.as_str())])
+                .unwrap_or_default(),
+            _ => vec![],
+        };
+        let globals = |s: &Snapshot| {
+            s.find_type(ty).map(|t| {
+                crate::compiler::field_globals_in_proc(&s.tree, t, expression, &locals, s.byond)
+            })
+        };
+        found = globals(old) != globals(new);
     });
     found
 }

@@ -212,3 +212,8 @@ var/const/DEP_PARENT = 5
 	var/const/DEP_COLON_LIST = 5
 
 /datum/dep_colon_list_later
+
+/datum/dep_colon_alone_first
+	var/const/DEP_COLON_ALONE = 5
+
+/datum/dep_colon_alone_later

@@ -605,6 +605,40 @@ pub(super) fn expr_type<'a>(
     ty
 }
 
+pub(super) fn field_globals(
+    compiler: &Compiler,
+    expr: &dreammaker::ast::Expression,
+) -> Vec<Option<String>> {
+    use dreammaker::ast::{Expression, Follow, PropertyAccessKind, Term};
+    let Expression::Base { term, follow } = expr else {
+        return vec![];
+    };
+    let global = matches!(&term.elem, Term::Ident(i) if i.as_str() == "global");
+    let mut ty = match global {
+        true => None,
+        false => term_type(compiler, &term.elem),
+    };
+    let mut found = vec![];
+    for (i, f) in follow.iter().enumerate() {
+        let Follow::Field(kind, name) = &f.elem else {
+            break;
+        };
+        let decl = match kind {
+            _ if global && i == 0 => compiler.proc.tree.root().get_var_declaration(name),
+            PropertyAccessKind::Colon | PropertyAccessKind::SafeColon => {
+                colon_var(compiler, ty, name.as_str())
+            }
+            _ => ty.and_then(|t| member_var(t, name.as_str())),
+        };
+        found.push(
+            decl.filter(|d| !d.ty().is_root() && is_global_member(d))
+                .map(|d| d.ty().get().path.clone()),
+        );
+        ty = decl.and_then(|d| declared_type(compiler, &d.get().var_type));
+    }
+    found
+}
+
 pub(super) fn resolve_proc_path(compiler: &Compiler, path: &str) -> Option<String> {
     let ctx = &compiler.proc;
     let (type_part, sep, kind, name) = ["proc", "verb"].iter().find_map(|kind| {
