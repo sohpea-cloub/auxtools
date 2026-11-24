@@ -14,6 +14,8 @@ use crate::syntax;
 mod moved;
 #[path = "reload_reparent.rs"]
 mod reparent;
+#[path = "reload_retargeted.rs"]
+mod retargeted;
 use crate::{ByondVersion, Instruction, Node, StaticScope};
 pub use reparent::{Reparented, ReparentedType};
 
@@ -1705,7 +1707,9 @@ pub fn diff(old: &Snapshot, new: &Snapshot, changed_files: Option<&HashSet<PathB
         .plan
         .new_types
         .sort_by_cached_key(|t| depth(&t.path));
-    compare_inits(old, new, &mut changes);
+    let retargeted = retargeted::retargeted(old, new, &realigned, &changes);
+    compare_inits(old, new, &retargeted, &mut changes);
+    retargeted::path_defaults(new, &retargeted, &mut changes);
     for (key, type_path, name, declared, verb) in new_procs {
         let code = new.compile_reload(&key).and_then(|mut code| {
             new.compile_in_lists(&key, &mut code, |_, _| true)?;
@@ -1822,6 +1826,7 @@ pub fn diff(old: &Snapshot, new: &Snapshot, changed_files: Option<&HashSet<PathB
     const_users(old, new, &realigned, &mut changes);
     reparent::reparented_users(old, new, &realigned, &mut changes);
     moved::moved_users(old, new, &realigned, &mut changes);
+    retargeted::path_users(old, new, &realigned, &retargeted, &mut changes);
     global_init::compare(old, new, &mut changes);
     changes.collect_warnings();
     changes
@@ -2475,15 +2480,26 @@ fn type_macro_is(expression: &mut dreammaker::ast::Expression, path: &str) {
     }
 }
 
-fn compare_inits(old: &Snapshot, new: &Snapshot, changes: &mut Changes) {
+fn compare_inits(
+    old: &Snapshot,
+    new: &Snapshot,
+    retargeted: &HashSet<String>,
+    changes: &mut Changes,
+) {
     let (mut old_memo, mut new_memo) = (HashMap::new(), HashMap::new());
     for n in new.tree.iter_types() {
         if n.is_root() {
             continue;
         }
         let new_inits = inits(n, &mut new_memo).to_vec();
+        let mut unchanged = false;
         match old.find_type(&n.get().path) {
-            Some(o) if inits(o, &mut old_memo) == new_inits.as_slice() => continue,
+            Some(o) if inits(o, &mut old_memo) == new_inits.as_slice() => {
+                if !retargeted::inits_mention(&new_inits, retargeted) {
+                    continue;
+                }
+                unchanged = true;
+            }
             Some(_) => {}
             None => {
                 let mut at = n.parent_type();
@@ -2504,6 +2520,7 @@ fn compare_inits(old: &Snapshot, new: &Snapshot, changes: &mut Changes) {
             None
         } else {
             match new.compile_init(n, &new_inits) {
+                Ok(code) if unchanged && !retargeted::code_names(&code, retargeted) => continue,
                 Ok(code) => Some(code),
                 Err(e) => {
                     changes.refused.push(
@@ -3689,23 +3706,7 @@ fn var_default(
         }
     }
 
-    let mut types = vec![];
-    for ty in new.tree.iter_types() {
-        let mut at = ty;
-        loop {
-            if at.index() == n.index() {
-                types.push(ty.get().path.clone());
-                break;
-            }
-            if at.get().vars.contains_key(name) {
-                break;
-            }
-            match at.parent_type() {
-                Some(parent) => at = parent,
-                None => break,
-            }
-        }
-    }
+    let types = default_types(new, n, name);
     if builtin {
         if !BUILTIN_VARS.contains(&name) {
             changes.refused.push(
@@ -3740,6 +3741,27 @@ fn var_default(
         value,
         types,
     });
+}
+
+fn default_types(new: &Snapshot, n: TypeRef, name: &str) -> Vec<String> {
+    let mut types = vec![];
+    for ty in new.tree.iter_types() {
+        let mut at = ty;
+        loop {
+            if at.index() == n.index() {
+                types.push(ty.get().path.clone());
+                break;
+            }
+            if at.get().vars.contains_key(name) {
+                break;
+            }
+            match at.parent_type() {
+                Some(parent) => at = parent,
+                None => break,
+            }
+        }
+    }
+    types
 }
 
 const CLIENT_SETTINGS: &[&str] = &[

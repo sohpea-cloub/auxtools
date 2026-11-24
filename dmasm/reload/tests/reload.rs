@@ -3704,3 +3704,75 @@ fn changed_initializers_are_deferred_to_a_reboot() {
     let changes = changes_of("deferred-moved", before, &format!("\n\n{}", before));
     assert!(changes.deferred.is_empty(), "{:?}", changes.deferred);
 }
+
+#[test]
+fn unchanged_code_naming_a_retargeted_proc_path_is_compiled_again() {
+    let before =
+        "/datum/t/proc/f()\n\treturn 0\n\n/datum/t/f()\n\treturn 1\n\n/datum/t/f()\n\treturn 2\n\n\
+                  /proc/calls()\n\treturn call(new /datum/t, /datum/t/f)()\n\n\
+                  /proc/declared()\n\treturn call(new /datum/t, /datum/t/proc/f)()\n\n\
+                  /datum/names\n\tvar/said = /datum/t/f\n\tvar/list/all_said = list(/datum/t/f)\n\n\
+                  /datum/names/more\n";
+    let removed = before.replace("/datum/t/f()\n\treturn 1\n\n", "");
+    let changes = changes("retargeted-removed", before, &removed);
+    assert_eq!(reloaded(&changes), [key("/calls", 0)]);
+    let defaults: Vec<(&str, &[String])> = changes
+        .plan
+        .var_defaults
+        .iter()
+        .map(|d| (d.var.as_str(), d.types.as_slice()))
+        .collect();
+    assert_eq!(
+        defaults,
+        [(
+            "said",
+            &["/datum/names".to_owned(), "/datum/names/more".to_owned()][..]
+        )]
+    );
+    let inits: Vec<&str> = changes
+        .plan
+        .init_procs
+        .iter()
+        .map(|i| i.type_path.as_str())
+        .collect();
+    assert_eq!(inits, ["/datum/names", "/datum/names/more"]);
+
+    let inserted = before.replace(
+        "/datum/t/f()\n\treturn 1\n",
+        "/datum/t/f()\n\treturn 3\n\n/datum/t/f()\n\treturn 1\n",
+    );
+    let changes = changes_of("retargeted-inserted", before, &inserted);
+    assert_eq!(reloaded(&changes), [key("/calls", 0)]);
+    assert_eq!(
+        changes.plan.var_defaults.len(),
+        1,
+        "{:?}",
+        changes.plan.var_defaults
+    );
+
+    let appended = format!("{before}\n/datum/t/f()\n\treturn 4\n");
+    let changes = changes_of("retargeted-appended", before, &appended);
+    assert_eq!(reloaded(&changes), []);
+    assert!(
+        changes.plan.var_defaults.is_empty(),
+        "{:?}",
+        changes.plan.var_defaults
+    );
+    assert!(changes.plan.init_procs.is_empty());
+}
+
+#[test]
+fn uncompiled_code_naming_a_retargeted_proc_path_is_refused() {
+    let before = "/datum/t/proc/f()\n\treturn 0\n\n/datum/t/f()\n\treturn 1\n\n/datum/t/f()\n\treturn 2\n\n\
+                  /proc/calls(x)\n\tswitch(x)\n\t\tif(x)\n\t\t\treturn call(new /datum/t, /datum/t/f)()\n";
+    let removed = before.replace("/datum/t/f()\n\treturn 1\n\n", "");
+    let changes = changes("retargeted-uncompiled", before, &removed);
+    let refused: Vec<String> = changes.refused.iter().map(|r| format!("{r:#}")).collect();
+    assert_eq!(
+        refused,
+        [
+            "/calls: names a proc whose definitions change, so it must be compiled again, but it \
+          doesn't compile: unsupported statement: switch case that isn't a simple constant"
+        ]
+    );
+}

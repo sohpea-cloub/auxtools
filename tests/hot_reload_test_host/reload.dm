@@ -249,3 +249,9 @@ var/mob/helper/small/old_helper = new
 
 /datum/twice/speak()
 	return "second override"
+
+/datum/inserted/proc/speak()
+	return "declaration"
+
+/datum/inserted/speak()
+	return "old first override"

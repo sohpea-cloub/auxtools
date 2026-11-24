@@ -2102,9 +2102,31 @@ fn definitions(built: Built) {
 			"/proc/calls_twice()\n\treturn call(new /datum/twice, /datum/twice/speak)()\n\n/proc/first_def()\n"
 		)
 	]);
+	assert_eq!(eval(&mut client, "calls_twice_unchanged()"), "\"first override\"");
 	reload(&mut watcher, &changes);
 	assert_eq!(eval(&mut client, "calls_twice()"), "\"second override\"");
 	println!("ok: new code names the first override left after a removal");
+
+	assert_eq!(eval(&mut client, "calls_twice_unchanged()"), "\"second override\"");
+	assert_eq!(
+		eval(&mut client, "call(new /datum/twice, (new /datum/names_twice).said)()"),
+		"\"second override\""
+	);
+	assert_eq!(
+		eval(&mut client, "call(new /datum/twice, (new /datum/names_twice).all_said[1])()"),
+		"\"second override\""
+	);
+	println!("ok: unchanged code names the first override left after a removal");
+
+	assert_eq!(eval(&mut client, "calls_inserted_unchanged()"), "\"old first override\"");
+	let changes = source.edit(
+		"reload.dm",
+		"/datum/inserted/speak()\n\treturn \"old first override\"\n",
+		"/datum/inserted/speak()\n\treturn \"inserted override\"\n\n/datum/inserted/speak()\n\treturn \"old first override\"\n"
+	);
+	reload(&mut watcher, &changes);
+	assert_eq!(eval(&mut client, "calls_inserted_unchanged()"), "\"inserted override\"");
+	println!("ok: unchanged code names an override inserted before the first");
 }
 
 fn types(built: Built) {

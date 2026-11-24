@@ -140,3 +140,13 @@ var/datum/declared/declared_one = new
 
 /datum/early_apart/speak()
 	return "override apart"
+
+/proc/calls_twice_unchanged()
+	return call(new /datum/twice, /datum/twice/speak)()
+
+/datum/names_twice
+	var/said = /datum/twice/speak
+	var/list/all_said = list(/datum/twice/speak)
+
+/proc/calls_inserted_unchanged()
+	return call(new /datum/inserted, /datum/inserted/speak)()
