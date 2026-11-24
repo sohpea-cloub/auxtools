@@ -4407,7 +4407,10 @@ fn uncompiled_code_folding_a_changed_member_const_through_a_var_is_refused() {
          /datum/holder/proc/chained(x)\n{uncompiled}\treturn src.config.LIMIT + 1\n\n\
          /proc/untyped(config, x)\n{uncompiled}\treturn config:LIMIT + 1\n\n\
          /proc/untyped_local(x)\n\tvar/config = new /datum/config\n{uncompiled}\treturn config:LIMIT + 1\n\n\
-         /proc/other(datum/other/other, x)\n{uncompiled}\treturn other.LIMIT + 1\n"
+         /proc/other(datum/other/other, x)\n{uncompiled}\treturn other.LIMIT + 1\n\n\
+         var/datum/config/config\n\n\
+         /proc/global_chain(x)\n{uncompiled}\treturn global.config.LIMIT + 1\n\n\
+         /proc/global_chain_alone(x)\n{uncompiled}\treturn global.config.LIMIT\n"
     );
     let after = before.replace("LIMIT = 5", "LIMIT = 10");
     let changes = changes_of("uncompiled-member-const", &before, &after);
@@ -4418,6 +4421,7 @@ fn uncompiled_code_folding_a_changed_member_const_through_a_var_is_refused() {
         [
             "/datum/holder/chained",
             "/datum/holder/member",
+            "/global_chain",
             "/local",
             "/parameter",
             "/scoped",

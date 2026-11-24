@@ -172,3 +172,12 @@ var/const/DEP_OUTPUT = 5
 	var/v
 	S["v"] >> v
 	return last ? v : 0
+
+/datum/dep_global_config
+	var/const/DEP_GLOBAL_MEMBER = 5
+
+var/datum/dep_global_config/dep_global_config
+
+/proc/dep_global_chain()
+	var/last = /datum/dep_twice::f()
+	return last ? global.dep_global_config.DEP_GLOBAL_MEMBER + 1 : 0

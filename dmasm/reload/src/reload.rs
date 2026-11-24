@@ -2228,9 +2228,16 @@ fn folds_changed(
                     !alone.contains(&(term as *const Term as usize)) && global_changed(name)
                 }
                 syntax::Node::Expression(expression @ Expression::Base { term, follow }) => {
+                    let field = |f: &Spanned<Follow>| {
+                        matches!(
+                            f.elem,
+                            Follow::Field(PropertyAccessKind::Dot | PropertyAccessKind::Colon, _)
+                        )
+                    };
+                    let fields = follow.iter().take_while(|f| field(f)).count();
                     match (&term.elem, follow.first().map(|f| &f.elem)) {
                         (Term::Ident(global), Some(Follow::Field(_, name)))
-                            if global.as_str() == "global" =>
+                            if global.as_str() == "global" && fields < 2 =>
                         {
                             !read_alone(expression, 1) && global_changed(name)
                         }
@@ -2252,16 +2259,6 @@ fn folds_changed(
                                 && default(old) != default(new)
                         }
                         _ => {
-                            let field = |f: &Spanned<Follow>| {
-                                matches!(
-                                    f.elem,
-                                    Follow::Field(
-                                        PropertyAccessKind::Dot | PropertyAccessKind::Colon,
-                                        _
-                                    )
-                                )
-                            };
-                            let fields = follow.iter().take_while(|f| field(f)).count();
                             let statics = follow
                                 .iter()
                                 .take_while(|f| matches!(f.elem, Follow::StaticField(_)))
