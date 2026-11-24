@@ -72,7 +72,7 @@ pub(super) struct ProcCtx<'a> {
     pub label_iterators: std::collections::HashMap<String, u32>,
     pub bare_labels: std::collections::HashSet<String>,
     pub cleanups: Vec<Instruction>,
-    pub local_consts: std::collections::HashMap<String, dreammaker::constants::Constant>,
+    pub local_consts: std::collections::HashMap<(String, u32), dreammaker::constants::Constant>,
     pub proc_path: String,
     pub file: String,
     pub file_id: dreammaker::FileId,
@@ -835,11 +835,9 @@ fn const_lookup(
     if compiler.debugger && name == "vars" {
         return None;
     }
-    if let Some(c) = ctx.local_consts.get(name) {
-        return Some((c.clone(), false));
-    }
-    if ctx.find_static(name).is_some() {
-        return None;
+    if let Some(number) = ctx.find_static(name) {
+        let folded = ctx.local_consts.get(&(name.to_owned(), number));
+        return folded.map(|c| (c.clone(), false));
     }
     let ty = if !ctx.ty.is_root() && member_var(ctx.ty, name).is_some() {
         ctx.ty

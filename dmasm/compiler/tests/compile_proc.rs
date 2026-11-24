@@ -211,6 +211,14 @@ fn savefile_input_statement() {
 }
 
 #[test]
+fn a_block_local_const_is_folded_only_in_its_block() {
+    let src = "var/const/LIMIT = 10\n/proc/f(x)\n\tif(x)\n\t\tvar/const/LIMIT = 2\n\t\tx = LIMIT + 1\n\treturn LIMIT + 1\n";
+    let code = compile(src, "", "f");
+    assert_has(&code, &["PushInt 3", "SetVar arg(0)"]);
+    assert_has(&code, &["PushInt 11", "Ret"]);
+}
+
+#[test]
 fn same_named_static_locals_in_one_proc_are_different_globals() {
     let src = "/proc/f(a)\n\tif(a)\n\t\tvar/static/x = 1\n\t\tworld << x\n\telse\n\t\tvar/static/x = 2\n\t\tworld << x\n";
     let ctx = dreammaker::Context::default();

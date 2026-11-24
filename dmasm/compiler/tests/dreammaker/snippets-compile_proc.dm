@@ -715,6 +715,13 @@ var/gx = 1
 /proc/f(n)
 	var/list/L[n]
 	return L
+// Guards: a_block_local_const_is_folded_only_in_its_block (compile_proc.rs)
+var/const/LIMIT = 10
+/proc/f(x)
+	if(x)
+		var/const/LIMIT = 2
+		x = LIMIT + 1
+	return LIMIT + 1
 // Guards: colon_reads_the_last_type_that_declares_its_var (compile_proc.rs)
 /datum/q
 /datum/p/a

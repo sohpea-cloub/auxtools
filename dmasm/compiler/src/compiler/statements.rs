@@ -1168,11 +1168,6 @@ fn emit_var_statement(
             }
             _ => None,
         };
-        if let Some(value) = &value {
-            ctx(compiler)
-                .local_consts
-                .insert(var.name.as_str().to_owned(), value.clone());
-        }
         folded = value;
     }
     if var.var_type.flags.is_static() || var.var_type.flags.is_const() {
@@ -1185,11 +1180,17 @@ fn emit_var_statement(
                     line: 0,
                     column: 0,
                 };
-                value.simple_evaluate(nowhere).ok().or(folded)
+                value.simple_evaluate(nowhere).ok().or(folded.clone())
             }
         };
         let constant = var.var_type.flags.is_const();
-        ctx(compiler).declare_static(var.name.as_str(), ty, value, var.value.clone(), constant);
+        let name = var.name.as_str();
+        let ctx = ctx(compiler);
+        ctx.declare_static(name, ty, value, var.value.clone(), constant);
+        if let Some(folded) = folded {
+            let number = ctx.static_locals.iter().filter(|s| *s == name).count() as u32 - 1;
+            ctx.local_consts.insert((name.to_owned(), number), folded);
+        }
         return Ok(());
     }
     let ty = var.var_type.type_path.to_string();
