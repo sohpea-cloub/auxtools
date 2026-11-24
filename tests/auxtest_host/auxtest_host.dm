@@ -41,16 +41,23 @@ var/datum/weak_test_datum
 /mob/verb/auxtest_verb()
 	return
 
-/proc/auxtest_temp_savefile()
-	for (var/attempt in 1 to 5)
-		try
-			return new /savefile
-		catch
+var/savefile/auxtest_savefile
+
+/proc/auxtest_open_savefile()
+	var/name = "auxtest_[world.process].sav"
+	fdel(name)
+	auxtest_savefile = new(name)
+	return auxtest_savefile
+
+/proc/auxtest_close_savefile()
+	var/name = auxtest_savefile.name
+	del(auxtest_savefile)
+	fdel(name)
 
 /proc/auxtest_islist_samples()
 	var/mob/M = new
 	M.filters += filter(type = "blur")
-	var/savefile/F = auxtest_temp_savefile()
+	var/savefile/F = auxtest_open_savefile()
 	var/list/L = list(1, 2)
 	. = list(
 		null, 1, "string", M, /list, &L,
@@ -62,8 +69,7 @@ var/datum/weak_test_datum
 		M.filters, M.filters[1],
 		world.contents, world.vars, global.vars,
 	)
-	if (F)
-		. += list(F.dir)
+	. += list(F.dir)
 
 #if DM_VERSION >= 516
 /proc/auxtest_alist_sample()
@@ -214,6 +220,7 @@ BIG_TWINS(auxtest_big_a, auxtest_big_b)
 	ASSERT(auxtest_hooks() == TRUE)
 	auxtest_panic_is_caught(auxtest_dll)
 	ASSERT(auxtest_lists() == TRUE)
+	auxtest_close_savefile()
 	ASSERT(auxtest_procs() == TRUE)
 	ASSERT(auxtest_strings() == TRUE)
 	ASSERT(auxtest_tables() == TRUE)
