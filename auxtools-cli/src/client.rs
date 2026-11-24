@@ -4,6 +4,7 @@ use std::{
 	io,
 	ops::ControlFlow,
 	sync::mpsc::{self, Receiver, RecvTimeoutError, Sender},
+	thread::JoinHandle,
 	time::{Duration, Instant}
 };
 
@@ -38,6 +39,7 @@ enum Read {
 pub struct Client {
 	writer: Shared,
 	read: Receiver<Read>,
+	reader: Option<JoinHandle<()>>,
 	greeted: bool,
 	requests: Pending
 }
@@ -63,12 +65,13 @@ impl Client {
 		let writer = Shared::new(stream);
 		let reader = writer.clone();
 		let (sender, read) = mpsc::channel();
-		std::thread::Builder::new()
+		let reader = std::thread::Builder::new()
 			.name("world reader".to_owned())
 			.spawn(move || read_all(reader, greeted, &sender, listener))?;
 		Ok(Self {
 			writer,
 			read,
+			reader: Some(reader),
 			greeted,
 			requests: Pending::new()
 		})
@@ -169,6 +172,13 @@ impl Client {
 
 	pub fn hang_up(&self) {
 		self.writer.hang_up();
+	}
+
+	pub fn close(&mut self) {
+		self.hang_up();
+		if let Some(reader) = self.reader.take() {
+			let _ = reader.join();
+		}
 	}
 
 	pub fn closed_by(&mut self, until: Instant) -> bool {
