@@ -385,11 +385,18 @@ mod tests {
 			);
 		}
 
-		let _third = Connection::connect(&connection::world_name()).expect("listener unavailable between server instances");
+		let third = Connection::connect(&connection::world_name()).expect("listener unavailable between server instances");
 		thread::sleep(Duration::from_millis(200));
 		let mut server = Server::listen().expect("the next server couldn't listen");
 		assert!(server.recv_request(super::Wait::No).is_none());
 		assert_eq!(server.sessions.clients.len(), 1);
 		assert!(Server::listen().is_err(), "multiple active servers accepted");
+
+		let writers: Vec<_> = server.sessions.clients.values_mut().filter_map(|client| client.writer.take()).collect();
+		drop(server);
+		for writer in writers {
+			writer.join().unwrap();
+		}
+		std::mem::forget((first, second, third));
 	}
 }
