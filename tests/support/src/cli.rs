@@ -352,8 +352,9 @@ mod tests {
 		let failed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| ran_within(&mut command, None, Duration::from_secs(1)))).unwrap_err();
 		let said = failed.downcast_ref::<String>().unwrap();
 		assert!(started.elapsed() < Duration::from_secs(10), "the command ran for {:?}", started.elapsed());
+		let printed = said.split_once("; it printed ").map_or("", |(_, printed)| printed);
 		assert!(
-			said.contains("was stopped after 1s") && said.contains("started"),
+			said.contains("was stopped after 1s") && printed.contains("started"),
 			"the failure said {}",
 			said
 		);
