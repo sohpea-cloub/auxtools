@@ -2326,7 +2326,10 @@ fn a_changed_return_type_recompiles_the_callers_that_read_through_it() {
          /proc/colon(datum/factory/factory)\n\treturn factory.make():LIMIT\n\n\
          /proc/uncompiled_dot(datum/factory/factory, x)\n{uncompiled}\treturn factory.make().LIMIT\n\n\
          /proc/uncompiled_colon(datum/factory/factory, x)\n{uncompiled}\treturn factory.make():LIMIT\n\n\
-         /proc/limits()\n\tvar/static/list/limits = list(gmake().LIMIT + 1)\n\treturn limits\n\n"
+         /proc/limits()\n\tvar/static/list/limits = list(gmake().LIMIT + 1)\n\treturn limits\n\n\
+         /datum/thing/proc/gmake()\n\treturn new /datum/b\n\n\
+         /datum/thing/proc/global_call()\n\treturn ::gmake().LIMIT\n\n\
+         /datum/thing/proc/uncompiled_global(x)\n{uncompiled}\treturn ::gmake().LIMIT\n\n"
     );
     let untyped = "/datum/factory/proc/make()\n\treturn new /datum/a\n\n/proc/gmake()\n\treturn new /datum/a\n";
     let typed = untyped.replace("make()\n", "make() as /datum/a\n");
@@ -2345,20 +2348,26 @@ fn a_changed_return_type_recompiles_the_callers_that_read_through_it() {
         ),
     ] {
         let changes = types_changes(name, &code, before, after);
-        let refused: Vec<String> = changes
+        let mut refused: Vec<String> = changes
             .refused
             .iter()
             .map(|r| format!("{}: {}", r.path, r.why))
             .collect();
-        assert_eq!(refused.len(), 1, "{name}: {refused:?}");
-        assert!(
-            refused[0].starts_with(
-                "/uncompiled_dot: reads a var through a proc that is declared to return another type now, so it must be compiled again"
-            ),
-            "{}: {:?}",
-            name,
-            refused
-        );
+        refused.sort();
+        assert_eq!(refused.len(), 2, "{name}: {refused:?}");
+        for (refusal, path) in refused
+            .iter()
+            .zip(["/datum/thing/uncompiled_global", "/uncompiled_dot"])
+        {
+            assert!(
+                refusal.starts_with(&format!(
+                    "{path}: reads a var through a proc that is declared to return another type now, so it must be compiled again"
+                )),
+                "{}: {:?}",
+                name,
+                refused
+            );
+        }
         let mut reloads: Vec<&str> = changes
             .plan
             .reloads
@@ -2366,7 +2375,12 @@ fn a_changed_return_type_recompiles_the_callers_that_read_through_it() {
             .map(|r| r.proc.path.as_str())
             .collect();
         reloads.sort();
-        assert_eq!(reloads, ["/bare", "/dot"], "{name}: {:?}", changes.plan);
+        assert_eq!(
+            reloads,
+            ["/bare", "/datum/thing/global_call", "/dot"],
+            "{name}: {:?}",
+            changes.plan
+        );
         assert_eq!(
             global_init_sets(&changes),
             ["/proc/limits#0:limits @29"],

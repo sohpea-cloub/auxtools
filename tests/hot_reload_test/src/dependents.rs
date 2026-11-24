@@ -443,6 +443,21 @@ pub fn dependents(built: Built) {
 		"a proc dmasm can't compile whose make()?.name = new makes another type after the reload isn't refused"
 	);
 	println!("ok: a reload is refused for a proc dmasm can't compile whose make()?.name = new makes another type");
+
+	const GLOBAL_CALLED: &str = "\"/datum/dep_global_b 5\"";
+	assert_eq!(eval(&mut client, "(new /datum/dep_global_caller).call_global()"), GLOBAL_CALLED);
+	let changes = source.edit(
+		"dependents.dm",
+		"\treturn \"[::dep_global_make().type] ",
+		"\treturn \"[::dep_global_make().type]  "
+	);
+	reload(&mut watcher, &changes);
+	assert_eq!(
+		eval(&mut client, "(new /datum/dep_global_caller).call_global()"),
+		"\"/datum/dep_global_b  5\"",
+		"recompiled ::make() in a type with its own make() doesn't call the global proc and read by its return type"
+	);
+	println!("ok: recompiled ::make() in a type with its own make() calls the global proc and reads by its return type");
 }
 
 fn refused_edit(source: &mut Source, file: &str, from: &str, to: &str) -> Vec<dmasm::reload::Refusal> {

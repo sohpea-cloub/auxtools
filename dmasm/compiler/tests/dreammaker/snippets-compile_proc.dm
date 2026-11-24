@@ -872,6 +872,37 @@ var/const/LIMIT = 10
 	return (factory.typed()?.S = 4)
 /proc/f12(datum/factory/factory)
 	return factory.make()?.S++
+// Guards: a_global_call_calls_the_global_proc_and_reads_by_its_return_type (compile_proc.rs)
+/datum/a
+	var/const/LIMIT = 5
+	var/static/S = 1
+/datum/b
+	var/const/LIMIT = 9
+	var/static/S = 2
+/proc/make() as /datum/a
+	return new /datum/a
+/datum/thing/proc/make() as /datum/b
+	return new /datum/b
+/datum/thing/proc/f1()
+	return ::make()
+/datum/thing/proc/f2()
+	return ::make().LIMIT
+/datum/thing/proc/f3()
+	return make()
+/datum/thing/proc/f4()
+	return ::make()?.LIMIT
+/datum/thing/proc/f5()
+	return ::make().S
+/datum/thing/proc/f6()
+	::make()?.S = 3
+/datum/thing/proc/f7(a, b)
+	return ::make(a, b)
+/datum/thing/proc/f8()
+	return ::make(arglist(list(1)))
+/datum/thing/proc/f9()
+	return ::make(a = 1)
+/proc/f10()
+	return ::make().LIMIT
 // Guards: a_safe_colon_call_finds_its_proc_and_value_as_a_colon_call_does (compile_proc.rs)
 /datum/a
 	var/const/LIMIT = 5

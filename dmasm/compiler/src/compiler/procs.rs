@@ -496,6 +496,12 @@ pub(super) fn start_type<'a>(
             };
             call_result(compiler, Some(receiver), PropertyAccessKind::Dot, name)
         }
+        Term::GlobalCall(name, _) => call_result(
+            compiler,
+            Some(compiler.proc.tree.root()),
+            PropertyAccessKind::Dot,
+            name,
+        ),
         _ => (term_type(compiler, term), After::Typed),
     }
 }

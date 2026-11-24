@@ -1924,7 +1924,7 @@ pub(crate) fn colon_fields<'a>(
     follow: &'a [dreammaker::ast::Spanned<dreammaker::ast::Follow>],
 ) -> impl Iterator<Item = &'a str> {
     use dreammaker::ast::{Follow, PropertyAccessKind, Term};
-    let after_index = std::iter::once(matches!(term, Term::Call(..))).chain(
+    let after_index = std::iter::once(matches!(term, Term::Call(..) | Term::GlobalCall(..))).chain(
         follow
             .iter()
             .map(|f| matches!(f.elem, Follow::Index(..) | Follow::Call(..))),
@@ -2030,7 +2030,7 @@ fn const_users(old: &Snapshot, new: &Snapshot, realigned: &Realigned, changes: &
                     "reads a var through a var that is declared with another type now"
                 } else if !retyped.is_empty()
                     && chain_rebinds(old, new, path, new_value, |term, follow| {
-                        matches!(term, Term::Call(name, _) if retyped.contains(name.as_str()))
+                        matches!(term, Term::Call(name, _) | Term::GlobalCall(name, _) if retyped.contains(name.as_str()))
                             || follow.iter().any(|f| {
                                 matches!(&f.elem, Follow::Call(_, name, _)
                                     if retyped.contains(name.as_str()))
@@ -2040,7 +2040,7 @@ fn const_users(old: &Snapshot, new: &Snapshot, realigned: &Realigned, changes: &
                     "reads a var through a proc that is declared to return another type now"
                 } else if !retyped.is_empty()
                     && implicit_type_changes(old, new, path, new_value, |term, follow| {
-                        matches!(term, Term::Ident(name) | Term::Call(name, _)
+                        matches!(term, Term::Ident(name) | Term::Call(name, _) | Term::GlobalCall(name, _)
                             if retyped.contains(name.as_str()))
                             || follow.iter().any(|f| {
                                 matches!(&f.elem, Follow::Field(_, name) | Follow::Call(_, name, _)

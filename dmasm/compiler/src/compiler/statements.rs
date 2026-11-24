@@ -1876,7 +1876,7 @@ pub(super) fn static_place(
     };
     let follow: Vec<Follow> = follow.iter().map(|f| f.elem.clone()).collect();
     let (ty, after) = match &term.elem {
-        Term::Call(..) => super::procs::start_type(compiler, &term.elem),
+        Term::Call(..) | Term::GlobalCall(..) => super::procs::start_type(compiler, &term.elem),
         Term::Ident(name) if name.as_str() == "global" => {
             (Some(compiler.proc.tree.root()), super::procs::After::Typed)
         }

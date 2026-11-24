@@ -339,3 +339,18 @@ var/datum/dep_retype_alone_first/dep_retype_alone_target
 
 /proc/dep_implicit_make(holder) as /datum/dep_implicit_holder
 	return holder || new /datum/dep_implicit_holder
+
+/datum/dep_global_a
+	var/const/DEP_GLOBAL_LIMIT = 5
+
+/datum/dep_global_b
+	var/const/DEP_GLOBAL_LIMIT = 9
+
+/proc/dep_global_make() as /datum/dep_global_a
+	return new /datum/dep_global_b
+
+/datum/dep_global_caller/proc/dep_global_make()
+	return src
+
+/datum/dep_global_caller/proc/call_global()
+	return "[::dep_global_make().type] [::dep_global_make().DEP_GLOBAL_LIMIT]"

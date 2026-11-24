@@ -256,23 +256,23 @@ fn a_var_after_a_call_is_found_by_the_procs_return_type() {
 }
 
 fn global_scopes(src: &str) -> Vec<String> {
+    global_scopes_in(src, "")
+}
+
+fn global_scopes_in(src: &str, ty: &str) -> Vec<String> {
     let ctx = dreammaker::Context::default();
     let pp = dreammaker::Preprocessor::from_buffer(&ctx, "test.dm".into(), src.to_owned());
     let mut parser = dreammaker::Parser::new(&ctx, pp);
     parser.enable_procs();
     let tree = parser.parse_object_tree();
-    let value = tree
-        .root()
-        .get()
-        .procs
-        .get("f")
-        .unwrap()
-        .value
-        .last()
-        .unwrap();
+    let ty = match ty {
+        "" => tree.root(),
+        path => tree.find(path).expect("type"),
+    };
+    let value = ty.get().procs.get("f").unwrap().value.last().unwrap();
     let source = ProcSource {
         tree: &tree,
-        ty: tree.root(),
+        ty,
         name: "f",
         value,
         file: "test.dm",
@@ -324,6 +324,50 @@ fn a_safe_write_after_a_call_finds_its_static_as_a_read_does() {
         assert_eq!(
             global_scopes(&src),
             [format!("Some(Type(\"{}\"))", scope)],
+            "{}",
+            body
+        );
+    }
+}
+
+#[test]
+fn a_global_call_calls_the_global_proc_and_reads_by_its_return_type() {
+    let types = "/datum/a\n\tvar/const/LIMIT = 5\n\tvar/static/S = 1\n\
+                 /datum/b\n\tvar/const/LIMIT = 9\n\tvar/static/S = 2\n\
+                 /proc/make() as /datum/a\n\treturn new /datum/a\n\
+                 /datum/thing/proc/make() as /datum/b\n\treturn new /datum/b\n";
+    for (body, call) in [
+        ("return ::make()", "CallGlob 0 /proc/make"),
+        ("return ::make(1, 2)", "CallGlob 2 /proc/make"),
+        (
+            "return ::make(arglist(list(1)))",
+            "CallGlobalArgList /proc/make",
+        ),
+        ("return ::make(a = 1)", "CallGlobalArgList /proc/make"),
+        ("return ::make().LIMIT", "CallGlob 0 /proc/make"),
+    ] {
+        let code = compile(
+            &format!("{types}/datum/thing/proc/f()\n\t{body}\n"),
+            "/datum/thing",
+            "f",
+        );
+        assert_has(&code, &[call]);
+        assert!(!code.contains("dynamic_proc"), "{}: {}", body, code);
+    }
+    for (ty, body) in [
+        ("/datum/thing", "return ::make().LIMIT"),
+        ("/datum/thing", "return ::make().S"),
+        ("/datum/thing", "return ::make()?.LIMIT"),
+        ("/datum/thing", "::make()?.S = 3"),
+        ("", "return ::make().LIMIT"),
+    ] {
+        let src = match ty {
+            "" => format!("{types}/proc/f()\n\t{body}\n"),
+            ty => format!("{types}{ty}/proc/f()\n\t{body}\n"),
+        };
+        assert_eq!(
+            global_scopes_in(&src, ty),
+            ["Some(Type(\"/datum/a\"))"],
             "{}",
             body
         );
