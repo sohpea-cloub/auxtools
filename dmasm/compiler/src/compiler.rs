@@ -1280,8 +1280,34 @@ impl<'a> Compiler<'a> {
                     if prefab.vars.is_empty() && !self.debugger {
                         self.global_field = true;
                         let path = prefab.path.to_string();
-                        let kind = procs::emit_type_scope(self, &path, &unspanned_follows[0])?;
                         let ty = self.proc.tree.find(&path);
+                        let names: Vec<&str> = unspanned_follows
+                            .iter()
+                            .map_while(|f| match f {
+                                Follow::StaticField(name) => Some(name.as_str()),
+                                _ => None,
+                            })
+                            .collect();
+                        let leads_to_static = (2..=names.len()).any(|n| {
+                            procs::static_chain(self, ty, &names[..n])
+                                .is_some_and(|d| procs::is_global_member(&d))
+                        }) && !names.first().is_some_and(|name| {
+                            ty.and_then(|t| procs::member_var(t, name))
+                                .is_some_and(|d| procs::is_global_member(&d))
+                        });
+                        let kind = match leads_to_static {
+                            true => EvalKind::Global,
+                            false => procs::emit_type_scope(self, &path, &unspanned_follows[0])?,
+                        };
+                        let ty = match &unspanned_follows[0] {
+                            Follow::StaticField(name)
+                                if !["type", "parent_type"].contains(&name.as_str()) =>
+                            {
+                                ty.and_then(|t| procs::member_var(t, name.as_str()))
+                                    .and_then(|d| procs::declared_type(self, &d.get().var_type))
+                            }
+                            _ => ty,
+                        };
                         return follow::emit_typed(self, unspanned_follows[1..].to_vec(), kind, ty);
                     }
                     if let (Some(scope), Follow::ProcReference(name)) =

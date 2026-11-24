@@ -3714,3 +3714,31 @@ fn lines_read_on_are_recorded_as_dreammaker_does() {
         ["DbgLine 2", "DbgLine 3", "DbgLine 2"]
     );
 }
+
+#[test]
+fn a_scoped_chain_from_a_type_path_follows_the_declared_type_of_each_var() {
+    let types = "/datum/config\n\tvar/datum/settings/settings\n\
+                 /datum/settings\n\tvar/static/item_type = 5\n";
+    for body in [
+        "return /datum/config::settings::item_type",
+        "return /datum/config::settings.item_type",
+    ] {
+        let src = format!("{types}/proc/f()\n\t{body}\n");
+        assert_eq!(
+            global_scopes(&src),
+            ["Some(Type(\"/datum/settings\"))"],
+            "{}",
+            body
+        );
+    }
+    let code = compile(
+        &format!("{types}/proc/f()\n\treturn /datum/config::settings::item_type\n"),
+        "",
+        "f",
+    );
+    assert!(
+        code.starts_with("GetVar global(\"item_type\")"),
+        "reads more than the static:\n{}",
+        code
+    );
+}

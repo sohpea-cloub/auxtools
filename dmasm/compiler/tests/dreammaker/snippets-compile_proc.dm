@@ -2566,3 +2566,15 @@ var/g = 1
 	h?.c.m().v++
 /proc/c5_inc_v(datum/h/h, list/l, i, x)
 	return (h?.c.m().v++)
+// Guards: a_scoped_chain_from_a_type_path_follows_the_declared_type_of_each_var (compile_proc.rs)
+/datum/config
+	var/datum/settings/settings
+/datum/settings
+	var/static/item_type = 5
+var/datum/config/config
+/proc/f1()
+	return /datum/config::settings::item_type
+/proc/f2()
+	return /datum/config::settings.item_type
+/proc/f3()
+	return config::settings::item_type
