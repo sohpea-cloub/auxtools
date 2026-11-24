@@ -405,6 +405,24 @@ pub(super) fn member_var<'a>(
     ty.get_var_declaration(name).filter(|d| !d.ty().is_root())
 }
 
+pub(super) fn field_var<'a>(
+    compiler: &Compiler<'a>,
+    ty: Option<TypeRef<'a>>,
+    kind: dreammaker::ast::PropertyAccessKind,
+    name: &str,
+    after_index: bool,
+) -> Option<dreammaker::objtree::VarDeclarationRef<'a>> {
+    use dreammaker::ast::PropertyAccessKind;
+    match kind {
+        PropertyAccessKind::Scope => ty.and_then(|t| member_var(t, name)),
+        _ if after_index => colon_var(compiler, None, name),
+        PropertyAccessKind::Colon | PropertyAccessKind::SafeColon => colon_var(compiler, ty, name),
+        PropertyAccessKind::Dot | PropertyAccessKind::SafeDot => {
+            ty.and_then(|t| member_var(t, name))
+        }
+    }
+}
+
 pub(super) fn colon_var<'a>(
     compiler: &Compiler<'a>,
     ty: Option<TypeRef<'a>>,
@@ -609,7 +627,7 @@ pub(super) fn field_globals(
     compiler: &Compiler,
     expr: &dreammaker::ast::Expression,
 ) -> Vec<Option<String>> {
-    use dreammaker::ast::{Expression, Follow, PropertyAccessKind, Term};
+    use dreammaker::ast::{Expression, Follow, Term};
     let Expression::Base { term, follow } = expr else {
         return vec![];
     };
@@ -633,12 +651,7 @@ pub(super) fn field_globals(
         };
         let decl = match kind {
             _ if global && i == 0 => compiler.proc.tree.root().get_var_declaration(name),
-            PropertyAccessKind::Scope => ty.and_then(|t| member_var(t, name.as_str())),
-            _ if after_index => colon_var(compiler, None, name.as_str()),
-            PropertyAccessKind::Colon | PropertyAccessKind::SafeColon => {
-                colon_var(compiler, ty, name.as_str())
-            }
-            _ => ty.and_then(|t| member_var(t, name.as_str())),
+            _ => field_var(compiler, ty, *kind, name.as_str(), after_index),
         };
         found.push(
             decl.filter(|d| !d.ty().is_root() && is_global_member(d))

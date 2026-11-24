@@ -238,3 +238,15 @@ var/datum/dep_retype_first/dep_retype_target
 	var/const/DEP_RETYPE_ALONE = 9
 
 var/datum/dep_retype_alone_first/dep_retype_alone_target
+
+/datum/dep_safe_index_a
+	var/const/DEP_SAFE_INDEX = 5
+
+/datum/dep_safe_index_b
+	var/const/DEP_SAFE_INDEX = 9
+
+/datum/dep_safe_index_holder
+	var/list/datum/dep_safe_index_a/items = list(new /datum/dep_safe_index_a)
+
+/proc/dep_safe_index(datum/dep_safe_index_holder/holder)
+	return holder?.items[1].DEP_SAFE_INDEX

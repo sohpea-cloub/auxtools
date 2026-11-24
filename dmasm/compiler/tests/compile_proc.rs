@@ -104,6 +104,89 @@ fn colon_chain_reads_the_type_of_each_var_it_goes_through() {
 }
 
 #[test]
+fn a_safe_chain_finds_a_var_after_an_index_as_untyped_colon_finds_it() {
+    let types = "/datum/a\n\tvar/const/LIMIT = 5\n\tvar/static/S = 1\n\tvar/datum/a/link\n\
+                 /datum/b\n\tvar/const/LIMIT = 9\n\tvar/static/S = 2\n\tvar/datum/b/link\n\
+                 /datum/holder\n\tvar/list/datum/a/items\n\tvar/list/plain\n";
+    for (body, read) in [
+        ("return holder?.items[1].LIMIT", "GetVar global(\"LIMIT\")"),
+        ("return holder?.plain[1].LIMIT", "GetVar global(\"LIMIT\")"),
+        ("return holder?.items[1]:LIMIT", "GetVar global(\"LIMIT\")"),
+        ("return holder.items?[1].LIMIT", "GetVar global(\"LIMIT\")"),
+        (
+            "return holder?.plain[1].link.LIMIT",
+            "GetVar global(\"LIMIT\")",
+        ),
+        ("return holder?.items[1]?.LIMIT", "GetVar global(\"LIMIT\")"),
+        ("return holder.items[1]?.LIMIT", "GetVar global(\"LIMIT\")"),
+        (
+            "return holder?.items[1].link?.LIMIT",
+            "GetVar global(\"LIMIT\")",
+        ),
+        ("return holder?.items[1].S", "GetVar global(\"S\")"),
+        ("holder?.items[1].S = 3", "SetVar global(\"S\")"),
+        ("holder?.items[1].S++", "Inc global(\"S\")"),
+        ("holder.items[1]?.S = 3", "SetVar global(\"S\")"),
+    ] {
+        let src = format!("{types}/proc/f(datum/holder/holder)\n\t{body}\n");
+        let ctx = dreammaker::Context::default();
+        let pp = dreammaker::Preprocessor::from_buffer(&ctx, "test.dm".into(), src);
+        let mut parser = dreammaker::Parser::new(&ctx, pp);
+        parser.enable_procs();
+        let tree = parser.parse_object_tree();
+        let value = tree
+            .root()
+            .get()
+            .procs
+            .get("f")
+            .unwrap()
+            .value
+            .last()
+            .unwrap();
+        let source = ProcSource {
+            tree: &tree,
+            ty: tree.root(),
+            name: "f",
+            value,
+            file: "test.dm",
+            debug_info: false,
+            index: None,
+            byond: dmasm_compiler::ByondVersion::LATEST,
+            file_names: None,
+        };
+        let nodes = compile_proc(&source).expect("compiles").nodes;
+        let code = dmasm_bytecode::format(&nodes);
+        let lines: Vec<&str> = code.lines().map(str::trim).collect();
+        assert!(
+            lines.contains(&"ListGet") && lines.contains(&read),
+            "{}: no ListGet and {} in {:?}",
+            body,
+            read,
+            lines
+        );
+        let scopes: Vec<String> = nodes
+            .iter()
+            .filter_map(|node| match node {
+                Node::Instruction(
+                    Instruction::GetVar(Variable::Global(g))
+                    | Instruction::SetVar(Variable::Global(g))
+                    | Instruction::Inc(Variable::Global(g)),
+                    _,
+                ) => Some(format!("{:?}", g.scope)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            scopes,
+            ["Some(Type(\"/datum/b\"))"],
+            "{}: {:?}",
+            body,
+            lines
+        );
+    }
+}
+
+#[test]
 fn a_var_after_an_index_is_found_as_untyped_colon_finds_it() {
     let types = "/datum/a\n\tvar/const/LIMIT = 5\n\tvar/datum/a/link\n\
                  /datum/b\n\tvar/const/LIMIT = 9\n\tvar/datum/b/link\n";

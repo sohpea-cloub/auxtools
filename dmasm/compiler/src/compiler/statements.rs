@@ -1877,6 +1877,7 @@ pub(super) fn static_place(
         super::procs::expr_type(compiler, &base),
         &follow,
         indexed,
+        false,
     )
 }
 
@@ -1885,22 +1886,26 @@ pub(super) fn static_member(
     ty: Option<dreammaker::objtree::TypeRef>,
     follow: &[Follow],
     indexed: bool,
+    after_index: bool,
 ) -> Option<Variable> {
     let follow = &follow[..follow.len().checked_sub(indexed as usize)?];
-    let (Follow::Field(_, name), holder) = (follow.last()?, &follow[..follow.len() - 1]) else {
-        return None;
-    };
-    let mut ty = ty?;
-    for f in holder {
-        let Follow::Field(_, field) = f else {
-            return None;
-        };
-        ty = super::procs::declared_type(
-            compiler,
-            &super::procs::member_var(ty, field.as_str())?.get().var_type,
-        )?;
+    let (mut ty, mut after_index, mut decl) = (ty, after_index, None);
+    for f in follow {
+        match f {
+            Follow::Field(kind, name) => {
+                let found =
+                    super::procs::field_var(compiler, ty, *kind, name.as_str(), after_index)?;
+                ty = super::procs::declared_type(compiler, &found.get().var_type);
+                decl = Some((name, found));
+                after_index = false;
+            }
+            Follow::Index(..) => {
+                (ty, after_index, decl) = (None, true, None);
+            }
+            _ => return None,
+        }
     }
-    let decl = super::procs::member_var(ty, name.as_str())?;
+    let (name, decl) = decl?;
     if !super::procs::is_global_member(&decl) {
         return None;
     }

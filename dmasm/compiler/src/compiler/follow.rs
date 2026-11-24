@@ -53,6 +53,16 @@ pub(super) fn emit_typed<'a>(
     kind: EvalKind,
     ty: Option<dreammaker::objtree::TypeRef<'a>>,
 ) -> Result<EvalKind, CompileError> {
+    emit_after(compiler, follow, kind, ty, false)
+}
+
+fn emit_after<'a>(
+    compiler: &mut Compiler<'a>,
+    follow: Vec<Follow>,
+    kind: EvalKind,
+    ty: Option<dreammaker::objtree::TypeRef<'a>>,
+    indexed: bool,
+) -> Result<EvalKind, CompileError> {
     let mut kind = kind;
     let mut ty = ty;
     let mut elem_ty = compiler.list_elem_type.take();
@@ -60,7 +70,7 @@ pub(super) fn emit_typed<'a>(
 
     let mut field_buffer = vec![];
 
-    let mut indexed = false;
+    let mut indexed = indexed;
     let mut follow = follow.into_iter();
     while let Some(sub_expr) = follow.next() {
         let after_index = std::mem::replace(&mut indexed, matches!(sub_expr, Follow::Index(..)));
@@ -74,7 +84,7 @@ pub(super) fn emit_typed<'a>(
         if is_safe(&sub_expr) && !safe_place {
             kind = commit_field_buffer(compiler, kind, &mut field_buffer)?;
             compiler.emit_move_to_stack(kind)?;
-            return emit_safe(compiler, sub_expr, follow.collect(), ty);
+            return emit_safe(compiler, sub_expr, follow.collect(), ty, after_index);
         }
         let global_field = compiler.global_field;
         if matches!(
@@ -89,16 +99,8 @@ pub(super) fn emit_typed<'a>(
         }
         match sub_expr {
             Follow::Field(access_kind, ident) => {
-                let field_ty = match access_kind {
-                    PropertyAccessKind::Scope => {
-                        ty.and_then(|t| super::procs::member_var(t, ident.as_str()))
-                    }
-                    _ if after_index => super::procs::colon_var(compiler, None, ident.as_str()),
-                    PropertyAccessKind::Colon => {
-                        super::procs::colon_var(compiler, ty, ident.as_str())
-                    }
-                    _ => ty.and_then(|t| super::procs::member_var(t, ident.as_str())),
-                };
+                let field_ty =
+                    super::procs::field_var(compiler, ty, access_kind, ident.as_str(), after_index);
                 ty =
                     field_ty.and_then(|d| super::procs::declared_type(compiler, &d.get().var_type));
                 elem_ty = field_ty.and_then(|d| {
@@ -467,6 +469,7 @@ fn emit_safe<'a>(
     first: Follow,
     mut rest: Vec<Follow>,
     ty: Option<dreammaker::objtree::TypeRef<'a>>,
+    indexed: bool,
 ) -> Result<EvalKind, CompileError> {
     let mut unary = vec![];
     while let Some(Follow::Unary(_)) = rest.last() {
@@ -490,8 +493,13 @@ fn emit_safe<'a>(
         let write = super::statements::SafeWrite::Change(&step);
         if let Some(chain) = super::statements::safe_chain(&follows) {
             if chain.writable(&write, true) {
-                let indexed = matches!(follows.last(), Some(Follow::Index(..)));
-                let static_var = super::statements::static_member(compiler, ty, &follows, indexed);
+                let static_var = super::statements::static_member(
+                    compiler,
+                    ty,
+                    &follows,
+                    matches!(follows.last(), Some(Follow::Index(..))),
+                    indexed,
+                );
                 super::statements::emit_safe_chain_write(
                     compiler, chain, None, static_var, None, write, true,
                 )?;
@@ -499,7 +507,7 @@ fn emit_safe<'a>(
             }
         }
     }
-    let kind = emit_safe_inner(compiler, first, rest, ty)?;
+    let kind = emit_safe_inner(compiler, first, rest, ty, indexed)?;
     if unary.is_empty() {
         return Ok(kind);
     }
@@ -511,6 +519,7 @@ fn emit_safe_inner<'a>(
     first: Follow,
     rest: Vec<Follow>,
     ty: Option<dreammaker::objtree::TypeRef<'a>>,
+    indexed: bool,
 ) -> Result<EvalKind, CompileError> {
     let end = compiler.new_label();
     compiler.emit_ins(Instruction::SetCacheJmpIfNull(Label::Named(end.clone())));
@@ -533,7 +542,13 @@ fn emit_safe_inner<'a>(
         )
     });
     if plain {
-        let kind = emit_typed(compiler, follows, EvalKind::Var(Variable::Cache), ty)?;
+        let kind = emit_after(
+            compiler,
+            follows,
+            EvalKind::Var(Variable::Cache),
+            ty,
+            indexed,
+        )?;
         compiler.emit_move_to_stack(kind)?;
         compiler.emit_label(end);
         return Ok(EvalKind::Stack);
@@ -545,27 +560,34 @@ fn emit_safe_inner<'a>(
     let mut kind = EvalKind::Var(Variable::Cache);
     let mut field_buffer: Vec<String> = vec![];
     let mut ty = ty;
+    let mut indexed = indexed;
     let mut it = follows.into_iter();
     while let Some(f) = it.next() {
+        let after_index = std::mem::replace(&mut indexed, matches!(f, Follow::Index(..)));
         if is_safe(&f) {
             kind = commit_field_buffer(compiler, kind, &mut field_buffer)?;
             compiler.emit_move_to_stack(kind)?;
-            kind = emit_safe(compiler, f, it.by_ref().collect(), ty)?;
+            kind = emit_safe(compiler, f, it.by_ref().collect(), ty, after_index)?;
             break;
         }
         let receiver_ty = ty;
         ty = None;
         match f {
             Follow::Field(access_kind, ident) => {
-                let decl = match access_kind {
-                    PropertyAccessKind::Colon | PropertyAccessKind::SafeColon => {
-                        super::procs::colon_var(compiler, receiver_ty, ident.as_str())
-                    }
-                    _ => receiver_ty.and_then(|t| super::procs::member_var(t, ident.as_str())),
-                };
+                let decl = super::procs::field_var(
+                    compiler,
+                    receiver_ty,
+                    access_kind,
+                    ident.as_str(),
+                    after_index,
+                );
                 ty = decl.and_then(|d| super::procs::declared_type(compiler, &d.get().var_type));
                 match decl {
                     Some(decl) if super::procs::is_global_member(&decl) => {
+                        if matches!(kind, EvalKind::Stack | EvalKind::ListRef) {
+                            compiler.emit_move_to_stack(kind)?;
+                            compiler.emit_ins(Instruction::SetVar(Variable::Cache));
+                        }
                         field_buffer.clear();
                         let scope = decl.ty().get().path.clone();
                         kind = EvalKind::Var(Variable::Global(GlobalVar::named(

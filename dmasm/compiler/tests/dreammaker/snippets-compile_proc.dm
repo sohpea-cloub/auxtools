@@ -743,6 +743,46 @@ var/const/LIMIT = 10
 	var/const/LIMIT = 9
 /proc/f(x)
 	return list(x:config:LIMIT + 1, x:config.LIMIT + 2)
+// Guards: a_safe_chain_finds_a_var_after_an_index_as_untyped_colon_finds_it (compile_proc.rs)
+/datum/a
+	var/const/LIMIT = 5
+	var/static/S = 1
+	var/datum/a/link
+/datum/b
+	var/const/LIMIT = 9
+	var/static/S = 2
+	var/datum/b/link
+/datum/holder
+	var/list/datum/a/items
+	var/list/plain
+/proc/f1(datum/holder/holder)
+	return holder?.items[1].LIMIT
+/proc/f2(datum/holder/holder)
+	return holder?.plain[1].LIMIT
+/proc/f3(datum/holder/holder)
+	return holder?.items[1]:LIMIT
+/proc/f4(datum/holder/holder)
+	return holder.items?[1].LIMIT
+/proc/f5(datum/holder/holder)
+	return holder?.plain[1].link.LIMIT
+/proc/f6(datum/holder/holder)
+	return holder?.items[1]?.LIMIT
+/proc/f7(datum/holder/holder)
+	return holder.items[1]?.LIMIT
+/proc/f8(datum/holder/holder)
+	return holder?.items[1].link?.LIMIT
+/proc/f9(datum/holder/holder)
+	return holder?.items[1].S
+/proc/f10(datum/holder/holder)
+	holder?.items[1].S = 3
+/proc/f11(datum/holder/holder)
+	holder?.items[1].S++
+/proc/f12(datum/holder/holder)
+	holder.items[1]?.S = 3
+/proc/f13(datum/holder/holder)
+	return holder?.items[1].LIMIT + 1
+/proc/f14(datum/holder/holder)
+	return holder?.items?[1].LIMIT
 // Guards: static_after_double_colon_chain (compile_proc.rs)
 /datum/a
 	var/datum/b/b

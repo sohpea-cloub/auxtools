@@ -320,6 +320,21 @@ pub fn dependents(built: Built) {
 		"a proc dmasm can't compile that reads a const through a retyped var isn't refused"
 	);
 	println!("ok: a reload is refused for a proc dmasm can't compile that reads a const through a var declared with another type");
+
+	let read = "\"[dep_safe_index(new /datum/dep_safe_index_holder)] [isnull(dep_safe_index(null))]\"";
+	assert_eq!(eval(&mut client, read), "\"9 1\"");
+	let changes = source.edit(
+		"dependents.dm",
+		"\treturn holder?.items[1].DEP_SAFE_INDEX",
+		"\treturn 0 || holder?.items[1].DEP_SAFE_INDEX"
+	);
+	reload(&mut watcher, &changes);
+	assert_eq!(
+		eval(&mut client, read),
+		"\"9 1\"",
+		"recompiled holder?.items[1].name doesn't read the var DreamMaker reads"
+	);
+	println!("ok: recompiled holder?.items[1].name reads the var DreamMaker reads, and null for a null holder");
 }
 
 fn refused_edit(source: &mut Source, file: &str, from: &str, to: &str) -> Vec<dmasm::reload::Refusal> {
