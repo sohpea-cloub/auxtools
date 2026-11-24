@@ -255,3 +255,11 @@ var/mob/helper/small/old_helper = new
 
 /datum/inserted/speak()
 	return "old first override"
+
+/datum/kin/proc/speak()
+	return "declaration"
+
+/datum/kin/middle/speak()
+	return "parent override"
+
+/datum/kin/middle/child

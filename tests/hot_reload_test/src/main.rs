@@ -2118,6 +2118,16 @@ fn definitions(built: Built) {
 	);
 	println!("ok: unchanged code names the first override left after a removal");
 
+	assert_eq!(
+		eval(&mut client, "call(new /datum/twice, reads_twice_default())()"),
+		"\"second override\""
+	);
+	assert_eq!(
+		eval(&mut client, "call(new /datum/twice, (new /datum/reads_names_twice).all[1])()"),
+		"\"second override\""
+	);
+	println!("ok: unchanged code reads a default that names the first override left after a removal");
+
 	assert_eq!(eval(&mut client, "calls_inserted_unchanged()"), "\"old first override\"");
 	let changes = source.edit(
 		"reload.dm",
@@ -2127,6 +2137,23 @@ fn definitions(built: Built) {
 	reload(&mut watcher, &changes);
 	assert_eq!(eval(&mut client, "calls_inserted_unchanged()"), "\"inserted override\"");
 	println!("ok: unchanged code names an override inserted before the first");
+
+	assert_eq!(eval(&mut client, "calls_kin_child()"), "\"parent override\"");
+	let changes = source.edit(
+		"reload.dm",
+		"/datum/kin/middle/child\n",
+		"/datum/kin/middle/child/speak()\n\treturn \"child override\"\n"
+	);
+	reload(&mut watcher, &changes);
+	assert_eq!(eval(&mut client, "calls_kin_child()"), "\"child override\"");
+	let changes = source.edit(
+		"reload.dm",
+		"/datum/kin/middle/child/speak()\n\treturn \"child override\"\n",
+		"/datum/kin/middle/child\n"
+	);
+	reload(&mut watcher, &changes);
+	assert_eq!(eval(&mut client, "calls_kin_child()"), "\"parent override\"");
+	println!("ok: unchanged code names a child's first override as it is added and removed");
 }
 
 fn types(built: Built) {

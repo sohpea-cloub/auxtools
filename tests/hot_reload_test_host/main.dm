@@ -150,3 +150,12 @@ var/datum/declared/declared_one = new
 
 /proc/calls_inserted_unchanged()
 	return call(new /datum/inserted, /datum/inserted/speak)()
+
+/proc/reads_twice_default()
+	return /datum/names_twice::said
+
+/datum/reads_names_twice
+	var/list/all = list(/datum/names_twice::said)
+
+/proc/calls_kin_child()
+	return call(new /datum/kin/middle/child, /datum/kin/middle/child::speak())()

@@ -1,130 +1,355 @@
-use dreammaker::ast::{Follow, Term};
+use std::collections::BTreeSet;
+
+use dreammaker::ast::{Expression, Follow, PathOp, Prefab, Term};
 
 use super::*;
-use crate::operands::Value;
+use crate::operands::{Proc, Value};
 
-pub(super) fn retargeted(
-    old: &Snapshot,
-    new: &Snapshot,
-    realigned: &Realigned,
-    changes: &Changes,
-) -> HashSet<String> {
-    let mut paths = HashSet::new();
-    for (path, map) in realigned {
-        let Some((ty, name)) = path.rsplit_once('/') else {
-            continue;
-        };
-        let (Some(o), Some(n)) = (old.find_type(ty), new.find_type(ty)) else {
-            continue;
-        };
-        let (old_values, new_values) = (real(o, name), real(n, name));
-        let old_declaration = declaration_index(o, name, &old_values);
-        let new_declaration = declaration_index(n, name, &new_values);
-        let first_override =
-            |count: usize, declaration: Option<usize>| (0..count).find(|&i| Some(i) != declaration);
-        let old_index = |i: Option<usize>| i.and_then(|i| map.get(i).copied().flatten());
-        let old_first = first_override(old_values.len(), old_declaration).map(|i| i as u32);
-        if old_index(first_override(new_values.len(), new_declaration)) != old_first {
-            paths.insert(path.clone());
-        }
-        if old_index(new_declaration) != old_declaration.map(|i| i as u32) {
-            declaration_forms(ty, name, &mut paths);
-        }
+#[derive(Debug, PartialEq)]
+enum Named<'a> {
+    NoProc(&'a str),
+    Old(ProcKey),
+    Added(ProcKey),
+}
+
+pub(super) struct Retargeted<'s> {
+    old: &'s Snapshot,
+    new: &'s Snapshot,
+    realigned: &'s Realigned,
+    paths: HashSet<String>,
+    names: HashSet<String>,
+    global_names: HashSet<String>,
+    defaults: HashSet<String>,
+    consts: HashSet<String>,
+}
+
+fn resolve(s: &Snapshot, path: &str) -> Option<ProcKey> {
+    if s.tree.find(path).is_some() {
+        return None;
     }
-    for removed in &changes.plan.removed_procs {
-        if !realigned.contains_key(&removed.proc.path) {
-            paths.insert(removed.proc.path.clone());
-            declaration_forms(&removed.type_path, &removed.name, &mut paths);
-        }
-    }
-    paths
-}
-
-fn declaration_forms(ty: &str, name: &str, paths: &mut HashSet<String>) {
-    paths.insert(format!("{ty}/proc/{name}"));
-    paths.insert(format!("{ty}/verb/{name}"));
-}
-
-fn names(retargeted: &HashSet<String>) -> HashSet<&str> {
-    retargeted
-        .iter()
-        .filter_map(|path| path.rsplit('/').next())
-        .collect()
-}
-
-fn mentions(node: syntax::Node, names: &HashSet<&str>) -> bool {
-    match node {
-        syntax::Node::Term(Term::Prefab(prefab)) => prefab
-            .path
-            .iter()
-            .last()
-            .is_some_and(|(_, last)| names.contains(last.as_str())),
-        syntax::Node::Follow(Follow::ProcReference(name)) => names.contains(name.as_str()),
-        _ => false,
-    }
-}
-
-fn names_in(nodes: &[Node], retargeted: &HashSet<String>) -> bool {
-    let named = |value: &Value| matches!(value, Value::Path(path) if retargeted.contains(path));
-    nodes.iter().any(|node| match node {
-        Node::Instruction(Instruction::PushVal(value), _) => named(value),
-        Node::Instruction(Instruction::Switch(params), _) => {
-            params.cases.iter().any(|(value, _)| named(value))
-        }
-        Node::Instruction(Instruction::SwitchRange(params), _) => {
-            params.cases.iter().any(|(value, _)| named(value))
-                || params
-                    .range_cases
-                    .iter()
-                    .any(|(low, high, _)| named(low) || named(high))
-        }
-        _ => false,
+    let (ty, name) = path.rsplit_once('/')?;
+    let (ty, declared) = match ty.rsplit_once('/') {
+        Some((ty, "proc" | "verb")) => (ty, true),
+        _ => (ty, false),
+    };
+    let t = s.find_type(ty)?;
+    let values = real(t, name);
+    let declaration = declaration_index(t, name, &values);
+    let index = match declared {
+        true => declaration?,
+        false => (0..values.len()).find(|&i| Some(i) != declaration)?,
+    };
+    Some(ProcKey {
+        path: proc_path(t, name),
+        override_id: index as u32,
     })
 }
 
-pub(super) fn code_names(code: &ProcReload, retargeted: &HashSet<String>) -> bool {
-    names_in(&code.nodes, retargeted)
-        || code
-            .statics
-            .iter()
-            .filter_map(|s| s.init.as_deref())
-            .any(|init| code_names(init, retargeted))
-        || code.params.iter().any(|param| match &param.in_list {
-            InList::New(init) => code_names(init, retargeted),
-            _ => false,
-        })
+fn forms(ty: &str, name: &str) -> [String; 3] {
+    [
+        format!("{ty}/{name}"),
+        format!("{ty}/proc/{name}"),
+        format!("{ty}/verb/{name}"),
+    ]
 }
 
-pub(super) fn path_users(
-    old: &Snapshot,
-    new: &Snapshot,
-    realigned: &Realigned,
-    retargeted: &HashSet<String>,
-    changes: &mut Changes,
-) {
-    if retargeted.is_empty() {
+pub(super) fn retargeted<'s>(
+    old: &'s Snapshot,
+    new: &'s Snapshot,
+    realigned: &'s Realigned,
+    changes: &Changes,
+) -> Retargeted<'s> {
+    let mut r = Retargeted {
+        old,
+        new,
+        realigned,
+        paths: HashSet::new(),
+        names: HashSet::new(),
+        global_names: HashSet::new(),
+        defaults: HashSet::new(),
+        consts: HashSet::new(),
+    };
+    let touched: BTreeSet<&str> = realigned
+        .keys()
+        .map(String::as_str)
+        .chain(
+            changes
+                .plan
+                .removed_procs
+                .iter()
+                .map(|r| r.proc.path.as_str()),
+        )
+        .collect();
+    for path in touched {
+        let Some((ty, name)) = path.rsplit_once('/') else {
+            continue;
+        };
+        for form in forms(ty, name) {
+            if r.before(&form) != r.after(&form) {
+                r.names.insert(name.to_owned());
+                if ty.is_empty() {
+                    r.global_names.insert(name.to_owned());
+                }
+                r.paths.insert(form);
+            }
+        }
+    }
+    if !r.paths.is_empty() {
+        r.find_defaults();
+    }
+    r
+}
+
+impl Retargeted<'_> {
+    pub(super) fn is_empty(&self) -> bool {
+        self.paths.is_empty()
+    }
+
+    fn before<'a>(&self, path: &'a str) -> Named<'a> {
+        resolve(self.old, path).map_or(Named::NoProc(path), Named::Old)
+    }
+
+    fn after<'a>(&self, path: &'a str) -> Named<'a> {
+        let Some(key) = resolve(self.new, path) else {
+            return Named::NoProc(path);
+        };
+        match old_key(self.realigned, &key).filter(|old| self.old.procs.contains_key(old)) {
+            Some(old) => Named::Old(old),
+            None => Named::Added(key),
+        }
+    }
+
+    fn find_defaults(&mut self) {
+        loop {
+            let mut found = vec![];
+            for s in [self.old, self.new] {
+                for t in s.tree.iter_types() {
+                    for (name, var) in t.get().vars.iter() {
+                        let Some(expression) = &var.value.expression else {
+                            continue;
+                        };
+                        let is_const = t
+                            .get_var_declaration(name.as_str())
+                            .is_some_and(|d| d.get().var_type.flags.is_const());
+                        let known = self.defaults.contains(name.as_str())
+                            && (!is_const || self.consts.contains(name.as_str()));
+                        if !known && self.expressions_might_name([expression]) {
+                            found.push((name.as_str().to_owned(), is_const));
+                        }
+                    }
+                }
+            }
+            if found.is_empty() {
+                return;
+            }
+            for (name, is_const) in found {
+                if is_const {
+                    self.consts.insert(name.clone());
+                }
+                self.defaults.insert(name);
+            }
+        }
+    }
+
+    fn reaches(&self, ty: &str, name: &str) -> bool {
+        if !self.names.contains(name) {
+            return false;
+        }
+        for s in [self.old, self.new] {
+            let Some(mut at) = s.find_type(ty) else {
+                return true;
+            };
+            loop {
+                let path = if at.is_root() { "" } else { &at.get().path };
+                if forms(path, name)
+                    .iter()
+                    .any(|form| self.paths.contains(form))
+                {
+                    return true;
+                }
+                match at.parent_type() {
+                    Some(parent) => at = parent,
+                    None => break,
+                }
+            }
+        }
+        forms("", name).iter().any(|form| self.paths.contains(form))
+    }
+
+    fn prefab_might_name(&self, prefab: &Prefab) -> bool {
+        let parts: Vec<(PathOp, &str)> = prefab
+            .path
+            .iter()
+            .map(|(op, part)| (*op, part.as_str()))
+            .collect();
+        let Some(&(_, name)) = parts.last() else {
+            return false;
+        };
+        if !prefab.vars.is_empty() || !self.names.contains(name) {
+            return false;
+        }
+        if parts.iter().any(|(op, _)| *op != PathOp::Slash) {
+            return true;
+        }
+        let joined = |parts: &[(PathOp, &str)]| -> String {
+            parts.iter().map(|(_, part)| format!("/{part}")).collect()
+        };
+        match parts
+            .iter()
+            .position(|(_, part)| *part == "proc" || *part == "verb")
+        {
+            Some(at) => self.reaches(&joined(&parts[..at]), name),
+            None => self.paths.contains(&joined(&parts)),
+        }
+    }
+
+    fn proc_might_name(&self, value: &ProcValue, own: &str) -> bool {
+        let mut scan = Scan::new(self, Some(own));
+        for parameter in value.parameters.iter() {
+            if let Some(default) = &parameter.default {
+                syntax::walk_expression(default, &mut |node| scan.visit(node));
+            }
+        }
+        if let Some(code) = &value.code {
+            syntax::walk_block(code, &mut |node| scan.visit(node));
+        }
+        scan.found
+    }
+
+    fn expressions_might_name<'e>(
+        &self,
+        expressions: impl IntoIterator<Item = &'e Expression>,
+    ) -> bool {
+        let mut scan = Scan::new(self, None);
+        for expression in expressions {
+            syntax::walk_expression(expression, &mut |node| scan.visit(node));
+        }
+        scan.found
+    }
+
+    pub(super) fn inits_might_name(&self, inits: &[Init]) -> bool {
+        !self.is_empty() && self.expressions_might_name(inits.iter().map(|init| &init.value))
+    }
+
+    pub(super) fn same_targets(&self, before: &ProcReload, after: &ProcReload) -> bool {
+        let (mut old, mut new) = (vec![], vec![]);
+        code_paths(before, &mut old);
+        code_paths(after, &mut new);
+        old.len() == new.len()
+            && old
+                .iter()
+                .zip(&new)
+                .all(|(old, new)| self.before(old) == self.after(new))
+    }
+
+    fn retargets(&self, before: Result<ProcReload, Diagnostic>, after: &ProcReload) -> bool {
+        before.map_or(true, |before| !self.same_targets(&before, after))
+    }
+}
+
+struct Scan<'r, 's> {
+    r: &'r Retargeted<'s>,
+    own: Option<&'r str>,
+    resolved: HashSet<*const Follow>,
+    found: bool,
+}
+
+impl<'r, 's> Scan<'r, 's> {
+    fn new(r: &'r Retargeted<'s>, own: Option<&'r str>) -> Self {
+        Scan {
+            r,
+            own,
+            resolved: HashSet::new(),
+            found: false,
+        }
+    }
+
+    fn visit(&mut self, node: syntax::Node) {
+        if self.found {
+            return;
+        }
+        let r = self.r;
+        self.found = match node {
+            syntax::Node::Expression(Expression::Base { term, follow }) => {
+                match (&term.elem, follow.first().map(|f| &f.elem)) {
+                    (Term::Prefab(prefab), Some(first @ Follow::ProcReference(name)))
+                        if prefab.vars.is_empty()
+                            && prefab.path.iter().all(|(op, _)| *op == PathOp::Slash) =>
+                    {
+                        self.resolved.insert(first);
+                        let ty: String = prefab.path.iter().map(|(_, p)| format!("/{p}")).collect();
+                        r.reaches(&ty, name.as_str())
+                    }
+                    _ => false,
+                }
+            }
+            syntax::Node::Follow(follow @ Follow::ProcReference(name)) => {
+                !self.resolved.contains(&(follow as *const Follow))
+                    && r.names.contains(name.as_str())
+            }
+            syntax::Node::Follow(Follow::StaticField(name)) => r.defaults.contains(name.as_str()),
+            syntax::Node::Term(Term::Prefab(prefab)) => r.prefab_might_name(prefab),
+            syntax::Node::Term(Term::__PROC__) => self.own.is_some_and(|own| r.names.contains(own)),
+            syntax::Node::Name(name) => r.consts.contains(name) || r.global_names.contains(name),
+            _ => false,
+        };
+    }
+}
+
+fn code_paths<'c>(code: &'c ProcReload, out: &mut Vec<&'c str>) {
+    nodes_paths(&code.nodes, out);
+    for init in code.statics.iter().filter_map(|s| s.init.as_deref()) {
+        code_paths(init, out);
+    }
+}
+
+fn nodes_paths<'c>(nodes: &'c [Node], out: &mut Vec<&'c str>) {
+    let value = |value: &'c Value, out: &mut Vec<&'c str>| match value {
+        Value::Path(path) => out.push(path),
+        Value::Prefab { vars, .. } => vars.iter().for_each(|(_, nodes)| nodes_paths(nodes, out)),
+        _ => {}
+    };
+    for node in nodes {
+        match node {
+            Node::Instruction(Instruction::PushVal(v), _) => value(v, out),
+            Node::Instruction(Instruction::Switch(params), _) => {
+                params.cases.iter().for_each(|(v, _)| value(v, out))
+            }
+            Node::Instruction(Instruction::SwitchRange(params), _) => {
+                params.cases.iter().for_each(|(v, _)| value(v, out));
+                for (low, high, _) in &params.range_cases {
+                    value(low, out);
+                    value(high, out);
+                }
+            }
+            Node::Instruction(
+                Instruction::CallGlob(_, Proc(path)) | Instruction::CallGlobalArgList(Proc(path)),
+                _,
+            ) => out.push(path),
+            _ => {}
+        }
+    }
+}
+
+pub(super) fn path_users(r: &Retargeted, changes: &mut Changes) {
+    if r.is_empty() {
         return;
     }
-    let names = names(retargeted);
-    let reloaded: HashSet<ProcKey> = changes
-        .plan
-        .reloads
-        .iter()
-        .map(|r| r.proc.clone())
-        .collect();
-    for key in new.procs.keys() {
-        let Some(old_key) = old_key(realigned, key) else {
+    let (old, new) = (r.old, r.new);
+    for (key, (_, name, _)) in new.procs.iter() {
+        let Some(old_key) = old_key(r.realigned, key) else {
             continue;
         };
-        if reloaded.contains(&old_key) || old.find(&old_key).is_none() {
-            continue;
-        }
-        let Some((_, value)) = new.find(key) else {
+        let (Some(_), Some((_, value))) = (old.find(&old_key), new.find(key)) else {
             continue;
         };
-        let mut found = false;
-        syntax::walk_proc(value, &mut |node| found |= mentions(node, &names));
-        if !found {
+        if changes
+            .plan
+            .reloads
+            .iter()
+            .any(|reload| reload.proc == old_key)
+            || !r.proc_might_name(value, name)
+        {
             continue;
         }
         let reload = new.compile_code(key).and_then(|mut reload| {
@@ -132,14 +357,14 @@ pub(super) fn path_users(
             Ok(reload)
         });
         match reload {
-            Ok(reload) if code_names(&reload, retargeted) => {
+            Ok(reload) if !r.retargets(old.compile_code(&old_key), &reload) => {}
+            Ok(reload) => {
                 changes.plan.line_moves.retain(|m| m.proc != old_key);
                 changes.plan.reloads.push(ProcReload {
                     proc: old_key,
                     ..reload
                 });
             }
-            Ok(_) => {}
             Err(e) => {
                 let refusal = new.uncompiled(key, &e);
                 changes.refused.push(Refusal {
@@ -154,22 +379,11 @@ pub(super) fn path_users(
     }
 }
 
-pub(super) fn inits_mention(inits: &[Init], retargeted: &HashSet<String>) -> bool {
-    if retargeted.is_empty() {
-        return false;
-    }
-    let names = names(retargeted);
-    let mut found = false;
-    for init in inits {
-        syntax::walk_expression(&init.value, &mut |node| found |= mentions(node, &names));
-    }
-    found
-}
-
-pub(super) fn path_defaults(new: &Snapshot, retargeted: &HashSet<String>, changes: &mut Changes) {
-    if retargeted.is_empty() {
+pub(super) fn path_defaults(r: &Retargeted, changes: &mut Changes) {
+    if r.is_empty() {
         return;
     }
+    let new = r.new;
     for n in new.tree.iter_types() {
         if n.is_root() {
             continue;
@@ -190,7 +404,7 @@ pub(super) fn path_defaults(new: &Snapshot, retargeted: &HashSet<String>, change
             let Some(ConstValue::Path(value)) = var_constant(var) else {
                 continue;
             };
-            if !retargeted.contains(&value) {
+            if !r.paths.contains(&value) {
                 continue;
             }
             if changes

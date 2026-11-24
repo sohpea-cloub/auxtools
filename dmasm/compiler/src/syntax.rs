@@ -37,7 +37,7 @@ pub fn walk_proc<'a>(value: &'a ProcValue, each: &mut dyn FnMut(Node<'a>)) {
     }
 }
 
-pub(crate) fn walk_block<'a>(block: &'a [Spanned<Statement>], each: &mut dyn FnMut(Node<'a>)) {
+pub fn walk_block<'a>(block: &'a [Spanned<Statement>], each: &mut dyn FnMut(Node<'a>)) {
     for statement in block {
         walk_statement(&statement.elem, each);
     }

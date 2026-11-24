@@ -1709,7 +1709,7 @@ pub fn diff(old: &Snapshot, new: &Snapshot, changed_files: Option<&HashSet<PathB
         .sort_by_cached_key(|t| depth(&t.path));
     let retargeted = retargeted::retargeted(old, new, &realigned, &changes);
     compare_inits(old, new, &retargeted, &mut changes);
-    retargeted::path_defaults(new, &retargeted, &mut changes);
+    retargeted::path_defaults(&retargeted, &mut changes);
     for (key, type_path, name, declared, verb) in new_procs {
         let code = new.compile_reload(&key).and_then(|mut code| {
             new.compile_in_lists(&key, &mut code, |_, _| true)?;
@@ -1826,7 +1826,7 @@ pub fn diff(old: &Snapshot, new: &Snapshot, changed_files: Option<&HashSet<PathB
     const_users(old, new, &realigned, &mut changes);
     reparent::reparented_users(old, new, &realigned, &mut changes);
     moved::moved_users(old, new, &realigned, &mut changes);
-    retargeted::path_users(old, new, &realigned, &retargeted, &mut changes);
+    retargeted::path_users(&retargeted, &mut changes);
     global_init::compare(old, new, &mut changes);
     changes.collect_warnings();
     changes
@@ -2483,7 +2483,7 @@ fn type_macro_is(expression: &mut dreammaker::ast::Expression, path: &str) {
 fn compare_inits(
     old: &Snapshot,
     new: &Snapshot,
-    retargeted: &HashSet<String>,
+    retargeted: &retargeted::Retargeted,
     changes: &mut Changes,
 ) {
     let (mut old_memo, mut new_memo) = (HashMap::new(), HashMap::new());
@@ -2492,13 +2492,14 @@ fn compare_inits(
             continue;
         }
         let new_inits = inits(n, &mut new_memo).to_vec();
-        let mut unchanged = false;
+        let mut before = None;
         match old.find_type(&n.get().path) {
             Some(o) if inits(o, &mut old_memo) == new_inits.as_slice() => {
-                if !retargeted::inits_mention(&new_inits, retargeted) {
+                if !retargeted.inits_might_name(&new_inits) {
                     continue;
                 }
-                unchanged = true;
+                let old_inits = inits(o, &mut old_memo).to_vec();
+                before = Some(old.compile_init(o, &old_inits));
             }
             Some(_) => {}
             None => {
@@ -2520,7 +2521,13 @@ fn compare_inits(
             None
         } else {
             match new.compile_init(n, &new_inits) {
-                Ok(code) if unchanged && !retargeted::code_names(&code, retargeted) => continue,
+                Ok(code)
+                    if before.is_some_and(|before| {
+                        before.is_ok_and(|before| retargeted.same_targets(&before, &code))
+                    }) =>
+                {
+                    continue
+                }
                 Ok(code) => Some(code),
                 Err(e) => {
                     changes.refused.push(

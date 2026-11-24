@@ -3776,3 +3776,46 @@ fn uncompiled_code_naming_a_retargeted_proc_path_is_refused() {
         ]
     );
 }
+
+#[test]
+fn unchanged_code_naming_a_child_path_follows_its_first_override() {
+    let before = "/datum/t/proc/f()\n\treturn 0\n\n/datum/t/middle/f()\n\treturn 1\n\n\
+                  /datum/t/middle/child\n\n\
+                  /proc/calls()\n\treturn call(new /datum/t/middle/child, /datum/t/middle/child::f())()\n";
+    let added = format!("{before}\n/datum/t/middle/child/f()\n\treturn 2\n");
+    let changes = changes("retargeted-child-added", before, &added);
+    assert_eq!(reloaded(&changes), [key("/calls", 0)]);
+
+    let changes = changes_of("retargeted-child-removed", &added, before);
+    assert_eq!(reloaded(&changes), [key("/calls", 0)]);
+}
+
+#[test]
+fn unchanged_code_reading_a_default_that_names_a_retargeted_path_is_compiled_again() {
+    let before =
+        "/datum/t/proc/f()\n\treturn 0\n\n/datum/t/f()\n\treturn 1\n\n/datum/t/f()\n\treturn 2\n\n\
+                  /datum/config\n\tvar/handler = /datum/t/f\n\n\
+                  /proc/reads()\n\treturn /datum/config::handler\n\n\
+                  /proc/unrelated()\n\treturn 3\n\n\
+                  /datum/holder\n\tvar/list/handlers = list(/datum/config::handler)\n";
+    let removed = before.replace("/datum/t/f()\n\treturn 1\n\n", "");
+    let changes = changes("retargeted-folded", before, &removed);
+    assert_eq!(reloaded(&changes), [key("/reads", 0)]);
+    let inits: Vec<&str> = changes
+        .plan
+        .init_procs
+        .iter()
+        .map(|i| i.type_path.as_str())
+        .collect();
+    assert_eq!(inits, ["/datum/holder"]);
+}
+
+#[test]
+fn uncompiled_code_naming_another_types_path_of_the_same_name_is_not_refused() {
+    let before = "/datum/a/proc/f()\n\treturn 0\n\n/datum/a/f()\n\treturn 1\n\n/datum/a/f()\n\treturn 2\n\n\
+                  /datum/b/proc/f()\n\treturn 0\n\n/datum/b/f()\n\treturn 3\n\n\
+                  /proc/other(x)\n\tswitch(x)\n\t\tif(x)\n\t\t\treturn call(new /datum/b, /datum/b/f)()\n";
+    let removed = before.replace("/datum/a/f()\n\treturn 1\n\n", "");
+    let changes = changes("retargeted-other-uncompiled", before, &removed);
+    assert_eq!(reloaded(&changes), []);
+}
