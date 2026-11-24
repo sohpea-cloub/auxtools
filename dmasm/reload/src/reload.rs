@@ -1978,15 +1978,16 @@ fn folds_changed(
     consts: &HashSet<&str>,
 ) -> bool {
     use dreammaker::ast::{Expression, Follow, Term};
-    let binds_const = |s: &Snapshot, name: &str| {
-        let mut at = s.find_type(ty);
-        while let Some(t) = at {
-            if let Some(declaration) = t.get().vars.get(name).and_then(|v| v.declaration.as_ref()) {
-                return declaration.var_type.flags.is_const();
-            }
-            at = t.parent_type();
+    let bound_value = |s: &Snapshot, name: &str| {
+        let at = s.find_type(ty)?;
+        let (at, declaration) = match at.get_var_declaration(name) {
+            Some(declaration) => (at, declaration),
+            None => (s.tree.root(), s.tree.root().get_var_declaration(name)?),
+        };
+        if !declaration.get().var_type.flags.is_const() {
+            return None;
         }
-        false
+        at.get_value(name)?.constant.clone()
     };
     let global_value = |s: &Snapshot, name: &str| {
         let root = s.tree.root();
@@ -2005,7 +2006,7 @@ fn folds_changed(
                 syntax::Node::Term(term @ Term::Ident(name)) => {
                     consts.contains(name.as_str())
                         && !locals.contains(&(term as *const Term as usize, name.to_string()))
-                        && (binds_const(old, name) || binds_const(new, name))
+                        && bound_value(old, name) != bound_value(new, name)
                 }
                 syntax::Node::Term(Term::GlobalIdent(name)) => global_changed(name),
                 syntax::Node::Expression(Expression::Base { term, follow }) => {

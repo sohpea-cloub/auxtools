@@ -122,6 +122,8 @@ pub fn dependents(built: Built) {
 	reload(&mut watcher, &changes);
 	assert_eq!(eval(&mut client, "\"[dep_own_global()] [(new /datum/dep_own).own()]\""), "\"11 3\"");
 	println!("ok: a global const changes beside a member const of its name");
+	assert_eq!(eval(&mut client, "(new /datum/dep_own).next()"), "3");
+	println!("ok: a changed const leaves code dmasm can't compile that reads a member const of its name");
 }
 
 fn refused_edit(source: &mut Source, file: &str, from: &str, to: &str) -> Vec<dmasm::reload::Refusal> {
