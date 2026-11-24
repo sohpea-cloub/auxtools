@@ -4128,3 +4128,49 @@ fn a_member_var_added_takes_bare_names_in_new_and_loop_targets() {
         );
     }
 }
+
+#[test]
+fn a_changed_const_recompiles_the_initializers_and_in_lists_that_fold_it() {
+    let before = "var/const/LIMIT = 5\nvar/list/global_limits = list(LIMIT + 1)\n\n\
+                  /datum/holder\n\tvar/list/limits = list(LIMIT + 1)\n\n\
+                  /datum/holder/child\n\n\
+                  /datum/c\n\tvar/const/CAP = 3\n\n\
+                  /datum/c/holder\n\tvar/list/caps = list(CAP * 2)\n\n\
+                  /datum/other\n\tvar/list/others = list(1)\n\n\
+                  /mob/verb/choose(x in list(LIMIT + 1))\n\treturn x\n";
+    for (name, after, inits) in [
+        (
+            "const-init-limit",
+            before.replace("LIMIT = 5", "LIMIT = 10"),
+            &["/datum/holder", "/datum/holder/child"][..],
+        ),
+        (
+            "const-init-cap",
+            before.replace("CAP = 3", "CAP = 4"),
+            &["/datum/c/holder"][..],
+        ),
+    ] {
+        let changes = changes_of(name, before, &after);
+        assert_eq!(init_types(&changes), inits, "{}", name);
+        assert_eq!(
+            changes.global_init.is_some(),
+            name == "const-init-limit",
+            "{}",
+            name
+        );
+        if name == "const-init-limit" {
+            assert_eq!(sorted_reloads(&changes), ["/mob/choose"], "{}", name);
+            let InList::New(code) = &changes.plan.reloads[0].params[0].in_list else {
+                panic!("{}: {:?}", name, changes.plan.reloads[0].params[0].in_list);
+            };
+            let code = dmasm_bytecode::format(&code.nodes);
+            assert!(code.contains("11"), "{}: {}", name, code);
+            for init in &changes.plan.init_procs {
+                let code = dmasm_bytecode::format(&init.code.as_ref().unwrap().nodes);
+                assert!(code.contains("11"), "{}: {}", init.type_path, code);
+            }
+        } else {
+            assert_eq!(sorted_reloads(&changes), Vec::<String>::new(), "{}", name);
+        }
+    }
+}

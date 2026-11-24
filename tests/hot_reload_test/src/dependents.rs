@@ -21,4 +21,15 @@ pub fn dependents(built: Built) {
 	assert_eq!(eval(&mut client, FACTORY_MAKES), "\"/datum/dep_made/other\"");
 	assert_eq!(eval(&mut client, "dep_factory_counts()"), "\"7 100\"");
 	println!("ok: new member vars take an unchanged proc's new and loop uses of globals' names");
+
+	let changes = source.edit("dependents.dm", "DEP_LIMIT = 5", "DEP_LIMIT = 10");
+	let chooser = changes.plan.reloads.iter().find(|r| r.proc.path == "/mob/dep_chooser/choose_dep_limit");
+	assert!(
+		matches!(chooser.map(|r| &r.params[0].in_list), Some(InList::New(_))),
+		"the verb's unchanged `in` list isn't compiled again: {:?}",
+		chooser
+	);
+	reload(&mut watcher, &changes);
+	assert_eq!(eval(&mut client, "(new /datum/dep_limited).limits[1]"), "11");
+	println!("ok: initializers and `in` lists that fold a changed const follow it");
 }

@@ -24,6 +24,7 @@ pub(super) struct Retargeted<'s> {
     member_vars: HashMap<String, Vec<String>>,
     member_procs: HashMap<String, Vec<String>>,
     changed_defaults: HashSet<String>,
+    changed_consts: HashSet<String>,
 }
 
 fn resolve(s: &Snapshot, path: &str) -> Option<ProcKey> {
@@ -112,6 +113,7 @@ pub(super) fn retargeted<'s>(
         member_vars: HashMap::new(),
         member_procs: HashMap::new(),
         changed_defaults: changes.defaults_changed.iter().cloned().collect(),
+        changed_consts: changes.consts.iter().cloned().collect(),
     };
     let touched: BTreeSet<&str> = realigned
         .keys()
@@ -202,7 +204,7 @@ pub(super) fn retargeted<'s>(
 
 impl Retargeted<'_> {
     pub(super) fn is_empty(&self) -> bool {
-        self.leaves_bodies() && self.changed_defaults.is_empty()
+        self.leaves_bodies() && self.changed_defaults.is_empty() && self.changed_consts.is_empty()
     }
 
     fn leaves_bodies(&self) -> bool {
@@ -478,7 +480,11 @@ impl<'r, 's> Scan<'r, 's> {
                 .ty
                 .is_some_and(|ty| r.rebinds(&r.member_procs, ty, name.as_str())),
             syntax::Node::Term(Term::__PROC__) => self.own.is_some_and(|own| r.names.contains(own)),
-            syntax::Node::Name(name) => r.consts.contains(name) || r.global_names.contains(name),
+            syntax::Node::Name(name) => {
+                r.consts.contains(name)
+                    || r.global_names.contains(name)
+                    || (self.own.is_none() && r.changed_consts.contains(name))
+            }
             _ => false,
         };
     }

@@ -21,3 +21,11 @@ var/dep_count = 100
 	var/datum/factory = new /datum/dep_factory
 	factory:first()
 	return "[factory.vars["dep_count"]] [dep_count]"
+
+var/const/DEP_LIMIT = 5
+
+/datum/dep_limited
+	var/list/limits = list(DEP_LIMIT + 1)
+
+/mob/dep_chooser/verb/choose_dep_limit(x as anything in list(DEP_LIMIT + 1))
+	return x
