@@ -791,7 +791,8 @@ fn an_implicit_value_for_a_destination_without_a_type_is_refused() {
         error
             .as_ref()
             .is_err_and(|e| e.to_string().ends_with(": unknown variable type")),
-        "an initializer of a var without a type: {error:?}"
+        "an initializer of a var without a type: {:?}",
+        error
     );
     for body in [
         "var/x = (q.o = astype(a))",
@@ -1454,7 +1455,7 @@ fn a_for_with_an_empty_first_part_is_read_past_it() {
     assert_has(&shifted, &["PostInc arg(0)", "Test", "Jz"]);
     let plain = code(", a < 5, a++");
     assert_has(&plain, &["GetVar arg(0)", "PushInt 5", "Tl", "Test", "Jz"]);
-    assert!(plain.contains("\nInc arg(0)\nJmpLoop"), "{plain}");
+    assert!(plain.contains("\nInc arg(0)\nJmpLoop"), "{}", plain);
 }
 
 #[test]
@@ -1709,7 +1710,7 @@ fn a_parameter_default_stops_at_in() {
         "f",
     );
     assert_has(&code, &["GetVar arg(0)", "SetVar arg(1)"]);
-    assert!(code.contains("IsIn"), "{code}");
+    assert!(code.contains("IsIn"), "{}", code);
 }
 
 #[test]
@@ -2399,7 +2400,7 @@ fn hashes_of_text_fold() {
 #[test]
 fn assert_gives_numbers_as_written() {
     let code = compile("/proc/f(n)\n\tASSERT(n > 1e3 + 0.50)\n", "", "f");
-    assert!(code.contains("PushVal \"n > 1e3 + 0.50\""), "{code}");
+    assert!(code.contains("PushVal \"n > 1e3 + 0.50\""), "{}", code);
 }
 
 #[test]
@@ -2448,8 +2449,8 @@ fn a_const_chosen_by_a_constant_test_is_read_alone() {
 fn goto_in_a_try_block_uses_try_jmp() {
     let src = "/proc/f(a)\n\ttry\n\t\tif (a) goto l1\n\t\ta = 2\n\t\tl1:\n\t\ta += 1\n\tcatch\n\t\tif (a) goto l2\n\t\tl2:\n\treturn a\n";
     let code = compile(src, "", "f");
-    assert!(code.contains("TryJmp USER_l1"), "{code}");
-    assert!(code.contains("JmpLoop USER_l2"), "{code}");
+    assert!(code.contains("TryJmp USER_l1"), "{}", code);
+    assert!(code.contains("JmpLoop USER_l2"), "{}", code);
 }
 
 #[test]
@@ -2514,7 +2515,7 @@ fn a_false_else_if_leaves_its_jump() {
         "",
         "f",
     );
-    assert!(!code.contains("Jmp "), "{code}");
+    assert!(!code.contains("Jmp "), "{}", code);
 }
 
 #[test]
@@ -2531,7 +2532,7 @@ fn or_assign_goes_by_the_source_of_a_folded_value() {
         "",
         "f",
     );
-    assert!(!code.contains("PushCache"), "{code}");
+    assert!(!code.contains("PushCache"), "{}", code);
 }
 
 #[test]
@@ -2720,7 +2721,7 @@ fn for_loop_separators_can_be_mixed() {
         )
     };
     let want = body("i = 1; i <= n; i++");
-    assert!(want.contains("Inc local(0)"), "{want}");
+    assert!(want.contains("Inc local(0)"), "{}", want);
     assert_eq!(body("i = 1; i <= n, i++"), want);
     assert_eq!(body("i = 1, i <= n; i++"), want);
 }
@@ -2734,7 +2735,8 @@ fn assert_keeps_raw_strings_as_written() {
     );
     assert!(
         code.contains(r#"PushVal "a == @{\"brace\"} || a == @'one'""#),
-        "{code}"
+        "{}",
+        code
     );
 }
 
@@ -2882,7 +2884,7 @@ fn a_default_from_another_file_in_an_operand_folded_away_names_nothing() {
         "(/datum/u::x ? 1 : 2)",
         "(/datum/u::x || 3)",
     ] {
-        assert!(files(expr) > 1, "{expr}");
+        assert!(files(expr) > 1, "{}", expr);
     }
 }
 
@@ -2907,11 +2909,11 @@ fn a_fold_that_differs_by_platform_is_warned_about() {
         |expr: &str, byond| warnings_for(&format!("/proc/f(a)\n\treturn {expr}\n"), byond);
     let warned = |expr: &str, what: &str| {
         let w = warnings(expr, latest);
-        assert!(w.len() == 1 && w[0].contains(what), "{expr}: {w:?}");
+        assert!(w.len() == 1 && w[0].contains(what), "{}: {:?}", expr, w);
     };
     let quiet = |expr: &str, byond| {
         let w = warnings(expr, byond);
-        assert!(w.is_empty(), "{expr} on {byond:?}: {w:?}");
+        assert!(w.is_empty(), "{} on {:?}: {:?}", expr, byond, w);
     };
     warned(
         "arctan(2)",
@@ -3055,12 +3057,23 @@ fn code_that_byond_gets_wrong_is_warned_about() {
         let w = warnings_of(code, ty, name, byond);
         assert!(
             w.iter().any(|w| w.contains(what)),
-            "{name} of {code:?} on {byond:?}: {w:?}"
+            "{} of {:?} on {:?}: {:?}",
+            name,
+            code,
+            byond,
+            w
         );
     };
     let quiet = |code: &str, ty: &str, name: &str, byond| {
         let w = warnings_of(code, ty, name, byond);
-        assert!(w.is_empty(), "{name} of {code:?} on {byond:?}: {w:?}");
+        assert!(
+            w.is_empty(),
+            "{} of {:?} on {:?}: {:?}",
+            name,
+            code,
+            byond,
+            w
+        );
     };
 
     let labelled = |outer: &str, go_on: &str| {
@@ -3229,12 +3242,15 @@ fn deliberate_differences_and_copied_quirks_are_warned_about() {
         let w = warnings_for(code, byond);
         assert!(
             w.iter().any(|w| w.contains(what)),
-            "{code:?} on {byond:?}: {w:?}"
+            "{:?} on {:?}: {:?}",
+            code,
+            byond,
+            w
         );
     };
     let quiet = |code: &str, byond| {
         let w = warnings_for(code, byond);
-        assert!(w.is_empty(), "{code:?} on {byond:?}: {w:?}");
+        assert!(w.is_empty(), "{:?} on {:?}: {:?}", code, byond, w);
     };
     let types = "/datum/t\n\tvar/n = 1\n\tvar/list/L = list(1)\n\tvar/datum/t/o\n\tproc/g(x)\n";
     warned(
@@ -3350,18 +3366,18 @@ fn a_name_alone_on_its_line_that_a_goto_names_is_a_label() {
     );
     let src = "/proc/f(L)\n\tout\n\tfor (var/x in L)\n\t\tif (x) goto out\n";
     let code = compile(src, "", "f");
-    assert!(code.contains("USER_out:"), "{code}");
+    assert!(code.contains("USER_out:"), "{}", code);
     let code = compile("/proc/f(a)\n\ta\n\treturn 1\n", "", "f");
-    assert!(!code.contains("USER_"), "{code}");
+    assert!(!code.contains("USER_"), "{}", code);
 }
 
 #[test]
 fn a_proc_of_the_world_s_never_calls_by_name() {
     let src = "/mob/proc/known()\n/proc/f(mob/M, x)\n\tM.known()\n\tM.unknown()\n\tx:unknown()\n";
     let code = compile(src, "", "f");
-    assert!(!code.contains("CallName"), "{code}");
-    assert!(code.contains("dynamic_proc(\"known\")"), "{code}");
-    assert!(code.contains("dynamic_proc(\"unknown\")"), "{code}");
+    assert!(!code.contains("CallName"), "{}", code);
+    assert!(code.contains("dynamic_proc(\"known\")"), "{}", code);
+    assert!(code.contains("dynamic_proc(\"unknown\")"), "{}", code);
 }
 
 fn dbg_lines(src: &str) -> Vec<String> {
@@ -3426,7 +3442,9 @@ fn an_assignment_operator_begins_with_dot_src() {
         let compiled = compile(&code, "/datum/d", &format!("operator{op}"));
         assert!(
             !compiled.contains("SetVar dot"),
-            "operator{op}:\n{compiled}"
+            "operator{}:\n{}",
+            op,
+            compiled
         );
     }
 }

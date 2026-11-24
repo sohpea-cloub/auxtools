@@ -91,10 +91,10 @@ fn same_alone_and_in_a_body(code: &str) -> Vec<String> {
     let alone = with_scope(|scope| {
         dmasm_compiler::compiler::compile_expr_in(code, &PARAMS, Some(scope), ByondVersion::LATEST)
     })
-    .unwrap_or_else(|e| panic!("{code} alone: {e}"));
+    .unwrap_or_else(|e| panic!("{} alone: {}", code, e));
     let (in_body, locals) =
-        body(&format!("return {code}")).unwrap_or_else(|e| panic!("{code} in a body: {e}"));
-    assert!(locals.is_empty(), "{code}: {locals:?}");
+        body(&format!("return {code}")).unwrap_or_else(|e| panic!("{} in a body: {}", code, e));
+    assert!(locals.is_empty(), "{}: {:?}", code, locals);
     let alone = until_return(lines(&alone));
     assert_eq!(alone, until_return(in_body), "{code}");
     alone
@@ -524,7 +524,9 @@ fn a_body_without_a_scope_is_the_debugger_s_code_too() {
         let error = unscoped(code).unwrap_err().to_string();
         assert!(
             error.contains("unsupported compiler macro"),
-            "{code}: {error}"
+            "{}: {}",
+            code,
+            error
         );
     }
     assert_has(
@@ -547,7 +549,7 @@ fn a_body_without_a_scope_is_the_debugger_s_code_too() {
     let error = unscoped("return /obj{name = \"a\"}")
         .unwrap_err()
         .to_string();
-    assert!(error.contains("modified types"), "{error}");
+    assert!(error.contains("modified types"), "{}", error);
 }
 
 #[test]
@@ -556,7 +558,9 @@ fn a_body_refuses_calls_to_the_proc_itself_and_its_parent() {
         let error = body(code).unwrap_err().to_string();
         assert!(
             error.ends_with("relative calls are not supported"),
-            "{code}: {error}"
+            "{}: {}",
+            code,
+            error
         );
     }
 }
@@ -575,7 +579,7 @@ fn an_assignment_to_a_global_is_a_value_too() {
         "by = ticks = 3",
         "return (global.ticks = 3)",
     ] {
-        let (compiled, _) = body(code).unwrap_or_else(|e| panic!("{code}: {e}"));
+        let (compiled, _) = body(code).unwrap_or_else(|e| panic!("{}: {}", code, e));
         assert_has(&compiled, &written);
     }
 }
@@ -586,7 +590,9 @@ fn null_is_read_alone_as_in_a_body() {
         let compiled = same_alone_and_in_a_body(code);
         assert!(
             compiled.iter().any(|l| l == "GetVar null"),
-            "{code}: {compiled:?}"
+            "{}: {:?}",
+            code,
+            compiled
         );
     }
     assert_has(
@@ -655,7 +661,7 @@ fn a_chain_of_and_or_or_is_the_same_alone_as_in_a_body() {
         "{chain:?}"
     );
     let folded = same_alone_and_in_a_body("1 && by");
-    assert!(!folded.iter().any(|l| l.starts_with("Jmp")), "{folded:?}");
+    assert!(!folded.iter().any(|l| l.starts_with("Jmp")), "{:?}", folded);
 }
 
 #[test]
@@ -767,7 +773,9 @@ fn a_logical_assignment_to_a_safe_place_is_a_value_in_a_body_too() {
         let compiled = same_alone_and_in_a_body(code);
         assert!(
             compiled.iter().any(|l| l.starts_with("SetVarExpr cache")),
-            "{code}: {compiled:?}"
+            "{}: {:?}",
+            code,
+            compiled
         );
     }
 }

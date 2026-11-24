@@ -534,7 +534,9 @@ fn a_modified_type_is_refused_in_debugger_code() {
         let error = scoped(code, &[]).unwrap_err().to_string();
         assert!(
             error.contains("use new and assign the vars"),
-            "{code}: {error}"
+            "{}: {}",
+            code,
+            error
         );
     }
 }
@@ -618,7 +620,7 @@ fn an_expression_folds_constants_as_a_proc_does() {
 #[test]
 fn without_a_scope_an_expression_is_still_the_debugger_s() {
     let error = compile_expr("/obj{name = \"a\"}", &[]).unwrap_err();
-    assert!(error.to_string().contains("modified types"), "{error}");
+    assert!(error.to_string().contains("modified types"), "{}", error);
     let error = compile_expr("astype(x)", &["x"]).unwrap_err();
     assert_eq!(
         error.to_string(),

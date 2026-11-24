@@ -537,20 +537,25 @@ fn language_515_lacks_is_refused() {
     let err = compile_for(B515_1647, "/proc/f(a)\n\treturn alist(a = 1)\n").unwrap_err();
     assert!(
         err.contains("BYOND 515.1647 does not support alist()"),
-        "{err}"
+        "{}",
+        err
     );
     let err = compile_for(
         B515_1647,
         "/proc/f(a)\n\tfor (var/k, v in a)\n\t\treturn k\n",
     )
     .unwrap_err();
-    assert!(err.contains("does not support for (k, v in list)"), "{err}");
+    assert!(
+        err.contains("does not support for (k, v in list)"),
+        "{}",
+        err
+    );
     let err = compile_for(
         ByondVersion::new(515, 1643),
         "/proc/f(a)\n\treturn __PROC__\n",
     )
     .unwrap_err();
-    assert!(err.contains("does not support __PROC__"), "{err}");
+    assert!(err.contains("does not support __PROC__"), "{}", err);
     assert!(compile_for(
         ByondVersion::new(515, 1644),
         "/proc/f(a)\n\treturn __PROC__\n"
@@ -566,18 +571,21 @@ fn safe_element_changes_restore_the_cache_first_from_516_1685() {
         new.contains(
             "PushCache\nGetVar arg(1)\nPopCache\nGetVar cache[\"l\"]\nPushInt 1\nSetVar cache_key"
         ),
-        "{new}"
+        "{}",
+        new
     );
     assert!(
         new.contains("PushCache\nPopCache\nGetVar cache[\"l\"]\nPushInt 1\nSetVar cache_key"),
-        "{new}"
+        "{}",
+        new
     );
     for byond in [ByondVersion::new(516, 1684), ByondVersion::new(515, 1637)] {
         let old = compile_for(byond, code).unwrap();
-        assert!(old.contains("PushCache\nGetVar arg(1)\nGetVar cache[\"l\"]\nPushInt 1\nPopCache\nSetVar cache_key"), "{old}");
+        assert!(old.contains("PushCache\nGetVar arg(1)\nGetVar cache[\"l\"]\nPushInt 1\nPopCache\nSetVar cache_key"), "{}", old);
         assert!(
             old.contains("PushCache\nGetVar cache[\"l\"]\nPushInt 1\nPopCache\nSetVar cache_key"),
-            "{old}"
+            "{}",
+            old
         );
     }
 }
@@ -617,7 +625,7 @@ fn log_folds_in_double_precision_before_515_1644() {
 fn proc_macro_in_call_before_515_1644() {
     let b = ByondVersion::new(515, 1637);
     let code = compile_for(b, "/proc/f(a)\n\tcall(a, __PROC__)(a)\n").unwrap();
-    assert!(code.contains("PushVal /proc/f"), "{code}");
+    assert!(code.contains("PushVal /proc/f"), "{}", code);
     assert_eq!(ret(b, "nameof(__PROC__)"), "PushVal \"f\"");
     assert!(compile_for(b, "/proc/f(a)\n\treturn __PROC__\n").is_err());
 }
@@ -768,17 +776,20 @@ fn a_logical_assignment_saves_the_cache_by_its_values_source() {
     let partly = code("a.x ||= (b ? (null ? L.len : 2) : 3)");
     assert!(
         partly.contains("PushCache") && partly.contains("PopCache"),
-        "{partly}"
+        "{}",
+        partly
     );
     let side = code("a.x &&= (0 ? L.len : b)");
     assert!(
         side.contains("PushCache\nGetVar arg(2)\nPopCache"),
-        "{side}"
+        "{}",
+        side
     );
     let value = code("return (a.x ||= (b ? (null ? L.len : 2) : 3))");
     assert!(
         value.contains("PushCache") && value.contains("PopCache\nSetVarExpr"),
-        "{value}"
+        "{}",
+        value
     );
     assert!(!code("a.x ||= (b ? 2 : 3)").contains("PushCache"));
 }
