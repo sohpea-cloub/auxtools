@@ -1,6 +1,8 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 
-use dreammaker::ast::{Expression, Follow, Spanned, Statement, Term, VarStatement};
+use dreammaker::ast::{
+    Expression, Follow, PropertyAccessKind, Spanned, Statement, Term, VarStatement,
+};
 use dreammaker::objtree::TypeRef;
 use std::path::{Path, PathBuf};
 
@@ -1090,12 +1092,71 @@ impl<'a> Walk<'a> {
         true
     }
 
-    fn value_set(&self, init: &Initializer, name: &str, global: bool, finishing: bool) -> bool {
-        let set = |scope: StaticScope| {
-            let key = (scope, name.to_owned());
-            (finishing || self.passed.contains(&key))
-                && (!self.computed.contains(&key) || self.set.contains(&key))
+    fn static_set(&self, scope: StaticScope, name: &str, finishing: bool) -> bool {
+        let key = (scope, name.to_owned());
+        (finishing || self.passed.contains(&key))
+            && (!self.computed.contains(&key) || self.set.contains(&key))
+    }
+
+    fn chain_statics_set<'f>(
+        &self,
+        snapshot: &Snapshot,
+        init: &Initializer,
+        name: &str,
+        fields: impl IntoIterator<Item = (PropertyAccessKind, &'f str)>,
+        finishing: bool,
+    ) -> bool {
+        let declared = |ty: TypeRef, name: &str| {
+            ty.get_var_declaration(name)
+                .map(|d| d.get().var_type.type_path.to_string())
         };
+        let mut path = init
+            .visible
+            .iter()
+            .rev()
+            .find(|(n, ..)| n == name)
+            .map(|(.., ty)| ty.clone())
+            .or_else(|| {
+                let param = init.params.iter().find(|(param, _)| param == name);
+                param.map(|(_, ty)| ty.clone())
+            })
+            .or_else(|| declared(init.ty, name))
+            .or_else(|| declared(snapshot.tree.root(), name));
+        for (kind, field) in fields {
+            if !matches!(kind, PropertyAccessKind::Dot | PropertyAccessKind::SafeDot) {
+                return true;
+            }
+            let Some(ty) = path
+                .and_then(|path| {
+                    snapshot
+                        .tree
+                        .find(&format!("/{}", path.trim_start_matches('/')))
+                })
+                .filter(|ty| !ty.is_root())
+            else {
+                return true;
+            };
+            let Some(declaration) = ty.get_var_declaration(field) else {
+                return true;
+            };
+            let flags = declaration.get().var_type.flags;
+            if flags.is_static()
+                && !flags.is_const()
+                && !self.static_set(
+                    StaticScope::Type(declaration.ty().get().path.clone()),
+                    field,
+                    finishing,
+                )
+            {
+                return false;
+            }
+            path = Some(declaration.get().var_type.type_path.to_string());
+        }
+        true
+    }
+
+    fn value_set(&self, init: &Initializer, name: &str, global: bool, finishing: bool) -> bool {
+        let set = |scope: StaticScope| self.static_set(scope, name, finishing);
         let t = init.ty;
         if !global {
             if let Some(proc_path) = &init.proc_path {
@@ -1299,7 +1360,12 @@ impl<'a> Walk<'a> {
                     return;
                 }
                 Seen::StaticFieldOf(_) => return,
-                Seen::MemberOf(name, proc) => {
+                Seen::MemberOf(name, proc, follow) => {
+                    let fields = follow.iter().map_while(|f| match &f.elem {
+                        Follow::Field(kind, field) => Some((*kind, field.as_str())),
+                        _ => None,
+                    });
+                    ready &= self.chain_statics_set(snapshot, init, name, fields, finishing);
                     let declared = |ty: TypeRef| {
                         ty.get_var_declaration(name)
                             .map(|d| d.get().var_type.type_path.to_string())
@@ -1336,6 +1402,13 @@ impl<'a> Walk<'a> {
                 Term::GlobalIdent(name) => self.value_set(init, name, true, finishing),
                 Term::NewMiniExpr { expr, .. } => {
                     self.value_set(init, &expr.ident, false, finishing)
+                        && self.chain_statics_set(
+                            snapshot,
+                            init,
+                            &expr.ident,
+                            expr.fields.iter().map(|f| (f.kind, f.ident.as_str())),
+                            finishing,
+                        )
                 }
                 Term::Call(name, _) => call(name, false),
                 Term::GlobalCall(name, _) => call(name, true),
@@ -1466,7 +1539,7 @@ enum Seen<'e> {
     GlobalCall(&'e str),
     GlobalVar(&'e str),
     StaticFieldOf(&'e Term),
-    MemberOf(&'e str, Option<&'e str>),
+    MemberOf(&'e str, Option<&'e str>, &'e [Spanned<Follow>]),
 }
 
 fn terms<'e>(expression: &'e Expression, each: &mut dyn FnMut(Seen<'e>)) {
@@ -1492,9 +1565,9 @@ fn terms<'e>(expression: &'e Expression, each: &mut dyn FnMut(Seen<'e>)) {
                 each(Seen::StaticFieldOf(&term.elem));
             }
             match (name, first) {
-                (Some(name), Some(Follow::Field(..))) => each(Seen::MemberOf(name, None)),
+                (Some(name), Some(Follow::Field(..))) => each(Seen::MemberOf(name, None, follow)),
                 (Some(name), Some(Follow::Call(_, proc, _))) => {
-                    each(Seen::MemberOf(name, Some(proc.as_str())))
+                    each(Seen::MemberOf(name, Some(proc.as_str()), follow))
                 }
                 _ => {}
             }

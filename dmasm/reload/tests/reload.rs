@@ -5590,3 +5590,46 @@ fn a_cast_in_an_initializer_takes_the_vars_declared_type() {
         "the reboot's initializers"
     );
 }
+
+#[test]
+fn an_initializer_that_reads_a_computed_static_through_a_var_waits_for_it() {
+    let kinds = "/datum/config\n\tvar/static/item_type = choose_kind()\n\n\
+                 /proc/choose_kind()\n\treturn /datum/a\n\n/datum/a\n";
+    let made = format!(
+        "var/datum/config/config\n\n\
+         var/global_item = new config.item_type()\n\n\
+         /proc/made()\n\tvar/static/item = new config.item_type()\n\treturn item\n\n{kinds}"
+    );
+    let read = format!("var/datum/config/config\n\nvar/global_kind = config.item_type\n\n{kinds}");
+    for (name, before, after, readers) in [
+        (
+            "computed-static-made",
+            &made,
+            made.replace("new config.item_type()", "new config.item_type(1)"),
+            &[":global_item", "/proc/made#0:item"][..],
+        ),
+        (
+            "computed-static-read",
+            &read,
+            read.replace("= config.item_type\n", "= config.item_type || 1\n"),
+            &[":global_kind"][..],
+        ),
+    ] {
+        let changes = changes(name, before, &after);
+        assert!(changes.refused.is_empty(), "{:?}", changes.refused);
+        let sets = global_init_sets(&changes);
+        let at = |var: &str| {
+            sets.iter()
+                .position(|set| set.starts_with(&format!("{} @", var)))
+                .unwrap_or_else(|| panic!("{} isn't set: {:?}", var, sets))
+        };
+        for reader in readers {
+            assert!(
+                at("/datum/config:item_type") < at(reader),
+                "{} before the static it reads: {:?}",
+                reader,
+                sets
+            );
+        }
+    }
+}
