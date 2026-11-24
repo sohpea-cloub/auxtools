@@ -144,22 +144,23 @@ fn a_wait_for_a_reboot_from_a_journal_entry_survives_a_reboot_while_it_registers
 fn a_wait_for_a_reboot_keeps_its_timeout_through_a_reboot_while_it_registers() {
 	let mut stand_in = StandIn::new(watchers_answered(0));
 	let pid = stand_in.spawn();
-	let started = Instant::now();
-	let waiting = command(pid, &["wait", "reboot", "--since", "5", "--timeout", "2"]);
+	let waiting = command(pid, &["wait", "reboot", "--since", "5", "--timeout", "3"]);
 	let mut first = stand_in.world();
 	first.next("Watcher", |request| matches!(request, Request::Watcher));
+	let asked = Instant::now();
+	std::thread::sleep(Duration::from_secs(2));
 	first.event(Response::Disconnect);
 	first.close();
 	let mut next = stand_in.world();
 	next.next("Watcher again", |request| matches!(request, Request::Watcher));
 	let output = waiting.wait_with_output().unwrap();
-	let took = started.elapsed();
+	let took = asked.elapsed();
 	assert!(
-		output.status.code() == Some(2) && took < LATE,
-		"wait reboot --timeout 2 ended after {:?} with {:?}: {}",
+		output.status.code() == Some(2) && took < Duration::from_secs(4),
+		"wait reboot --timeout 3, cut 2 seconds after it registered, ended {:?} after it registered with {:?}: {}",
 		took,
 		output.status.code(),
 		printed(&output)
 	);
-	assert_eq!(printed(&output), "error: timed out after 2 seconds waiting for the world to reboot.\n");
+	assert_eq!(printed(&output), "error: timed out after 3 seconds waiting for the world to reboot.\n");
 }
