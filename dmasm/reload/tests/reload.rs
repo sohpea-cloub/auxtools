@@ -2313,6 +2313,14 @@ fn a_declaration_that_colon_lookup_finds_after_a_bare_call_recompiles_initialize
             "{name}"
         );
         assert_eq!(global_init_reads(&changes), [limit, limit], "{name}");
+        assert_eq!(init_types(&changes), ["/datum/holder"], "{name}");
+        let init = changes.plan.init_procs[0].code.as_ref().unwrap();
+        assert_eq!(global_reads(&init.nodes), [limit], "{name}");
+        assert_eq!(sorted_reloads(&changes), ["/mob/choose"], "{name}");
+        let InList::New(list) = &changes.plan.reloads[0].params[0].in_list else {
+            panic!("{}: {:?}", name, changes.plan.reloads[0].params[0].in_list);
+        };
+        assert_eq!(global_reads(&list.nodes), [limit], "{name}");
     }
 }
 
@@ -3688,8 +3696,11 @@ fn global_init_sets(changes: &Changes) -> Vec<String> {
 
 fn global_init_reads(changes: &Changes) -> Vec<String> {
     let init = changes.global_init.as_ref().expect("no global init proc");
-    init.code
-        .nodes
+    global_reads(&init.code.nodes)
+}
+
+fn global_reads(nodes: &[Node]) -> Vec<String> {
+    nodes
         .iter()
         .filter_map(|node| match node {
             Node::Instruction(Instruction::GetVar(dmasm_bytecode::Variable::Global(var)), ()) => {
