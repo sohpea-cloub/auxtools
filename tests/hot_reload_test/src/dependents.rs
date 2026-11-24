@@ -425,6 +425,24 @@ pub fn dependents(built: Built) {
 		"recompiled make()?.name = new doesn't make the type DreamMaker makes"
 	);
 	println!("ok: recompiled make()?.name = new makes the type DreamMaker makes");
+
+	assert_eq!(eval(&mut client, "\"[dep_implicit_uncompiled()]\""), "\"/datum/dep_implicit_child\"");
+	let refused = refused_edit(
+		&mut source,
+		"dependents.dm",
+		"/proc/dep_implicit_make(holder) as /datum/dep_implicit_holder\n",
+		"/proc/dep_implicit_make(holder) as /datum/dep_implicit_other\n"
+	);
+	let shown: Vec<String> = refused.iter().map(|r| format!("{:#}", r)).collect();
+	assert_eq!(
+		shown,
+		[
+			"/dep_implicit_uncompiled: takes the type of a `new`, `locate()`, `astype()` or `istype()` from a var whose type changes, so it must be \
+			 compiled again, but it doesn't compile: unsupported statement: type::proc() that names a type's second or later override"
+		],
+		"a proc dmasm can't compile whose make()?.name = new makes another type after the reload isn't refused"
+	);
+	println!("ok: a reload is refused for a proc dmasm can't compile whose make()?.name = new makes another type");
 }
 
 fn refused_edit(source: &mut Source, file: &str, from: &str, to: &str) -> Vec<dmasm::reload::Refusal> {

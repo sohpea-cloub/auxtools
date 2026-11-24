@@ -279,3 +279,10 @@ var/hr_tally = 100
 
 /proc/dep_bare_call()
 	return dep_bare_make().DEP_BARE_CALL
+
+/proc/dep_implicit_uncompiled()
+	var/last = /datum/dep_twice::f()
+	var/datum/dep_implicit_holder/holder = dep_implicit_make()
+	if(last)
+		dep_implicit_make(holder)?.dep_implicit_made = new
+	return holder.dep_implicit_made?.type

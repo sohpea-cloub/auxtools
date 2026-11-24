@@ -2377,6 +2377,80 @@ fn a_changed_return_type_recompiles_the_callers_that_read_through_it() {
 }
 
 #[test]
+fn a_changed_implicit_type_refuses_the_callers_dmasm_cant_compile() {
+    let uncompiled = "\tswitch(x)\n\t\tif(x)\n\t\t\treturn 0\n";
+    let code = format!(
+        "/datum/child\n\n/datum/child/special\n\n\
+         /datum/holder\n\tvar/datum/child/child\n\n\
+         /datum/other\n\tvar/datum/child/special/child\n\n\
+         /proc/compiled()\n\tmake()?.child = new\n\n\
+         /proc/uncompiled_new(x)\n{uncompiled}\tmake()?.child = new\n\n\
+         /proc/uncompiled_or(x)\n{uncompiled}\tmake()?.child ||= new\n\n\
+         /proc/uncompiled_astype(x)\n{uncompiled}\treturn astype(make().child)\n\n\
+         /proc/uncompiled_istype(x)\n{uncompiled}\treturn istype(make().child)\n\n\
+         /proc/uncompiled_value(x)\n{uncompiled}\tmake()?.child = x\n\n"
+    );
+    let before = "/proc/make() as /datum/holder\n\treturn new /datum/holder\n";
+    let after = before.replace("as /datum/holder", "as /datum/other");
+    for (name, before, after) in [
+        ("implicit-type-changed", before, after.as_str()),
+        ("implicit-type-changed-back", after.as_str(), before),
+    ] {
+        let changes = types_changes(name, &code, before, after);
+        let mut refused: Vec<&str> = changes.refused.iter().map(|r| r.path.as_str()).collect();
+        refused.sort();
+        assert_eq!(
+            refused,
+            [
+                "/uncompiled_astype",
+                "/uncompiled_istype",
+                "/uncompiled_new",
+                "/uncompiled_or"
+            ],
+            "{name}: {:?}",
+            changes.refused
+        );
+        for refusal in &changes.refused {
+            assert!(
+                refusal.why.starts_with(
+                    "takes the type of a `new`, `locate()`, `astype()` or `istype()` from a var whose type changes, so it must be compiled again"
+                ),
+                "{}: {}",
+                name,
+                refusal
+            );
+        }
+        let reloads: Vec<&str> = changes
+            .plan
+            .reloads
+            .iter()
+            .map(|r| r.proc.path.as_str())
+            .collect();
+        assert_eq!(reloads, ["/compiled"], "{name}: {:?}", changes.plan);
+    }
+    let code = format!(
+        "/datum/child\n\n/datum/child/special\n\n\
+         /proc/compiled(datum/holder/holder)\n\tholder.child = new\n\n\
+         /proc/uncompiled_new(datum/holder/holder, x)\n{uncompiled}\tholder.child = new\n\n\
+         /proc/uncompiled_value(datum/holder/holder, x)\n{uncompiled}\tholder.child = x\n\n"
+    );
+    let before = "/datum/holder\n\tvar/datum/child/child\n";
+    let after = before.replace("child/child", "child/special/child");
+    let changes = types_changes("implicit-var-type-changed", &code, before, &after);
+    let refused: Vec<String> = changes
+        .refused
+        .iter()
+        .map(|r| format!("{}: {}", r.path, r.why))
+        .collect();
+    assert_eq!(refused.len(), 1, "{refused:?}");
+    assert!(
+        refused[0].starts_with("/uncompiled_new: takes the type of a `new`"),
+        "{:?}",
+        refused
+    );
+}
+
+#[test]
 fn a_declaration_that_colon_lookup_finds_instead_recompiles_initializers_and_in_lists() {
     let code = "/datum/a\n\tvar/const/LIMIT = 5\n\n\
                 /datum/holder\n\tvar/holder\n\tvar/list/limits = list(holder:LIMIT + 1)\n\n\

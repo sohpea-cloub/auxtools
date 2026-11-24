@@ -327,3 +327,15 @@ var/datum/dep_retype_alone_first/dep_retype_alone_target
 	typed.me()?.dep_new_made = new
 	untyped.untyped_me()?.dep_new_made = new
 	return "[typed.dep_new_made.type] [untyped.dep_new_made.type]"
+
+/datum/dep_implicit_child
+/datum/dep_implicit_child/special
+
+/datum/dep_implicit_holder
+	var/datum/dep_implicit_child/dep_implicit_made
+
+/datum/dep_implicit_other
+	var/datum/dep_implicit_child/special/dep_implicit_made
+
+/proc/dep_implicit_make(holder) as /datum/dep_implicit_holder
+	return holder || new /datum/dep_implicit_holder

@@ -2038,6 +2038,17 @@ fn const_users(old: &Snapshot, new: &Snapshot, realigned: &Realigned, changes: &
                     })
                 {
                     "reads a var through a proc that is declared to return another type now"
+                } else if !retyped.is_empty()
+                    && implicit_type_changes(old, new, path, new_value, |term, follow| {
+                        matches!(term, Term::Ident(name) | Term::Call(name, _)
+                            if retyped.contains(name.as_str()))
+                            || follow.iter().any(|f| {
+                                matches!(&f.elem, Follow::Field(_, name) | Follow::Call(_, name, _)
+                                    if retyped.contains(name.as_str()))
+                            })
+                    })
+                {
+                    "takes the type of a `new`, `locate()`, `astype()` or `istype()` from a var whose type changes"
                 } else {
                     continue;
                 };
@@ -2453,6 +2464,69 @@ fn chain_rebinds(
             })
         };
         found = globals(old) != globals(new);
+    });
+    found
+}
+
+fn implicit_type_changes(
+    old: &Snapshot,
+    new: &Snapshot,
+    ty: &str,
+    value: &ProcValue,
+    reads: impl Fn(&dreammaker::ast::Term, &[dreammaker::ast::Spanned<dreammaker::ast::Follow>]) -> bool,
+) -> bool {
+    use dreammaker::ast::{BinaryOp, Expression, Term};
+    fn takes_type(expr: &Expression) -> bool {
+        match expr {
+            Expression::Base { term, follow } if follow.is_empty() => match &term.elem {
+                Term::NewImplicit { .. } | Term::__IMPLIED_TYPE__ => true,
+                Term::Locate { args, .. } => args.is_empty(),
+                Term::Call(name, args) => name.as_str() == "astype" && args.len() == 1,
+                Term::Expr(inner) => takes_type(inner),
+                _ => false,
+            },
+            Expression::BinaryOp {
+                op: BinaryOp::And | BinaryOp::Or,
+                lhs,
+                rhs,
+            } => takes_type(lhs) || takes_type(rhs),
+            _ => false,
+        }
+    }
+    let local_types = retargeted::local_read_types(value);
+    let mut found = false;
+    syntax::walk_proc(value, &mut |node| {
+        let (expr, place) = match node {
+            syntax::Node::Expression(Expression::AssignOp { lhs, rhs, .. }) if takes_type(rhs) => {
+                (&**lhs, true)
+            }
+            syntax::Node::Term(Term::Call(name, args))
+                if matches!(name.as_str(), "astype" | "istype") && args.len() == 1 =>
+            {
+                (&args[0], false)
+            }
+            _ => return,
+        };
+        let Expression::Base { term, follow } = expr else {
+            return;
+        };
+        if found || !reads(&term.elem, follow) {
+            return;
+        }
+        let locals: Vec<(&str, &str)> = match &term.elem {
+            Term::Ident(head) => local_types
+                .get(&(&term.elem as *const Term as usize, head.to_string()))
+                .map(|path| vec![(head.as_str(), path.as_str())])
+                .unwrap_or_default(),
+            _ => vec![],
+        };
+        let implicit = |s: &Snapshot| {
+            s.find_type(ty).map(|t| match place {
+                true => crate::compiler::place_type_in_proc(&s.tree, t, expr, &locals, s.byond),
+                false => crate::compiler::value_type_in_proc(&s.tree, t, expr, &locals, s.byond),
+            })
+        };
+        found = implicit(old) != implicit(new);
     });
     found
 }
