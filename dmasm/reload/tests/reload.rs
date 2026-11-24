@@ -5171,6 +5171,36 @@ fn a_static_moved_into_a_block_changes_what_a_later_initializer_reads() {
 }
 
 #[test]
+fn a_retyped_static_changes_what_a_later_initializer_reads_through_it() {
+    let before = "/datum/a\n\tvar/const/LIMIT = 5\n\n/datum/b\n\tvar/const/LIMIT = 9\n\n\
+                  /proc/limits()\n\tvar/static/datum/a/config\n\
+                  \tvar/static/list/limits = list(config.LIMIT)\n\treturn limits\n";
+    let after = before.replace("static/datum/a/config", "static/datum/b/config");
+    let changes = changes("static-retyped-read", before, &after);
+    assert!(changes.refused.is_empty(), "{:?}", changes.refused);
+    let deferred: Vec<String> = changes.deferred.iter().map(ToString::to_string).collect();
+    assert_eq!(
+        deferred,
+        ["code/code.dm:9: /proc/limits: limits: changed initializer"]
+    );
+    let reboot = &changes
+        .global_init
+        .as_ref()
+        .expect("no global init")
+        .code
+        .nodes;
+    assert_eq!(reads_of(reboot, "LIMIT"), ["/datum/b:LIMIT"]);
+
+    let world = World::new("static-retyped-read-file", before);
+    let mut old = world.parse();
+    world.write(&after);
+    match old.reload_file(&world.dir, std::path::Path::new("code/code.dm")) {
+        Ok(_) => panic!("reloaded on its own"),
+        Err(e) => assert!(e.contains("static initializers"), "{e}"),
+    }
+}
+
+#[test]
 fn a_global_init_names_the_override_whose_static_each_initializer_sets() {
     let before = "var/rolled = rand(1, 2)\n\n\
                   /datum/t/proc/f()\n\treturn 0\n\n\
