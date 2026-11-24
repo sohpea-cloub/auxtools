@@ -1923,6 +1923,20 @@ pub(crate) fn colon_fields<'a>(
     term: &dreammaker::ast::Term,
     follow: &'a [dreammaker::ast::Spanned<dreammaker::ast::Follow>],
 ) -> impl Iterator<Item = &'a str> {
+    colon_names_of(term, follow).filter_map(|(name, call)| (!call).then_some(name))
+}
+
+pub(crate) fn colon_calls<'a>(
+    term: &dreammaker::ast::Term,
+    follow: &'a [dreammaker::ast::Spanned<dreammaker::ast::Follow>],
+) -> impl Iterator<Item = &'a str> {
+    colon_names_of(term, follow).filter_map(|(name, call)| call.then_some(name))
+}
+
+pub(crate) fn colon_names_of<'a>(
+    term: &dreammaker::ast::Term,
+    follow: &'a [dreammaker::ast::Spanned<dreammaker::ast::Follow>],
+) -> impl Iterator<Item = (&'a str, bool)> {
     use dreammaker::ast::{Follow, PropertyAccessKind, Term};
     let after_index = std::iter::once(matches!(term, Term::Call(..) | Term::GlobalCall(..))).chain(
         follow
@@ -1932,14 +1946,17 @@ pub(crate) fn colon_fields<'a>(
     follow
         .iter()
         .zip(after_index)
-        .filter_map(|(f, after_index)| match &f.elem {
-            Follow::Field(PropertyAccessKind::Colon | PropertyAccessKind::SafeColon, name) => {
-                Some(name.as_str())
+        .filter_map(|(f, after_index)| {
+            let (kind, name, call) = match &f.elem {
+                Follow::Field(kind, name) => (*kind, name.as_str(), false),
+                Follow::Call(kind, name, _) => (*kind, name.as_str(), true),
+                _ => return None,
+            };
+            match kind {
+                PropertyAccessKind::Colon | PropertyAccessKind::SafeColon => Some((name, call)),
+                PropertyAccessKind::Scope => None,
+                _ => after_index.then_some((name, call)),
             }
-            Follow::Field(kind, name) if after_index && *kind != PropertyAccessKind::Scope => {
-                Some(name.as_str())
-            }
-            _ => None,
         })
 }
 
@@ -1951,7 +1968,7 @@ fn colon_reads_any(value: &ProcValue, names: &HashSet<&str>) -> bool {
     let mut found = false;
     syntax::walk_proc(value, &mut |node| {
         if let syntax::Node::Expression(Expression::Base { term, follow }) = node {
-            found |= colon_fields(&term.elem, follow).any(|name| names.contains(name));
+            found |= colon_names_of(&term.elem, follow).any(|(name, _)| names.contains(name));
         }
     });
     found
@@ -2018,6 +2035,12 @@ fn const_users(old: &Snapshot, new: &Snapshot, realigned: &Realigned, changes: &
                     })
                 {
                     "reads a var by `x:name` that another type declares now"
+                } else if !colon_names.is_empty()
+                    && chain_rebinds(old, new, path, new_value, |term, follow| {
+                        colon_calls(term, follow).any(|name| colon_names.contains(name))
+                    })
+                {
+                    "calls a proc by `x:name()` that another type declares now"
                 } else if !retyped.is_empty()
                     && chain_rebinds(old, new, path, new_value, |term, follow| {
                         matches!(term, Term::Ident(name) if retyped.contains(name.as_str()))
@@ -2460,7 +2483,7 @@ fn chain_rebinds(
         };
         let globals = |s: &Snapshot| {
             s.find_type(ty).map(|t| {
-                crate::compiler::field_globals_in_proc(&s.tree, t, expression, &locals, s.byond)
+                crate::compiler::chain_targets_in_proc(&s.tree, t, expression, &locals, s.byond)
             })
         };
         found = globals(old) != globals(new);
@@ -3449,10 +3472,17 @@ fn compare_types(
     }
     for path in old_types.keys().filter(|p| !new_types.contains_key(*p)) {
         if let Some(o) = old.find_type(path) {
-            for (name, var) in o.get().vars.iter() {
-                if var.declaration.is_some()
-                    && !changes.colon_names.iter().any(|c| c == name.as_str())
-                {
+            let vars = o.get().vars.iter().filter(|(_, v)| v.declaration.is_some());
+            let procs = o
+                .get()
+                .procs
+                .iter()
+                .filter(|(_, p)| p.declaration.is_some());
+            let names = vars
+                .map(|(name, _)| name)
+                .chain(procs.map(|(name, _)| name));
+            for name in names {
+                if !changes.colon_names.iter().any(|c| c == name.as_str()) {
                     changes.colon_names.push(name.to_string());
                 }
             }
@@ -3598,6 +3628,24 @@ fn compare_types(
 
         let op = o.map_or(&no_procs, |o| &o.get().procs);
         let np = &n.get().procs;
+        let declared =
+            |p: Option<&dreammaker::objtree::TypeProc>| p.is_some_and(|p| p.declaration.is_some());
+        let redeclared = np
+            .iter()
+            .filter(|(name, p)| declared(Some(p)) != declared(op.get(*name)))
+            .map(|(name, _)| name)
+            .chain(
+                op.iter()
+                    .filter(|(name, p)| declared(Some(p)) && !np.contains_key(*name))
+                    .map(|(name, _)| name),
+            );
+        if !n.is_root() {
+            for name in redeclared {
+                if !changes.colon_names.iter().any(|c| c == name.as_str()) {
+                    changes.colon_names.push(name.to_string());
+                }
+            }
+        }
         for (name, proc) in np.iter() {
             let old_values = o.map(|o| real(o, name.as_str())).unwrap_or_default();
             let new_values = real(n, name.as_str());

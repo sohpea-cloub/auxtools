@@ -509,6 +509,19 @@ pub fn dependents(built: Built) {
 		"recompiled untyped x:make() doesn't call the proc of the last type made that declares make()"
 	);
 	println!("ok: recompiled untyped x:make() calls the proc of the last type made that declares make()");
+
+	let changes = source.edit(
+		"dependents.dm",
+		"/proc/dep_make_on(x)",
+		"/datum/dep_maker_later/proc/dep_make()\n\tset name = \"dep make later\"\n\treturn \"later\"\n\n/proc/dep_make_on(x)"
+	);
+	reload(&mut watcher, &changes);
+	assert_eq!(
+		eval(&mut client, "dep_make_on(new /datum/dep_maker_later)"),
+		"\"later\"",
+		"unchanged untyped x:make() doesn't call the make() of a type made later"
+	);
+	println!("ok: unchanged untyped x:make() calls the make() of a type made later");
 }
 
 fn refused_edit(source: &mut Source, file: &str, from: &str, to: &str) -> Vec<dmasm::reload::Refusal> {

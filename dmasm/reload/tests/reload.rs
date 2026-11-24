@@ -2234,6 +2234,76 @@ fn a_declaration_that_colon_lookup_finds_instead_recompiles_its_users() {
 }
 
 #[test]
+fn a_proc_declaration_that_colon_lookup_finds_instead_recompiles_its_callers() {
+    let uncompiled = "\tswitch(x)\n\t\tif(x)\n\t\t\treturn 0\n";
+    let code = format!(
+        "/datum/a/proc/make()\n\tset name = \"a make\"\n\n\
+         /proc/colon(x)\n\treturn x:make()\n\n\
+         /proc/safe(x)\n\treturn x?:make()\n\n\
+         /proc/indexed(list/items)\n\treturn items[1].make()\n\n\
+         /proc/uncompiled_colon(x)\n{uncompiled}\treturn x:make()\n\n\
+         /proc/typed(datum/a/x)\n\treturn x:make()\n\n"
+    );
+    let (without, with) = (
+        "/datum/b\n",
+        "/datum/b/proc/make()\n\tset name = \"b make\"\n",
+    );
+    for (name, before, after, call) in [
+        (
+            "colon-proc-added",
+            without,
+            with,
+            "dynamic_proc(\"b make\")",
+        ),
+        (
+            "colon-proc-removed",
+            with,
+            without,
+            "dynamic_proc(\"a make\")",
+        ),
+        (
+            "colon-proc-type-removed",
+            with,
+            "",
+            "dynamic_proc(\"a make\")",
+        ),
+    ] {
+        let changes = types_changes(name, &code, before, after);
+        let refused: Vec<&str> = changes.refused.iter().map(|r| r.path.as_str()).collect();
+        assert_eq!(
+            refused,
+            ["/uncompiled_colon"],
+            "{name}: {:?}",
+            changes.refused
+        );
+        assert!(
+            changes.refused[0].why.starts_with(
+                "calls a proc by `x:name()` that another type declares now, so it must be compiled again"
+            ),
+            "{name}: {}",
+            changes.refused[0]
+        );
+        let mut reloads: Vec<&str> = changes
+            .plan
+            .reloads
+            .iter()
+            .map(|r| r.proc.path.as_str())
+            .collect();
+        reloads.sort();
+        assert_eq!(
+            reloads,
+            ["/colon", "/indexed", "/safe"],
+            "{name}: {:?}",
+            changes.plan
+        );
+        for reload in &changes.plan.reloads {
+            let code = dmasm_bytecode::format(&reload.nodes);
+            assert!(code.contains(call), "{name}: {}: {code}", reload.proc.path);
+        }
+    }
+}
+
+#[test]
 fn a_declaration_that_colon_lookup_finds_after_a_call_recompiles_its_users() {
     let uncompiled = "\tswitch(x)\n\t\tif(x)\n\t\t\treturn 0\n";
     let code = format!(

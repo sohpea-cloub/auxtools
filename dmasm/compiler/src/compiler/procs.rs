@@ -796,7 +796,7 @@ pub(super) fn place_typed(place: &dreammaker::ast::Expression) -> bool {
     }
 }
 
-pub(super) fn field_globals(
+pub(super) fn chain_targets(
     compiler: &Compiler,
     expr: &dreammaker::ast::Expression,
 ) -> Vec<Option<String>> {
@@ -820,11 +820,12 @@ pub(super) fn field_globals(
                 continue;
             }
             Follow::Call(access, name, _) => {
-                found.push(None);
                 let receiver = match global && i == 0 {
                     true => Some(compiler.proc.tree.root()),
                     false => ty,
                 };
+                let callee = callee_type(compiler, receiver, *access, name.as_str());
+                found.push(Some(format!("{:?}", call_var(callee, name.as_str()))));
                 (ty, after) = call_result(compiler, receiver, *access, name.as_str());
                 continue;
             }

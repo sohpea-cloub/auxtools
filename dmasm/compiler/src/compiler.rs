@@ -1594,7 +1594,7 @@ pub fn fold_in_scope(
     })
 }
 
-pub fn field_globals_in_proc(
+pub fn chain_targets_in_proc(
     tree: &dreammaker::objtree::ObjectTree,
     ty: dreammaker::objtree::TypeRef,
     expr: &Expression,
@@ -1606,7 +1606,7 @@ pub fn field_globals_in_proc(
         .map(|(name, path)| InScope::Local(name, path))
         .collect();
     in_scope(tree, ty, &scope, byond, |compiler| {
-        procs::field_globals(compiler, expr)
+        procs::chain_targets(compiler, expr)
     })
 }
 
