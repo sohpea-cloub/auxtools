@@ -4216,3 +4216,44 @@ fn a_static_naming_a_retargeted_path_is_given_to_a_reboot() {
     assert_eq!(changes.global_init.as_ref().map(|i| i.table), Some(1));
     assert_eq!(global_init_sets(&changes), ["/proc/callback#0:handler @8"]);
 }
+
+#[test]
+fn uncompiled_code_folding_a_changed_const_is_refused() {
+    let uncompiled = "\tswitch(x)\n\t\tif(x)\n\t\t\treturn 0\n";
+    let before = format!(
+        "var/const/LIMIT = 5\n\n\
+         /proc/next(x)\n{uncompiled}\treturn LIMIT + 1\n\n\
+         /proc/parameter(LIMIT, x)\n{uncompiled}\treturn LIMIT + 1\n\n\
+         /datum/m\n\tvar/LIMIT = 2\n\n\
+         /datum/m/proc/member(x)\n{uncompiled}\treturn LIMIT + 1\n\n\
+         /datum/c\n\tvar/const/CAP = 3\n\n\
+         /datum/c/proc/capped(x)\n{uncompiled}\treturn CAP * 2\n\n\
+         /proc/scoped(x)\n{uncompiled}\treturn /datum/c::CAP\n\n\
+         /proc/compiled()\n\treturn LIMIT + CAP\n"
+    );
+    for (name, after, refused) in [
+        (
+            "uncompiled-const-limit",
+            before.replace("LIMIT = 5", "LIMIT = 10"),
+            &["/next"][..],
+        ),
+        (
+            "uncompiled-const-cap",
+            before.replace("CAP = 3", "CAP = 4"),
+            &["/datum/c/capped", "/scoped"][..],
+        ),
+    ] {
+        let changes = changes_of(name, &before, &after);
+        let mut paths: Vec<&str> = changes.refused.iter().map(|r| r.path.as_str()).collect();
+        paths.sort();
+        assert_eq!(paths, refused, "{}: {:?}", name, changes.refused);
+        assert!(
+            changes.refused[0]
+                .why
+                .starts_with("folds a const whose value changes, so it must be compiled again, but it doesn't compile: "),
+            "{}: {}",
+            name,
+            changes.refused[0]
+        );
+    }
+}

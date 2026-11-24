@@ -40,3 +40,18 @@ var/const/DEP_LIMIT = 5
 	var/handler = /datum/dep_called::f()
 
 /datum/dep_copier
+
+var/const/DEP_STEP = 5
+
+/datum/dep_twice/proc/f()
+	return 0
+
+/datum/dep_twice/f()
+	return 1
+
+/datum/dep_twice/f()
+	return 2
+
+/proc/dep_next()
+	var/last = /datum/dep_twice::f()
+	return last ? DEP_STEP + 1 : 0
