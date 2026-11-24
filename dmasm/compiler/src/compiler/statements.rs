@@ -1847,10 +1847,11 @@ pub(super) fn emit_safe_chain_write<'a>(
                     compiler.emit_ins(Instruction::PopCache);
                 }
                 compiler.emit_ins(if value_form {
-                    Instruction::SetVarExpr(var)
+                    Instruction::SetVarExpr(var.clone())
                 } else {
-                    Instruction::SetVar(var)
+                    Instruction::SetVar(var.clone())
                 });
+                super::known_bugs::safe_logical_write(compiler, &var);
                 let Label::Named(end) = end else {
                     unreachable!()
                 };
@@ -1949,7 +1950,8 @@ pub(super) fn emit_safe_chain_write<'a>(
                     .insert(start, Node::Instruction(Instruction::PushCache, ()));
                 compiler.emit_ins(Instruction::PopCache);
             }
-            compiler.emit_ins(Instruction::SetVar(var));
+            compiler.emit_ins(Instruction::SetVar(var.clone()));
+            super::known_bugs::safe_logical_write(compiler, &var);
             compiler.emit_label(end);
         }
         _ => unreachable!("not writable"),
@@ -2552,7 +2554,8 @@ pub(super) fn emit_safe_logical_assign(
             .insert(start, Node::Instruction(Instruction::PushCache, ()));
         compiler.emit_ins(Instruction::PopCache);
     }
-    compiler.emit_ins(Instruction::SetVarExpr(var));
+    compiler.emit_ins(Instruction::SetVarExpr(var.clone()));
+    super::known_bugs::safe_logical_write(compiler, &var);
     compiler.emit_label(end);
     Ok(true)
 }

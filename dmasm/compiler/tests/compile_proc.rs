@@ -2067,6 +2067,47 @@ fn reading_a_pointer_it_makes_warns_before_516_1668() {
 }
 
 #[test]
+fn a_logical_assignment_through_a_safe_chain_warns_where_dreammaker_writes_another_var() {
+    let types = "/datum/item\n\tvar/datum/item/a\n\tvar/datum/item/b\n\tvar/datum/item/c\n\
+                 \tvar/list/l\n\tvar/static/S\n/datum/item/proc/f()\n\treturn src\n";
+    let warns = |body: &str, build: u32| {
+        let src = format!("{types}/proc/g(datum/item/i, list/items, datum/item/x)\n\t{body}\n");
+        compiled_of(&src, "", "g", dmasm_compiler::ByondVersion::new(516, build))
+            .byond_bugs
+            .iter()
+            .any(|bug| bug.id == dmasm_compiler::diagnostic::Id::ByondSafeLogicalWrite)
+    };
+    for body in [
+        "i?.a.b ||= x",
+        "i?.a.b &&= x",
+        "i?.a.b.c ||= x",
+        "i?.a:b ||= x",
+        "items?[1]:a:b ||= x",
+        "i?.f().a.b ||= x",
+        "i?.a?.b.c ||= x",
+        "return (i?.a.b ||= x)",
+    ] {
+        assert!(warns(body, 1689), "no warning for {}", body);
+        assert!(warns(body, 1637), "no warning before 516.1673 for {}", body);
+    }
+    for body in [
+        "i?.a ||= x",
+        "items?[1].a ||= x",
+        "i.a?.b ||= x",
+        "i?.a?.b ||= x",
+        "i?.a.l[1] ||= x",
+        "i?.a.S ||= x",
+        "i.a.b ||= x",
+        "i?.a.f().b ||= x",
+        "i?.a.b += x",
+        "i?.a.b ||= x.c",
+        "i?.a.b ||= i.f()",
+    ] {
+        assert!(!warns(body, 1689), "a warning for {}", body);
+    }
+}
+
+#[test]
 fn new_without_arguments_is_true_in_a_test() {
     let src = "/datum/t\n/proc/f(a, b)\n\treturn (new /datum/t ? a : b)\n";
     assert_eq!(compile(src, "", "f"), "GetVar arg(0)\nRet\nEnd");

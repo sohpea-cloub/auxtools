@@ -2,6 +2,24 @@ use dreammaker::ast::{Block, Statement};
 
 use super::{procs::ProcSource, Compiler};
 use crate::diagnostic::Id;
+use crate::operands::Variable;
+use crate::{Instruction, Node};
+
+pub(super) fn safe_logical_write(compiler: &Compiler, read: &Variable) {
+    let written = match compiler.nodes.last() {
+        Some(Node::Instruction(Instruction::SetVar(var) | Instruction::SetVarExpr(var), _)) => var,
+        _ => return,
+    };
+    if matches!(read, Variable::SetCache(..)) && !matches!(written, Variable::SetCache(..)) {
+        compiler.warn_bug(
+            Id::ByondSafeLogicalWrite,
+            "`||=` or `&&=` on a `?.` chain that ends in two or more vars (`a?.b.c ||= x`): \
+             DreamMaker writes the var through the object its test read, a.b.b.c, or fails on \
+             null",
+            "; dmasm writes a.b.c",
+        );
+    }
+}
 
 pub(super) fn check(compiler: &Compiler, source: &ProcSource, code: &Block) {
     let line = source.value.location.line;
