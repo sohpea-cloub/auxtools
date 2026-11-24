@@ -237,6 +237,32 @@ pub fn reloads(pid: u64, code: &Path) {
 	std::fs::write(code, &source).unwrap();
 	run(pid, &["wait", "reload", "--since", &since, "--timeout", "15"], 0);
 	println!("ok: wait pause keeps its breakpoint through a reload");
+
+	let guard = code.with_file_name("guard");
+	let place = format!("attach_host.dm:{}", crate::line_of(code, "\t\ttotal += i // second loop"));
+	let waiting = wait_at(pid, &place);
+	let since = newest(pid).to_string();
+	let guarded = "\t\tif (fexists(\"guard\"))\n\t\t\ttotal += i // second loop\n";
+	std::fs::write(code, source.replace("\t\ttotal += i // second loop\n", guarded)).unwrap();
+	run(pid, &["wait", "reload", "--since", &since, "--timeout", "15"], 0);
+	run(pid, &["eval", "--spawn", "two_loops()"], 0);
+	rounds_pass(pid, 2);
+	std::fs::write(&guard, "yes").unwrap();
+	run(pid, &["eval", "--spawn", "two_loops()"], 0);
+	let (exit, printed) = waiting.finish();
+	let line = crate::line_of(code, "\t\t\ttotal += i // second loop");
+	assert!(
+		exit == 0 && printed.contains(&format!("#0 /two_loops  attach_host.dm:{}\n", line)),
+		"wait pause on a statement put under a condition gave {}: {}",
+		exit,
+		printed
+	);
+	run(pid, &["continue"], 0);
+	std::fs::remove_file(&guard).unwrap();
+	let since = newest(pid).to_string();
+	std::fs::write(code, &source).unwrap();
+	run(pid, &["wait", "reload", "--since", &since, "--timeout", "15"], 0);
+	println!("ok: wait pause keeps its breakpoint on a statement put under a condition");
 }
 
 pub fn reboot(pid: u64, dir: &Path) {

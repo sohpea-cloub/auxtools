@@ -257,6 +257,8 @@ var/lone_held = FALSE
 	lone_held = FALSE
 	world.log << "dap: the new lone returned [lone(2)]"
 
+var/swap_guard = FALSE
+
 /proc/sc_swap()
 	var/n = 1
 	n += 2 // @swap_add
