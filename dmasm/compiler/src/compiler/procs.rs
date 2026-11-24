@@ -157,13 +157,14 @@ impl ProcCtx<'_> {
 }
 
 pub fn compile_proc(source: &ProcSource) -> Result<CompiledProc, CompileError> {
-    compile_proc_as(source, None, &[])
+    compile_proc_as(source, None, &[], None)
 }
 
 pub fn compile_proc_as(
     source: &ProcSource,
     proc_path: Option<&str>,
     statics: &[(String, u32, String)],
+    value_type: Option<&str>,
 ) -> Result<CompiledProc, CompileError> {
     let declared: Vec<&dreammaker::ast::Parameter> = source
         .value
@@ -195,6 +196,8 @@ pub fn compile_proc_as(
     compiler.emit_ins(Instruction::DbgFile(DMString(
         source.file.as_bytes().to_vec(),
     )));
+    compiler.implicit_type =
+        value_type.and_then(|ty| super::statements::implicit_type_for(&compiler, ty));
 
     let empty: Block = Box::new([]);
     let code = source.value.code.as_ref().unwrap_or(&empty);

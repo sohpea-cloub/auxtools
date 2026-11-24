@@ -1169,6 +1169,50 @@ fn static_made_by_new_of_a_computed_static() {
 	world.end();
 }
 
+const CASTS: &str = "/datum/rb_cast_item
+
+/datum/rb_cast_other
+
+var/datum/rb_cast_source = new /datum/rb_cast_other
+
+/proc/rb_cast()
+	return 0
+";
+
+fn global_cast_to_its_declared_type() {
+	let dir = copy_of_the_world("global_cast_to_its_declared_type");
+	std::fs::write(dir.join("casts.dm"), CASTS).unwrap();
+	let dme = dir.join("dap_test_host.dme");
+	let text = std::fs::read_to_string(&dme).unwrap() + "#include \"casts.dm\"\n";
+	std::fs::write(&dme, text).unwrap();
+	paths::compile(&dme);
+
+	let mut world = World::launch_in(dir.to_path_buf(), json!({ "hotReload": true }));
+	world.catch_runtimes(false);
+	world.configure();
+	world.wait_output("Hot reload active");
+	if world.eval_global("world.byond_version").parse::<u32>().unwrap() < 516 {
+		world.end();
+		return;
+	}
+	edit(
+		&mut world,
+		"casts.dm",
+		"/proc/rb_cast()\n\treturn 0",
+		"var/datum/rb_cast_item/rb_cast_global = astype(rb_cast_source)\n\n/proc/rb_cast()\n\treturn isnull(rb_cast_global)"
+	);
+	assert_eq!(world.eval_global("rb_cast()"), "1", "whether the new global is null:\n{}", world.output);
+	reboot(&mut world, 2);
+	assert_eq!(
+		world.eval_global("rb_cast()"),
+		"1",
+		"whether the new global is null after reboot:\n{}",
+		world.output
+	);
+	ok("new global cast by `astype()` to its declared type, live and after reboot");
+	world.end();
+}
+
 const LOCAL_LIMIT: &str = "/proc/rb_local_limit()
 	var/const/LIMIT = 5
 	return \"[LIMIT] [LIMIT + 1]\"
@@ -1447,6 +1491,7 @@ pub fn files() {
 	static_reading_through_a_retyped_static();
 	static_made_by_new_of_a_static_moved_into_a_block();
 	static_made_by_new_of_a_computed_static();
+	global_cast_to_its_declared_type();
 	local_const_changed();
 	file_named_by_a_reload();
 	resource_files();

@@ -5544,3 +5544,49 @@ fn a_global_init_names_the_override_whose_static_each_initializer_sets() {
     let first = init.without(|var| var.name.0 == b"rolled");
     assert_eq!(first.owners, init.owners[1..]);
 }
+
+fn cast_types(nodes: &[Node]) -> Vec<String> {
+    nodes
+        .windows(2)
+        .filter_map(|pair| match pair {
+            [Node::Instruction(Instruction::PushVal(dmasm_bytecode::Value::Path(path)), ()), Node::Instruction(Instruction::AsType, ())] => {
+                Some(path.clone())
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn a_cast_in_an_initializer_takes_the_vars_declared_type() {
+    let before = "/datum/item\n/datum/other\n\nvar/datum/source = new /datum/other\n\n\
+                  /proc/f()\n\treturn 1\n";
+    let after = "/datum/item\n/datum/other\n\nvar/datum/source = new /datum/other\n\
+                 var/datum/item/selected = astype(source)\n\n\
+                 /proc/f()\n\tvar/static/datum/item/held = astype(source)\n\treturn held\n";
+    let changes = changes("initializer-cast", before, after);
+    assert!(changes.refused.is_empty(), "{:?}", changes.refused);
+    let selected = changes
+        .plan
+        .new_vars
+        .iter()
+        .find(|var| var.var == "selected")
+        .and_then(|var| var.init.as_ref())
+        .expect("no initializer for selected");
+    assert_eq!(
+        cast_types(&selected.nodes),
+        ["/datum/item"],
+        "the new global"
+    );
+    let held = changes.plan.reloads[0].statics[0]
+        .init
+        .as_ref()
+        .expect("no initializer for held");
+    assert_eq!(cast_types(&held.nodes), ["/datum/item"], "the new static");
+    let reboot = &changes.global_init.as_ref().expect("no global init").code;
+    assert_eq!(
+        cast_types(&reboot.nodes),
+        ["/datum/item", "/datum/item"],
+        "the reboot's initializers"
+    );
+}

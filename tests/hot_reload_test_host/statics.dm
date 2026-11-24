@@ -171,3 +171,12 @@ var/st_arm = 20
 /proc/st_configured()
 	var/static/datum/st_config/st_config
 	return isnull(st_config)
+
+/datum/st_cast_item
+
+/datum/st_cast_other
+
+var/datum/st_cast_source = new /datum/st_cast_other
+
+/proc/st_cast()
+	return 0

@@ -1296,7 +1296,7 @@ fn loop_filter(compiler: &Compiler, ty: &str) -> (crate::TypeFilter, Option<Stri
     (filter, if exact { None } else { Some(path) })
 }
 
-fn implicit_type_for(compiler: &Compiler, ty: &str) -> Option<String> {
+pub(super) fn implicit_type_for(compiler: &Compiler, ty: &str) -> Option<String> {
     if ty.is_empty() {
         return None;
     }

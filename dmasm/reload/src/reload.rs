@@ -1290,7 +1290,7 @@ impl Snapshot {
             location,
             Statement::Return(Some(expression.clone())),
         )]);
-        self.compile_synthetic(ty, "(in list)", block, location, true, None, &[])
+        self.compile_synthetic(ty, "(in list)", block, location, true, None, &[], None)
     }
 
     pub(crate) fn compile_value(
@@ -1333,6 +1333,7 @@ impl Snapshot {
             false,
             proc_path,
             statics,
+            Some(declared),
         )
     }
 
@@ -1364,7 +1365,16 @@ impl Snapshot {
                 )
             })
             .collect();
-        self.compile_synthetic(ty, "(init)", block, ty.get().location, false, None, &[])
+        self.compile_synthetic(
+            ty,
+            "(init)",
+            block,
+            ty.get().location,
+            false,
+            None,
+            &[],
+            None,
+        )
     }
 
     fn compile_synthetic(
@@ -1376,6 +1386,7 @@ impl Snapshot {
         debug_info: bool,
         proc_path: Option<&str>,
         statics: &[(String, u32, String)],
+        value_type: Option<&str>,
     ) -> Result<ProcReload, Diagnostic> {
         let value = ProcValue {
             location,
@@ -1402,7 +1413,7 @@ impl Snapshot {
         };
         let path = format!("{}/{}", ty.get().path, name);
         let compiled = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            crate::compiler::compile_proc_as(&source, proc_path, statics)
+            crate::compiler::compile_proc_as(&source, proc_path, statics, value_type)
         })) {
             Ok(Ok(compiled)) => compiled,
             Ok(Err(e)) => return Err(e.diagnostic()),

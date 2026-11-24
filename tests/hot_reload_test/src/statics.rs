@@ -198,6 +198,22 @@ pub fn statics(built: Built) {
 		"the new static's value from a const read through a null static of its proc"
 	);
 	println!("ok: a new static's initializer reads a const through a typed static of its proc");
+
+	if source.options.byond.is_some_and(|(version, _)| version >= 516) {
+		let changes = source.edit(
+			"statics.dm",
+			"/proc/st_cast()\n\treturn 0",
+			"var/datum/st_cast_item/st_cast_global = astype(st_cast_source)\n\n/proc/st_cast()\n\tvar/static/datum/st_cast_item/st_cast_static = \
+			 astype(st_cast_source)\n\treturn \"[isnull(st_cast_global)] [isnull(st_cast_static)]\""
+		);
+		reload(&mut watcher, &changes);
+		assert_eq!(
+			eval(&mut client, "st_cast()"),
+			"\"1 1\"",
+			"whether the new global and static are null after casting a value of another type to their declared type"
+		);
+		println!("ok: a new global's and a new static's `astype()` cast to their declared type");
+	}
 }
 
 fn declared_references(client: &mut Client, path: &str) -> (u32, u32) {
