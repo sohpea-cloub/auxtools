@@ -1101,6 +1101,23 @@ pub fn run() {
 	world.function_breakpoints(&[]);
 	world.resume_through("twice");
 	ok("function breakpoint on a proc a reload removes and adds again");
+
+	let set = world.function_breakpoints(&["/datum/thing/twice/bump#1"]);
+	assert_eq!(set[0]["verified"], true, "{}", set[0]);
+	const INSERTED: &str = "/datum/thing/twice/bump(by)\n\treturn ..(by) + 10 // @twice_inserted\n\n";
+	edit(&mut world, "stepping.dm", SECOND, &format!("{}{}", INSERTED, SECOND));
+	world.run("twice");
+	let stop = world.stop();
+	assert_eq!(
+		stop.line,
+		world.marks.line("twice_inserted"),
+		"stopped in {} at line {}",
+		stop.proc,
+		stop.line
+	);
+	world.function_breakpoints(&[]);
+	world.resume_through("twice");
+	ok("function breakpoint on an override number a reload gives another definition");
 	edit(
 		&mut world,
 		"stepping.dm",

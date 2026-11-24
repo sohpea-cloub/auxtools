@@ -965,7 +965,7 @@ impl Adapter {
 		};
 		let mut changed = HashSet::new();
 		let mut instructions = vec![];
-		let mut unlinked = vec![];
+		let mut find_again = vec![];
 		for (key, breakpoints) in self.set.lock().unwrap().iter_mut() {
 			let exact = key == INSTRUCTION_BREAKPOINTS;
 			let by_name = key == FUNCTION_BREAKPOINTS;
@@ -974,8 +974,9 @@ impl Adapter {
 					return true;
 				}
 				let now = placed.iter().find(|placed| placed.id == breakpoint.claim);
-				if by_name && now.is_some_and(|now| now.unlinked) {
-					unlinked.push(breakpoint.claim);
+				let renumbered = |now: &aux::PlacedBreakpoint| breakpoint.at.as_ref().is_some_and(|at| at.proc != now.at.proc);
+				if by_name && now.is_some_and(|now| now.unlinked || renumbered(now)) {
+					find_again.push(breakpoint.claim);
 					return false;
 				}
 				if now.is_some_and(|now| breakpoint.at.as_ref() == Some(&now.at) && breakpoint.file == now.file && breakpoint.line == now.line) {
@@ -996,7 +997,7 @@ impl Adapter {
 		}
 		changed.remove(INSTRUCTION_BREAKPOINTS);
 		self.relocated.extend(changed);
-		for claim in unlinked {
+		for claim in find_again {
 			let _ = self.remove_breakpoint(claim);
 		}
 		for (id, removed) in instructions {
