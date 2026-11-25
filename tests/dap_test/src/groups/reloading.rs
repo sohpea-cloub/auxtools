@@ -405,6 +405,35 @@ fn starting_at_world_new() {
 	world.end();
 }
 
+fn completion_after_a_rename() {
+	let dir = TempDir::new("dap_test_renamed");
+	std::fs::write(dir.join("dap_test_host.dme"), "#define DEBUG\n#include \"bare.dm\"\n").unwrap();
+	std::fs::write(
+		dir.join("bare.dm"),
+		"/world/New()\n\tworld.log << \"dap: world/New\"\n\n/proc/helper()\n\treturn 1\n"
+	)
+	.unwrap();
+	paths::compile(&dir.join("dap_test_host.dme"));
+	let mut world = World::launch_in(dir.to_path_buf(), json!({ "hotReload": true }));
+	world.configure();
+	world.wait_output("Hot reload active");
+	let offered = |world: &mut World, text: &str| -> Vec<String> {
+		let targets = world.request("completions", json!({ "text": text, "column": text.len() + 1 }));
+		targets["targets"]
+			.as_array()
+			.unwrap()
+			.iter()
+			.map(|t| t["label"].as_str().unwrap().to_owned())
+			.collect()
+	};
+	assert_eq!(offered(&mut world, "::hel"), ["helper"]);
+	edit(&mut world, "bare.dm", "/proc/helper()\n", "/proc/helped()\n");
+	assert_eq!(offered(&mut world, "::hel"), ["helped"]);
+	assert_eq!(offered(&mut world, "hel"), ["helped"]);
+	ok("completion after a reload renames a proc");
+	world.end();
+}
+
 fn edited_during_a_reboot() {
 	let (mut world, _dir) = watched_world("edited_during_a_reboot");
 	let at = world.marks.clone();
@@ -1589,6 +1618,7 @@ pub fn edits() {
 	saves_with_nothing_to_reload();
 	retry_after_a_refused_save();
 	edited_during_a_reboot();
+	completion_after_a_rename();
 	reboot_refusing_the_edits();
 }
 

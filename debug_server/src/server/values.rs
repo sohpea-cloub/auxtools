@@ -309,6 +309,9 @@ pub(super) fn each_proc(mut each: impl FnMut(&str, &str)) {
 		if name.starts_with("auxtools_") || name.ends_with(')') || name.is_empty() {
 			continue;
 		}
+		if !Proc::overrides(proc.path.as_str()).iter().any(|linked| linked.id == proc.id) {
+			continue;
+		}
 		each(owner, name);
 	}
 }
