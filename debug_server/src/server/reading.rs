@@ -16,7 +16,11 @@ impl Server {
 			),
 			None => None
 		};
-		read(&parsed, frame)
+		let was_in_eval = std::mem::replace(&mut self.eval.in_eval, true);
+		auxtools::instruction_hook::hear_all();
+		let value = read(&parsed, frame);
+		self.eval.in_eval = was_in_eval;
+		value
 	}
 
 	pub(super) fn handle_read(&mut self, frame_id: Option<u32>, expression: &str) {

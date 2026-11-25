@@ -1292,6 +1292,20 @@ fn main() {
 	assert_eq!(eval(&mut client, Some(0), "breakpoint_target()"), "2");
 	println!("ok: evaluating a proc that has a breakpoint in it");
 
+	client.send(Request::Read {
+		frame_id: None,
+		expression: "/datum".to_owned()
+	});
+	client.send(Request::Status);
+	let answers = [client.recv(), client.recv()];
+	assert!(
+		matches!(&answers[0], Response::Eval(Ok(read)) if read.value == "/datum"),
+		"the read got {:?}",
+		answers[0]
+	);
+	assert!(matches!(answers[1], Response::Status { .. }), "the status request got {:?}", answers[1]);
+	println!("ok: a read of a type path answers before the next request");
+
 	let byond = match client.request(Request::ByondVersion) {
 		Response::ByondVersion { version, build } => (version, build),
 		other => panic!("expected ByondVersion, got {:?}", other)
