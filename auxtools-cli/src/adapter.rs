@@ -2335,7 +2335,13 @@ fn completion_place(text: &str) -> Option<CompletionPlace<'_>> {
 			.strip_suffix("::")
 			.is_some_and(|head| !head.ends_with(|c: char| name_char(c) || matches!(c, ']' | ')' | '"')))
 		{
-			base_end?;
+			if base_end.is_none() {
+				return Some(CompletionPlace {
+					start,
+					base: Some("global"),
+					command: false
+				});
+			}
 			at -= 2;
 			break;
 		}
@@ -2569,6 +2575,7 @@ mod tests {
 		assert_eq!(place("f(x) + items[\"k\"][i + 1].na"), Some(("na", Some("items[\"k\"][i + 1]"), false)));
 		assert_eq!(place("items?[1].na"), Some(("na", Some("items?[1]"), false)));
 		assert_eq!(place("::registry[k].na"), Some(("na", Some("::registry[k]"), false)));
+		assert_eq!(place("::reg"), Some(("reg", Some("global"), false)));
 		assert_eq!(place("x + ::count."), Some(("", Some("::count"), false)));
 		assert_eq!(place("items[\"slot (left)\"].na"), Some(("na", Some("items[\"slot (left)\"]"), false)));
 		assert_eq!(place("items[\"\\\"]\"].na"), Some(("na", Some("items[\"\\\"]\"]"), false)));

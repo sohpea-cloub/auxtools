@@ -102,6 +102,8 @@ fn completions(world: &mut World) {
 	] {
 		assert_eq!(names(world, text), ["reads"], "{}", text);
 	}
+	assert_eq!(names(world, "::regi"), ["registry"]);
+	assert_eq!(names(world, "::amou"), ["amount"]);
 	ok("completion rejects unsafe or invalid receivers");
 
 	let targets = world.request("completions", json!({ "frameId": frame, "text": "leaf(by) + n", "column": 8 }));
