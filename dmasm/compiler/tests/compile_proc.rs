@@ -3842,3 +3842,43 @@ fn a_scoped_var_after_a_safe_access_warns_where_dreammaker_reads_the_receivers()
         assert!(!warns(body), "{}", body);
     }
 }
+
+#[test]
+fn a_scoped_const_after_a_value_folds_as_the_code_finds_it() {
+    let types = "/datum/config\n\tvar/datum/settings/settings\n\tvar/const/LIMIT = 3\n\
+                 /datum/config/proc/refresh() as /datum/config\n\treturn src\n\
+                 /datum/settings\n\tvar/const/KIND = 9\n\
+                 /datum/later\n\tvar/const/LIMIT = 11\n\
+                 var/datum/config/config\nvar/list/configs\n\
+                 /proc/get_config() as /datum/config\n\treturn config\n";
+    for (body, folded) in [
+        ("return get_config()::LIMIT + 1", "PushInt 4"),
+        ("return config.refresh()::LIMIT + 1", "PushInt 4"),
+        ("return config.settings::KIND + 1", "PushInt 10"),
+        ("return get_config()::settings::KIND + 1", "PushInt 10"),
+        ("return configs[1]::LIMIT + 1", "PushInt 12"),
+    ] {
+        let code = compile(&format!("{types}/proc/f()\n\t{body}\n"), "", "f");
+        assert!(
+            code.starts_with(&format!("{folded}\nRet")),
+            "{}: not folded to {}:\n{}",
+            body,
+            folded,
+            code
+        );
+    }
+}
+
+#[test]
+fn a_scoped_read_from_a_path_that_names_no_type_is_refused() {
+    let types = "/datum/config\n\tvar/datum/settings/settings\n\
+                 /datum/settings\n\tvar/static/item_type = 7\n\tvar/const/KIND = 9\n\
+                 /datum/later\n\tvar/static/item_type = 13\n\tvar/const/KIND = 11\n";
+    for body in [
+        "return /datum/config.settings::item_type",
+        "return /datum/config.settings::KIND + 1",
+    ] {
+        let src = format!("{types}/proc/g()\n\t{body}\n");
+        assert!(compile_error(&src).contains("::"), "{}", body);
+    }
+}

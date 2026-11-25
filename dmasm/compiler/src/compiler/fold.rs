@@ -80,12 +80,10 @@ pub(super) fn constant(c: &Compiler, expr: &Expression) -> Option<Constant> {
         {
             return None;
         }
-        if !follow.is_empty()
-            && (follow
-                .iter()
-                .all(|f| matches!(f.elem, Follow::StaticField(_)))
-                || follow.iter().all(|f| matches!(f.elem, Follow::Field(..))))
-        {
+        if matches!(
+            follow.last().map(|f| &f.elem),
+            Some(Follow::StaticField(_) | Follow::Field(..))
+        ) {
             return None;
         }
         if follow.is_empty() {
@@ -133,7 +131,9 @@ pub(super) fn value(c: &Compiler, expr: &Expression) -> Option<Constant> {
                     )
                 })
                 .count();
-            let (mut v, follow) = if statics > 0 {
+            let (mut v, follow) = if let Some((v, at)) = scoped_const(c, expr) {
+                (v, &follow[at + 1..])
+            } else if statics > 0 {
                 (
                     static_const(c, &term.elem, &follow[..statics])?,
                     &follow[statics..],
@@ -192,6 +192,32 @@ fn field_const(
     from_objtree(decl.ty().get_value(name.as_str())?.constant.as_ref()?)
 }
 
+fn scoped_const(c: &Compiler, expr: &Expression) -> Option<(Constant, usize)> {
+    let Expression::Base { term, follow } = expr else {
+        return None;
+    };
+    let at = follow
+        .iter()
+        .rposition(|f| !matches!(f.elem, Follow::Unary(_)))?;
+    let Follow::StaticField(name) = &follow[at].elem else {
+        return None;
+    };
+    let chain = Expression::Base {
+        term: term.clone(),
+        follow: follow[..=at].to_vec().into_boxed_slice(),
+    };
+    let (found, decl) = super::procs::last_scoped_static(c, &chain)?;
+    let flags = decl.get().var_type.flags;
+    if found != at || !flags.is_const() || decl.get().location.file == dreammaker::FileId::BUILTINS
+    {
+        return None;
+    }
+    Some((
+        from_objtree(decl.ty().get_value(name.as_str())?.constant.as_ref()?)?,
+        at,
+    ))
+}
+
 fn static_const(
     c: &Compiler,
     term: &Term,
@@ -202,8 +228,10 @@ fn static_const(
         return None;
     }
     let ty = match term {
-        Term::Prefab(prefab) if prefab.vars.is_empty() => ctx.tree.find(&prefab.path.to_string()),
-        other => super::procs::term_type(c, other),
+        Term::Prefab(prefab) if prefab.vars.is_empty() => {
+            Some(ctx.tree.find(&prefab.path.to_string())?)
+        }
+        other => super::procs::start_type(c, other).0,
     };
     let names: Vec<&str> = steps
         .iter()

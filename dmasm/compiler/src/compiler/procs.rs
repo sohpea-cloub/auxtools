@@ -869,9 +869,19 @@ fn chain_parts(
         return (None, vec![]);
     };
     let global = matches!(&term.elem, Term::Ident(i) if i.as_str() == "global");
-    let (mut ty, mut after) = match global {
-        true => (None, After::Typed),
-        false => start_type(compiler, &term.elem),
+    let scoped = matches!(
+        follow.first().map(|f| &f.elem),
+        Some(Follow::StaticField(_))
+    );
+    let (mut ty, mut after) = match &term.elem {
+        _ if global => (None, After::Typed),
+        Term::Prefab(prefab) if scoped && prefab.vars.is_empty() => {
+            match compiler.proc.tree.find(&prefab.path.to_string()) {
+                Some(ty) => (Some(ty), After::Typed),
+                None => return (None, vec![]),
+            }
+        }
+        term => start_type(compiler, term),
     };
     let mut found = vec![];
     let mut head = None;
