@@ -8,7 +8,7 @@
 # Try the BYOND build mirror first, then byond.com. BYOND_MIRROR overrides
 # the mirror URL. Verify against ci/byond.sha256 before extraction.
 set -eu
-[ $# -eq 3 ] || { sed -n '2,6p' "$0" >&2; exit 2; }
+[ $# -eq 3 ] || { sed -n '2,9p' "$0" >&2; exit 2; }
 version=$1 os=$2 dest=$3
 case "$os" in
 	linux) zip=${version}_byond_linux.zip ;;

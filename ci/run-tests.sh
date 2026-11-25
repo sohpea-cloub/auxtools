@@ -19,7 +19,7 @@
 #
 # With no TEST arguments, also run PROGRAMS/unit tests if that directory exists.
 set -u
-[ $# -ge 2 ] || { sed -n '2,16p' "$0" >&2; exit 2; }
+[ $# -ge 2 ] || { sed -n '2,20p' "$0" >&2; exit 2; }
 programs=$(cd "$1" && pwd) || exit 2
 byond=$(cd "$2" && pwd) || exit 2
 shift 2

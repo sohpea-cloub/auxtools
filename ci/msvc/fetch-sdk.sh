@@ -11,7 +11,7 @@
 # Pin SDK and CRT versions for reproducible linking. Static CRT linking
 # and the selected system imports support Windows 10 and later.
 set -eu
-[ $# -eq 1 ] || { sed -n '2,8p' "$0" >&2; exit 2; }
+[ $# -eq 1 ] || { sed -n '2,12p' "$0" >&2; exit 2; }
 dest=$1
 
 XWIN_VERSION=0.10.0
