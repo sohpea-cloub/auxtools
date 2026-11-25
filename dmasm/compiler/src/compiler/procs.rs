@@ -475,6 +475,7 @@ pub(super) fn start_type<'a>(
     term: &dreammaker::ast::Term,
 ) -> (Option<TypeRef<'a>>, After) {
     use dreammaker::ast::{PropertyAccessKind, Term};
+    let term = unparenthesised(term);
     match term {
         Term::Call(name, _) => {
             let ctx = &compiler.proc;
@@ -807,9 +808,9 @@ pub(super) fn expr_type<'a>(
     let global = matches!(&term.elem, Term::Ident(i) if i.as_str() == "global");
     let mut follow = follow.iter();
     let (mut ty, mut after) = match (global, follow.as_slice().first().map(|f| &f.elem)) {
-        (false, Some(Follow::StaticField(_))) if matches!(&term.elem, Term::Prefab(p) if p.vars.is_empty()) =>
+        (false, Some(Follow::StaticField(_))) if matches!(unparenthesised(&term.elem), Term::Prefab(p) if p.vars.is_empty()) =>
         {
-            let Term::Prefab(prefab) = &term.elem else {
+            let Term::Prefab(prefab) = unparenthesised(&term.elem) else {
                 unreachable!()
             };
             (Some(scope_head_type(compiler, prefab)?), After::Typed)
@@ -896,12 +897,13 @@ fn chain_parts(
     let Expression::Base { term, follow } = expr else {
         return (None, vec![]);
     };
-    let global = matches!(&term.elem, Term::Ident(i) if i.as_str() == "global");
+    let start = unparenthesised(&term.elem);
+    let global = matches!(start, Term::Ident(i) if i.as_str() == "global");
     let scoped = matches!(
         follow.first().map(|f| &f.elem),
         Some(Follow::StaticField(_))
     );
-    let (ty, after) = match &term.elem {
+    let (ty, after) = match start {
         _ if global => (None, After::Typed),
         Term::Prefab(prefab) if scoped && prefab.vars.is_empty() => {
             match scope_head_type(compiler, prefab) {
@@ -912,7 +914,7 @@ fn chain_parts(
         term => start_type(compiler, term),
     };
     let mut head = None;
-    if let Term::Call(name, _) = &term.elem {
+    if let Term::Call(name, _) = start {
         let ty = compiler.proc.ty;
         if !ty.is_root()
             && ty
@@ -1249,6 +1251,21 @@ fn const_lookup(
         return None;
     }
     Some((ty.get_value(name)?.constant.clone()?, builtin))
+}
+
+pub(super) fn unparenthesised(term: &dreammaker::ast::Term) -> &dreammaker::ast::Term {
+    use dreammaker::ast::{Expression, Term};
+    let mut term = term;
+    while let Term::Expr(inner) = term {
+        match &**inner {
+            Expression::Base {
+                term: inner,
+                follow,
+            } if follow.is_empty() => term = &inner.elem,
+            _ => break,
+        }
+    }
+    term
 }
 
 pub(super) fn scope_head_type<'a>(

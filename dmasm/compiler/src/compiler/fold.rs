@@ -226,6 +226,7 @@ fn static_const(
     if c.debugger {
         return None;
     }
+    let term = super::procs::unparenthesised(term);
     let ty = match term {
         Term::Prefab(prefab) if prefab.vars.is_empty() => {
             Some(super::procs::scope_head_type(c, prefab)?)

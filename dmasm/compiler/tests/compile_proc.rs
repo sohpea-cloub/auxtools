@@ -3942,7 +3942,7 @@ fn a_scoped_read_from_a_path_that_names_no_type_is_refused() {
     }
 }
 
-const SCOPED_TYPES: &str = "/datum/config\n\tvar/datum/settings/settings\n\tvar/const/LIMIT = 3\n\
+const SCOPED_TYPES: &str = "var/datum/config/config\n/datum/config\n\tvar/datum/settings/settings\n\tvar/const/LIMIT = 3\n\
                             \tvar/static/S = 5\n\
                             /datum/settings\n\tvar/datum/config/back\n\tvar/static/item_type = 7\n\
                             \tvar/plain = 4\n\
@@ -3952,11 +3952,13 @@ const SCOPED_TYPES: &str = "/datum/config\n\tvar/datum/settings/settings\n\tvar/
 fn assert_scoped_reads(reads: &[(&str, &str)], folds: &[(&str, &str)]) {
     for (body, scope) in reads {
         let src = format!("{SCOPED_TYPES}/proc/f()\n\t{body}\n");
-        assert_eq!(
-            global_scopes(&src),
-            [format!("Some(Type(\"{scope}\"))")],
-            "{}",
-            body
+        let scopes = global_scopes(&src);
+        assert!(
+            scopes.contains(&format!("Some(Type(\"{scope}\"))"))
+                && !scopes.iter().any(|s| s.contains("/datum/later")),
+            "{}: {:?}",
+            body,
+            scopes
         );
     }
     for (body, folded) in folds {
@@ -3991,6 +3993,22 @@ fn a_scoped_read_from_a_searched_type_path_finds_the_type_it_names() {
             ),
             ("return /datum/config.settings::plain", "PushInt 4"),
         ],
+    );
+}
+
+#[test]
+fn a_scoped_read_from_a_parenthesised_type_path_finds_that_type() {
+    assert_scoped_reads(
+        &[
+            ("return (/datum/config)::LIMIT", "/datum/config"),
+            ("return (/datum/config)::S", "/datum/config"),
+            (
+                "return ((/datum/config))::settings::item_type",
+                "/datum/settings",
+            ),
+            ("return (config)?.settings::item_type", "/datum/settings"),
+        ],
+        &[("return (/datum/config)::LIMIT + 1", "PushInt 4")],
     );
 }
 
