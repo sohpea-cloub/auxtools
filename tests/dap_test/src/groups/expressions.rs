@@ -94,7 +94,12 @@ fn completions(world: &mut World) {
 	assert_eq!(names(world, "counted_in[1].re"), ["reads"]);
 	assert_eq!(names(world, "counted_in[counted_keys[1]].re"), ["reads"]);
 	assert_eq!(names(world, "counted_in[counted_keys[src.n]].re"), ["reads"]);
-	for text in ["registry[/datum/counted].re", "counted_in?[1].re", "slots[\"slot (left)\"].re"] {
+	for text in [
+		"registry[/datum/counted].re",
+		"counted_in?[1].re",
+		"slots[\"slot (left)\"].re",
+		"::registry[/datum/counted].re"
+	] {
 		assert_eq!(names(world, text), ["reads"], "{}", text);
 	}
 	ok("completion rejects unsafe or invalid receivers");
@@ -422,7 +427,9 @@ pub fn run() {
 		("\"(a = b)\"", "\"(a = b)\""),
 		("counted_in[counted_keys[1]]", "/datum/counted"),
 		("global.counted_in[1].reads", "0"),
-		("registry[/datum/counted]", "/datum/counted")
+		("registry[/datum/counted]", "/datum/counted"),
+		("amount", "1"),
+		("::amount", "3")
 	] {
 		assert_eq!(world.evaluate_in(&frame, expression, "hover")["result"], shown, "{}", expression);
 	}

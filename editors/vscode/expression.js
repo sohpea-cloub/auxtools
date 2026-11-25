@@ -102,6 +102,10 @@ function expressionAt(line, column) {
 	}
 
 	for (;;) {
+		if (/(^|[^A-Za-z0-9_\])"])::$/.test(line.slice(0, start))) {
+			start -= 2;
+			break;
+		}
 		const joined = /\s*(\?\.|\?:|\.|:)\s*$/.exec(line.slice(0, start));
 		if (!joined || (/:$/.test(joined[1]) && /\s:\s*$/.test(line.slice(0, start)))) {
 			break;

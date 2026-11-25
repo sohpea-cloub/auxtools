@@ -44,6 +44,10 @@ assert.strictEqual(at("\tvar/|y = 1"), undefined);
 assert.strictEqual(at("\tx = 1e|3"), undefined);
 assert.strictEqual(at("\tx = 1.e|5"), undefined);
 assert.strictEqual(at("\tx = target1.na|me"), "target1.name");
+assert.strictEqual(at("\tx = ::cou|nt"), "::count");
+assert.strictEqual(at("\tx = ::registry[key].na|me"), "::registry[key].name");
+assert.strictEqual(at("\tx = ::registry[key|]"), "::registry[key]");
+assert.strictEqual(at("\tx = /datum::na|me"), undefined);
 assert.strictEqual(at("\tx = src.slot2.na|me"), "src.slot2.name");
 assert.strictEqual(at("\tnew /datum/th|ing(x)"), undefined);
 assert.strictEqual(at("\tvar/datum/thing/|t = x"), undefined);
@@ -77,4 +81,4 @@ assert.deepStrictEqual({ ...evaluatableExpression(vscode, document, { line: 1, c
 	end: 21,
 });
 assert.strictEqual(evaluatableExpression(vscode, document, { line: 1, character: 3 }), undefined);
-console.log("ok: 46 hover expressions");
+console.log("ok: 50 hover expressions");
