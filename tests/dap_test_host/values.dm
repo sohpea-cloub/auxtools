@@ -110,3 +110,4 @@ var/datum/counted/counted = new
 var/list/counted_in = list(counted)
 var/list/counted_keys = list(1)
 var/list/registry = list(/datum/counted = counted)
+var/list/slots = list("slot (left)" = counted)

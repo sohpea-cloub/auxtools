@@ -94,7 +94,7 @@ fn completions(world: &mut World) {
 	assert_eq!(names(world, "counted_in[1].re"), ["reads"]);
 	assert_eq!(names(world, "counted_in[counted_keys[1]].re"), ["reads"]);
 	assert_eq!(names(world, "counted_in[counted_keys[src.n]].re"), ["reads"]);
-	for text in ["registry[/datum/counted].re"] {
+	for text in ["registry[/datum/counted].re", "counted_in?[1].re", "slots[\"slot (left)\"].re"] {
 		assert_eq!(names(world, text), ["reads"], "{}", text);
 	}
 	ok("completion rejects unsafe or invalid receivers");

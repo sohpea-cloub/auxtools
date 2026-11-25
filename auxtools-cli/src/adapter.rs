@@ -2269,7 +2269,27 @@ struct CompletionPlace<'a> {
 
 fn completion_place(text: &str) -> Option<CompletionPlace<'_>> {
 	let name_char = |c: char| c.is_ascii_alphanumeric() || c == '_';
-	if text.chars().filter(|&c| c == '"').count() % 2 == 1 {
+	let mut opened = vec![];
+	let mut opens = HashMap::new();
+	let mut quoted = false;
+	let mut chars = text.char_indices();
+	while let Some((at, c)) = chars.next() {
+		match c {
+			'\\' if quoted => {
+				chars.next();
+			}
+			'"' => quoted = !quoted,
+			_ if quoted => {}
+			'[' | '(' => opened.push(at),
+			']' | ')' => {
+				if let Some(open) = opened.pop() {
+					opens.insert(at, open);
+				}
+			}
+			_ => {}
+		}
+	}
+	if quoted {
 		return None;
 	}
 	let start = text.trim_end_matches(name_char).len();
@@ -2295,23 +2315,10 @@ fn completion_place(text: &str) -> Option<CompletionPlace<'_>> {
 		base_end.get_or_insert(member_end);
 		let mut member = member_end;
 		while text[..member].ends_with(']') {
-			let mut depth = 0;
-			let mut open = None;
-			for (i, c) in text[..member].char_indices().rev() {
-				match c {
-					']' => depth += 1,
-					'[' => {
-						depth -= 1;
-						if depth == 0 {
-							open = Some(i);
-							break;
-						}
-					}
-					'(' | ')' => return None,
-					_ => {}
-				}
+			member = opens.get(&(member - 1)).copied().filter(|&open| text[open..].starts_with('['))?;
+			if text[..member].ends_with('?') {
+				member -= 1;
 			}
-			member = open?;
 		}
 		let name = text[..member].trim_end_matches(name_char).len();
 		if name == member {
@@ -2529,6 +2536,10 @@ mod tests {
 		assert_eq!(place("a?.b:c?:d"), Some(("d", Some("a?.b:c"), false)));
 		assert_eq!(place("items[2].na"), Some(("na", Some("items[2]"), false)));
 		assert_eq!(place("f(x) + items[\"k\"][i + 1].na"), Some(("na", Some("items[\"k\"][i + 1]"), false)));
+		assert_eq!(place("items?[1].na"), Some(("na", Some("items?[1]"), false)));
+		assert_eq!(place("items[\"slot (left)\"].na"), Some(("na", Some("items[\"slot (left)\"]"), false)));
+		assert_eq!(place("items[\"\\\"]\"].na"), Some(("na", Some("items[\"\\\"]\"]"), false)));
+		assert_eq!(place("items[f()].na"), Some(("na", Some("items[f()]"), false)));
 		assert_eq!(place("#"), Some(("", None, true)));
 		assert_eq!(place("#di"), Some(("di", None, true)));
 		assert_eq!(place(" #mem"), Some(("mem", None, true)));
@@ -2539,7 +2550,8 @@ mod tests {
 		for text in [
 			"get_mob().na",
 			"(a).b",
-			"items[f()].na",
+			"items(1].na",
+			"\"a \\\" b.",
 			"\"text",
 			"\"a\" + \"b.",
 			"12",
