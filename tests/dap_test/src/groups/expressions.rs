@@ -39,7 +39,11 @@ fn completions(world: &mut World) {
 		pair("middle", "function"),
 		pair("world", "variable")
 	] {
-		assert!(all.contains(&expected), "{:?} isn't offered", expected);
+		assert!(
+			offered(world, &expected.0, Some(&frame)).contains(&expected),
+			"{:?} isn't offered",
+			expected
+		);
 	}
 	assert!(!all.iter().any(|(name, _)| name.contains("auxtools") || name.contains('(')), "{:?}", all);
 	ok("frame-scope completion");
@@ -90,6 +94,9 @@ fn completions(world: &mut World) {
 	assert_eq!(names(world, "counted_in[1].re"), ["reads"]);
 	assert_eq!(names(world, "counted_in[counted_keys[1]].re"), ["reads"]);
 	assert_eq!(names(world, "counted_in[counted_keys[src.n]].re"), ["reads"]);
+	for text in ["registry[/datum/counted].re"] {
+		assert_eq!(names(world, text), ["reads"], "{}", text);
+	}
 	ok("completion rejects unsafe or invalid receivers");
 
 	let targets = world.request("completions", json!({ "frameId": frame, "text": "leaf(by) + n", "column": 8 }));
@@ -414,7 +421,8 @@ pub fn run() {
 		("src.items[2]", "\"y\""),
 		("\"(a = b)\"", "\"(a = b)\""),
 		("counted_in[counted_keys[1]]", "/datum/counted"),
-		("global.counted_in[1].reads", "0")
+		("global.counted_in[1].reads", "0"),
+		("registry[/datum/counted]", "/datum/counted")
 	] {
 		assert_eq!(world.evaluate_in(&frame, expression, "hover")["result"], shown, "{}", expression);
 	}
