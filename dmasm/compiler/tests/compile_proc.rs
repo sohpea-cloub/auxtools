@@ -2344,6 +2344,35 @@ fn a_logical_assignment_through_two_safe_accesses_has_a_value() {
 }
 
 #[test]
+fn a_second_call_after_a_safe_access_keeps_its_receiver_across_the_arguments() {
+    let types = "/datum/h\n\tvar/v\n\tvar/datum/h/c\n/datum/h/proc/m(a)\n\treturn src\n";
+    for (body, args) in [
+        (
+            "return h?.m().c.m(x.v).v",
+            "GetVar cache = arg(1); cache[\"v\"]\n",
+        ),
+        ("return h?.m().c.m().v", ""),
+        ("h?.m().c.m(x.v)", "GetVar cache = arg(1); cache[\"v\"]\n"),
+        (
+            "return h?.m().c.c.m(x.v)",
+            "GetVar cache = arg(1); cache[\"v\"]\n",
+        ),
+    ] {
+        let code = compile(
+            &format!("{types}/proc/g(datum/h/h, datum/h/x)\n\t{body}\n"),
+            "",
+            "g",
+        );
+        assert_has(
+            &code,
+            &[&format!(
+                "SetVar cache\nPushCache\n{args}PopCache\nCall cache = cache[\"c\"]; "
+            )],
+        );
+    }
+}
+
+#[test]
 fn new_without_arguments_is_true_in_a_test() {
     let src = "/datum/t\n/proc/f(a, b)\n\treturn (new /datum/t ? a : b)\n";
     assert_eq!(compile(src, "", "f"), "GetVar arg(0)\nRet\nEnd");

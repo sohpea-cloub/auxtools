@@ -44,74 +44,94 @@
 // Known: /proc/p425  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
 // Known: /proc/p426  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
 // Known: /proc/p429  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
-// Known: /proc/p430  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
-// Known: /proc/p431  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
+// Known: /proc/p434  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
+// Known: /proc/p435  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
+// Known: /proc/p436  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
+// Known: /proc/p437  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
 // Known: /proc/p440  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
 // Known: /proc/p441  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
 // Known: /proc/p442  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
-// Known: /proc/p443  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
-// Known: /proc/p446  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
-// Known: /proc/p493  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
-// Known: /proc/p494  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
-// Known: /proc/p495  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
-// Known: /proc/p496  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
-// Known: /proc/p499  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
-// Known: /proc/p512  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
-// Known: /proc/p513  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
-// Known: /proc/p537  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
-// Known: /proc/p538  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
+// Known: /proc/p447  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
+// Known: /proc/p448  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
+// Known: /proc/p453  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
+// Known: /proc/p454  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
+// Known: /proc/p463  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
+// Known: /proc/p464  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
+// Known: /proc/p465  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
+// Known: /proc/p466  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
+// Known: /proc/p469  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
+// Known: /proc/p470  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
+// Known: /proc/p520  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
+// Known: /proc/p521  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
+// Known: /proc/p522  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
+// Known: /proc/p523  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
+// Known: /proc/p526  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
 // Known: /proc/p539  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
 // Known: /proc/p540  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
-// Known: /proc/p543  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
-// Known: /proc/p544  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
-// Known: /proc/p548  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
-// Known: /proc/p549  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
-// Known: /proc/p554  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
-// Known: /proc/p555  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
 // Known: /proc/p564  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
 // Known: /proc/p565  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
 // Known: /proc/p566  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
 // Known: /proc/p567  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
 // Known: /proc/p570  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
+// Known: /proc/p571  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
 // Known: /proc/p575  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
 // Known: /proc/p576  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
-// Known: /proc/p577  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
-// Known: /proc/p578  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
 // Known: /proc/p581  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
 // Known: /proc/p582  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
-// Known: /proc/p583  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
-// Known: /proc/p588  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
-// Known: /proc/p589  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
+// Known: /proc/p591  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
+// Known: /proc/p592  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
+// Known: /proc/p593  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
 // Known: /proc/p594  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
-// Known: /proc/p595  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
+// Known: /proc/p597  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
+// Known: /proc/p602  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
+// Known: /proc/p603  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
 // Known: /proc/p604  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
 // Known: /proc/p605  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
-// Known: /proc/p606  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
-// Known: /proc/p607  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
+// Known: /proc/p608  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
+// Known: /proc/p609  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
 // Known: /proc/p610  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
-// Known: /proc/p611  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
-// Known: /proc/p619  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
-// Known: /proc/p620  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
+// Known: /proc/p615  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
+// Known: /proc/p616  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
 // Known: /proc/p621  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
 // Known: /proc/p622  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
-// Known: /proc/p625  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
-// Known: /proc/p626  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
-// Known: /proc/p630  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
 // Known: /proc/p631  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
-// Known: /proc/p636  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
+// Known: /proc/p632  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
+// Known: /proc/p633  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
+// Known: /proc/p634  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
 // Known: /proc/p637  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
+// Known: /proc/p638  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
 // Known: /proc/p646  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
 // Known: /proc/p647  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
 // Known: /proc/p648  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
 // Known: /proc/p649  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
 // Known: /proc/p652  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
 // Known: /proc/p653  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
-// Known: /proc/p654  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
+// Known: /proc/p657  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
+// Known: /proc/p658  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
 // Known: /proc/p663  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
 // Known: /proc/p664  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
-// Known: /proc/p665  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
-// Known: /proc/p666  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
-// Known: /proc/p669  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
+// Known: /proc/p673  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
+// Known: /proc/p674  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
+// Known: /proc/p675  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
+// Known: /proc/p676  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
+// Known: /proc/p679  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
+// Known: /proc/p684  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
+// Known: /proc/p685  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
+// Known: /proc/p686  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
+// Known: /proc/p687  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
+// Known: /proc/p690  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
+// Known: /proc/p691  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
+// Known: /proc/p692  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
+// Known: /proc/p697  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
+// Known: /proc/p698  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
+// Known: /proc/p703  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
+// Known: /proc/p704  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
+// Known: /proc/p713  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
+// Known: /proc/p714  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
+// Known: /proc/p715  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
+// Known: /proc/p716  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
+// Known: /proc/p719  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
+// Known: /proc/p720  DreamMaker restores the cache before reading `::` after a `?.` and more, and reads the initial value of the `?.` receiver's var (a BYOND bug, which dmasm warns of); dmasm reads the var of the value before `::`
 /datum/config
 	var/datum/settings/settings
 	var/list/l
@@ -981,504 +1001,612 @@ var/list/configs
 /proc/p418()
 	return config?.refresh():settings::KIND + 1
 /proc/p419()
-	return config?.refresh()?.refresh()::S
+	return config?.refresh().refresh()::S
 /proc/p420()
-	return config?.refresh()?.refresh()::S + 1
+	return config?.refresh().refresh()::S + 1
 /proc/p421()
-	return config?.refresh()?.refresh()::LIMIT
+	return config?.refresh().refresh()::LIMIT
 /proc/p422()
-	return config?.refresh()?.refresh()::LIMIT + 1
+	return config?.refresh().refresh()::LIMIT + 1
 /proc/p423()
-	return config?.refresh()?.refresh()::plain
+	return config?.refresh().refresh()::plain
 /proc/p424()
-	return config?.refresh()?.refresh()::plain + 1
+	return config?.refresh().refresh()::plain + 1
 /proc/p425()
-	return config?.refresh()?.refresh()::settings
+	return config?.refresh().refresh()::settings
 /proc/p426()
-	return config?.refresh()?.refresh()::settings::plain
+	return config?.refresh().refresh()::settings::plain
 /proc/p427()
-	return config?.refresh()?.refresh()::settings.plain
+	return config?.refresh().refresh()::settings.plain
 /proc/p428()
-	return config?.refresh()?.refresh()::settings::item_type
+	return config?.refresh().refresh()::settings::item_type
 /proc/p429()
-	return config?.refresh()?.refresh()::settings + 1
+	return config?.refresh().refresh()::settings + 1
 /proc/p430()
-	return config?.refresh()?.settings::plain
+	return config?.refresh()?.refresh()::S
 /proc/p431()
-	return config?.refresh()?.settings::plain + 1
+	return config?.refresh()?.refresh()::S + 1
 /proc/p432()
-	return config?.refresh()?.settings::item_type
+	return config?.refresh()?.refresh()::LIMIT
 /proc/p433()
-	return config?.refresh()?.settings::item_type + 1
+	return config?.refresh()?.refresh()::LIMIT + 1
 /proc/p434()
-	return config?.refresh()?.settings::KIND
+	return config?.refresh()?.refresh()::plain
 /proc/p435()
-	return config?.refresh()?.settings::KIND + 1
+	return config?.refresh()?.refresh()::plain + 1
 /proc/p436()
-	return config?.refresh()::settings.back::S
+	return config?.refresh()?.refresh()::settings
 /proc/p437()
-	return config?.refresh()::settings.back::S + 1
+	return config?.refresh()?.refresh()::settings::plain
 /proc/p438()
-	return config?.refresh()::settings.back::LIMIT
+	return config?.refresh()?.refresh()::settings.plain
 /proc/p439()
-	return config?.refresh()::settings.back::LIMIT + 1
+	return config?.refresh()?.refresh()::settings::item_type
 /proc/p440()
-	return config?.refresh()::settings.back::plain
+	return config?.refresh()?.refresh()::settings + 1
 /proc/p441()
-	return config?.refresh()::settings.back::plain + 1
+	return config?.refresh()::settings.again()::plain
 /proc/p442()
-	return config?.refresh()::settings.back::settings
+	return config?.refresh()::settings.again()::plain + 1
 /proc/p443()
-	return config?.refresh()::settings.back::settings::plain
+	return config?.refresh()::settings.again()::item_type
 /proc/p444()
-	return config?.refresh()::settings.back::settings.plain
+	return config?.refresh()::settings.again()::item_type + 1
 /proc/p445()
-	return config?.refresh()::settings.back::settings::item_type
+	return config?.refresh()::settings.again()::KIND
 /proc/p446()
-	return config?.refresh()::settings.back::settings + 1
+	return config?.refresh()::settings.again()::KIND + 1
 /proc/p447()
-	return config.loose()::S
+	return config?.refresh().settings.again()::plain
 /proc/p448()
-	return config.loose()::S + 1
+	return config?.refresh().settings.again()::plain + 1
 /proc/p449()
-	return config.loose()::LIMIT
+	return config?.refresh().settings.again()::item_type
 /proc/p450()
-	return config.loose()::LIMIT + 1
+	return config?.refresh().settings.again()::item_type + 1
 /proc/p451()
-	return config.loose()::plain
+	return config?.refresh().settings.again()::KIND
 /proc/p452()
-	return config.loose()::plain + 1
+	return config?.refresh().settings.again()::KIND + 1
 /proc/p453()
-	return config.loose()::item_type
+	return config?.refresh()?.settings::plain
 /proc/p454()
-	return config.loose()::item_type + 1
+	return config?.refresh()?.settings::plain + 1
 /proc/p455()
-	return config.loose()::KIND
+	return config?.refresh()?.settings::item_type
 /proc/p456()
-	return config.loose()::KIND + 1
+	return config?.refresh()?.settings::item_type + 1
 /proc/p457()
-	return config.loose()::settings
+	return config?.refresh()?.settings::KIND
 /proc/p458()
-	return config.loose()::settings::plain
+	return config?.refresh()?.settings::KIND + 1
 /proc/p459()
-	return config.loose()::settings.plain
+	return config?.refresh()::settings.back::S
 /proc/p460()
-	return config.loose()::settings::item_type
+	return config?.refresh()::settings.back::S + 1
 /proc/p461()
-	return config.loose()::settings + 1
+	return config?.refresh()::settings.back::LIMIT
 /proc/p462()
-	return config.loose()::settings::plain + 1
+	return config?.refresh()::settings.back::LIMIT + 1
 /proc/p463()
-	return config.loose()::settings::item_type + 1
+	return config?.refresh()::settings.back::plain
 /proc/p464()
-	return config.loose()::settings::KIND
+	return config?.refresh()::settings.back::plain + 1
 /proc/p465()
-	return config.loose()::settings::KIND + 1
+	return config?.refresh()::settings.back::settings
 /proc/p466()
-	return config.loose().settings::plain
+	return config?.refresh()::settings.back::settings::plain
 /proc/p467()
-	return config.loose().settings::plain + 1
+	return config?.refresh()::settings.back::settings.plain
 /proc/p468()
-	return config.loose().settings::item_type
+	return config?.refresh()::settings.back::settings::item_type
 /proc/p469()
-	return config.loose().settings::item_type + 1
+	return config?.refresh()::settings.back::settings + 1
 /proc/p470()
-	return config.loose().settings::KIND
+	return config?.refresh().refresh()::settings::plain + 1
 /proc/p471()
-	return config.loose().settings::KIND + 1
+	return config?.refresh().refresh()::settings::item_type + 1
 /proc/p472()
-	return config.loose():settings::plain
+	return config?.refresh().refresh()::settings::KIND
 /proc/p473()
-	return config.loose():settings::plain + 1
+	return config?.refresh().refresh()::settings::KIND + 1
 /proc/p474()
-	return config.loose():settings::item_type
+	return config.loose()::S
 /proc/p475()
-	return config.loose():settings::item_type + 1
+	return config.loose()::S + 1
 /proc/p476()
-	return config.loose():settings::KIND
+	return config.loose()::LIMIT
 /proc/p477()
-	return config.loose():settings::KIND + 1
+	return config.loose()::LIMIT + 1
 /proc/p478()
-	return config.loose().refresh()::S
+	return config.loose()::plain
 /proc/p479()
-	return config.loose().refresh()::S + 1
+	return config.loose()::plain + 1
 /proc/p480()
-	return config.loose().refresh()::LIMIT
+	return config.loose()::item_type
 /proc/p481()
-	return config.loose().refresh()::LIMIT + 1
+	return config.loose()::item_type + 1
 /proc/p482()
-	return config.loose().refresh()::plain
+	return config.loose()::KIND
 /proc/p483()
-	return config.loose().refresh()::plain + 1
+	return config.loose()::KIND + 1
 /proc/p484()
-	return config.loose().refresh()::settings
+	return config.loose()::settings
 /proc/p485()
-	return config.loose().refresh()::settings::plain
+	return config.loose()::settings::plain
 /proc/p486()
-	return config.loose().refresh()::settings.plain
+	return config.loose()::settings.plain
 /proc/p487()
-	return config.loose().refresh()::settings::item_type
+	return config.loose()::settings::item_type
 /proc/p488()
-	return config.loose().refresh()::settings + 1
+	return config.loose()::settings + 1
 /proc/p489()
-	return config.loose()?.refresh()::S
+	return config.loose()::settings::plain + 1
 /proc/p490()
-	return config.loose()?.refresh()::S + 1
+	return config.loose()::settings::item_type + 1
 /proc/p491()
-	return config.loose()?.refresh()::LIMIT
+	return config.loose()::settings::KIND
 /proc/p492()
-	return config.loose()?.refresh()::LIMIT + 1
+	return config.loose()::settings::KIND + 1
 /proc/p493()
-	return config.loose()?.refresh()::plain
+	return config.loose().settings::plain
 /proc/p494()
-	return config.loose()?.refresh()::plain + 1
+	return config.loose().settings::plain + 1
 /proc/p495()
-	return config.loose()?.refresh()::settings
+	return config.loose().settings::item_type
 /proc/p496()
-	return config.loose()?.refresh()::settings::plain
+	return config.loose().settings::item_type + 1
 /proc/p497()
-	return config.loose()?.refresh()::settings.plain
+	return config.loose().settings::KIND
 /proc/p498()
-	return config.loose()?.refresh()::settings::item_type
+	return config.loose().settings::KIND + 1
 /proc/p499()
-	return config.loose()?.refresh()::settings + 1
+	return config.loose():settings::plain
 /proc/p500()
-	return config.loose()::settings.again()::plain
+	return config.loose():settings::plain + 1
 /proc/p501()
-	return config.loose()::settings.again()::plain + 1
+	return config.loose():settings::item_type
 /proc/p502()
-	return config.loose()::settings.again()::item_type
+	return config.loose():settings::item_type + 1
 /proc/p503()
-	return config.loose()::settings.again()::item_type + 1
+	return config.loose():settings::KIND
 /proc/p504()
-	return config.loose()::settings.again()::KIND
+	return config.loose():settings::KIND + 1
 /proc/p505()
-	return config.loose()::settings.again()::KIND + 1
+	return config.loose().refresh()::S
 /proc/p506()
-	return config.loose().settings.again()::plain
+	return config.loose().refresh()::S + 1
 /proc/p507()
-	return config.loose().settings.again()::plain + 1
+	return config.loose().refresh()::LIMIT
 /proc/p508()
-	return config.loose().settings.again()::item_type
+	return config.loose().refresh()::LIMIT + 1
 /proc/p509()
-	return config.loose().settings.again()::item_type + 1
+	return config.loose().refresh()::plain
 /proc/p510()
-	return config.loose().settings.again()::KIND
+	return config.loose().refresh()::plain + 1
 /proc/p511()
-	return config.loose().settings.again()::KIND + 1
+	return config.loose().refresh()::settings
 /proc/p512()
-	return config.loose()?.settings::plain
+	return config.loose().refresh()::settings::plain
 /proc/p513()
-	return config.loose()?.settings::plain + 1
+	return config.loose().refresh()::settings.plain
 /proc/p514()
-	return config.loose()?.settings::item_type
+	return config.loose().refresh()::settings::item_type
 /proc/p515()
-	return config.loose()?.settings::item_type + 1
+	return config.loose().refresh()::settings + 1
 /proc/p516()
-	return config.loose()?.settings::KIND
+	return config.loose()?.refresh()::S
 /proc/p517()
-	return config.loose()?.settings::KIND + 1
+	return config.loose()?.refresh()::S + 1
 /proc/p518()
-	return config.loose()::settings.back::S
+	return config.loose()?.refresh()::LIMIT
 /proc/p519()
-	return config.loose()::settings.back::S + 1
+	return config.loose()?.refresh()::LIMIT + 1
 /proc/p520()
-	return config.loose()::settings.back::LIMIT
+	return config.loose()?.refresh()::plain
 /proc/p521()
-	return config.loose()::settings.back::LIMIT + 1
+	return config.loose()?.refresh()::plain + 1
 /proc/p522()
-	return config.loose()::settings.back::plain
+	return config.loose()?.refresh()::settings
 /proc/p523()
-	return config.loose()::settings.back::plain + 1
+	return config.loose()?.refresh()::settings::plain
 /proc/p524()
-	return config.loose()::settings.back::settings
+	return config.loose()?.refresh()::settings.plain
 /proc/p525()
-	return config.loose()::settings.back::settings::plain
+	return config.loose()?.refresh()::settings::item_type
 /proc/p526()
-	return config.loose()::settings.back::settings.plain
+	return config.loose()?.refresh()::settings + 1
 /proc/p527()
-	return config.loose()::settings.back::settings::item_type
+	return config.loose()::settings.again()::plain
 /proc/p528()
-	return config.loose()::settings.back::settings + 1
+	return config.loose()::settings.again()::plain + 1
 /proc/p529()
-	return config.loose().refresh()::settings::plain + 1
+	return config.loose()::settings.again()::item_type
 /proc/p530()
-	return config.loose().refresh()::settings::item_type + 1
+	return config.loose()::settings.again()::item_type + 1
 /proc/p531()
-	return config.loose().refresh()::settings::KIND
+	return config.loose()::settings.again()::KIND
 /proc/p532()
-	return config.loose().refresh()::settings::KIND + 1
+	return config.loose()::settings.again()::KIND + 1
 /proc/p533()
-	return config?.settings.back::S
+	return config.loose().settings.again()::plain
 /proc/p534()
-	return config?.settings.back::S + 1
+	return config.loose().settings.again()::plain + 1
 /proc/p535()
-	return config?.settings.back::LIMIT
+	return config.loose().settings.again()::item_type
 /proc/p536()
-	return config?.settings.back::LIMIT + 1
+	return config.loose().settings.again()::item_type + 1
 /proc/p537()
-	return config?.settings.back::plain
+	return config.loose().settings.again()::KIND
 /proc/p538()
-	return config?.settings.back::plain + 1
+	return config.loose().settings.again()::KIND + 1
 /proc/p539()
-	return config?.settings.back::settings
+	return config.loose()?.settings::plain
 /proc/p540()
-	return config?.settings.back::settings::plain
+	return config.loose()?.settings::plain + 1
 /proc/p541()
-	return config?.settings.back::settings.plain
+	return config.loose()?.settings::item_type
 /proc/p542()
-	return config?.settings.back::settings::item_type
+	return config.loose()?.settings::item_type + 1
 /proc/p543()
-	return config?.settings.back::settings + 1
+	return config.loose()?.settings::KIND
 /proc/p544()
-	return config?.settings.back::settings::plain + 1
+	return config.loose()?.settings::KIND + 1
 /proc/p545()
-	return config?.settings.back::settings::item_type + 1
+	return config.loose()::settings.back::S
 /proc/p546()
-	return config?.settings.back::settings::KIND
+	return config.loose()::settings.back::S + 1
 /proc/p547()
-	return config?.settings.back::settings::KIND + 1
+	return config.loose()::settings.back::LIMIT
 /proc/p548()
-	return config?.settings.back.settings::plain
+	return config.loose()::settings.back::LIMIT + 1
 /proc/p549()
-	return config?.settings.back.settings::plain + 1
+	return config.loose()::settings.back::plain
 /proc/p550()
-	return config?.settings.back.settings::item_type
+	return config.loose()::settings.back::plain + 1
 /proc/p551()
-	return config?.settings.back.settings::item_type + 1
+	return config.loose()::settings.back::settings
 /proc/p552()
-	return config?.settings.back.settings::KIND
+	return config.loose()::settings.back::settings::plain
 /proc/p553()
-	return config?.settings.back.settings::KIND + 1
+	return config.loose()::settings.back::settings.plain
 /proc/p554()
-	return config?.settings.back:settings::plain
+	return config.loose()::settings.back::settings::item_type
 /proc/p555()
-	return config?.settings.back:settings::plain + 1
+	return config.loose()::settings.back::settings + 1
 /proc/p556()
-	return config?.settings.back:settings::item_type
+	return config.loose().refresh()::settings::plain + 1
 /proc/p557()
-	return config?.settings.back:settings::item_type + 1
+	return config.loose().refresh()::settings::item_type + 1
 /proc/p558()
-	return config?.settings.back:settings::KIND
+	return config.loose().refresh()::settings::KIND
 /proc/p559()
-	return config?.settings.back:settings::KIND + 1
+	return config.loose().refresh()::settings::KIND + 1
 /proc/p560()
-	return config?.settings.back.refresh()::S
+	return config?.settings.back::S
 /proc/p561()
-	return config?.settings.back.refresh()::S + 1
+	return config?.settings.back::S + 1
 /proc/p562()
-	return config?.settings.back.refresh()::LIMIT
+	return config?.settings.back::LIMIT
 /proc/p563()
-	return config?.settings.back.refresh()::LIMIT + 1
+	return config?.settings.back::LIMIT + 1
 /proc/p564()
-	return config?.settings.back.refresh()::plain
+	return config?.settings.back::plain
 /proc/p565()
-	return config?.settings.back.refresh()::plain + 1
+	return config?.settings.back::plain + 1
 /proc/p566()
-	return config?.settings.back.refresh()::settings
+	return config?.settings.back::settings
 /proc/p567()
-	return config?.settings.back.refresh()::settings::plain
+	return config?.settings.back::settings::plain
 /proc/p568()
-	return config?.settings.back.refresh()::settings.plain
+	return config?.settings.back::settings.plain
 /proc/p569()
-	return config?.settings.back.refresh()::settings::item_type
+	return config?.settings.back::settings::item_type
 /proc/p570()
-	return config?.settings.back.refresh()::settings + 1
+	return config?.settings.back::settings + 1
 /proc/p571()
-	return config?.settings.back?.refresh()::S
+	return config?.settings.back::settings::plain + 1
 /proc/p572()
-	return config?.settings.back?.refresh()::S + 1
+	return config?.settings.back::settings::item_type + 1
 /proc/p573()
-	return config?.settings.back?.refresh()::LIMIT
+	return config?.settings.back::settings::KIND
 /proc/p574()
-	return config?.settings.back?.refresh()::LIMIT + 1
+	return config?.settings.back::settings::KIND + 1
 /proc/p575()
-	return config?.settings.back?.refresh()::plain
+	return config?.settings.back.settings::plain
 /proc/p576()
-	return config?.settings.back?.refresh()::plain + 1
+	return config?.settings.back.settings::plain + 1
 /proc/p577()
-	return config?.settings.back?.refresh()::settings
+	return config?.settings.back.settings::item_type
 /proc/p578()
-	return config?.settings.back?.refresh()::settings::plain
+	return config?.settings.back.settings::item_type + 1
 /proc/p579()
-	return config?.settings.back?.refresh()::settings.plain
+	return config?.settings.back.settings::KIND
 /proc/p580()
-	return config?.settings.back?.refresh()::settings::item_type
+	return config?.settings.back.settings::KIND + 1
 /proc/p581()
-	return config?.settings.back?.refresh()::settings + 1
+	return config?.settings.back:settings::plain
 /proc/p582()
-	return config?.settings.back::settings.again()::plain
+	return config?.settings.back:settings::plain + 1
 /proc/p583()
-	return config?.settings.back::settings.again()::plain + 1
+	return config?.settings.back:settings::item_type
 /proc/p584()
-	return config?.settings.back::settings.again()::item_type
+	return config?.settings.back:settings::item_type + 1
 /proc/p585()
-	return config?.settings.back::settings.again()::item_type + 1
+	return config?.settings.back:settings::KIND
 /proc/p586()
-	return config?.settings.back::settings.again()::KIND
+	return config?.settings.back:settings::KIND + 1
 /proc/p587()
-	return config?.settings.back::settings.again()::KIND + 1
+	return config?.settings.back.refresh()::S
 /proc/p588()
-	return config?.settings.back.settings.again()::plain
+	return config?.settings.back.refresh()::S + 1
 /proc/p589()
-	return config?.settings.back.settings.again()::plain + 1
+	return config?.settings.back.refresh()::LIMIT
 /proc/p590()
-	return config?.settings.back.settings.again()::item_type
+	return config?.settings.back.refresh()::LIMIT + 1
 /proc/p591()
-	return config?.settings.back.settings.again()::item_type + 1
+	return config?.settings.back.refresh()::plain
 /proc/p592()
-	return config?.settings.back.settings.again()::KIND
+	return config?.settings.back.refresh()::plain + 1
 /proc/p593()
-	return config?.settings.back.settings.again()::KIND + 1
+	return config?.settings.back.refresh()::settings
 /proc/p594()
-	return config?.settings.back?.settings::plain
+	return config?.settings.back.refresh()::settings::plain
 /proc/p595()
-	return config?.settings.back?.settings::plain + 1
+	return config?.settings.back.refresh()::settings.plain
 /proc/p596()
-	return config?.settings.back?.settings::item_type
+	return config?.settings.back.refresh()::settings::item_type
 /proc/p597()
-	return config?.settings.back?.settings::item_type + 1
+	return config?.settings.back.refresh()::settings + 1
 /proc/p598()
-	return config?.settings.back?.settings::KIND
+	return config?.settings.back?.refresh()::S
 /proc/p599()
-	return config?.settings.back?.settings::KIND + 1
+	return config?.settings.back?.refresh()::S + 1
 /proc/p600()
-	return config?.settings.back::settings.back::S
+	return config?.settings.back?.refresh()::LIMIT
 /proc/p601()
-	return config?.settings.back::settings.back::S + 1
+	return config?.settings.back?.refresh()::LIMIT + 1
 /proc/p602()
-	return config?.settings.back::settings.back::LIMIT
+	return config?.settings.back?.refresh()::plain
 /proc/p603()
-	return config?.settings.back::settings.back::LIMIT + 1
+	return config?.settings.back?.refresh()::plain + 1
 /proc/p604()
-	return config?.settings.back::settings.back::plain
+	return config?.settings.back?.refresh()::settings
 /proc/p605()
-	return config?.settings.back::settings.back::plain + 1
+	return config?.settings.back?.refresh()::settings::plain
 /proc/p606()
-	return config?.settings.back::settings.back::settings
+	return config?.settings.back?.refresh()::settings.plain
 /proc/p607()
-	return config?.settings.back::settings.back::settings::plain
+	return config?.settings.back?.refresh()::settings::item_type
 /proc/p608()
-	return config?.settings.back::settings.back::settings.plain
+	return config?.settings.back?.refresh()::settings + 1
 /proc/p609()
-	return config?.settings.back::settings.back::settings::item_type
+	return config?.settings.back::settings.again()::plain
 /proc/p610()
-	return config?.settings.back::settings.back::settings + 1
+	return config?.settings.back::settings.again()::plain + 1
 /proc/p611()
-	return config?.settings.back.refresh()::settings::plain + 1
+	return config?.settings.back::settings.again()::item_type
 /proc/p612()
-	return config?.settings.back.refresh()::settings::item_type + 1
+	return config?.settings.back::settings.again()::item_type + 1
 /proc/p613()
-	return config?.settings.back.refresh()::settings::KIND
+	return config?.settings.back::settings.again()::KIND
 /proc/p614()
-	return config?.settings.back.refresh()::settings::KIND + 1
+	return config?.settings.back::settings.again()::KIND + 1
 /proc/p615()
-	return config?.refresh().settings.back::S
+	return config?.settings.back.settings.again()::plain
 /proc/p616()
-	return config?.refresh().settings.back::S + 1
+	return config?.settings.back.settings.again()::plain + 1
 /proc/p617()
-	return config?.refresh().settings.back::LIMIT
+	return config?.settings.back.settings.again()::item_type
 /proc/p618()
-	return config?.refresh().settings.back::LIMIT + 1
+	return config?.settings.back.settings.again()::item_type + 1
 /proc/p619()
-	return config?.refresh().settings.back::plain
+	return config?.settings.back.settings.again()::KIND
 /proc/p620()
-	return config?.refresh().settings.back::plain + 1
+	return config?.settings.back.settings.again()::KIND + 1
 /proc/p621()
-	return config?.refresh().settings.back::settings
+	return config?.settings.back?.settings::plain
 /proc/p622()
-	return config?.refresh().settings.back::settings::plain
+	return config?.settings.back?.settings::plain + 1
 /proc/p623()
-	return config?.refresh().settings.back::settings.plain
+	return config?.settings.back?.settings::item_type
 /proc/p624()
-	return config?.refresh().settings.back::settings::item_type
+	return config?.settings.back?.settings::item_type + 1
 /proc/p625()
-	return config?.refresh().settings.back::settings + 1
+	return config?.settings.back?.settings::KIND
 /proc/p626()
-	return config?.refresh().settings.back::settings::plain + 1
+	return config?.settings.back?.settings::KIND + 1
 /proc/p627()
-	return config?.refresh().settings.back::settings::item_type + 1
+	return config?.settings.back::settings.back::S
 /proc/p628()
-	return config?.refresh().settings.back::settings::KIND
+	return config?.settings.back::settings.back::S + 1
 /proc/p629()
-	return config?.refresh().settings.back::settings::KIND + 1
+	return config?.settings.back::settings.back::LIMIT
 /proc/p630()
-	return config?.refresh().settings.back.settings::plain
+	return config?.settings.back::settings.back::LIMIT + 1
 /proc/p631()
-	return config?.refresh().settings.back.settings::plain + 1
+	return config?.settings.back::settings.back::plain
 /proc/p632()
-	return config?.refresh().settings.back.settings::item_type
+	return config?.settings.back::settings.back::plain + 1
 /proc/p633()
-	return config?.refresh().settings.back.settings::item_type + 1
+	return config?.settings.back::settings.back::settings
 /proc/p634()
-	return config?.refresh().settings.back.settings::KIND
+	return config?.settings.back::settings.back::settings::plain
 /proc/p635()
-	return config?.refresh().settings.back.settings::KIND + 1
+	return config?.settings.back::settings.back::settings.plain
 /proc/p636()
-	return config?.refresh().settings.back:settings::plain
+	return config?.settings.back::settings.back::settings::item_type
 /proc/p637()
-	return config?.refresh().settings.back:settings::plain + 1
+	return config?.settings.back::settings.back::settings + 1
 /proc/p638()
-	return config?.refresh().settings.back:settings::item_type
+	return config?.settings.back.refresh()::settings::plain + 1
 /proc/p639()
-	return config?.refresh().settings.back:settings::item_type + 1
+	return config?.settings.back.refresh()::settings::item_type + 1
 /proc/p640()
-	return config?.refresh().settings.back:settings::KIND
+	return config?.settings.back.refresh()::settings::KIND
 /proc/p641()
-	return config?.refresh().settings.back:settings::KIND + 1
+	return config?.settings.back.refresh()::settings::KIND + 1
 /proc/p642()
-	return config?.refresh().settings.back?.refresh()::S
+	return config?.refresh().settings.back::S
 /proc/p643()
-	return config?.refresh().settings.back?.refresh()::S + 1
+	return config?.refresh().settings.back::S + 1
 /proc/p644()
-	return config?.refresh().settings.back?.refresh()::LIMIT
+	return config?.refresh().settings.back::LIMIT
 /proc/p645()
-	return config?.refresh().settings.back?.refresh()::LIMIT + 1
+	return config?.refresh().settings.back::LIMIT + 1
 /proc/p646()
-	return config?.refresh().settings.back?.refresh()::plain
+	return config?.refresh().settings.back::plain
 /proc/p647()
-	return config?.refresh().settings.back?.refresh()::plain + 1
+	return config?.refresh().settings.back::plain + 1
 /proc/p648()
-	return config?.refresh().settings.back?.refresh()::settings
+	return config?.refresh().settings.back::settings
 /proc/p649()
-	return config?.refresh().settings.back?.refresh()::settings::plain
+	return config?.refresh().settings.back::settings::plain
 /proc/p650()
-	return config?.refresh().settings.back?.refresh()::settings.plain
+	return config?.refresh().settings.back::settings.plain
 /proc/p651()
-	return config?.refresh().settings.back?.refresh()::settings::item_type
+	return config?.refresh().settings.back::settings::item_type
 /proc/p652()
-	return config?.refresh().settings.back?.refresh()::settings + 1
+	return config?.refresh().settings.back::settings + 1
 /proc/p653()
-	return config?.refresh().settings.back?.settings::plain
+	return config?.refresh().settings.back::settings::plain + 1
 /proc/p654()
-	return config?.refresh().settings.back?.settings::plain + 1
+	return config?.refresh().settings.back::settings::item_type + 1
 /proc/p655()
-	return config?.refresh().settings.back?.settings::item_type
+	return config?.refresh().settings.back::settings::KIND
 /proc/p656()
-	return config?.refresh().settings.back?.settings::item_type + 1
+	return config?.refresh().settings.back::settings::KIND + 1
 /proc/p657()
-	return config?.refresh().settings.back?.settings::KIND
+	return config?.refresh().settings.back.settings::plain
 /proc/p658()
-	return config?.refresh().settings.back?.settings::KIND + 1
+	return config?.refresh().settings.back.settings::plain + 1
 /proc/p659()
-	return config?.refresh().settings.back::settings.back::S
+	return config?.refresh().settings.back.settings::item_type
 /proc/p660()
-	return config?.refresh().settings.back::settings.back::S + 1
+	return config?.refresh().settings.back.settings::item_type + 1
 /proc/p661()
-	return config?.refresh().settings.back::settings.back::LIMIT
+	return config?.refresh().settings.back.settings::KIND
 /proc/p662()
-	return config?.refresh().settings.back::settings.back::LIMIT + 1
+	return config?.refresh().settings.back.settings::KIND + 1
 /proc/p663()
-	return config?.refresh().settings.back::settings.back::plain
+	return config?.refresh().settings.back:settings::plain
 /proc/p664()
-	return config?.refresh().settings.back::settings.back::plain + 1
+	return config?.refresh().settings.back:settings::plain + 1
 /proc/p665()
-	return config?.refresh().settings.back::settings.back::settings
+	return config?.refresh().settings.back:settings::item_type
 /proc/p666()
-	return config?.refresh().settings.back::settings.back::settings::plain
+	return config?.refresh().settings.back:settings::item_type + 1
 /proc/p667()
-	return config?.refresh().settings.back::settings.back::settings.plain
+	return config?.refresh().settings.back:settings::KIND
 /proc/p668()
-	return config?.refresh().settings.back::settings.back::settings::item_type
+	return config?.refresh().settings.back:settings::KIND + 1
 /proc/p669()
+	return config?.refresh().settings.back.refresh()::S
+/proc/p670()
+	return config?.refresh().settings.back.refresh()::S + 1
+/proc/p671()
+	return config?.refresh().settings.back.refresh()::LIMIT
+/proc/p672()
+	return config?.refresh().settings.back.refresh()::LIMIT + 1
+/proc/p673()
+	return config?.refresh().settings.back.refresh()::plain
+/proc/p674()
+	return config?.refresh().settings.back.refresh()::plain + 1
+/proc/p675()
+	return config?.refresh().settings.back.refresh()::settings
+/proc/p676()
+	return config?.refresh().settings.back.refresh()::settings::plain
+/proc/p677()
+	return config?.refresh().settings.back.refresh()::settings.plain
+/proc/p678()
+	return config?.refresh().settings.back.refresh()::settings::item_type
+/proc/p679()
+	return config?.refresh().settings.back.refresh()::settings + 1
+/proc/p680()
+	return config?.refresh().settings.back?.refresh()::S
+/proc/p681()
+	return config?.refresh().settings.back?.refresh()::S + 1
+/proc/p682()
+	return config?.refresh().settings.back?.refresh()::LIMIT
+/proc/p683()
+	return config?.refresh().settings.back?.refresh()::LIMIT + 1
+/proc/p684()
+	return config?.refresh().settings.back?.refresh()::plain
+/proc/p685()
+	return config?.refresh().settings.back?.refresh()::plain + 1
+/proc/p686()
+	return config?.refresh().settings.back?.refresh()::settings
+/proc/p687()
+	return config?.refresh().settings.back?.refresh()::settings::plain
+/proc/p688()
+	return config?.refresh().settings.back?.refresh()::settings.plain
+/proc/p689()
+	return config?.refresh().settings.back?.refresh()::settings::item_type
+/proc/p690()
+	return config?.refresh().settings.back?.refresh()::settings + 1
+/proc/p691()
+	return config?.refresh().settings.back::settings.again()::plain
+/proc/p692()
+	return config?.refresh().settings.back::settings.again()::plain + 1
+/proc/p693()
+	return config?.refresh().settings.back::settings.again()::item_type
+/proc/p694()
+	return config?.refresh().settings.back::settings.again()::item_type + 1
+/proc/p695()
+	return config?.refresh().settings.back::settings.again()::KIND
+/proc/p696()
+	return config?.refresh().settings.back::settings.again()::KIND + 1
+/proc/p697()
+	return config?.refresh().settings.back.settings.again()::plain
+/proc/p698()
+	return config?.refresh().settings.back.settings.again()::plain + 1
+/proc/p699()
+	return config?.refresh().settings.back.settings.again()::item_type
+/proc/p700()
+	return config?.refresh().settings.back.settings.again()::item_type + 1
+/proc/p701()
+	return config?.refresh().settings.back.settings.again()::KIND
+/proc/p702()
+	return config?.refresh().settings.back.settings.again()::KIND + 1
+/proc/p703()
+	return config?.refresh().settings.back?.settings::plain
+/proc/p704()
+	return config?.refresh().settings.back?.settings::plain + 1
+/proc/p705()
+	return config?.refresh().settings.back?.settings::item_type
+/proc/p706()
+	return config?.refresh().settings.back?.settings::item_type + 1
+/proc/p707()
+	return config?.refresh().settings.back?.settings::KIND
+/proc/p708()
+	return config?.refresh().settings.back?.settings::KIND + 1
+/proc/p709()
+	return config?.refresh().settings.back::settings.back::S
+/proc/p710()
+	return config?.refresh().settings.back::settings.back::S + 1
+/proc/p711()
+	return config?.refresh().settings.back::settings.back::LIMIT
+/proc/p712()
+	return config?.refresh().settings.back::settings.back::LIMIT + 1
+/proc/p713()
+	return config?.refresh().settings.back::settings.back::plain
+/proc/p714()
+	return config?.refresh().settings.back::settings.back::plain + 1
+/proc/p715()
+	return config?.refresh().settings.back::settings.back::settings
+/proc/p716()
+	return config?.refresh().settings.back::settings.back::settings::plain
+/proc/p717()
+	return config?.refresh().settings.back::settings.back::settings.plain
+/proc/p718()
+	return config?.refresh().settings.back::settings.back::settings::item_type
+/proc/p719()
 	return config?.refresh().settings.back::settings.back::settings + 1
+/proc/p720()
+	return config?.refresh().settings.back.refresh()::settings::plain + 1
+/proc/p721()
+	return config?.refresh().settings.back.refresh()::settings::item_type + 1
+/proc/p722()
+	return config?.refresh().settings.back.refresh()::settings::KIND
+/proc/p723()
+	return config?.refresh().settings.back.refresh()::settings::KIND + 1

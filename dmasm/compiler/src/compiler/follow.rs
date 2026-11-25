@@ -529,6 +529,33 @@ fn emit_safe<'a>(
     emit(compiler, unary, kind)
 }
 
+fn call_on_kept_receiver(
+    compiler: &mut Compiler,
+    kind: EvalKind,
+    args: Vec<dreammaker::ast::Expression>,
+    var: Variable,
+) -> Result<EvalKind, CompileError> {
+    let builder = match kind {
+        EvalKind::Var(var) => ChainBuilder::begin(var),
+        EvalKind::Field(mut builder, field) => {
+            builder.append(DMString(field.into()));
+            builder
+        }
+        other => {
+            compiler.emit_move_to_stack(other)?;
+            compiler.emit_ins(Instruction::SetVar(Variable::Cache));
+            ChainBuilder::begin(Variable::Cache)
+        }
+    };
+    compiler.emit_ins(Instruction::PushCache);
+    let args_start = compiler.nodes.len();
+    let count = compiler.emit_call_args(args)?;
+    compiler.emit_ins(Instruction::PopCache);
+    compiler.emit_ins(Instruction::Call(builder.get_leaf(var), count));
+    compiler.record_call(args_start, false);
+    Ok(EvalKind::Stack)
+}
+
 fn emit_safe_inner<'a>(
     compiler: &mut Compiler<'a>,
     first: Follow,
@@ -638,27 +665,19 @@ fn emit_safe_inner<'a>(
                 kind = commit_field_buffer(compiler, kind, &mut field_buffer)?;
                 let computed =
                     rooted_in_value || !matches!(kind, EvalKind::Var(_) | EvalKind::Field(..));
+                if computed {
+                    let var = callee_var(compiler, receiver_ty, access, &ident);
+                    kind = call_on_kept_receiver(compiler, kind, args.into_vec(), var)?;
+                    continue;
+                }
                 let builder = match kind {
                     EvalKind::Var(var) => ChainBuilder::begin(var),
                     EvalKind::Field(mut builder, field) => {
                         builder.append(DMString(field.into()));
                         builder
                     }
-                    other => {
-                        compiler.emit_move_to_stack(other)?;
-                        compiler.emit_ins(Instruction::SetVar(Variable::Cache));
-                        ChainBuilder::begin(Variable::Cache)
-                    }
+                    _ => unreachable!("a computed receiver"),
                 };
-                if computed {
-                    compiler.emit_ins(Instruction::PushCache);
-                    let count = compiler.emit_call_args(args.into_vec())?;
-                    compiler.emit_ins(Instruction::PopCache);
-                    let var = callee_var(compiler, receiver_ty, access, &ident);
-                    compiler.emit_ins(Instruction::Call(builder.get_leaf(var), count));
-                    kind = EvalKind::Stack;
-                    continue;
-                }
                 let start = compiler.nodes.len();
                 let count = compiler.emit_call_args(args.into_vec())?;
                 let touched = compiler.nodes[start..].iter().any(|n| {
@@ -682,7 +701,14 @@ fn emit_safe_inner<'a>(
             }
             Follow::Call(access, ident, args) => {
                 (ty, after) = super::procs::call_result(compiler, receiver_ty, access, &ident);
+                let rooted_in_value =
+                    !field_buffer.is_empty() && matches!(kind, EvalKind::Stack | EvalKind::ListRef);
                 kind = commit_field_buffer(compiler, kind, &mut field_buffer)?;
+                if rooted_in_value {
+                    let var = callee_var(compiler, receiver_ty, access, &ident);
+                    kind = call_on_kept_receiver(compiler, kind, args.into_vec(), var)?;
+                    continue;
+                }
                 kind = emit_after(
                     compiler,
                     vec![Follow::Call(access, ident, args)],
