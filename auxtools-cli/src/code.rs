@@ -159,6 +159,7 @@ struct Code {
 struct Watching {
 	built: Snapshot,
 	edited_since_built: HashSet<PathBuf>,
+	edited_since_applied: HashSet<PathBuf>,
 	dmb_modified: Option<SystemTime>,
 	applied: Option<Snapshot>,
 	applied_as: Option<Vec<(String, Option<String>)>>,
@@ -245,6 +246,7 @@ impl Code {
 			script,
 			dmb_modified,
 			edited_since_built: HashSet::new(),
+			edited_since_applied: HashSet::new(),
 			applied: None,
 			applied_as: None,
 			built,
@@ -332,6 +334,8 @@ impl Code {
 	}
 
 	fn reload_code(&self, watching: &mut Watching, changed: HashSet<PathBuf>) -> AdapterConnected {
+		watching.edited_since_applied.extend(changed);
+		let changed = watching.edited_since_applied.clone();
 		let read = self.read_texts(&changed);
 		let selected = self.selected_defines();
 		let other_defines = selected != *self.running_defines.borrow();
@@ -358,6 +362,7 @@ impl Code {
 							None => &mut watching.built
 						};
 						current.keep(reload);
+						watching.edited_since_applied.clear();
 						self.watch_named(watching);
 						true
 					}
@@ -403,6 +408,7 @@ impl Code {
 			Some(true) => {
 				self.watch_named(watching);
 				let given = self.give_macros(Some(&new));
+				watching.edited_since_applied.clear();
 				watching.applied = Some(new);
 				watching.applied_as = Some(selected);
 				watching.built.clear_patches();
@@ -1566,6 +1572,40 @@ mod tests {
 		worker.write("a", &text);
 		let lines = Some(text.lines().map(str::to_owned).collect::<Vec<_>>());
 		assert_eq!(worker.nothing_changed(), Some(Texts::from([(path, lines)])));
+	}
+
+	fn refused(worker: &Worker) -> Vec<String> {
+		worker.next("refusal", |event| match event {
+			Event::NotReloaded { refused, .. } => Some(refused.iter().map(|refusal| refusal.path.clone()).collect()),
+			Event::Reload { summary, .. } => panic!("reloaded: {}", summary.text(&[])),
+			_ => None
+		})
+	}
+
+	#[test]
+	fn a_save_after_a_refusal_reads_the_files_saved_with_it() {
+		let worker = Worker::start("after-refusal");
+		let lines = |text: &str| Some(text.lines().map(str::to_owned).collect::<Vec<_>>());
+		let original = |file: &str| body(file, "return 1");
+		let a = format!("// above\n{}", original("a"));
+		worker.write("a", &a);
+		worker.write("b", &body("b", "return ("));
+		assert_eq!(refused(&worker), [""]);
+		worker.next("looked", |event| matches!(event, Event::Looked).then_some(()));
+		worker.write("b", &original("b"));
+		let reload = worker.prepared();
+		assert_eq!(
+			reload.plan,
+			worker.full_plan(&[("a", &original("a")), ("b", &original("b"))], &["a", "b"], false)
+		);
+		let root = &worker.project.root;
+		assert_eq!(
+			reload.texts,
+			Some(Texts::from([
+				(root.join("code/a.dm"), lines(&a)),
+				(root.join("code/b.dm"), lines(&original("b")))
+			]))
+		);
 	}
 
 	#[test]

@@ -1477,12 +1477,39 @@ fn saves_with_nothing_to_reload() {
 	world.end();
 }
 
+fn retry_after_a_refused_save() {
+	let (mut world, _dir) = watched_world("retry_after_refusal");
+	let at = world.marks.clone();
+	let stepping = at.file("stepping.dm");
+	world.break_on(&["middle_2"]);
+	let before = world.count(REFUSED);
+	at.edit("stepping.dm", "/proc/middle(a)\n", "// Calls leaf twice\n/proc/middle(a)\n");
+	at.edit("errors.dm", "\tvar/zero = 0\n", "\tvar/zero = 0\n\tvar/list/broken = (\n");
+	world.wait_until(REFUSED, |output| output.matches(REFUSED).count() > before);
+	let middle_2 = at.line("middle_2");
+	world.drop_events("breakpoint");
+	let set = world.request(
+		"setBreakpoints",
+		json!({ "source": { "path": stepping }, "sourceModified": true, "breakpoints": [{ "line": middle_2 }] })
+	);
+	assert_eq!(set["breakpoints"][0]["message"], "pending hot reload", "{}", set);
+	at.edit("errors.dm", "\tvar/list/broken = (\n", "");
+	assert_eq!(moved(&mut world), (middle_2, true));
+	world.run("middle");
+	world.stop_on("breakpoint", "/middle", "middle_2");
+	world.set_breakpoints(&stepping, json!([]));
+	world.resume_through("middle");
+	ok("breakpoint in a file saved with a refused one, after the refusal is fixed");
+	world.end();
+}
+
 pub fn edits() {
 	saved_without_reloading();
 	behind_the_clients_back();
 	starting_at_world_new();
 	types_changed_before_reboot();
 	saves_with_nothing_to_reload();
+	retry_after_a_refused_save();
 }
 
 const STARTS_AT_AN_AREA: &str = "/area
