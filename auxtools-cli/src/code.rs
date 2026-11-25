@@ -481,11 +481,13 @@ impl Code {
 			watching.applied = None;
 			watching.applied_as = None;
 			watching.edited_since_built.clear();
+			watching.edited_since_applied.clear();
 			return self.send(Event::Changed(None)) && self.give_macros(read.then_some(&watching.built));
 		}
 
 		let applied = watching.applied.take();
 		let applied_as = watching.applied_as.take();
+		watching.edited_since_applied.extend(watching.edited_since_built.iter().cloned());
 		*self.running_defines.borrow_mut() = self.parse_options.borrow().defines.clone();
 		let selected = self.selected_defines();
 		let other_defines = selected != *self.running_defines.borrow();
@@ -519,6 +521,7 @@ impl Code {
 				};
 				if applied {
 					watching.built.keep(reload);
+					watching.edited_since_applied.clear();
 					self.watch_named(watching);
 				}
 				if !self.restore_resources(watching, &resource_files) || !self.ready() {
@@ -553,6 +556,7 @@ impl Code {
 		if applied {
 			watching.applied = Some(current);
 			watching.applied_as = Some(selected);
+			watching.edited_since_applied.clear();
 			watching.built.clear_patches();
 			self.watch_named(watching);
 		}
@@ -1592,6 +1596,37 @@ mod tests {
 		worker.write("b", &body("b", "return ("));
 		assert_eq!(refused(&worker), [""]);
 		worker.next("looked", |event| matches!(event, Event::Looked).then_some(()));
+		worker.write("b", &original("b"));
+		let reload = worker.prepared();
+		assert_eq!(
+			reload.plan,
+			worker.full_plan(&[("a", &original("a")), ("b", &original("b"))], &["a", "b"], false)
+		);
+		let root = &worker.project.root;
+		assert_eq!(
+			reload.texts,
+			Some(Texts::from([
+				(root.join("code/a.dm"), lines(&a)),
+				(root.join("code/b.dm"), lines(&original("b")))
+			]))
+		);
+	}
+
+	#[test]
+	fn a_save_after_a_refused_reboot_reads_the_files_saved_before_it() {
+		let mut worker = Worker::start("after-refused-reboot");
+		let lines = |text: &str| Some(text.lines().map(str::to_owned).collect::<Vec<_>>());
+		let original = |file: &str| body(file, "return 1");
+		let a = format!("// above\n{}", original("a"));
+		worker.write("a", &a);
+		assert_eq!(worker.prepared().summary, "updated the line numbers of 2 other procs");
+		worker.write("b", &body("b", "switch(1)\n\t\tif(rand())\n\t\t\treturn 1"));
+		worker.applied(false);
+		assert_eq!(refused(&worker), ["/b"]);
+		worker.next("looked", |event| matches!(event, Event::Looked).then_some(()));
+		worker.reboot();
+		assert_eq!(refused(&worker), ["/b"]);
+		worker.next("ready", |event| matches!(event, Event::Ready).then_some(()));
 		worker.write("b", &original("b"));
 		let reload = worker.prepared();
 		assert_eq!(
