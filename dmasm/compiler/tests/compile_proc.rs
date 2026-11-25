@@ -3870,6 +3870,35 @@ fn a_scoped_const_after_a_value_folds_as_the_code_finds_it() {
 }
 
 #[test]
+fn a_scoped_static_further_along_a_chain_leaves_out_the_calls_before_it() {
+    let types = "/datum/config\n\tvar/datum/settings/settings\n\tvar/count = 0\n\
+                 /datum/config/proc/refresh() as /datum/config\n\tcount++\n\treturn src\n\
+                 /datum/settings\n\tvar/static/item_type = 7\n\tvar/datum/config/back\n\
+                 /datum/settings/proc/refresh() as /datum/settings\n\treturn src\n\
+                 var/datum/config/config\n";
+    for body in [
+        "return /datum/config::settings.refresh()::item_type",
+        "return config?.refresh()::settings::item_type",
+        "return config?.settings.back.refresh()::settings::item_type",
+        "return config?.refresh().settings.refresh()::item_type",
+    ] {
+        let code = compile(&format!("{types}/proc/f()\n\t{body}\n"), "", "f");
+        assert!(
+            !code.contains("Call"),
+            "{}: calls before the static:\n{}",
+            body,
+            code
+        );
+        assert!(
+            code.contains("GetVar global(\"item_type\")"),
+            "{}:\n{}",
+            body,
+            code
+        );
+    }
+}
+
+#[test]
 fn a_scoped_read_from_a_path_that_names_no_type_is_refused() {
     let types = "/datum/config\n\tvar/datum/settings/settings\n\
                  /datum/settings\n\tvar/static/item_type = 7\n\tvar/const/KIND = 9\n\

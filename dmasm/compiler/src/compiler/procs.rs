@@ -679,30 +679,46 @@ pub(super) fn last_scoped_static<'a>(
     compiler: &Compiler<'a>,
     expr: &dreammaker::ast::Expression,
 ) -> Option<(usize, dreammaker::objtree::VarDeclarationRef<'a>)> {
-    use dreammaker::ast::{Expression, Follow, ListAccessKind, PropertyAccessKind};
-    let Expression::Base { follow, .. } = expr else {
+    let dreammaker::ast::Expression::Base { follow, .. } = expr else {
         return None;
     };
-    let safe = follow.iter().position(|f| {
-        matches!(
-            f.elem,
-            Follow::Field(
-                PropertyAccessKind::SafeDot | PropertyAccessKind::SafeColon,
-                _
-            ) | Follow::Call(
-                PropertyAccessKind::SafeDot | PropertyAccessKind::SafeColon,
-                ..
-            ) | Follow::Index(ListAccessKind::Safe, _)
-        )
-    });
     let (_, targets) = chain_parts(compiler, expr);
+    last_static_of(compiler, targets, follow.iter().map(|f| &f.elem))
+}
+
+pub(super) fn last_scoped_static_after<'a>(
+    compiler: &Compiler<'a>,
+    (ty, after): (Option<TypeRef<'a>>, After),
+    follow: &[dreammaker::ast::Follow],
+) -> Option<(usize, dreammaker::objtree::VarDeclarationRef<'a>)> {
+    let targets = follow_parts(compiler, (ty, after), false, follow.iter());
+    last_static_of(compiler, targets, follow.iter())
+}
+
+fn last_static_of<'a, 'f>(
+    compiler: &Compiler<'a>,
+    targets: Vec<Option<String>>,
+    follow: impl Iterator<Item = &'f dreammaker::ast::Follow>,
+) -> Option<(usize, dreammaker::objtree::VarDeclarationRef<'a>)> {
+    use dreammaker::ast::{Follow, ListAccessKind, PropertyAccessKind};
     targets
         .into_iter()
-        .zip(follow.iter())
-        .take(safe.unwrap_or(follow.len()))
+        .zip(follow)
+        .take_while(|(_, f)| {
+            !matches!(
+                f,
+                Follow::Field(
+                    PropertyAccessKind::SafeDot | PropertyAccessKind::SafeColon,
+                    _
+                ) | Follow::Call(
+                    PropertyAccessKind::SafeDot | PropertyAccessKind::SafeColon,
+                    ..
+                ) | Follow::Index(ListAccessKind::Safe, _)
+            )
+        })
         .enumerate()
         .filter_map(|(at, (target, f))| {
-            let (Some(path), Follow::StaticField(name)) = (target, &f.elem) else {
+            let (Some(path), Follow::StaticField(name)) = (target, f) else {
                 return None;
             };
             Some((
@@ -873,7 +889,7 @@ fn chain_parts(
         follow.first().map(|f| &f.elem),
         Some(Follow::StaticField(_))
     );
-    let (mut ty, mut after) = match &term.elem {
+    let (ty, after) = match &term.elem {
         _ if global => (None, After::Typed),
         Term::Prefab(prefab) if scoped && prefab.vars.is_empty() => {
             match compiler.proc.tree.find(&prefab.path.to_string()) {
@@ -883,7 +899,6 @@ fn chain_parts(
         }
         term => start_type(compiler, term),
     };
-    let mut found = vec![];
     let mut head = None;
     if let Term::Call(name, _) = &term.elem {
         let ty = compiler.proc.ty;
@@ -895,9 +910,26 @@ fn chain_parts(
             head = Some(format!("{:?}", call_var(Some(ty), name.as_str())));
         }
     }
-    for (i, f) in follow.iter().enumerate() {
-        let before = std::mem::replace(&mut after, After::of(&f.elem));
-        let (kind, name) = match &f.elem {
+    let found = follow_parts(
+        compiler,
+        (ty, after),
+        global,
+        follow.iter().map(|f| &f.elem),
+    );
+    (head, found)
+}
+
+fn follow_parts<'f>(
+    compiler: &Compiler,
+    (mut ty, mut after): (Option<TypeRef>, After),
+    global: bool,
+    follow: impl Iterator<Item = &'f dreammaker::ast::Follow>,
+) -> Vec<Option<String>> {
+    use dreammaker::ast::Follow;
+    let mut found = vec![];
+    for (i, f) in follow.enumerate() {
+        let before = std::mem::replace(&mut after, After::of(f));
+        let (kind, name) = match f {
             Follow::Field(kind, name) => (kind, name),
             Follow::Index(..) => {
                 found.push(None);
@@ -935,7 +967,7 @@ fn chain_parts(
         );
         ty = decl.and_then(|d| declared_type(compiler, &d.get().var_type));
     }
-    (head, found)
+    found
 }
 
 pub(super) fn resolve_proc_path(compiler: &Compiler, path: &str) -> Option<String> {
