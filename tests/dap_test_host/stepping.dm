@@ -1,5 +1,3 @@
-// Procs to stop in and step through
-
 /proc/leaf(x)
 	var/y = x + 1 // @leaf_1
 	return y * 2 // @leaf_2
@@ -31,7 +29,6 @@
 
 /proc/sc_spawner()
 	spawner()
-	// The spawned block runs before this is over
 	sleep(3)
 
 /proc/recurse(depth)
@@ -57,17 +54,16 @@
 
 /datum/thing/New(called)
 	if (called)
-		name = called // @thing_new
+		name = called
 
 /datum/thing/proc/bump(by)
 	n += by // @bump_1
-	return n // @bump_2
+	return n
 
 /datum/thing/sub/bump(by)
 	var/got = ..(by * 2) // @sub_bump_1
-	return got + 1 // @sub_bump_2
+	return got + 1
 
-// Two definitions of one proc on one type: the second is `#1`
 /datum/thing/twice/bump(by)
 	return ..(by) // @twice_first
 
@@ -81,9 +77,8 @@
 /proc/sc_parent()
 	var/datum/thing/sub/s = new("S")
 	var/r = s.bump(2) // @sc_parent_1
-	return r // @sc_parent_2
+	return r
 
-// Its list's initial value is set by code of its own, an (init) proc
 /datum/made
 	var/list/stuff = list(1, 2)
 	var/size = 0
@@ -97,7 +92,7 @@
 
 /proc/sc_call()
 	var/r = call(/proc/leaf)(1) // @sc_call_1
-	return r // @sc_call_2
+	return r
 
 /proc/sc_plain()
 	var/a = 1 // @plain_1
@@ -113,14 +108,14 @@
 	for (var/i in 1 to 2) // @flow_for
 		total += i // @flow_body
 	if (total > 5) // @flow_if
-		total = 0 // @flow_then
+		total = 0
 	else
 		total += 1 // @flow_else
 	switch (total) // @flow_switch
 		if (4)
 			total = 40 // @flow_case
 		else
-			total = -1 // @flow_default
+			total = -1
 	try // @flow_try_start
 		total += quiet_failure() // @flow_try
 	catch (var/exception/e)
@@ -140,17 +135,15 @@
 
 var/stop_busy = FALSE
 
-// Runs without sleeping until it's told to stop (or five seconds are up)
 /proc/sc_busy()
 	var/started = world.timeofday
 	var/passes = 0
 	stop_busy = FALSE
 	world.log << "dap: busy"
 	while (!stop_busy && abs(world.timeofday - started) < 50)
-		passes++ // @busy_loop
+		passes++
 	return passes
 
-// Fifty procs asleep at once, or as many as the test asks for
 var/many = 50
 
 /proc/sc_many()
@@ -161,30 +154,27 @@ var/many = 50
 	leaf(1)
 
 /proc/nap(ticks)
-	var/napped = ticks // @nap_1
+	var/napped = ticks
 	sleep(ticks) // @nap_2
 	return napped // @nap_3
 
-// One proc asleep for a second, while another stops
 /proc/sc_nap()
 	spawn(0)
 		nap(10)
 	sleep(1)
 	leaf(1)
 
-// Three procs asleep, each with an object of its own for src
 /datum/dozer
 	var/n = 0
 
 /datum/dozer/proc/doze()
 	set waitfor = FALSE
 	var/mine = n
-	sleep(600) // @doze_sleep
+	sleep(600)
 	return mine
 
 var/list/dozers
 
-// An expression can't delete, but it can call this
 /proc/end_dozer(datum/dozer/d)
 	del(d)
 
@@ -201,26 +191,22 @@ var/list/dozers
 		del(d)
 	dozers = null
 
-// Lines with no executable code. DreamMaker records each; an empty macro
-// counts only as the first body line (as with RETURN_TYPE(/list)).
 #define NOTHING_TO_RUN
 /proc/nothing_to_run()
 	NOTHING_TO_RUN // @nothing_macro
 	var/n // @nothing_var
 	set background = TRUE // @nothing_set
 	n = 1 // @nothing_code
-	// DreamMaker records the next line before evaluating this initializer.
 	
-	var/text = "[n]" // @read_ahead_text
+	var/text = "[n]"
 	var/size = length(text) // @read_ahead_next
 	return n * size
 
 /proc/sc_nothing_to_run()
 	nothing_to_run()
 
-// spawn(-1) runs immediately in a copy of the proc's frame.
 /proc/spawns_now()
-	var/n = 1 // @spawn_now_1
+	var/n = 1
 	spawn (-1) // @spawn_now_spawn
 		n = 2 // @spawn_now_body
 	n = 3 // @spawn_now_2
@@ -229,13 +215,11 @@ var/list/dozers
 /proc/sc_spawn_now()
 	spawns_now()
 
-// A final spawn(-1) whose copy outlives the original proc by sleeping.
-
 /proc/spawns_sleeping()
 	var/n = 1
 	spawn (-1) // @spawn_sleep_spawn
 		sleep(2)
-		n = 2 // @spawn_sleep_body
+		n = 2
 
 /proc/sc_spawn_sleep()
 	spawns_sleeping() // @spawn_sleep_call

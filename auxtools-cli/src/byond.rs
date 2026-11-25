@@ -1,25 +1,16 @@
-//! Finding BYOND's programs.
-
 use std::path::{Path, PathBuf};
 
-/// Which BYOND program hosts the world
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Deserialize)]
 pub enum Server {
-	/// The client, which hosts the world itself (Windows only)
 	#[serde(rename = "dreamseeker")]
 	DreamSeeker,
-	/// Console DreamDaemon (`dd.exe` on Windows), with captured output.
-	/// `dd` remains an alias for `dreamdaemon`.
 	#[serde(rename = "dreamdaemon", alias = "dd")]
 	DreamDaemon,
-	/// Windowed DreamDaemon (`dreamdaemon.exe` on Windows), with output
-	/// in its own window.
 	#[serde(rename = "dreamdaemon-gui")]
 	DreamDaemonGui
 }
 
 impl Server {
-	/// The program's file name, in BYOND's `bin` directory
 	pub const fn program(self) -> &'static str {
 		if cfg!(windows) {
 			match self {
@@ -28,7 +19,6 @@ impl Server {
 				Self::DreamDaemonGui => "dreamdaemon.exe"
 			}
 		} else {
-			// Linux has the one
 			"DreamDaemon"
 		}
 	}
@@ -38,7 +28,6 @@ impl Server {
 	}
 }
 
-/// The program that compiles a .dme
 const fn compiler() -> &'static str {
 	if cfg!(windows) {
 		"dm.exe"
@@ -47,8 +36,6 @@ const fn compiler() -> &'static str {
 	}
 }
 
-/// BYOND's `bin` directory: in `byond_path` when given, else where BYOND is
-/// installed.
 pub fn bin_dir(byond_path: Option<&Path>) -> Result<PathBuf, String> {
 	let candidates: Vec<PathBuf> = match byond_path {
 		Some(path) => vec![path.to_owned()],
@@ -69,11 +56,9 @@ pub fn bin_dir(byond_path: Option<&Path>) -> Result<PathBuf, String> {
 	}
 }
 
-/// Where BYOND is usually installed
 fn installed() -> Vec<PathBuf> {
 	let mut dirs = vec![];
 
-	// byondsetup sets it on Linux
 	if let Some(system) = std::env::var_os("BYOND_SYSTEM") {
 		dirs.push(PathBuf::from(system));
 	}
@@ -109,7 +94,6 @@ mod registry {
 		um::winreg::{RegGetValueW, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, RRF_RT_REG_SZ}
 	};
 
-	/// Where BYOND's installer says it put it
 	pub fn install_path() -> Vec<PathBuf> {
 		[HKEY_LOCAL_MACHINE, HKEY_CURRENT_USER]
 			.into_iter()

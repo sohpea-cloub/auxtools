@@ -20,8 +20,6 @@ pub fn text_of(bytes: &[u8]) -> String {
 	String::from_utf8_lossy(&text).into_owned()
 }
 
-/// A wrapper around [Values](struct.Value.html) that make working with strings
-/// a little easier
 pub struct StringRef {
 	pub value: Value
 }
@@ -44,8 +42,6 @@ impl StringRef {
 			return None;
 		}
 
-		// Here we're going from value -> raw -> new value because to get that
-		// juicy static lifetime
 		Some(StringRef {
 			value: unsafe { Value::from_raw(value.raw) }
 		})
@@ -105,8 +101,6 @@ impl fmt::Debug for StringRef {
 
 		while let Some(&byte) = iter.next() {
 			if byte == 0xFF {
-				// NOTE: Doesn't hold state for formatting, so some strings
-				// relying on are a little off
 				format.extend_from_slice(match iter.next() {
 					None => break,
 					Some(1) | Some(2) | Some(3) | Some(4) => b"[]",
@@ -166,7 +160,6 @@ impl fmt::Debug for StringRef {
 				continue;
 			}
 
-			// Escape \[]"" chars
 			if byte == b'\\' || byte == b'[' || byte == b']' || byte == b'"' {
 				format.push(b'\\');
 			}

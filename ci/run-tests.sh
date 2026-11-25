@@ -30,7 +30,6 @@ case "$(uname -s)" in
 	*)
 		if [ -n "${WINE:-}" ]; then
 			exe=.exe
-			# Wine has the whole filesystem as drive Z
 			BYOND_PATH="Z:$(printf '%s' "$byond" | tr / '\\')"
 			export WINEDEBUG="${WINEDEBUG:--all}"
 		else
@@ -42,7 +41,6 @@ esac
 export BYOND_PATH
 
 failed=
-# report NAME STATUS SECONDS
 report() {
 	if [ "$2" -eq 0 ]; then
 		echo "passed: $1 ($3 s)"
@@ -68,11 +66,8 @@ if [ -n "${SERIAL:-}" ]; then
 		run "$test" "$programs/$test$exe"
 	done
 else
-	# A test compiles and edits its world where it finds it, in tests/*_host
-	# under the current directory, so each gets a copy.
 	work=$PWD/target/run-tests
 	rm -rf "$work"
-	# Wine creates its prefix on first use: once, not by every test at once.
 	[ -z "${WINE:-}" ] || "$WINE" cmd /c exit
 	declare -A pids
 	trap 'kill "${pids[@]}" 2>/dev/null; exit 130' INT TERM
@@ -94,8 +89,6 @@ else
 					running="$running $test"
 					continue
 				fi
-				# The job's own time limit would end the step with the
-				# test's output unseen.
 				kill "${pids[$test]}"
 				echo "$test was still running after $seconds s" >>"$work/$test.log"
 			fi
@@ -112,7 +105,6 @@ else
 	trap - INT TERM
 fi
 
-# cargo runs a package's unit tests from the package's directory
 if [ -d "$programs/unit" ] && [ $# -eq 0 ]; then
 	root=$PWD
 	for test in $(cd "$programs/unit" && find . -type f | sort); do

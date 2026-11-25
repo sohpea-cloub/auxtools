@@ -35,20 +35,6 @@ impl From<&Value> for Value {
 	}
 }
 
-// List-y helpers
-
-// This is broken due to https://github.com/rust-lang/rust/issues/50133
-// The blanket implementation of TryFrom in core conflicts with -any- generics
-// on a TryFrom trait
-//
-// impl<T: AsRef<str>> TryFrom<T> for Value {
-// 	type Error = Runtime;
-// 	fn try_from(value: T) -> Result<Self, Self::Error> {
-// 		Value::from_string(value.as_ref())
-// 	}
-// }
-
-// Specialized for ease-of-use due to the above not being possible
 impl<T: Into<Value> + Clone> TryFrom<&HashMap<String, T>> for Value {
 	type Error = Runtime;
 
@@ -71,9 +57,6 @@ impl<A: Into<Value> + Clone, B: Into<Value> + Clone> TryFrom<&HashMap<A, B>> for
 		let res = List::new();
 
 		for (k, v) in hashmap {
-			// This can fail for basically any reason that BYOND decides,
-			// because in the end this just ends up calling into BYOND with the
-			// Value's.
 			res.set(k.clone(), v.clone())?;
 		}
 

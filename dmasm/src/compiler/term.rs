@@ -19,7 +19,6 @@ pub(super) fn emit(compiler: &mut Compiler<'_>, term: Term) -> Result<EvalKind, 
         _ => RelativeCall::Itself,
     };
     match term {
-        // Parenthesized values are evaluated onto the stack, including variables.
         Term::Expr(expr) if compiler.proc.is_some() => {
             compiler.regroup_root = true;
             let kind = compiler.emit_expr(*expr)?;
@@ -27,13 +26,11 @@ pub(super) fn emit(compiler: &mut Compiler<'_>, term: Term) -> Result<EvalKind, 
         }
         Term::Expr(expr) => compiler.emit_expr(*expr),
 
-        // Simple stack pushes
         Term::Null if compiler.proc.is_some() => Ok(EvalKind::Var(Variable::Null)),
         Term::Null => {
             compiler.emit_ins(Instruction::PushVal(Value::Null));
             Ok(EvalKind::Stack)
         }
-        // PushInt has a 16-bit operand; larger values need PushVal.
         Term::Int(i) => {
             compiler.emit_number(i as f32);
             Ok(EvalKind::Stack)
@@ -47,7 +44,6 @@ pub(super) fn emit(compiler: &mut Compiler<'_>, term: Term) -> Result<EvalKind, 
             Ok(EvalKind::Stack)
         }
 
-        // Identifiers. These could be params or globals.
         Term::Ident(ident) => {
             if super::procs::is_builtin_const(compiler, ident.as_str()) {
                 let value = super::procs::const_value(compiler, ident.as_str()).unwrap();
@@ -61,19 +57,16 @@ pub(super) fn emit(compiler: &mut Compiler<'_>, term: Term) -> Result<EvalKind, 
             Some(String::new()),
         )))),
 
-        // Resources
         Term::Resource(resource) => {
             compiler.emit_ins(Instruction::PushVal(Value::Resource(resource)));
             Ok(EvalKind::Stack)
         }
 
-        // as() stuff. We might eventually change this to its own EvalKind so statements can act on them better.
         Term::As(val) => {
             compiler.emit_ins(Instruction::PushInt(val.bits() as i32));
             Ok(EvalKind::Stack)
         }
 
-        // Type paths: We don't support the anonymous kind with variable declarations.
         Term::Prefab(prefab) => {
             if !prefab.vars.is_empty() {
                 let value = prefab_value(compiler, &prefab)?;
@@ -81,12 +74,10 @@ pub(super) fn emit(compiler: &mut Compiler<'_>, term: Term) -> Result<EvalKind, 
                 return Ok(EvalKind::Stack);
             }
 
-            // TODO: Relative stuff
             let mut path = prefab.path.to_string();
             if let Some(resolved) = super::procs::resolve_proc_path(compiler, &path) {
                 path = resolved;
             }
-            // Resolve debugger proc paths against the running world.
             if let Some(found) = compiler
                 .expr_scope
                 .and_then(|scope| (scope.proc_path)(&path))
@@ -94,7 +85,6 @@ pub(super) fn emit(compiler: &mut Compiler<'_>, term: Term) -> Result<EvalKind, 
                 compiler.emit_found_proc(found);
                 return Ok(EvalKind::Stack);
             }
-            // `/type/proc` (as in typesof(/type/proc)) is text
             if path.ends_with("/proc") || path.ends_with("/verb") {
                 compiler.emit_ins(Instruction::PushVal(Value::DMString(DMString(
                     path.into_bytes(),
@@ -109,18 +99,14 @@ pub(super) fn emit(compiler: &mut Compiler<'_>, term: Term) -> Result<EvalKind, 
         Term::Call(ident, args) | Term::GlobalCall(ident, args) => {
             let args_vec = args.into_vec();
             match builtin_procs::emit(compiler, &ident, &args_vec)? {
-                // Handled by builtin_procs
                 Some(kind) => Ok(kind),
 
-                // We've got to call a proc
                 None => {
                     if let Some(kind) =
                         super::procs::emit_bare_call(compiler, &ident, args_vec.clone())?
                     {
                         return Ok(kind);
                     }
-                    // A debugger's expression, for an object with a proc of
-                    // that name: the object's, as in its procs' code
                     if compiler
                         .expr_scope
                         .is_some_and(|scope| (scope.has_src_proc)(ident.as_str()))
@@ -135,7 +121,6 @@ pub(super) fn emit(compiler: &mut Compiler<'_>, term: Term) -> Result<EvalKind, 
 
                     match args::emit(compiler, args::ArgsContext::Proc, args_vec)? {
                         args::ArgsResult::Normal => {
-                            // We're treating all Term::Call expressions as global calls
                             compiler.emit_ins(Instruction::CallGlob(
                                 arg_count,
                                 operands::Proc(format!("/proc/{}", ident)),
@@ -179,8 +164,6 @@ pub(super) fn emit(compiler: &mut Compiler<'_>, term: Term) -> Result<EvalKind, 
                 });
             }
 
-            // Push LHS (`call(src, __PROC__)` is allowed before 515.1644, where
-            // `__PROC__` otherwise isn't)
             for (i, expr) in lhs.iter().enumerate() {
                 compiler.proc_macro_ok = lhs_len == 2 && i == 1;
                 let kind = compiler.emit_expr(expr.clone());
@@ -188,7 +171,6 @@ pub(super) fn emit(compiler: &mut Compiler<'_>, term: Term) -> Result<EvalKind, 
                 compiler.emit_move_to_stack(kind?)?;
             }
 
-            // Push RHS (as a proc's: `(x = 1)` is an assignment)
             match args::emit(compiler, args::ArgsContext::Proc, rhs.into_vec())? {
                 args::ArgsResult::Normal => match lhs_len {
                     1 => compiler.emit_ins(Instruction::CallPath(rhs_len as u32)),
@@ -265,7 +247,6 @@ pub(super) fn emit(compiler: &mut Compiler<'_>, term: Term) -> Result<EvalKind, 
         }
         Term::NewImplicit { .. } => Err(CompileError::UnsupportedImplicitNew),
         Term::NewMiniExpr { expr, args } => {
-            // (`new src.a.b()` is written with `src.` like any chain)
             if expr.ident.as_str() == "src" && !expr.fields.is_empty() && compiler.proc.is_some() {
                 compiler.explicit_src = true;
             }
@@ -298,7 +279,6 @@ pub(super) fn emit(compiler: &mut Compiler<'_>, term: Term) -> Result<EvalKind, 
             args::emit_normal(compiler, args::ArgsContext::Proc, args.into_vec())?;
 
             match args_len {
-                // locate() finds the declared type of what it's assigned to
                 0 if compiler.implicit_type.is_some() => {
                     let path = compiler.implicit_type.take().unwrap();
                     compiler.emit_ins(Instruction::PushVal(Value::Path(path)));
@@ -313,12 +293,10 @@ pub(super) fn emit(compiler: &mut Compiler<'_>, term: Term) -> Result<EvalKind, 
                 }
                 0 => return Err(CompileError::UnsupportedImplicitLocate),
 
-                // locate(ref|type)
                 1 if in_list.is_none() => {
                     compiler.emit_ins(Instruction::LocateRef);
                 }
 
-                // locate(type) in container
                 1 if in_list.is_some() => {
                     let kind = compiler.emit_expr(*in_list.unwrap())?;
                     compiler.emit_move_to_stack(kind)?;
@@ -326,12 +304,10 @@ pub(super) fn emit(compiler: &mut Compiler<'_>, term: Term) -> Result<EvalKind, 
                     compiler.emit_ins(Instruction::LocateType);
                 }
 
-                // locate(type, container) is locate(type) in container
                 2 if in_list.is_none() => {
                     compiler.emit_ins(Instruction::LocateType);
                 }
 
-                // locate(X, Y, Z)
                 3 => {
                     compiler.emit_ins(Instruction::LocatePos);
                 }
@@ -344,7 +320,6 @@ pub(super) fn emit(compiler: &mut Compiler<'_>, term: Term) -> Result<EvalKind, 
 
         Term::Pick(args) => {
             match args.len() {
-                // prob()
                 0 => {
                     return Err(CompileError::MissingArgument {
                         proc: "pick".to_owned(),
@@ -352,7 +327,6 @@ pub(super) fn emit(compiler: &mut Compiler<'_>, term: Term) -> Result<EvalKind, 
                     })
                 }
 
-                // prob(L)
                 1 => {
                     let (lhs, rhs) = args.into_vec().pop().unwrap();
 
@@ -360,7 +334,6 @@ pub(super) fn emit(compiler: &mut Compiler<'_>, term: Term) -> Result<EvalKind, 
                         return Err(CompileError::UnexpectedProbability);
                     }
 
-                    // (pick(arglist(L)) is pick(L))
                     let rhs = super::builtin_procs::arglist_inner(&rhs)
                         .cloned()
                         .unwrap_or(rhs);
@@ -369,9 +342,6 @@ pub(super) fn emit(compiler: &mut Compiler<'_>, term: Term) -> Result<EvalKind, 
                     compiler.emit_ins(Instruction::Pick);
                 }
 
-                // Constant weights use one random draw against cumulative thresholds
-                // out of 65535. Use the same strategy in debugger expressions so the
-                // same random state selects the same entry.
                 _ if args.iter().all(|(w, _)| {
                     w.as_ref()
                         .map_or(true, |w| pick_weight(compiler, w).is_some())
@@ -388,12 +358,8 @@ pub(super) fn emit(compiler: &mut Compiler<'_>, term: Term) -> Result<EvalKind, 
                     let end = compiler.new_label();
                     let labels: Vec<String> =
                         (0..args.len()).map(|_| compiler.new_label()).collect();
-                    // Each weight's share is rounded down on its own
                     let mut threshold = 0u32;
                     let mut cases = vec![];
-                    // From 516.1689, zero weights retain a case at the previous
-                    // threshold. Earlier builds omit numeric-zero cases but
-                    // retain their value code. Text weights always have a case.
                     let keeps_zero = compiler
                         .byond
                         .at_least(super::versions::PICK_ZERO_WEIGHT_KEPT);
@@ -405,8 +371,6 @@ pub(super) fn emit(compiler: &mut Compiler<'_>, term: Term) -> Result<EvalKind, 
                                     .is_some_and(|w| super::fold::number(compiler, w) == Some(0.0))
                         })
                         .collect();
-                    // Before 516.1689, a final zero weight causes an invalid jump.
-                    // Use the last nonzero entry as the default and warn.
                     let mut last = args.len() - 1;
                     if zero[last] {
                         if let Some(live) = zero.iter().rposition(|z| !z) {
@@ -443,7 +407,6 @@ pub(super) fn emit(compiler: &mut Compiler<'_>, term: Term) -> Result<EvalKind, 
                     compiler.emit_label(end);
                 }
 
-                // prob(x, y; z, ...)
                 _ => {
                     let label_end = format!("LAB_{:0>4X}", compiler.label_count);
                     compiler.label_count += 1;
@@ -451,7 +414,6 @@ pub(super) fn emit(compiler: &mut Compiler<'_>, term: Term) -> Result<EvalKind, 
                     let mut branches = vec![];
 
                     for (lhs, rhs) in args {
-                        // A weight written prob(x) is just x
                         let lhs = lhs.map(|w| match &w {
                             Expression::Base { term, follow } if follow.is_empty() => match &term
                                 .elem
@@ -530,7 +492,6 @@ pub(super) fn emit(compiler: &mut Compiler<'_>, term: Term) -> Result<EvalKind, 
             function,
             args,
         } => {
-            // call_ext(handle)(), with what load_ext() returned
             let Some(library) = library else {
                 let kind = compiler.emit_expr(*function)?;
                 compiler.emit_move_to_stack(kind)?;
@@ -566,7 +527,6 @@ pub(super) fn emit(compiler: &mut Compiler<'_>, term: Term) -> Result<EvalKind, 
             text.push(first.as_str())?;
             let mut count = 0;
             for (expr, literal) in parts.into_vec() {
-                // (an empty `[]` is a place for text() to fill)
                 if let Some(expr) = expr {
                     let kind = compiler.emit_expr(expr)?;
                     compiler.emit_move_to_stack(kind)?;
@@ -587,7 +547,6 @@ pub(super) fn emit(compiler: &mut Compiler<'_>, term: Term) -> Result<EvalKind, 
             input_type,
             in_list,
         } => emit_input(compiler, args.into_vec(), input_type, in_list.map(|l| *l)),
-        // Debugger proc macros cannot use the synthetic body proc (see `proc_macros_known`).
         Term::__TYPE__
             if compiler.proc_macros_known()
                 && compiler.proc.as_ref().is_some_and(|p| !p.ty.is_root()) =>
@@ -596,7 +555,6 @@ pub(super) fn emit(compiler: &mut Compiler<'_>, term: Term) -> Result<EvalKind, 
             compiler.emit_ins(Instruction::PushVal(Value::Path(path)));
             Ok(EvalKind::Stack)
         }
-        // A global proc's (and a global var's initial value's)
         Term::__TYPE__ if compiler.proc_macros_known() => {
             compiler.emit_ins(Instruction::PushVal(Value::Null));
             Ok(EvalKind::Stack)
@@ -626,8 +584,6 @@ pub(super) fn emit(compiler: &mut Compiler<'_>, term: Term) -> Result<EvalKind, 
     }
 }
 
-/// Compile input choices as distance/source operands. Built-in source IDs:
-/// view 1, oview 2, range 5, orange 6, usr 8, world 16; stack list 64.
 fn emit_input(
     compiler: &mut Compiler<'_>,
     args: Vec<Expression>,
@@ -640,13 +596,11 @@ fn emit_input(
     }
     let builtin = in_list.as_ref().and_then(|l| input_source(compiler, l));
     let mut types = input_type.unwrap_or_default().bits();
-    // Without `as`, built-in sources offer atoms (usr: its contents, objs)
     match (input_type, builtin) {
         (None, Some((_, 8))) => types = InputType::OBJ.bits(),
         (None, Some(_)) => types = InputType::ATOM.bits(),
         _ => {}
     }
-    // Types that don't fit in 16 bits go on the stack, for the other opcode
     let wide = types > 0xFFFF;
     if wide {
         compiler.emit_ins(Instruction::PushVal(Value::Number(types as f32)));
@@ -677,7 +631,6 @@ fn emit_input(
     Ok(EvalKind::Stack)
 }
 
-/// The built-in source of an `input() in X`, as (distance, source).
 fn input_source(compiler: &Compiler, list: &Expression) -> Option<(u32, u32)> {
     let Expression::Base { term, follow } = list else {
         return None;
@@ -722,7 +675,6 @@ fn is_usr(expr: &Expression) -> bool {
     matches!(expr, Expression::Base { term, follow } if follow.is_empty() && matches!(&term.elem, Term::Ident(n) if n.as_str() == "usr"))
 }
 
-/// `alist(k = v, ...)`
 pub(super) fn emit_alist(
     compiler: &mut Compiler<'_>,
     args: Vec<Expression>,
@@ -738,7 +690,6 @@ pub(super) fn emit_alist(
         ) && super::builtin_procs::arglist_inner(arg).is_none()
     };
     if args.iter().any(positional) {
-        // A key with no value has null: `alist(a, "k" = b)`
         for arg in args {
             let lone = positional(&arg);
             match args::emit(compiler, args::ArgsContext::List, vec![arg])? {
@@ -761,12 +712,10 @@ pub(super) fn emit_alist(
     Ok(EvalKind::Stack)
 }
 
-/// A constant pick() weight: `10` or `prob(10)`.
 fn pick_weight(compiler: &Compiler, expr: &Expression) -> Option<f32> {
     if let Some(n) = super::fold::number(compiler, expr) {
         return Some(n);
     }
-    // (a text weight, from `"a";5` written the wrong way round, is 0)
     if let Some(super::fold::Constant::Text(_)) = super::fold::value(compiler, expr) {
         return Some(0.0);
     }
@@ -782,7 +731,6 @@ fn pick_weight(compiler: &Compiler, expr: &Expression) -> Option<f32> {
     None
 }
 
-// Assuming the type to create will always be on the stack
 fn emit_new(
     compiler: &mut Compiler<'_>,
     args: Option<Box<[Expression]>>,
@@ -808,19 +756,15 @@ fn emit_new(
     Ok(EvalKind::Stack)
 }
 
-/// Compile prefab variable overrides as initializer assignments.
-/// Emit source locations before computed values.
 fn prefab_value(
     compiler: &mut Compiler,
     prefab: &dreammaker::ast::Prefab,
 ) -> Result<Value, CompileError> {
-    // Reject modified types in debugger code: their instances would persist in BYOND's tables.
     if compiler.expr_scope.is_some() && !prefab.vars.is_empty() {
         return Err(CompileError::UnsupportedStatement(
             "modified types (/type{var = value}) are unsupported in debugger code; use new and assign the vars",
         ));
     }
-    // (a proc of its own: nothing is in the cache at its start)
     let saved = std::mem::take(&mut compiler.nodes);
     let saved_cache = compiler.cache.take();
     let saved_line = compiler.last_line.take();
@@ -834,7 +778,6 @@ fn prefab_value(
             let literal = matches!(value, Expression::Base { term, follow }
                 if follow.is_empty()
                     && matches!(term.elem, Term::Resource(_) | Term::Prefab(_) | Term::String(_) | Term::Null));
-            // (a made value, like `list(1)`, runs code)
             if !literal
                 && super::fold::value(compiler, value)
                     .is_none_or(|v| v == super::fold::Constant::New)
@@ -875,7 +818,6 @@ fn prefab_value(
     })
 }
 
-/// The line an expression starts on.
 fn value_line(expr: &Expression) -> u32 {
     match expr {
         Expression::Base { term, .. } => term.location.line,

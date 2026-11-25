@@ -1,5 +1,3 @@
-//! Scopes and variables: how each kind of value shows, and what's inside it
-
 use serde_json::{json, Value};
 
 use crate::{
@@ -8,7 +6,6 @@ use crate::{
 	world::World
 };
 
-/// What kind of value each is, and the expression that reaches it
 fn kinds_and_expressions(world: &mut World, locals: &[Value], version: u64) {
 	let of = |name: &str| locals.iter().find(|v| v["name"] == name).unwrap().clone();
 	for (name, kind) in [
@@ -35,7 +32,6 @@ fn kinds_and_expressions(world: &mut World, locals: &[Value], version: u64) {
 	}
 	ok("variable type labels");
 
-	// Each local is reached by its name, and gives what it shows
 	let frame = world.frame_id();
 	for local in locals {
 		let (name, value) = (local["name"].as_str().unwrap(), local["value"].as_str().unwrap());
@@ -44,7 +40,6 @@ fn kinds_and_expressions(world: &mut World, locals: &[Value], version: u64) {
 	}
 	ok("local access expressions");
 
-	// Down through objects and lists
 	let inside = world.variables(&of("named")["variablesReference"].clone());
 	for child in &inside {
 		let expression = child["evaluateName"].as_str().unwrap();
@@ -74,7 +69,6 @@ fn kinds_and_expressions(world: &mut World, locals: &[Value], version: u64) {
 	assert_eq!(world.evaluate_in(&frame, "nested[2][\"x\"][1]", "watch")["result"], "3");
 	ok("nested access expressions");
 
-	// Reach entries with escaped literals, object refs or positional lookup.
 	let inside = world.variables(&of("keyed")["variablesReference"].clone());
 	let expressions: Vec<&str> = inside.iter().map(|v| v["evaluateName"].as_str().unwrap()).collect();
 	assert_eq!(expressions[..3], ["keyed[\"a\\[b\\]\"]", "keyed[keyed[2]]", "keyed[keyed[3]]"]);
@@ -87,7 +81,6 @@ fn kinds_and_expressions(world: &mut World, locals: &[Value], version: u64) {
 	}
 	if version >= 516 {
 		let inside = world.variables(&of("keyed_pairs")["variablesReference"].clone());
-		// Alist entries cannot be accessed by position.
 		assert!(inside[0]["evaluateName"].is_null(), "{}", inside[0]);
 		let expression = inside[1]["evaluateName"].as_str().unwrap();
 		assert_eq!(world.evaluate_in(&frame, expression, "watch")["result"], "2", "{}", expression);
@@ -107,7 +100,6 @@ fn kinds_and_expressions(world: &mut World, locals: &[Value], version: u64) {
 	ok("argument and global access expressions");
 }
 
-/// A long list a piece at a time, and whole numbers in hex
 fn pieces_and_hex(world: &mut World, big: &Value, locals: &Value) {
 	assert_eq!(big["indexedVariables"], 3000);
 	let piece = |world: &mut World, start: u64, count: u64| -> Vec<String> {
@@ -146,18 +138,14 @@ fn pieces_and_hex(world: &mut World, big: &Value, locals: &Value) {
 	ok("hexadecimal number formatting");
 }
 
-/// Gives the variable `name`, among what `inside` opens to, the value of an
-/// expression, and returns it as the launcher says it is then
 fn set(world: &mut World, inside: &Value, name: &str, value: &str) -> Value {
 	world.request("setVariable", json!({ "variablesReference": inside, "name": name, "value": value }))
 }
 
-/// Why that can't be done
 fn cannot_set(world: &mut World, inside: &Value, name: &str, value: &str) -> String {
 	world.refused("setVariable", json!({ "variablesReference": inside, "name": name, "value": value }))
 }
 
-/// Giving variables other values, in the paused frame of values()
 fn setting(world: &mut World, version: u64) {
 	let frame = world.frame_id();
 	let locals = world.scope(&frame, "Locals");
@@ -168,7 +156,6 @@ fn setting(world: &mut World, version: u64) {
 	assert_eq!((&now["value"], &now["type"]), (&json!("50"), &json!("num")));
 	assert_eq!(world.local("whole"), "50");
 	assert_eq!(world.eval("whole + 1"), "51");
-	// The value is an expression, in the variable's frame
 	assert_eq!(set(world, &locals, "fraction", "whole * 2 + length(args)")["value"], "103");
 	assert_eq!(set(world, &locals, "text", "\"new [whole]\"")["value"], "\"new 50\"");
 	assert_eq!(set(world, &locals, "nothing", "named")["value"], "A");
@@ -190,12 +177,10 @@ fn setting(world: &mut World, version: u64) {
 	assert_eq!(set(world, &named, "name", "\"renamed\"")["value"], "\"renamed\"");
 	assert_eq!(world.eval("\"[named.name] [named.n]\""), "\"renamed 7\"");
 	assert_eq!(world.local("named"), "renamed");
-	// Through the object to the one inside it
 	let children = world.variables(&named);
 	let other = children.iter().find(|v| v["name"] == "other").unwrap()["variablesReference"].clone();
 	assert_eq!(set(world, &other, "n", "named.n + 1")["value"], "8");
 	assert_eq!(world.eval("named.other.n"), "8");
-	// A built-in var takes what BYOND makes of the value
 	let mob = inside(world, "M");
 	assert_eq!(set(world, &mob, "hp", "3")["value"], "3");
 	assert_eq!(set(world, &mob, "name", "\"Bob\"")["value"], "\"Bob\"");
@@ -207,7 +192,6 @@ fn setting(world: &mut World, version: u64) {
 	assert_eq!(world.eval("plain[2]"), "\"z\"");
 	let why = cannot_set(world, &plain, "[9]", "1");
 	assert_eq!(why, "the list has no entry [9]");
-	// An entry with a value for its key gets another value
 	let assoc = inside(world, "assoc");
 	assert_eq!(set(world, &assoc, "[1]", "5")["value"], "\"a\" = 5");
 	assert_eq!(world.eval("assoc[\"a\"]"), "5");
@@ -249,7 +233,6 @@ fn setting(world: &mut World, version: u64) {
 	assert_eq!(world.local("whole"), "50");
 	ok("assignment diagnostics");
 
-	// An expression that names a place, as a watch is set
 	let now = world.request(
 		"setExpression",
 		json!({ "expression": "named.n", "value": "whole + 1", "frameId": frame })
@@ -266,7 +249,6 @@ fn setting(world: &mut World, version: u64) {
 	assert_eq!(why, "expected l-value");
 	ok("setExpression target validation");
 
-	// What was listed before the world carried on is gone
 	world.step("next");
 	assert_eq!(
 		cannot_set(world, &locals, "whole", "1"),
@@ -275,7 +257,6 @@ fn setting(world: &mut World, version: u64) {
 	ok("stale assignment references");
 }
 
-/// The world's BYOND version
 fn byond_version(world: &mut World) -> u64 {
 	world.eval_global("world.byond_version").parse().unwrap()
 }
@@ -284,7 +265,6 @@ pub fn run() {
 	let mut world = World::start();
 	let version = byond_version(&mut world);
 
-	// Resolve duplicate local names to the active slot in each block.
 	for (mark, value) in [("twin_1", "1"), ("twin_2", "2")] {
 		world.run_to("values", "/values", mark);
 		let frame = world.frame_id();
@@ -321,7 +301,6 @@ pub fn run() {
 	assert_eq!(local("whole"), "42");
 	assert_eq!(local("fraction"), "1.5");
 	assert_eq!(local("negative"), "-0.25");
-	// BYOND's numbers are 32-bit floats
 	assert_eq!(local("past_24_bits"), "16777216");
 	assert_eq!(local("huge"), "1000000000000000000000000000000");
 	assert_eq!(local("infinite"), "inf");
@@ -342,7 +321,6 @@ pub fn run() {
 	assert!(!opens("path") && !opens("proc_path") && !opens("file"));
 	ok("non-expandable paths and resources");
 
-	// A datum shows as its name, if it has one
 	assert_eq!(local("named"), "A");
 	assert_eq!(local("unnamed"), "/datum/made");
 	let inside = world.children(&variable("named"));
@@ -360,7 +338,6 @@ pub fn run() {
 	assert_eq!(value_of(&inside, "K"), "4");
 	ok("datum variables sorted by name");
 
-	// Down through an object's var to another object
 	let children = world.variables(&variable("named")["variablesReference"].clone());
 	let other = children.iter().find(|v| v["name"] == "other").unwrap();
 	let inside = world.children(other);
@@ -401,7 +378,6 @@ pub fn run() {
 	assert_eq!(named(&children), [
 		("[1]".to_owned(), "\"a\" = 1".to_owned()),
 		("[2]".to_owned(), "\"b\" = A".to_owned()),
-		// A key with no value is no different from an element
 		("[3]".to_owned(), "\"c\"".to_owned())
 	]);
 	assert_eq!(world.children(&children[1]), [
@@ -485,8 +461,6 @@ pub fn run() {
 		println!("(BYOND {} has no alists, vectors, pixlocs or callees to show)", version);
 	}
 
-	// After both blocks, expose only the duplicate local whose use started
-	// last.
 	let twins: Vec<(String, String)> = world
 		.scope_values("Locals")
 		.into_iter()
@@ -500,7 +474,6 @@ pub fn run() {
 		("usr".to_owned(), "null".to_owned()),
 		("first".to_owned(), "1".to_owned()),
 		("second".to_owned(), "\"two\"".to_owned()),
-		// values() was called with one more than it declares
 		("undefined argument #1".to_owned(), "3".to_owned())
 	]);
 	ok("src, usr and extra arguments");
@@ -509,12 +482,10 @@ pub fn run() {
 	assert_eq!(value_of(&globals, "global_number"), "5");
 	assert_eq!(value_of(&globals, "global_list"), "/list {len = 3}");
 	assert_eq!(value_of(&globals, "early_global"), "5");
-	// A type's static and const vars are globals
 	assert_eq!(value_of(&globals, "shared"), "9");
 	assert_eq!(value_of(&globals, "K"), "4");
 	ok("globals include statics and consts");
 
-	// The hundred or so BYOND declares are apart, in the last row
 	assert!(!globals.iter().any(|(name, _)| name == "NORTH" || name == "MOB_LAYER"), "{:?}", globals);
 	let last = world.variable("Globals", "(BYOND's)");
 	assert!(last["value"].as_str().unwrap().ends_with(" constants"), "{}", last);
@@ -538,7 +509,6 @@ pub fn run() {
 	assert_eq!(world.local("whole"), "42");
 	ok("unknown variable references");
 
-	// whole += length(args)
 	world.step("next");
 	assert_eq!(world.local("whole"), "45");
 	assert_eq!(world.eval("whole = 7"), "7");

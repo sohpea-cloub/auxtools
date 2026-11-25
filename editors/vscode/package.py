@@ -27,7 +27,6 @@ from xml.sax.saxutils import escape
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent.parent
 
-# VS Code platform, Rust target and files copied into bin/PLATFORM.
 PLATFORMS = [
 	("win32", "i686-pc-windows-msvc", ["auxtools.exe", "debug_server.dll"]),
 	("linux", "i686-unknown-linux-gnu", ["auxtools", "libdebug_server.so"]),
@@ -68,7 +67,6 @@ def content_types(paths):
 	lines = ['<?xml version="1.0" encoding="utf-8"?>', '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">']
 	for extension, kind in defaults.items():
 		lines.append(f'\t<Default Extension="{extension}" ContentType="{kind}" />')
-	# Everything else, binaries mostly, by name
 	for path in paths:
 		if Path(path).suffix not in defaults:
 			lines.append(f'\t<Override PartName="/{escape(path)}" ContentType="application/octet-stream" />')
@@ -112,7 +110,6 @@ def main():
 	args = parser.parse_args()
 
 	package = json.loads((HERE / "package.json").read_text())
-	# Require matching extension and binary versions.
 	if package["version"] != cargo_version():
 		sys.exit(f'package.json\'s version is {package["version"]}, and Cargo.toml\'s is {cargo_version()}: they go together')
 	out = Path(args.out) if args.out else Path(f'{package["name"]}-{package["version"]}.vsix')

@@ -7,8 +7,6 @@ use syn::{
 	Attribute, Expr, Field, Fields, Ident, ItemStruct, Token, Visibility
 };
 
-// --- Input types ---
-
 struct VersionVariant {
 	name: Ident,
 	condition: Option<Expr>
@@ -17,8 +15,6 @@ struct VersionVariant {
 struct VersionedArgs {
 	variants: Vec<VersionVariant>
 }
-
-// --- Field annotation types ---
 
 enum FieldVersionInfo {
 	AllVersions,
@@ -29,8 +25,6 @@ struct VersionedField {
 	field: Field,
 	version_info: FieldVersionInfo
 }
-
-// --- Parsing ---
 
 impl Parse for VersionVariant {
 	fn parse(input: ParseStream) -> syn::Result<Self> {
@@ -51,8 +45,6 @@ impl Parse for VersionedArgs {
 		Ok(Self { variants })
 	}
 }
-
-// --- Field processing ---
 
 fn extract_field_version_info(field: &mut Field) -> FieldVersionInfo {
 	let mut result = FieldVersionInfo::AllVersions;
@@ -88,8 +80,6 @@ fn extract_versioned_fields(input: &mut ItemStruct) -> Result<Vec<VersionedField
 		.collect())
 }
 
-// --- Validation ---
-
 fn validate_variants(variants: &[VersionVariant]) -> Option<syn::Error> {
 	if variants.len() < 2 {
 		return Some(syn::Error::new(Span::call_site(), "#[versioned] requires at least 2 variants"));
@@ -107,8 +97,6 @@ fn validate_variants(variants: &[VersionVariant]) -> Option<syn::Error> {
 	}
 	None
 }
-
-// --- Code generation ---
 
 fn field_to_tokens(field: &Field) -> TokenStream {
 	let attrs = &field.attrs;
@@ -275,8 +263,6 @@ fn generate_impl(struct_ident: &Ident, variants: &[VersionVariant], pub_fields: 
 		}
 	}
 }
-
-// --- Entry point ---
 
 pub fn versioned(attr: TokenStream, item: TokenStream) -> TokenStream {
 	let args = match syn::parse2::<VersionedArgs>(attr) {

@@ -1,13 +1,4 @@
 #!/bin/bash
-# Run clippy and report warnings without failing on them:
-#
-#     ci/clippy.sh [CARGO CLIPPY'S ARGUMENTS...]
-#
-# Print each warning once, as cargo does, then the number of warnings for
-# each lint. In GitHub Actions, also annotate the lines the warnings are
-# about; GitHub shows the first ten.
-#
-# Fail only when cargo does: for an error, such as code that doesn't compile.
 set -euo pipefail
 cargo clippy --message-format=json "$@" | python3 -c '
 import collections, json, os, sys
@@ -28,7 +19,6 @@ for line in sys.stdin:
 		continue
 	message = message["message"]
 	rendered = message.get("rendered") or ""
-	# A file built into two programs is reported for both.
 	if message["level"] not in ("warning", "error") or rendered in seen:
 		continue
 	seen.add(rendered)

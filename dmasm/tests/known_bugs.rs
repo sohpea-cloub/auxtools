@@ -1,5 +1,3 @@
-//! Project-wide BYOND bug detection and version filtering.
-
 use dmasm::{reload::Snapshot, ByondVersion};
 
 const CODE: &str = "\
@@ -51,7 +49,6 @@ const CODE: &str = "\
 \ta?.me().n = 1
 ";
 
-/// Return (line, proc, diagnostic prefix) findings and unchecked procs.
 fn found(byond: ByondVersion) -> (Vec<(u32, String, String)>, Vec<String>) {
     let ctx = dreammaker::Context::default();
     byond.read_as(&ctx);
@@ -68,7 +65,6 @@ fn found(byond: ByondVersion) -> (Vec<(u32, String, String)>, Vec<String>) {
         "{:?}",
         found.bugs
     );
-    // Project diagnostics omit dmasm workaround details.
     assert!(
         found.bugs.iter().all(|bug| !bug.text.contains("dmasm")),
         "{:?}",
@@ -131,7 +127,6 @@ fn a_codebase_is_checked_by_file_and_line() {
             row(45, "/receiver", RECEIVER),
         ]
     );
-    // Report unsupported procs as unchecked.
     assert_eq!(not_checked.len(), 1, "{:?}", not_checked);
     assert!(
         not_checked[0].starts_with("/refused (code.dm): "),

@@ -1,13 +1,9 @@
-// Resource files the reloading tests edit: lamp_edited.dmi and lamp_third.dmi
-// replace lamp.dmi while the world runs.
-
 /obj/lamp
 	icon = 'lamp.dmi'
 	icon_state = "on"
 
 /obj/lamp_holder
 
-// Made while the world loads, before world/New
 var/obj/lamp/early_lamp = new
 var/obj/lamp/placed_lamp
 var/obj/lamp_holder/lamp_holder

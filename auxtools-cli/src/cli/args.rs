@@ -1,8 +1,3 @@
-//! Clap command, argument and option definitions. Full help pages are in
-//! `help`.
-//!
-//! `rules` validates option combinations before connecting to a world.
-
 use std::{path::PathBuf, time::Duration};
 
 use clap::{Args, CommandFactory, FromArgMatches, Parser, Subcommand};
@@ -15,16 +10,13 @@ const HOLD_MAX: &str =
 
 pub const RESPONSE_TIMEOUT: &str = "Set the wait for each response from the world. [default: 30]";
 
-/// Default response timeout, overridden by `--response-timeout`.
 pub const DEFAULT_RESPONSE_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Parser)]
 #[command(name = "auxtools", disable_help_subcommand = true, disable_version_flag = true)]
 pub struct Cli {
-	/// The world's process: before the command or after it
 	#[arg(long, global = true, value_name = "PID", value_parser = pid, help = "Select the world process.")]
 	pub pid: Option<u32>,
-	/// Response timeout, accepted before or after the command.
 	#[arg(long, global = true, value_name = "SECONDS", value_parser = seconds, help = RESPONSE_TIMEOUT)]
 	pub response_timeout: Option<Duration>,
 	#[arg(long, short = 'V', hide = true)]
@@ -62,7 +54,6 @@ pub enum Command {
 }
 
 impl Command {
-	/// Its name, as it's typed
 	pub const fn name(&self) -> &'static str {
 		match self {
 			Self::Launch(_) => "launch",
@@ -92,7 +83,6 @@ impl Command {
 		}
 	}
 
-	/// Whether it's a command to a running world, which `--pid` chooses
 	pub const fn selects_world(&self) -> bool {
 		!matches!(
 			self,
@@ -100,7 +90,6 @@ impl Command {
 		)
 	}
 
-	/// Whether response timeouts apply. `stop` waits for process exit instead.
 	pub const fn awaits_responses(&self) -> bool {
 		self.selects_world() && !matches!(self, Self::Stop(_))
 	}
@@ -149,7 +138,6 @@ pub struct Launch {
 		help = "Set the BYOND installation path.\n[default: BYOND_SYSTEM, then the installed location]"
 	)]
 	pub byond: Option<PathBuf>,
-	/// Given to the launcher `--detach` starts in the background
 	#[arg(long, hide = true)]
 	pub detached: bool,
 	#[arg(last = true, value_name = "ARGS")]
@@ -257,8 +245,6 @@ pub struct Vars {
 
 #[derive(Args)]
 pub struct Eval {
-	/// The expression's words, or `-` for stdin. A negative number is one;
-	/// anything else that starts with a hyphen goes after `--`.
 	#[arg(value_name = "EXPRESSION", allow_negative_numbers = true)]
 	pub expression: Vec<String>,
 	#[arg(short = 'f', long, value_name = "FILE", help = "Read the expression from FILE.")]
@@ -363,7 +349,6 @@ pub struct StepOut {
 
 #[derive(Args)]
 pub struct Wait {
-	/// Without one, `wait` shows what it can wait for
 	#[command(subcommand)]
 	pub event: Option<WaitFor>
 }
@@ -512,7 +497,6 @@ pub struct Check {
 
 #[derive(Args)]
 pub struct Help {
-	/// The command, and its subcommand
 	#[arg(value_name = "COMMAND")]
 	pub path: Vec<String>
 }
@@ -523,19 +507,15 @@ pub struct Version {
 	pub json: bool
 }
 
-/// Maximum duration accepted by an option (about thirty years).
 pub const MANY_SECONDS: f64 = 1e9;
 
-/// A time in seconds: a number that isn't negative
 fn seconds(text: &str) -> Result<Duration, String> {
 	match text.trim().parse::<f64>() {
-		// Keep the limit representable when added to the current time.
 		Ok(seconds) if seconds.is_finite() && seconds >= 0.0 => Ok(Duration::from_secs_f64(seconds.min(MANY_SECONDS))),
 		_ => Err("expected a non-negative number of seconds".to_owned())
 	}
 }
 
-/// A count of something, from 0
 fn whole<T: std::str::FromStr>(text: &str) -> Result<T, String> {
 	text.parse().map_err(|_| "expected a non-negative integer".to_owned())
 }
@@ -555,7 +535,6 @@ fn port(text: &str) -> Result<u16, String> {
 	text.parse().map_err(|_| "expected a port number from 0 to 65535".to_owned())
 }
 
-/// A BYOND build, as `MAJOR.BUILD`
 fn byond_version(text: &str) -> Result<(u32, u32), String> {
 	text.split_once('.')
 		.and_then(|(major, build)| Some((major.parse().ok()?, build.parse().ok()?)))
@@ -567,27 +546,21 @@ fn byond_version_help() -> String {
 	format!("Check for bugs affecting this BYOND build. [default: {}.{}]", latest.major, latest.build)
 }
 
-/// Why there's no command to run
 pub enum Unparsed {
-	/// Help was asked for: the page, for stdout
 	Help(String),
-	/// The arguments are wrong: why
 	Usage(String)
 }
 
-/// The commands as clap has them, each with its page of help
 pub fn command() -> clap::Command {
 	help::attach(Cli::command())
 }
 
-/// Reads the arguments after the program's name
 pub fn parse(args: &[String]) -> Result<Cli, Unparsed> {
 	let given = std::iter::once("auxtools".to_owned()).chain(args.iter().cloned());
 	let matches = command().try_get_matches_from(given).map_err(|error| help::unparsed(&error, args))?;
 	Cli::from_arg_matches(&matches).map_err(|error| help::unparsed(&error, args))
 }
 
-/// Validate option combinations before connecting to a world.
 pub fn rules(command: &Command) -> Result<(), String> {
 	let requires = |given: bool, option: &str, needed: bool, other: &str| match given && !needed {
 		true => Err(format!("{} requires {}.", option, other)),
@@ -810,11 +783,9 @@ mod tests {
 		assert_eq!(eval(&["eval", "6", "*", "7"]).expression, args(&["6", "*", "7"]));
 		assert_eq!(eval(&["eval", "-"]).expression, args(&["-"]));
 		assert_eq!(eval(&["eval", "-1"]).expression, args(&["-1"]));
-		// Its options can come after it, or among its words
 		let after = eval(&["eval", "x", "+", "1", "--json", "--frame", "2"]);
 		assert_eq!(after.expression, args(&["x", "+", "1"]));
 		assert!(after.json && after.frame == Some(2));
-		// What starts with a hyphen and isn't a number goes after `--`
 		let negated = eval(&["eval", "--json", "--", "-x", "--y"]);
 		assert_eq!(negated.expression, args(&["-x", "--y"]));
 		assert!(negated.json);

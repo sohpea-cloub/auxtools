@@ -1,12 +1,9 @@
-//! Client script reloads and reboot restoration, inspected with `#script`.
-
 use std::process::Command;
 
 use serde_json::json;
 
 use crate::{ok, paths, paths::ByondCommand, world::World};
 
-/// Script string ID (or "none"), file resource IDs and combined login text.
 fn script(world: &mut World) -> (String, Vec<String>, String) {
 	let shown = world.eval_global("#script");
 	let mut lines = shown.splitn(3, '\n');
@@ -25,7 +22,6 @@ fn script(world: &mut World) -> (String, Vec<String>, String) {
 	)
 }
 
-/// Wait for a client script reload report.
 fn told(world: &mut World) {
 	world.wait_output("Hot reload: client script updated.");
 	let event = world.event("auxtoolsScript");

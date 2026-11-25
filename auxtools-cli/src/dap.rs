@@ -1,6 +1,3 @@
-//! The Debug Adapter Protocol's framing: JSON messages, each after a
-//! `Content-Length` header, on stdin and stdout.
-
 use std::{
 	io::{self, BufRead, Write},
 	sync::{
@@ -11,7 +8,6 @@ use std::{
 
 use dap_types::{Breakpoint, Event, EventMessage, OutputEvent, ProtocolMessage, ResponseMessage};
 
-/// Reads one message, or `None` at the end of the input.
 pub fn read_message(input: &mut impl BufRead) -> io::Result<Option<String>> {
 	let mut length = None;
 	loop {
@@ -38,32 +34,22 @@ pub fn read_message(input: &mut impl BufRead) -> io::Result<Option<String>> {
 		.map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
 }
 
-/// Thread-safe output for DAP clients or in-process callers.
 pub struct Output {
 	seq: AtomicI64,
 	to: To
 }
 
 enum To {
-	/// A client on stdout, in DAP
 	Client(Mutex<io::Stdout>),
-	/// In-process caller receiving terminal output and lifecycle events.
 	Plain(Box<dyn Fn(Note) + Send + Sync>)
 }
 
-/// Events delivered to an in-process caller.
 pub enum Note {
-	/// A line of the world's output, or of what the adapter says (`console`)
 	Line { category: String, text: String },
-	/// A request it was given failed
 	Failed { command: String, message: String },
-	/// The world's process started
 	Process(u32),
-	/// World connected and source watching initialized, if enabled.
 	Ready,
-	/// Debugger initialization failure; the world continues running.
 	Unavailable(String),
-	/// The world ended, with this exit code (-1 if it was killed)
 	Exited(i64)
 }
 
@@ -75,7 +61,6 @@ impl Output {
 		}
 	}
 
-	/// Tells `to` what happens, in place of a client
 	pub fn plain(to: impl Fn(Note) + Send + Sync + 'static) -> Self {
 		Self {
 			seq: AtomicI64::new(1),
@@ -96,7 +81,6 @@ impl Output {
 		};
 		let json = serde_json::to_string(message).expect("a DAP message that can't be encoded");
 		let mut stdout = stdout.lock().unwrap();
-		// Nobody to tell if the client has gone
 		let _ = write!(stdout, "Content-Length: {}\r\n\r\n{}", json.len(), json);
 		let _ = stdout.flush();
 	}
@@ -112,7 +96,6 @@ impl Output {
 				}),
 				"process" => to(Note::Process(body["systemProcessId"].as_u64().unwrap_or_default() as u32)),
 				"exited" => to(Note::Exited(body["exitCode"].as_i64().unwrap_or(-1))),
-				// The rest is for a debugger
 				_ => {}
 			}
 			return;
@@ -148,12 +131,10 @@ impl Output {
 		});
 	}
 
-	/// A line in the debug console
 	pub fn console(&self, text: impl Into<String>) {
 		self.output("console", text.into() + "\n");
 	}
 
-	/// Write a console line linked to the source file and line.
 	pub fn console_at(&self, text: impl Into<String>, file: &std::path::Path, line: Option<u32>) {
 		self.event(OutputEvent {
 			output: text.into() + "\n",
@@ -168,21 +149,16 @@ impl Output {
 		});
 	}
 
-	/// Whether output goes to a DAP client rather than an in-process caller.
 	pub fn to_client(&self) -> bool {
 		matches!(self.to, To::Client(_))
 	}
 
-	/// The world is ready to be used (see `Note::Ready`). A client is told
-	/// as much in other ways.
 	pub fn ready(&self) {
 		if let To::Plain(to) = &self.to {
 			to(Note::Ready);
 		}
 	}
 
-	/// The world is running without a debugger (see `Note::Unavailable`).
-	/// Report the reason in the console.
 	pub fn unavailable(&self, reason: &str) {
 		if let To::Plain(to) = &self.to {
 			to(Note::Unavailable(reason.to_owned()));
@@ -198,8 +174,6 @@ impl Output {
 	}
 }
 
-/// Start a progress indicator until `ProgressEnd` with the same ID.
-/// Defined locally because dap-types does not provide this event.
 #[derive(serde::Serialize)]
 #[allow(non_snake_case)]
 pub struct ProgressStart {
@@ -221,14 +195,12 @@ impl Event for ProgressEnd {
 	const EVENT: &'static str = "progressEnd";
 }
 
-/// Which program is being debugged
 #[derive(serde::Serialize)]
 #[allow(non_snake_case)]
 pub struct ProcessEvent {
 	pub name: String,
 	pub systemProcessId: u32,
 	pub isLocalProcess: bool,
-	/// `launch` or `attach`
 	pub startMethod: String
 }
 
@@ -236,7 +208,6 @@ impl Event for ProcessEvent {
 	const EVENT: &'static str = "process";
 }
 
-/// The world paused. dap_types' has no `hitBreakpointIds`.
 #[derive(serde::Serialize, Default)]
 #[allow(non_snake_case)]
 pub struct StoppedEvent {
@@ -247,7 +218,6 @@ pub struct StoppedEvent {
 	pub text: Option<String>,
 	pub threadId: i64,
 	pub allThreadsStopped: bool,
-	/// The breakpoints it stopped for, as `setBreakpoints` numbered them
 	#[serde(skip_serializing_if = "Vec::is_empty")]
 	pub hitBreakpointIds: Vec<i64>
 }
@@ -256,7 +226,6 @@ impl Event for StoppedEvent {
 	const EVENT: &'static str = "stopped";
 }
 
-/// Invalidate cached client data in `areas` (`stacks`, `variables`).
 #[derive(serde::Serialize)]
 pub struct InvalidatedEvent {
 	pub areas: Vec<String>
@@ -266,8 +235,6 @@ impl Event for InvalidatedEvent {
 	const EVENT: &'static str = "invalidated";
 }
 
-/// A breakpoint changed: `reason` is `changed`, `new` or `removed`. Not one
-/// of dap_types' events.
 #[derive(serde::Serialize)]
 pub struct BreakpointEvent {
 	pub reason: String,
@@ -298,7 +265,6 @@ mod tests {
 
 	#[test]
 	fn the_length_counts_bytes() {
-		// Two bytes in UTF-8
 		let mut input = Cursor::new(framed("{\"text\":\"\u{e9}\"}"));
 		assert_eq!(read_message(&mut input).unwrap().as_deref(), Some("{\"text\":\"\u{e9}\"}"));
 	}

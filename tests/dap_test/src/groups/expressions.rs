@@ -1,11 +1,7 @@
-//! Evaluating expressions: in the debug console, as watches, in any frame
-
 use serde_json::{json, Value};
 
 use crate::{ok, world::World};
 
-/// What the launcher offers to go on with, typed as far as `text` in the
-/// paused frame (or in no frame): each name with its kind
 fn offered(world: &mut World, text: &str, frame: Option<&serde_json::Value>) -> Vec<(String, String)> {
 	let targets = world.request(
 		"completions",
@@ -19,8 +15,6 @@ fn offered(world: &mut World, text: &str, frame: Option<&serde_json::Value>) -> 
 		.collect()
 }
 
-/// Completions in the debug console, in the frame of a /datum/thing/sub's
-/// inside(by), with a local local_list
 fn completions(world: &mut World) {
 	let frame = world.frame_id();
 	let names = |world: &mut World, text: &str| -> Vec<String> { offered(world, text, Some(&frame)).into_iter().map(|(name, _)| name).collect() };
@@ -28,7 +22,6 @@ fn completions(world: &mut World) {
 
 	assert_eq!(offered(world, "by", Some(&frame)), [pair("by", "variable")]);
 	assert_eq!(names(world, "loc"), ["local_list"]);
-	// The frame's own, src's vars and procs, globals and global procs
 	let all = offered(world, "", Some(&frame));
 	for expected in [
 		pair("by", "variable"),
@@ -50,7 +43,6 @@ fn completions(world: &mut World) {
 	assert!(!all.iter().any(|(name, _)| name.contains("auxtools") || name.contains('(')), "{:?}", all);
 	ok("frame-scope completion");
 
-	// After a dot: what that is, in the frame
 	let members = offered(world, "src.", Some(&frame));
 	for expected in [
 		pair("n", "property"),
@@ -81,7 +73,6 @@ fn completions(world: &mut World) {
 	assert_eq!(names(world, "local_list[1]."), Vec::<String>::new());
 	ok("completion rejects unsafe or invalid receivers");
 
-	// In the middle of a line, and with letters that take two units
 	let targets = world.request("completions", json!({ "frameId": frame, "text": "leaf(by) + n", "column": 8 }));
 	assert_eq!(targets["targets"][0]["label"], "by");
 	assert_eq!(
@@ -90,7 +81,6 @@ fn completions(world: &mut World) {
 	);
 	let targets = world.request("completions", json!({ "frameId": frame, "text": "\"\u{1F600}\" + src.na", "column": 14 }));
 	assert_eq!(targets["targets"][0]["label"], "name");
-	// The face is two units: quote, face, quote, " + ", "src." are 11
 	assert_eq!(
 		(&targets["targets"][0]["start"], &targets["targets"][0]["length"]),
 		(&json!(12), &json!(2))
@@ -102,11 +92,9 @@ fn completions(world: &mut World) {
 		pair("disassemble", "keyword")
 	]);
 	assert_eq!(offered(world, "#", Some(&frame)).len(), 5);
-	// Inspection commands are hidden from completion.
 	assert_eq!(offered(world, "#s", Some(&frame)), Vec::<(String, String)>::new());
 	ok("command completion");
 
-	// No frame: the world's, and nothing of a frame's
 	let global = offered(world, "glo", None);
 	assert_eq!(global, [
 		pair("global", "variable"),
@@ -117,7 +105,6 @@ fn completions(world: &mut World) {
 	ok("global-scope completion");
 }
 
-/// Proc bodies in the paused frame of `inside`, and in none
 fn bodies(world: &mut World) {
 	let mut gives = |world: &mut World, cases: &[(&str, &str)]| {
 		for (body, expected) in cases {
@@ -131,25 +118,18 @@ fn bodies(world: &mut World) {
 		("if(by > 3)\n\treturn \"big\"\nreturn \"small\"", "\"big\""),
 		("var/list/L = list()\nfor(var/i in 1 to by)\n\tL += i\nL.Join(\",\")", "\"1,2,3,4\""),
 		("var/i = 0\nwhile(i < 10)\n\ti++\n\tif(i == 5) break\ni", "5"),
-		// Indented as a whole, as code copied from a proc is
 		("\t\tvar/x = by\n\t\tx * 3", "12")
 	]);
 	ok("proc-body evaluation");
 
 	gives(world, &[
-		// src's var, the frame's argument, a global
 		("var/x = n + by + global_number\nx", "10"),
-		// a global proc, and src's
 		("var/r = leaf(1)\nr", "4"),
 		("var/got = bump(1)\nn = 1\ngot", "4"),
-		// the frame's own vars come before src's
 		("var/list/got = local_list\ngot.len", "3")
 	]);
 	ok("body name resolution");
 
-	// (local_list is list(11, 20, 30) by now)
-	// Changes to the frame's vars are written back; the body's own aren't
-	// anywhere afterwards. Falling off the end gives `.`, the frame's.
 	gives(world, &[("by = 9\nlocal_list[1] = 12\nvar/unused = 0", "null")]);
 	assert_eq!(world.argument("by"), "9");
 	assert_eq!(world.eval("local_list[1]"), "12");
@@ -174,21 +154,17 @@ fn bodies(world: &mut World) {
 		("var/x = 1\nx +", "parser error: 2:"),
 		("var/x = 0\nreturn by / x", "runtime error: Division by zero"),
 		("var/x = 1\nreturn src.other.name", "runtime error: Cannot read null.name"),
-		// A body is over when it's answered too
 		("var/x = by\nsleep(1)\nreturn x", "evaluation aborted because the code slept")
 	]);
 	assert_eq!(world.eval("by"), "4");
 	assert_eq!(world.frames(0).len(), 3);
 	ok("body compile, runtime and sleep errors");
 
-	// The same in a watch; a result that opens doesn't say how to reach
-	// what's in it, which would run the body again
 	let result = world.evaluate_in(&frame, "var/datum/thing/t = src\nt", "watch");
 	assert_eq!(result["result"], "S");
 	let inside = world.variables(&result["variablesReference"].clone());
 	let n = inside.iter().find(|v| v["name"] == "n").unwrap();
 	assert_eq!((&n["value"], &n["evaluateName"]), (&json!("1"), &Value::Null), "{}", n);
-	// A hover reads one expression, and runs no body: this one would never end
 	for body in ["again:\ngoto again", "var/x = n\nx", "return n"] {
 		let why = world.refused("evaluate", json!({ "expression": body, "frameId": frame, "context": "hover" }));
 		assert_eq!(why, "hover requires a single expression", "{}", body);
@@ -205,7 +181,6 @@ fn bodies(world: &mut World) {
 	ok("body evaluation without a frame");
 }
 
-/// `*(&x)`, a type's var by `::`, and `initial()` of one
 fn smaller_things(world: &mut World) {
 	let mut gives = |world: &mut World, cases: &[(&str, &str)]| {
 		for (expression, expected) in cases {
@@ -221,7 +196,6 @@ fn smaller_things(world: &mut World) {
 	assert_eq!(world.argument("by"), "4");
 	ok("pointer reads and writes");
 
-	// As DreamMaker has them: a type's initial value, a static var's value
 	gives(world, &[
 		("/datum/thing::name", "\"thing\""),
 		("/datum/thing::n + 1", "2"),
@@ -239,9 +213,6 @@ fn smaller_things(world: &mut World) {
 pub fn run() {
 	let mut world = World::start();
 	world.run_to("inside", "/datum/thing/inside", "inside_stop");
-	// Each expression and what it gives, in the stopped proc: src is a
-	// /datum/thing/sub called "S" with n = 1, by is 4, local_list is
-	// list(10, 20, 30)
 	let mut gives = |world: &mut World, cases: &[(&str, &str)]| {
 		for (expression, expected) in cases {
 			assert_eq!(world.eval(expression), *expected, "{}", expression);
@@ -291,7 +262,6 @@ pub fn run() {
 	]);
 	ok("global, static and const evaluation");
 
-	// Built-in stddef.dm macros remain available alongside source macros.
 	gives(&mut world, &[
 		("TILE_BOUND | COLORSPACE_HSV", "257"),
 		("length(REGEX_QUOTE(\"a.b\"))", "4")
@@ -309,7 +279,6 @@ pub fn run() {
 	]);
 	ok("proc calls and string interpolation");
 
-	// A name the frame doesn't have is src's var, as it is in the proc's code
 	gives(&mut world, &[
 		("n", "1"),
 		("name", "\"S\""),
@@ -330,7 +299,6 @@ pub fn run() {
 	]);
 	ok("bare src variable reads and writes");
 
-	// Then a global, and a type's static and const vars are those
 	gives(&mut world, &[
 		("ticks > 0", "1"),
 		("early_global", "5"),
@@ -350,11 +318,9 @@ pub fn run() {
 	]);
 	ok("bare src proc calls");
 
-	// The frame's arguments, not the expression's own
 	gives(&mut world, &[("args[1]", "4"), ("length(args)", "1"), ("args", "/list {len = 1}")]);
 	ok("args resolves to selected frame");
 
-	// A sub's bump() doubles its argument for the parent's, and adds one
 	gives(&mut world, &[("src.bump(1)", "4"), ("src.n", "3"), ("src.n = 1", "1")]);
 	ok("object proc side effects");
 
@@ -385,7 +351,6 @@ pub fn run() {
 	]);
 	ok("list, object and global assignment");
 
-	// In the debug console, a watch or a hover
 	let frame = world.frame_id();
 	for context in ["repl", "watch", "hover"] {
 		let watched = world.evaluate_in(&frame, "src", context);
@@ -411,7 +376,6 @@ pub fn run() {
 	assert_eq!(world.evaluate_in(&frame, "name", "watch")["type"], "text");
 	ok("result type and access expressions");
 
-	// The mouse on some code reads it, and that's all
 	for (expression, shown) in [
 		("n", "1"),
 		("src.items[2]", "\"y\""),
@@ -429,12 +393,10 @@ pub fn run() {
 
 	completions(&mut world);
 
-	// sc_inside called inside(), and has a local of its own
 	let caller = world.frames(0)[1]["id"].clone();
 	assert_eq!(world.evaluate_in(&caller, "in_caller", "watch")["result"], "77");
 	assert_eq!(world.evaluate_in(&caller, "in_caller = 78", "repl")["result"], "78");
 	assert_eq!(world.evaluate_in(&caller, "s.name", "watch")["result"], "\"S\"");
-	// It's a global proc's frame: there's no src to have an n
 	let why = world.refused("evaluate", json!({ "expression": "n", "frameId": caller, "context": "watch" }));
 	assert_eq!(why, "undefined var: n");
 	ok("caller-frame name resolution");
@@ -455,8 +417,6 @@ pub fn run() {
 	bodies(&mut world);
 	smaller_things(&mut world);
 
-	// What can't be evaluated fails, and says why: a client shows that where
-	// the value would be
 	let mut fails = |world: &mut World, cases: &[(&str, &str)]| {
 		let frame = world.frame_id();
 		for (expression, expected) in cases {
@@ -482,7 +442,6 @@ pub fn run() {
 
 	fails(&mut world, &[
 		("not_a_name_anywhere", "undefined var: not_a_name_anywhere"),
-		// A var of another type: src doesn't have it, and it's no global
 		("hp", "undefined var: hp"),
 		("hp = 3", "undefined var: hp"),
 		("not_a_proc_anywhere(1)", "proc not found: /proc/not_a_proc_anywhere"),
@@ -491,7 +450,6 @@ pub fn run() {
 			"runtime error: undefined variable /datum/thing/sub/var/not_a_name_anywhere"
 		),
 		("/datum/not_a_type", "there's no type /datum/not_a_type"),
-		// A statement-only builtin is compiled as a body and cannot sleep here.
 		("sleep(1)", "evaluation aborted because the code slept"),
 		("..()", "relative calls are not supported")
 	]);
@@ -502,9 +460,7 @@ pub fn run() {
 		("1 / 0", "runtime error: Division by zero"),
 		("local_list[9]", "runtime error: list index out of bounds"),
 		("src.shared.len", "runtime error: Cannot read 9.len"),
-		// (a statement, which is a body)
 		("CRASH(\"no\")", "runtime error: no"),
-		// An expression is over when it's answered: it can't wait
 		("sleeper(1)", "evaluation aborted because the code slept")
 	]);
 	assert_eq!(world.eval("by"), "4");
@@ -541,7 +497,6 @@ pub fn run() {
 	);
 	ok("console disassembly commands");
 
-	// As a client sends its watches: all at once
 	let requests: Vec<(&str, serde_json::Value)> = (0..100)
 		.map(|i| {
 			(
@@ -565,7 +520,6 @@ pub fn run() {
 	world.run_through("plain");
 	ok("evaluation while running");
 
-	// Evaluation failures must not reach a paused caller's catch.
 	world.run_to("caught", "/caught_inside", "caught_stop");
 	let frame = world.frame_id();
 	for context in ["repl", "watch"] {

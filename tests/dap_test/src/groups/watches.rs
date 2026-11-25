@@ -1,11 +1,7 @@
-//! Data breakpoints: the world pauses when what's at a place changes
-
 use serde_json::{json, Value};
 
 use crate::{client::named, ok, world::World};
 
-/// Asks what watching a variable (`name` inside `container`) or an
-/// expression in the paused frame would watch
 fn info(world: &mut World, container: Option<&Value>, name: &str) -> Value {
 	let frame = world.frame_id();
 	match container {
@@ -14,7 +10,6 @@ fn info(world: &mut World, container: Option<&Value>, name: &str) -> Value {
 	}
 }
 
-/// Sets the client's data breakpoints, each `(dataId, condition, hit count)`
 fn watch(world: &mut World, wanted: &[(&Value, &str, &str)]) -> Vec<Value> {
 	let breakpoints: Vec<Value> = wanted
 		.iter()
@@ -33,8 +28,6 @@ fn watch(world: &mut World, wanted: &[(&Value, &str, &str)]) -> Vec<Value> {
 	set["breakpoints"].as_array().unwrap().clone()
 }
 
-/// Lets the world carry on from each stop until the scenario is over, and
-/// returns what each stop said: why, the proc, its description, the ids
 fn stops(world: &mut World, scenario: &str) -> Vec<(String, String, String, Vec<u64>)> {
 	let mut seen = vec![];
 	let over = format!("dap: finished {}\n", scenario);
@@ -62,8 +55,6 @@ fn stops(world: &mut World, scenario: &str) -> Vec<(String, String, String, Vec<
 	}
 }
 
-/// What the launcher says of a breakpoint whose state changed: its id,
-/// whether it's set, and why not
 fn changed(world: &mut World) -> (u64, bool, String) {
 	let event = world.event("breakpoint");
 	assert_eq!(event["body"]["reason"], "changed", "{}", event);
@@ -80,7 +71,6 @@ fn id(breakpoint: &Value) -> u64 {
 	breakpoint["id"].as_u64().expect("a breakpoint with no id")
 }
 
-/// What a pointer is shown as, and what it opens to
 fn pointers(world: &mut World) {
 	world.run_to("values", "/values", "values_stop");
 	let pointer = world.variable("Locals", "pointer");
@@ -95,8 +85,6 @@ fn pointers(world: &mut World) {
 	assert_eq!(world.eval("*pointer + 1"), "43");
 	ok("pointer expansion and evaluation");
 
-	// A pointer to an object's var names it; one to a var of the
-	// expression's own code names nothing once that has run
 	assert_eq!(world.eval("&named.n"), "&A (/datum/thing).n");
 	assert_eq!(world.eval("&whole"), "a pointer to a var that's gone");
 	world.resume_through("values");
@@ -160,8 +148,6 @@ pub fn run() {
 	let ids: Vec<u64> = set.iter().map(id).collect();
 	let (steps, number, list, pair, name, n) = (ids[0], ids[1], ids[2], ids[3], ids[4], ids[5]);
 
-	// Each stop is on the instruction after the change: the next line,
-	// in the proc that made it
 	let seen = stops(&mut world, "watch");
 	let stop = |proc: &str, marker: &str, what: &str, id: u64| {
 		(
@@ -177,7 +163,6 @@ pub fn run() {
 		stop("/sc_watch", "watch_pair", "watched_list[2] changed: \"b\" → \"B\"", list),
 		stop("/sc_watch", "watch_object", "watched_pairs[\"two\"] changed: 2 → 22", pair),
 		stop("/datum/thing/rename", "rename_after", "kept.name changed: \"kept\" → \"renamed\"", name),
-		// (kept.n = kept.n changes nothing)
 		stop("/sc_watch", "watch_sleep", "steps changed: 1 → 11", steps),
 		stop("/change_number", "change_number_after", "watched_number changed: 3 → 6", number),
 		stop("/sc_watch", "watch_del", "steps changed: 11 → 111", steps)
@@ -190,7 +175,6 @@ pub fn run() {
 		"the console didn't say what changed"
 	);
 
-	// The object was deleted, and the proc returned
 	let mut over = vec![changed(&mut world), changed(&mut world), changed(&mut world)];
 	over.sort();
 	let mut expected = vec![
@@ -206,7 +190,6 @@ pub fn run() {
 	);
 	ok("watch expiration notifications");
 
-	// What's still watched stays as it is when another is added
 	assert_eq!(world.eval_global("watched_number = 1"), "1");
 	assert!(!world.has_event("stopped"), "a value the debugger set paused the world");
 	world.run_to("watch", "/sc_watch", "watch_start");
@@ -222,8 +205,6 @@ pub fn run() {
 	assert_eq!(changed(&mut world), (steps, false, "watched proc returned".to_owned()));
 	ok("debugger writes, retained watches and hit counts");
 
-	// An expression in no frame can be asked about while the world runs.
-	// `value` and `old` in a condition are what's there now and what was.
 	world.eval_global("watched_number = 1");
 	let anywhere = world.request("dataBreakpointInfo", json!({ "name": "watched_number" }));
 	assert_eq!(anywhere["description"], "watched_number");
@@ -239,8 +220,6 @@ pub fn run() {
 	world.resume_through("watch");
 	ok("global watch condition bindings");
 
-	// A condition that fails with an error isn't a change to pause for, and
-	// the console says so once: watched_number goes to 3, then 6
 	world.eval_global("watched_number = 1");
 	watch(&mut world, &[(&anywhere["dataId"], "value.len > 0", "")]);
 	world.run_through("watch");
@@ -250,7 +229,6 @@ pub fn run() {
 	assert_eq!(world.count("(reported once)"), 1, "diagnostic was reported more than once");
 	ok("watch condition errors reported once");
 
-	// Stepping over the call that makes the change
 	world.eval_global("watched_number = 1");
 	watch(&mut world, &[(&anywhere["dataId"], "", "")]);
 	world.run_to("watch", "/sc_watch", "watch_call");
@@ -261,7 +239,6 @@ pub fn run() {
 	world.run_through("watch");
 	ok("watch interrupts step and can be removed");
 
-	// What was asked about at one pause is something of that pause
 	world.run_to("watch", "/sc_watch", "watch_start");
 	let of_this_pause = info(&mut world, None, "steps");
 	world.resume_through("watch");
@@ -273,8 +250,6 @@ pub fn run() {
 	world.resume_through("watch");
 	ok("pause-local watch target expiration");
 
-	// Thirty sleeps, with spawned copies of the proc's frame (which have
-	// the var too, each its own) and other procs coming and going
 	world.run_to("watch_long", "/sc_watch_long", "watch_long_start");
 	let patient = info(&mut world, None, "patient");
 	let set = watch(&mut world, &[(&patient["dataId"], "", "")]);
@@ -287,8 +262,6 @@ pub fn run() {
 	assert_eq!(changed(&mut world), (patient, false, "watched proc returned".to_owned()));
 	ok("frame watches exclude spawned copies");
 
-	// The next world: a global is watched in it too, but what was something
-	// of a pause in the old one isn't found again
 	world.run_to("watch", "/sc_watch", "watch_start");
 	let frame = world.frame_id();
 	let globals = world.scope(&frame, "Globals");

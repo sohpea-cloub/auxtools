@@ -51,8 +51,6 @@ pub fn byond_return(value: Option<Vec<u8>>) -> *const c_char {
 		None => &EMPTY_STRING,
 		Some(vec) if vec.is_empty() => &EMPTY_STRING,
 		Some(vec) => RETURN_STRING.with(|cell| {
-			// Panicking over an FFI boundary is bad form, so if a NUL ends up
-			// in the result, just truncate.
 			let cstring = match CString::new(vec) {
 				Ok(s) => s,
 				Err(e) => {

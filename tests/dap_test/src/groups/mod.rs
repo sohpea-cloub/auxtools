@@ -1,5 +1,3 @@
-//! The checks, a group to a file. Each group debugs a world or two of its own.
-
 pub mod basics;
 pub mod breakpoints;
 pub mod bytecode;

@@ -1,17 +1,11 @@
-//! Declarations moved from a type to an ancestor. Existing types retain
-//! their var IDs, values and proc IDs; the rest of the tree receives the
-//! ancestor's declaration. The existing proc becomes an override.
-
 use dreammaker::objtree::{TypeProc, TypeRef, TypeVar};
 
 use super::*;
 
-/// Storage and persistence flags: static, const and tmp.
 fn storage(flags: dreammaker::ast::VarTypeFlags) -> (bool, bool, bool) {
     (flags.is_static(), flags.is_const(), flags.is_tmp())
 }
 
-/// Whether `n`'s old var declaration moved to an ancestor in the new source.
 pub(super) fn var_moved_up(
     n: TypeRef,
     name: &str,
@@ -25,7 +19,6 @@ pub(super) fn var_moved_up(
             .is_some_and(|d| d.get().location.file != FileId::BUILTINS)
 }
 
-/// Descendants of `n` whose old var declaration moved to `n`.
 pub(super) fn moved_from(old: &Snapshot, n: TypeRef, name: &str) -> Vec<String> {
     let below = |t: TypeRef| {
         let mut at = t.parent_type();
@@ -47,9 +40,6 @@ pub(super) fn moved_from(old: &Snapshot, n: TypeRef, name: &str) -> Vec<String> 
         .collect()
 }
 
-/// Retain a moved var's runtime declaration with the ancestor's new flags
-/// and the applicable default. A static or const cannot be retained because
-/// it would conflict with the ancestor's global slot.
 pub(super) fn var_moved(
     old: &Snapshot,
     new: &Snapshot,
@@ -84,19 +74,15 @@ pub(super) fn var_moved(
         );
         return;
     }
-    // Apply the ancestor's declaration flags, including static and tmp.
     if old_storage != new_storage {
         if let Some(ancestor_var) = declaration.ty().get().vars.get(name) {
             redeclare(new, n, name, old_var, ancestor_var, changes);
         }
     }
-    // Use the current override or inherited default.
     let _ = var;
     var_default(old, new, &path, name, false, changes);
 }
 
-/// Whether `n`'s proc declaration moved to an ancestor with the same kind
-/// and flags, making `n`'s definitions overrides.
 pub(super) fn proc_moved_up(
     n: TypeRef,
     name: &str,
@@ -112,8 +98,6 @@ pub(super) fn proc_moved_up(
             .is_some_and(|d| d.kind == old_declaration.kind && d.flags == old_declaration.flags)
 }
 
-/// Recompile moved proc declarations whose code changes. `__PROC__` uses
-/// the override path without `/proc`.
 pub(super) fn moved_users(
     old: &Snapshot,
     new: &Snapshot,

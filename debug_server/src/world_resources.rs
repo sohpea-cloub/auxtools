@@ -1,14 +1,3 @@
-//! Resolve resources safely while a launched world loads.
-//!
-//! The debugger starts before BYOND loads its resources. fcopy_rsc() would
-//! allocate IDs later reused by the build's resources, pointing reloaded
-//! code at unrelated files. Until `world/New`, resolve existing resources
-//! by content using the `.dmb` resource table. Defer reloads introducing
-//! other files until `world/New` (see `Server::world_data_loaded`).
-//!
-//! The final `.dmb` table maps IDs to BYOND CRCs (`dmb_tables`); the `.rsc`
-//! uses those CRCs to identify file data.
-
 use std::{
 	collections::BTreeSet,
 	path::{Path, PathBuf},
@@ -22,21 +11,15 @@ use dmasm::reload::{ConstValue, InList, Param, StaticVar};
 
 use crate::server_types::HotReloadRequest;
 
-/// Whether resources have loaded. Worlds not launched by the debugger
-/// load the library from their own code, after resources are available.
 static LOADED: AtomicBool = AtomicBool::new(true);
 
-/// Lazy resource CRC table from the build, refreshed after world loading.
 static BUILT: Mutex<Option<Option<Vec<u32>>>> = Mutex::new(None);
 
-/// A launched world is loading: resources resolve from its build until
-/// `world/New`.
 pub fn loading() {
 	LOADED.store(false, Ordering::Relaxed);
 	*BUILT.lock().unwrap() = None;
 }
 
-/// `world/New` is starting: the world has its resources.
 pub fn loaded() {
 	LOADED.store(true, Ordering::Relaxed);
 	*BUILT.lock().unwrap() = None;
@@ -46,8 +29,6 @@ pub fn is_loaded() -> bool {
 	LOADED.load(Ordering::Relaxed)
 }
 
-/// Resource ID for `path`'s current content in the build, relative to the
-/// world directory. Return none for unknown content or an unreadable table.
 pub fn built_id(path: &Path) -> Option<u32> {
 	let crc = crate::dmb_tables::byond_crc(&std::fs::read(path).ok()?);
 	let mut built = BUILT.lock().unwrap();
@@ -55,8 +36,6 @@ pub fn built_id(path: &Path) -> Option<u32> {
 	crcs.iter().position(|&built| built == crc).map(|id| id as u32)
 }
 
-/// Number of built resources; smaller IDs belong to the build.
-/// Return none if the table cannot be read reliably.
 pub fn built_count() -> Option<usize> {
 	let mut built = BUILT.lock().unwrap();
 	built.get_or_insert_with(read_built).as_ref().map(Vec::len)
@@ -67,11 +46,8 @@ fn read_built() -> Option<Vec<u32>> {
 	crate::dmb_tables::resource_crcs(&std::fs::read(&dmb).ok()?).ok()
 }
 
-/// Lazy set of resource file names in the build.
 static BUILT_NAMES: Mutex<Option<Vec<String>>> = Mutex::new(None);
 
-/// Whether `file` is named in the build's resources, regardless of its
-/// current content. Paths are relative to the world directory.
 pub fn built_file(file: &Path) -> bool {
 	let names = BUILT_NAMES
 		.lock()
@@ -81,8 +57,6 @@ pub fn built_file(file: &Path) -> bool {
 	names.iter().any(|name| crate::assemble_env::resource_file(name).as_deref() == Some(file))
 }
 
-/// The names of the `.rsc`'s records in use: `u32 length, u8 in use, u8 type,
-/// u32 crc, u32 time, u32 time, u32 data length, name, data`
 fn read_names() -> Option<Vec<String>> {
 	let data = std::fs::read(world_dmb()?.with_extension("rsc")).ok()?;
 	let mut names = vec![];
@@ -104,15 +78,12 @@ fn read_names() -> Option<Vec<String>> {
 	Some(names)
 }
 
-/// The .dmb the world runs, from its command line
 fn world_dmb() -> Option<PathBuf> {
 	let (args, cwd) = crate::launched::command_line();
 	let dmb = args.iter().skip(1).find(|arg| arg.to_ascii_lowercase().ends_with(".dmb"))?;
 	Some(Path::new(&cwd).join(dmb))
 }
 
-/// Resource files referenced by `request` but absent from the build.
-/// These need resource IDs allocated at `world/New`.
 pub fn not_built(request: &HotReloadRequest) -> Vec<String> {
 	let mut named = Named::default();
 	for new in &request.new_types {
@@ -157,8 +128,6 @@ pub fn not_built(request: &HotReloadRequest) -> Vec<String> {
 		.collect()
 }
 
-/// Collect resource names by assembling against a resolver accepting every
-/// name.
 #[derive(Default)]
 struct Named(BTreeSet<String>);
 

@@ -1,16 +1,3 @@
-//! Compare source snapshots and compile hot reload changes.
-//!
-//! [`Snapshot::parse`] reads a project; [`diff`] produces [`Changes`] for code,
-//! metadata, types and variables. Unchanged procs with shifted source lines
-//! use [`LineMove`] so they retain DreamMaker's bytecode.
-//!
-//! Warnings describe retained runtime state and compatibility differences.
-//! Any `refused` diagnostic requires rejecting the change set.
-//!
-//! [`Snapshot::reload_file`] reparses one file when only proc bodies changed.
-//! Procs use auxtools paths without `/proc` or `/verb`, plus a zero-based
-//! `override_id` in proc-table order.
-
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
@@ -32,13 +19,10 @@ mod global_init;
 mod resources;
 pub use global_init::GlobalInit;
 
-/// A proc as auxtools' debug server names it.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ProcKey {
-    /// The type's path and the proc's name, without `/proc` or `/verb`.
     pub path: String,
-    /// Zero-based definition index for `path`.
     pub override_id: u32,
 }
 
@@ -52,67 +36,45 @@ impl std::fmt::Display for ProcKey {
     }
 }
 
-/// Compiled replacement for a changed proc.
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ProcReload {
     pub proc: ProcKey,
-    /// New bytecode including debug instructions. Drop DbgFile and DbgLine
-    /// when applying to a world built without DEBUG.
     pub nodes: Vec<Node>,
-    /// Local variable names, by slot.
     pub locals: Vec<String>,
     pub params: Vec<Param>,
-    /// None if the proc settings are unchanged.
     pub settings: Option<ProcSettings>,
-    /// Static locals; allocate and initialize those absent from the running proc.
     pub statics: Vec<StaticVar>,
-    /// Compatibility warnings, also included in `Changes::warnings`.
     #[cfg_attr(feature = "serde", serde(default))]
     pub warnings: Vec<String>,
 }
 
-/// A static local (or local const) of a proc.
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct StaticVar {
     pub name: String,
-    /// The scope the proc's code names it with (`proc:PATH#N`).
     pub scope: String,
-    /// Constant initializer, or `None` for a computed value.
     pub value: Option<ConstValue>,
-    /// Computed initializer to evaluate once in the running world.
     pub init: Option<Box<ProcReload>>,
 }
 
-/// Runtime parameter metadata.
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Param {
     pub name: String,
-    /// Allowed input types encoded as BYOND bits: mob 1, obj 2, text 4, num 8, etc.
     pub input: u32,
-    /// `as command_text` is 1, `as color` 2.
     pub input_extra: u32,
-    /// Source of choices for the parameter's `in` clause.
     pub in_list: InList,
 }
 
-/// A parameter's `in` list.
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum InList {
-    /// Encoded built-in source: kind in the low byte (`view` 1, `oview` 2,
-    /// `usr.loc` 3, `range` 5, `orange` 6, `usr` 8, `world` 0x10), with the
-    /// range or 0x7D/0x7F sentinel above it. No clause defaults to 0x7D01.
     Builtin(u32),
-    /// Reuse the running parameter's list expression proc.
     Kept,
-    /// New list expression compiled as a proc returning the choices.
     New(Box<ProcReload>),
 }
 
-/// The word BYOND keeps for an `in` list it has built in.
 fn builtin_in_list(in_list: Option<&dreammaker::ast::Expression>) -> Option<u32> {
     use dreammaker::ast::{Expression, Follow, Term};
     const NO_RANGE: u32 = 0x7D;
@@ -164,24 +126,19 @@ fn builtin_in_list(in_list: Option<&dreammaker::ast::Expression>) -> Option<u32>
     }
 }
 
-/// A proc's `set` statements, which BYOND keeps in its table entry.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ProcSettings {
     pub waitfor: bool,
     pub background: bool,
-    /// `set name`, `desc` and `category`, where set
     pub name: Option<String>,
     pub desc: Option<String>,
     pub category: Option<String>,
-    /// True for `set category = null`, hiding the verb from all categories.
     pub no_category: bool,
     pub hidden: bool,
     pub popup_menu: bool,
     pub instant: bool,
     pub invisibility: Option<u8>,
-    /// `set src`: assignment-vs-membership flag and encoded source
-    /// (see `InList::Builtin`).
     pub src: Option<(bool, u32)>,
 }
 
@@ -204,7 +161,6 @@ impl Default for ProcSettings {
 }
 
 impl ProcSettings {
-    /// The flags of the proc's table entry, as DreamMaker sets them.
     pub fn flags(&self) -> u32 {
         let mut flags = 0;
         if self.hidden {
@@ -234,14 +190,12 @@ impl ProcSettings {
         if self.instant {
             flags |= 0x200;
         }
-        // DreamMaker writes the longer form for these
         if flags & 0x318 != 0 {
             flags |= 0x80;
         }
         flags
     }
 
-    /// Three packed bytes: source range, source kind and invisibility.
     pub fn packed(&self) -> u32 {
         let (range, kind) = match self.src {
             None => (0xFF, 0),
@@ -255,11 +209,9 @@ impl ProcSettings {
         range | kind << 8 | invisibility << 16
     }
 
-    /// Mask of proc flag bits controlled by these settings.
     pub const FLAGS: u32 = 0x3FF;
 }
 
-/// New settings for a proc whose code is as it was.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct SettingsChange {
@@ -267,147 +219,99 @@ pub struct SettingsChange {
     pub settings: ProcSettings,
 }
 
-/// A proc the running world doesn't have yet.
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct NewProc {
-    /// The type it's on, `""` for a global proc.
     pub type_path: String,
     pub name: String,
-    /// Declared on this type (`proc/name`), rather than overriding a proc of
-    /// a parent type.
     pub declared: bool,
-    /// A verb: on its type's list of verbs rather than of procs
     pub verb: bool,
     pub code: ProcReload,
 }
 
-/// Removed source definition. Unlink it from type lookup and override chains
-/// so calls reach the definition it overrode. Global definitions are excluded
-/// only from numbering because old bytecode may still call them.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct RemovedProc {
-    /// The definition as the running world knows it
     pub proc: ProcKey,
     pub type_path: String,
     pub name: String,
     pub verb: bool,
 }
 
-/// A constant value, as a var default can have.
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum ConstValue {
     Null,
     Number(f32),
     String(String),
-    /// A type path
     Path(String),
-    /// A file in the resource cache (`'icon.dmi'`)
     Resource(String),
 }
 
-/// Source value of `client/script`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ClientScript {
     Text(String),
-    /// A file, as the code names it (`'style.css'`)
     File(String),
 }
 
-/// A var whose default changed.
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct VarDefault {
     pub var: String,
     pub value: ConstValue,
-    /// The type whose default changed, and every subtype that gets its
-    /// default from there.
     pub types: Vec<String>,
 }
 
-/// Built-in override removed from a type. Copy the running parent's value
-/// to the type and inheriting subtypes to preserve BYOND's built-in defaults.
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct BuiltinInherited {
     pub var: String,
-    /// Parents first
     pub types: Vec<String>,
 }
 
-/// A proc whose code is unchanged but has moved to other lines.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct LineMove {
     pub proc: ProcKey,
-    /// `(old line, new line)` for every line the proc's `DbgLine`s name,
-    /// sorted by old line.
     pub lines: Vec<(u32, u32)>,
 }
 
-/// A type the running world doesn't have yet. It starts as a copy of its
-/// parent, with these fields of its record set; its vars and procs come as
-/// new vars, var defaults, new procs and an init proc.
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct NewType {
     pub path: String,
     pub parent: String,
-    /// Built-in vars kept in the type's record, where they aren't the
-    /// parent's: `name`, `desc`, `icon`, `icon_state`, `text`, `suffix`,
-    /// `dir`, `layer`, `density` and `opacity`.
     pub fields: Vec<(String, ConstValue)>,
 }
 
-/// A var the running world doesn't have yet.
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct NewVar {
-    /// The type that declares it, `""` for a global var.
     pub type_path: String,
     pub var: String,
-    /// As BYOND keeps them for a declared var: 1 static (or global), 2
-    /// const, 4 tmp.
     pub flags: u32,
-    /// Initial value for the newly declared variable.
     pub value: ConstValue,
-    /// Computed initializer for a global or static variable; evaluate once
-    /// and use null as the placeholder `value`.
     pub init: Option<Box<ProcReload>>,
-    /// Subtypes whose var declaration moved to this ancestor. They and their
-    /// descendants retain their runtime declaration; any other redeclaration
-    /// is a duplicate.
     pub moved_from: Vec<String>,
 }
 
-/// Variable declaration changes to static/global, const or tmp flags.
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Redeclared {
-    /// The type that declares it ("" for a global const whose value changed)
     pub type_path: String,
     pub var: String,
-    /// As for a new var: 1 static (or global), 2 const, 4 tmp.
     pub flags: u32,
-    /// Initial value for a newly static variable or changed const. `None`
-    /// preserves the current value. Instance defaults are applied separately.
     pub value: Option<ConstValue>,
-    /// Otherwise, code that returns it, for the running world to run once.
     pub init: Option<Box<ProcReload>>,
 }
 
-/// Computed-default initializer for new instances, including inherited values.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct InitProc {
     pub type_path: String,
-    /// `None` when the type has no such vars any more.
     pub code: Option<ProcReload>,
 }
 
-/// Required action to apply a deferred change.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "lowercase"))]
@@ -417,36 +321,19 @@ pub enum Until {
     Rebuild,
 }
 
-/// Unsupported reload change. Any refusal rejects the whole change set.
-/// [`Changes::deferred`] uses the same form for changes that take effect
-/// later.
-///
-/// Display as `file:line: path: name: why`, omitting unknown or empty fields.
-/// Alternate formatting (`{:#}`) omits the location for callers displaying it
-/// separately.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Refusal {
-    /// Affected type (`/area`, `(global)`) or proc (formatted as [`ProcKey`]).
-    /// Empty for parse errors.
     pub path: String,
-    /// Affected var, if any.
     pub name: Option<String>,
-    /// Reason for refusal. The caller supplies rebuild instructions.
     pub why: String,
-    /// File in the new snapshot, relative to the `.dme` directory
-    /// (see [`Snapshot::proc_file`]). For removals, use the surviving type
-    /// or declaration that identifies the change.
     pub file: Option<String>,
-    /// One-based line number in `file`.
     pub line: Option<u32>,
-    /// Required action: refusals need a rebuild; deferred changes may need only a reboot.
     #[cfg_attr(feature = "serde", serde(default))]
     pub until: Until,
 }
 
 impl Refusal {
-    /// Create a refusal for `path` without a var or location.
     pub fn new(path: impl Into<String>, why: impl Into<String>) -> Self {
         Refusal {
             path: path.into(),
@@ -463,13 +350,11 @@ impl Refusal {
         self
     }
 
-    /// Associate the refusal with var `name`.
     pub fn named(mut self, name: impl Into<String>) -> Self {
         self.name = Some(name.into());
         self
     }
 
-    /// Attach a source location from `snapshot`, excluding built-in or synthetic files.
     fn at(mut self, snapshot: &Snapshot, location: dreammaker::Location) -> Self {
         if let Some((file, line)) = snapshot.source_line(location) {
             self.file = Some(file);
@@ -498,64 +383,34 @@ impl std::fmt::Display for Refusal {
     }
 }
 
-/// What changed between two snapshots.
 #[derive(Debug, Default)]
 pub struct Changes {
-    /// New types in parent-first order, applied before dependent changes.
     pub new_types: Vec<NewType>,
     pub reloads: Vec<ProcReload>,
-    /// Settings changes without bytecode changes.
     pub settings: Vec<SettingsChange>,
     pub new_procs: Vec<NewProc>,
-    /// Removed type proc definitions; unlink before adding replacements.
     pub removed_procs: Vec<RemovedProc>,
-    /// New variables, applied before defaults on their inheriting subtypes.
     pub new_vars: Vec<NewVar>,
     pub var_defaults: Vec<VarDefault>,
-    /// Built-in defaults stored in type records rather than variable tables.
     pub builtin_defaults: Vec<VarDefault>,
-    /// Built-in defaults restored from runtime parents after `builtin_defaults`.
     pub builtin_inherited: Vec<BuiltinInherited>,
-    /// Changed constants; dependent procs are included in `reloads`.
     pub consts: Vec<String>,
-    /// Changed defaults embedded by `/type::var`; recompile dependent procs.
     pub defaults_changed: Vec<String>,
-    /// Defaults moved to new source locations; update dependent debug info.
     pub defaults_moved: Vec<String>,
-    /// Changed variable type or declaration metadata. Include affected
-    /// recompiled procs in `reloads`.
     pub retyped: Vec<String>,
-    /// Declaration flag changes, applied after new variables and before defaults.
     pub redeclared: Vec<Redeclared>,
-    /// Changed computed-default init procs for new instances.
     pub init_procs: Vec<InitProc>,
-    /// Parent changes, parents first, applied after new types and before other changes.
     pub reparented: Vec<Reparented>,
-    /// Procs whose declarations moved to an ancestor (`/type/name`). Definitions
-    /// whose compiled code changes, such as `__PROC__`, are also in `reloads`.
     pub moved_procs: Vec<String>,
     pub line_moves: Vec<LineMove>,
-    /// Runtime state retained by reload and compiler compatibility warnings.
     pub warnings: Vec<String>,
-    /// Unsupported changes. Any entry rejects the whole change set.
     pub refused: Vec<Refusal>,
-    /// Changes that need a reboot or rebuild. Callers can hold the change set
-    /// to avoid applying it partially. Existing global and static initializers
-    /// need a reboot if `global_init` compiled, otherwise a rebuild. World and
-    /// client settings stored in the `.dmb` always need a rebuild.
     pub deferred: Vec<Refusal>,
-    /// Changed world and client settings, as (type, var), also in `deferred`
-    /// (see `settings_as_built`).
     pub restart_settings: Vec<(String, String)>,
-    /// Replacement global init proc for rebooted worlds. Running worlds keep
-    /// their global and static values; see `deferred`.
     pub global_init: Option<GlobalInit>,
 }
 
 impl Changes {
-    /// Forget changed settings restored to their built values. The diff
-    /// compares against the last reload, so these changes otherwise appear
-    /// to need a rebuild.
     pub fn settings_as_built(&mut self, built: &Snapshot, new: &Snapshot) {
         let value = |s: &Snapshot, path: &str, name: &str| {
             s.find_type(path)
@@ -577,7 +432,6 @@ impl Changes {
         self.restart_settings = kept;
     }
 
-    /// Merge compiled-proc warnings into the change set.
     fn collect_warnings(&mut self) {
         for reload in &self.reloads {
             for warning in &reload.warnings {
@@ -604,87 +458,55 @@ impl Changes {
     }
 }
 
-/// A known BYOND bug with its source location (`Snapshot::known_bugs`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KnownBug {
-    /// Proc source file, relative to the `.dme` directory.
     pub file: String,
     pub line: Option<u32>,
     pub proc: ProcKey,
-    /// What BYOND does with the code.
     pub text: String,
 }
 
-/// Project diagnostics from `Snapshot::known_bugs`.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct KnownBugs {
-    /// Findings sorted by file, line and proc.
     pub bugs: Vec<KnownBug>,
-    /// Unchecked procs as (proc, source file, compiler error).
     pub not_checked: Vec<(ProcKey, String, String)>,
 }
 
-/// How to parse a `.dme`.
 #[derive(Debug, Clone, Default)]
 pub struct ParseOptions {
-    /// Defines given to DreamMaker on its command line (`-DNAME` or
-    /// `-DNAME=VALUE`), as `(name, value)`.
     pub defines: Vec<(String, Option<String>)>,
-    /// The BYOND version the world runs on, `(version, build)`, for
-    /// `DM_VERSION` and `DM_BUILD`. SpacemanDMM's own (516.1666) when `None`.
     pub byond: Option<(u32, u32)>,
 }
 
-/// What the defines in front of the `.dme` are called, as a file.
 const PRELUDE: &str = "<hot reload prelude>";
 
-/// One parse of a codebase.
 pub struct Snapshot {
     ctx: Context,
     tree: ObjectTree,
-    /// Compiled-source definitions indexed by type, name and override index.
     procs: BTreeMap<ProcKey, (String, String, usize)>,
-    /// Macro history used to reparse individual files.
     defines: Option<DefineHistory>,
-    /// Reparsed definitions overriding the original tree.
     patched: HashMap<ProcKey, ProcValue>,
-    /// The build the code is compiled for
     byond: ByondVersion,
-    /// The `.dme`'s directory, when parsed from one
     root: Option<PathBuf>,
-    /// Nonstandard debug source names indexed by project-relative path
-    /// (see `debug_files`).
     debug_names: HashMap<PathBuf, String>,
-    /// Names referenced through `::` in each file, with source lines.
     scope_names: HashMap<FileId, Vec<(String, u32)>>,
-    /// The procs defined in each file, once asked for
     procs_by_file: std::sync::OnceLock<HashMap<FileId, Vec<ProcKey>>>,
-    /// Cached source locations of defaults embedded in each proc's debug info.
     default_lines: std::sync::Mutex<HashMap<ProcKey, Vec<(Vec<u8>, u32)>>>,
-    /// Initializer locations folded by dmasm after SpacemanDMM evaluation failed.
     folded: std::collections::BTreeSet<dreammaker::Location>,
-    /// Files reparsed successfully by `keep`; their original parse errors no longer apply.
     mended: HashSet<FileId>,
-    /// Last `.dmf` included by the preprocessor: the world's skin.
     skin: Option<PathBuf>,
-    /// Included `.dmm` files: the maps compiled into the world.
     maps: Vec<PathBuf>,
-    /// Lazy resource-user index (see `resource_users`).
     resource_index: std::sync::OnceLock<resources::Index>,
 }
 
-/// Incremental changes from reparsing one file (see `Snapshot::reload_file`).
 pub struct FileReload {
     pub changes: Changes,
-    /// The file's definitions as they are now
     patched: Vec<(ProcKey, ProcValue)>,
-    /// The file, and the names it reads with `::` now
     file: FileId,
     scope_names: Vec<(String, u32)>,
 }
 
 impl Snapshot {
-    /// Parses `dme` as DreamMaker would with `options`.
     pub fn parse(dme: &Path, options: &ParseOptions) -> Result<Snapshot, String> {
         let ctx = Context::default();
         if let Some((major, build)) = options.byond {
@@ -693,8 +515,6 @@ impl Snapshot {
         let mut pp = dreammaker::Preprocessor::new(&ctx, dme.to_owned())
             .map_err(|e| format!("couldn't read {}: {}", dme.display(), e))?;
 
-        // Remove linter-only defines and use the target BYOND version.
-        // A synthetic prelude preserves the `.dme`'s original line numbers.
         let mut prelude = String::from("#undef SPACEMAN_DMM\n");
         if let Some((version, build)) = options.byond {
             prelude.push_str(&format!(
@@ -762,11 +582,6 @@ impl Snapshot {
         Ok(snapshot)
     }
 
-    /// Reparse `file` using its original macro context for proc-body-only edits.
-    /// `file` is relative to the project root. Other edits return `Err` with
-    /// the reason a full parse is needed.
-    ///
-    /// Does not mutate the snapshot. Call `keep` after the world applies the changes.
     pub fn reload_file(&mut self, root: &Path, file: &Path) -> Result<FileReload, String> {
         let history = self
             .defines
@@ -786,7 +601,6 @@ impl Snapshot {
             return Err("file contains includes".to_owned());
         }
 
-        // Preserve file IDs used by macro source locations.
         let ctx = Context::default();
         self.byond.read_as(&ctx);
         self.ctx.files().for_each(|path| {
@@ -827,8 +641,6 @@ impl Snapshot {
         if old.declarations != new.declarations {
             return Err("proc declarations changed".to_owned());
         }
-        // Moving a default referenced through `::` requires recompiling
-        // its users during a full parse.
         let moved: Vec<(&String, u32)> = old
             .var_lines
             .iter()
@@ -868,7 +680,6 @@ impl Snapshot {
                 if settings(old_value.code.as_ref()) != settings(new_value.code.as_ref()) {
                     return Err(format!("{key}: `set`s changed"));
                 }
-                // Compare static initializers through the full diff.
                 fn statics(v: &ProcValue) -> Vec<(&str, Option<&dreammaker::ast::Expression>)> {
                     v.code
                         .as_deref()
@@ -885,8 +696,6 @@ impl Snapshot {
             return Err("proc definitions were added".to_owned());
         }
 
-        // Lines that moved need the code as it was, compiled before the new
-        // definitions go in
         let mut changes = Changes::default();
         let mut before = HashMap::new();
         for (key, old_value, new_value) in &pairs {
@@ -914,7 +723,6 @@ impl Snapshot {
                     Err(e) => changes.refused.push(self.uncompiled(key, &e)),
                 }
             } else if let Some(Ok(old_code)) = before.remove(key) {
-                // Every line, as `diff` gives them, when any moved
                 let lines: BTreeMap<u32, u32> = match self.compile(key) {
                     Ok(new_code) => dbg_lines(&old_code.nodes)
                         .into_iter()
@@ -949,7 +757,6 @@ impl Snapshot {
         })
     }
 
-    /// Accept incremental source changes after successful application.
     pub fn keep(&mut self, reload: FileReload) {
         let default_lines = self.default_lines.get_mut().unwrap();
         for (key, _) in &reload.patched {
@@ -957,12 +764,10 @@ impl Snapshot {
         }
         self.patched.extend(reload.patched);
         self.scope_names.insert(reload.file, reload.scope_names);
-        // This successful reparse preserved the definitions, so the old error hid no code.
         self.mended.insert(reload.file);
         self.resource_index = Default::default();
     }
 
-    /// Run `f` against the original parse, excluding incremental replacements.
     pub fn without_patches<R>(&mut self, f: impl FnOnce(&Snapshot) -> R) -> R {
         let patched = std::mem::take(&mut self.patched);
         let result = f(self);
@@ -970,14 +775,12 @@ impl Snapshot {
         result
     }
 
-    /// Discard incremental file replacements.
     pub fn clear_patches(&mut self) {
         self.patched.clear();
         self.mended.clear();
         self.resource_index = Default::default();
     }
 
-    /// What `file` defines: vars, proc declarations and definitions
     fn contents_of(&self, file: FileId) -> Result<FileContents<'_>, String> {
         let mut keys: HashMap<(&str, &str, usize), &ProcKey> = HashMap::new();
         for (key, (ty, name, index)) in &self.procs {
@@ -991,7 +794,6 @@ impl Snapshot {
                 let Some(values) = contents.procs.get_mut(&(path.clone(), name.to_string())) else {
                     continue;
                 };
-                // By key, and as the snapshot has them now
                 for (key, value) in values.iter_mut() {
                     let index = proc.value.iter().position(|v| std::ptr::eq(v, *value));
                     let found =
@@ -1006,8 +808,6 @@ impl Snapshot {
         Ok(contents)
     }
 
-    /// A snapshot of code already parsed into `tree`, with `ctx` holding its
-    /// file names relative to the `.dme`'s directory.
     pub fn from_tree(ctx: Context, tree: ObjectTree) -> Snapshot {
         crate::compiler::new_tree();
         let mut procs = BTreeMap::new();
@@ -1015,7 +815,6 @@ impl Snapshot {
             for (name, type_proc) in ty.get().procs.iter() {
                 let mut override_id = 0;
                 for (index, value) in type_proc.value.iter().enumerate() {
-                    // SpacemanDMM's declarations of BYOND's own procs
                     if value.location.file == FileId::BUILTINS {
                         continue;
                     }
@@ -1051,8 +850,6 @@ impl Snapshot {
         }
     }
 
-    /// Fold const initializers beyond SpacemanDMM's evaluator and suppress their errors.
-    /// Repeat to resolve consts that depend on other consts.
     fn fold_const_initializers(&mut self) {
         let described: Vec<(dreammaker::Location, String)> = self
             .ctx
@@ -1104,8 +901,6 @@ impl Snapshot {
                 names.insert(name.to_string());
             }
         }
-        // SpacemanDMM also reports recursive-reference errors for vars using a const
-        // it could not evaluate. Suppress those after resolving the const.
         for (location, description) in described {
             let of = description.strip_prefix("recursive constant reference: ");
             if of.is_some_and(|name| names.contains(name)) {
@@ -1114,12 +909,10 @@ impl Snapshot {
         }
     }
 
-    /// Target build from `ParseOptions::byond`, or the newest supported build.
     pub fn byond(&self) -> ByondVersion {
         self.byond
     }
 
-    /// Compiles for `byond` from now on.
     pub fn set_byond(&mut self, byond: ByondVersion) {
         self.byond = byond;
     }
@@ -1132,8 +925,6 @@ impl Snapshot {
         &self.ctx
     }
 
-    /// Every file the parse read, relative to the `.dme`'s directory (the
-    /// `.dme` itself has its own path, as given).
     pub fn files(&self) -> Vec<PathBuf> {
         let mut files = vec![];
         self.ctx.files().for_each(|path| {
@@ -1144,19 +935,14 @@ impl Snapshot {
         files
     }
 
-    /// Last `.dmf` included by the `.dme`, relative to the `.dme` directory.
     pub fn skin(&self) -> Option<&Path> {
         self.skin.as_deref()
     }
 
-    /// Included map paths in preprocessor order, relative to the `.dme` directory
-    /// where possible. Map changes require a rebuild.
     pub fn maps(&self) -> &[PathBuf] {
         &self.maps
     }
 
-    /// Login script from `/client/script`. Return `None` for unset or null,
-    /// or an error unless it is constant text or a resource file.
     pub fn client_script(&self) -> Result<Option<ClientScript>, String> {
         let Some(value) = self
             .find_type("/client")
@@ -1172,36 +958,30 @@ impl Snapshot {
         }
     }
 
-    /// Every proc with code.
     pub fn procs(&self) -> impl Iterator<Item = &ProcKey> {
         self.procs.keys()
     }
 
-    /// The file a proc is in, from the `.dme`'s directory.
     pub fn proc_file(&self, key: &ProcKey) -> Option<String> {
         let (_, value) = self.find(key)?;
         Some(self.file_name(value.location.file))
     }
 
-    /// Compiles one proc for a reload: its code, parameters and settings.
     pub fn compile_reload(&self, key: &ProcKey) -> Result<ProcReload, String> {
         let mut reload = self.compile_code(key)?;
         reload.settings = Some(self.settings(key)?);
         Ok(reload)
     }
 
-    /// Compiles one proc for a reload, without its settings.
     fn compile_code(&self, key: &ProcKey) -> Result<ProcReload, String> {
         let (_, value) = self.find(key).ok_or_else(|| format!("no proc {key}"))?;
         let compiled = self.compile(key)?;
         let (ty, _) = self.find(key).ok_or_else(|| format!("no proc {key}"))?;
         let mut statics = vec![];
-        // Each initializer can reference earlier statics in the proc.
         let mut earlier = vec![];
         for s in compiled.statics {
             let constant = s.value.as_ref().and_then(const_value);
             let init = match (&constant, &s.expression) {
-                // `__PROC__` must name the containing proc.
                 (None, Some(expression)) => Some(Box::new(self.compile_value(
                     ty,
                     expression,
@@ -1231,7 +1011,6 @@ impl Snapshot {
         })
     }
 
-    /// Compile newly added parameter `in` expressions into generated procs.
     fn compile_in_lists(
         &self,
         key: &ProcKey,
@@ -1262,7 +1041,6 @@ impl Snapshot {
         Ok(())
     }
 
-    /// Compile a parameter `in` expression as a return proc with DEBUG locations.
     fn compile_in_list(
         &self,
         ty: TypeRef,
@@ -1277,8 +1055,6 @@ impl Snapshot {
         self.compile_synthetic(ty, "(in list)", block, location, true, None, &[])
     }
 
-    /// Compile a computed global or static initializer in `ty`'s scope
-    /// (root for globals).
     pub(crate) fn compile_value(
         &self,
         ty: TypeRef,
@@ -1289,11 +1065,9 @@ impl Snapshot {
         statics: &[(String, u32)],
     ) -> Result<ProcReload, String> {
         use dreammaker::ast::{Expression, Ident, PathOp, Prefab, RelativePath, Spanned, Term};
-        // A `new` with no type makes the var's declared type
         let mut expression = expression.clone();
         if let Expression::Base { term, .. } = &mut expression {
             if let Term::NewImplicit { args } = &term.elem {
-                // (a list of a type is a list)
                 let declared = if declared.trim_start_matches('/').starts_with("list/") {
                     "list"
                 } else {
@@ -1325,8 +1099,6 @@ impl Snapshot {
         )
     }
 
-    /// Compiles a type's init proc: an assignment to `src.var` for each of
-    /// `inits`.
     fn compile_init(&self, ty: TypeRef, inits: &[Init]) -> Result<ProcReload, String> {
         use dreammaker::ast::{
             AssignOp, Expression, Follow, Ident, PropertyAccessKind, Spanned, Term,
@@ -1358,8 +1130,6 @@ impl Snapshot {
         self.compile_synthetic(ty, "(init)", block, ty.get().location, false, None, &[])
     }
 
-    /// Compile a synthetic proc on `ty`, optionally emitting debug locations
-    /// and overriding `__PROC__` with `proc_path`.
     fn compile_synthetic(
         &self,
         ty: TypeRef,
@@ -1415,8 +1185,6 @@ impl Snapshot {
         })
     }
 
-    /// Resolve proc settings from its declaration plus this definition's
-    /// `set` statements.
     pub fn settings(&self, key: &ProcKey) -> Result<ProcSettings, String> {
         self.settings_with(key, &mut DeclaredSettings::new())
     }
@@ -1434,7 +1202,6 @@ impl Snapshot {
         settings_of(ty, name, *index, declared)
     }
 
-    /// Compiles one proc, with `DbgFile` and `DbgLine`.
     pub fn compile(&self, key: &ProcKey) -> Result<CompiledProc, String> {
         let (ty, value) = self.find(key).ok_or_else(|| format!("no proc {key}"))?;
         let (_, name, index) = &self.procs[key];
@@ -1450,7 +1217,6 @@ impl Snapshot {
             byond: self.byond,
             file_names: Some(&|id| self.debug_file_name(id)),
         };
-        // A compiler panic for one proc must not terminate the source watcher.
         match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| compile_proc(&source))) {
             Ok(Ok(compiled)) => Ok(compiled),
             Ok(Err(e)) => Err(e.to_string()),
@@ -1458,7 +1224,6 @@ impl Snapshot {
         }
     }
 
-    /// Compile every proc and collect known BYOND bugs and compilation failures.
     pub fn known_bugs(&self) -> KnownBugs {
         let mut found = KnownBugs::default();
         for key in self.procs() {
@@ -1482,9 +1247,6 @@ impl Snapshot {
         found
     }
 
-    /// Return unresolved parse errors, excluding recovered const initializers and
-    /// successfully reparsed files. Each pair contains a line-independent comparison
-    /// key and a diagnostic with the source line, so moving an error does not make it new.
     pub fn parse_errors(&self) -> Vec<(String, String)> {
         self.unresolved_errors()
             .into_iter()
@@ -1498,7 +1260,6 @@ impl Snapshot {
             .collect()
     }
 
-    /// Unresolved parse errors as refusals, paired with `parse_errors` comparison keys.
     fn parse_refusals(&self) -> Vec<(String, Refusal)> {
         self.unresolved_errors()
             .into_iter()
@@ -1513,8 +1274,6 @@ impl Snapshot {
             .collect()
     }
 
-    /// Parse error locations and descriptions, excluding recovered const
-    /// initializers and superseded parses.
     fn unresolved_errors(&self) -> Vec<(dreammaker::Location, String)> {
         self.ctx
             .errors()
@@ -1528,8 +1287,6 @@ impl Snapshot {
             .collect()
     }
 
-    /// File relative to the `.dme` directory and one-based line. Return none
-    /// for built-ins or defines prepended to the `.dme`.
     fn source_line(&self, location: dreammaker::Location) -> Option<(String, u32)> {
         if location.file == FileId::BUILTINS
             || location.file == FileId::UNKNOWN
@@ -1541,8 +1298,6 @@ impl Snapshot {
         (file != PRELUDE).then_some((file, location.line))
     }
 
-    /// Most direct source declaration of `t`. For built-in types, use the
-    /// first source var or proc declaration.
     fn type_location(&self, t: TypeRef) -> dreammaker::Location {
         let ty = t.get();
         let in_source = |l: &dreammaker::Location| self.source_line(*l).is_some();
@@ -1557,7 +1312,6 @@ impl Snapshot {
             .unwrap_or(ty.location)
     }
 
-    /// Location where `t` sets or declares `name`, falling back to the type.
     fn var_location(&self, t: TypeRef, name: &str) -> dreammaker::Location {
         match t.get().vars.get(name) {
             Some(var) if self.source_line(var.value.location).is_some() => var.value.location,
@@ -1571,7 +1325,6 @@ impl Snapshot {
         }
     }
 
-    /// Create a refusal at proc `key`'s definition.
     fn proc_refusal(&self, key: &ProcKey, why: impl Into<String>) -> Refusal {
         let refusal = Refusal::new(key.to_string(), why);
         match self.find(key) {
@@ -1580,7 +1333,6 @@ impl Snapshot {
         }
     }
 
-    /// Create a compilation refusal, using the error's line when available.
     fn uncompiled(&self, key: &ProcKey, e: &str) -> Refusal {
         let line = e
             .strip_prefix("line ")
@@ -1615,8 +1367,6 @@ impl Snapshot {
         }
     }
 
-    /// Whether a proc embeds a moved default's previous source location
-    /// through `::`.
     fn reads_moved_default(&self, file: FileId, moved: &[(&String, u32)]) -> Option<ProcKey> {
         let file_name = self.debug_file_name(file).into_bytes();
         let procs_by_file = self.procs_by_file.get_or_init(|| {
@@ -1631,7 +1381,6 @@ impl Snapshot {
             }
             by_file
         });
-        // The procs with one of the names after `::` in their lines
         let mut candidates = vec![];
         for (id, uses) in &self.scope_names {
             let lines: Vec<u32> = uses
@@ -1667,7 +1416,6 @@ impl Snapshot {
         None
     }
 
-    /// Find embedded default locations outside the proc's own source range.
     fn recorded_defaults(&self, key: &ProcKey) -> Vec<(Vec<u8>, u32)> {
         let (Some((_, value)), Ok(code)) = (self.find(key), self.compile(key)) else {
             return vec![];
@@ -1690,8 +1438,6 @@ impl Snapshot {
         lines
     }
 
-    /// Whether the current source range contains `text`. Return true if
-    /// the file cannot be read, so callers conservatively inspect the proc.
     fn source_has(
         &self,
         value: &ProcValue,
@@ -1718,7 +1464,6 @@ impl Snapshot {
             .is_none_or(|l| l.iter().any(|l| l.contains(text)))
     }
 
-    /// Source location as (file path, line, column), stable across parses.
     fn place(&self, location: dreammaker::Location) -> (String, u32, u16) {
         (
             self.file_name(location.file),
@@ -1734,8 +1479,6 @@ impl Snapshot {
             .replace('\\', "/")
     }
 
-    /// Resolve DreamMaker's debug name for a project-relative source path
-    /// (see `debug_files`).
     fn debug_file_name(&self, file: FileId) -> String {
         let path = self.ctx.file_path(file);
         match self.debug_names.get(&crate::debug_files::normalize(&path)) {
@@ -1745,18 +1488,13 @@ impl Snapshot {
     }
 }
 
-/// `/type/path/name`, or `/name` for a global proc.
 fn proc_path(ty: TypeRef, name: &str) -> String {
     format!("{}/{}", ty.get().path, name)
 }
 
-/// Compare snapshots. `changed_files` contains project-relative edited paths
-/// whose unchanged procs may need line remapping. `None` checks all procs.
 pub fn diff(old: &Snapshot, new: &Snapshot, changed_files: Option<&HashSet<PathBuf>>) -> Changes {
     let mut changes = Changes::default();
 
-    // New parse errors can omit declarations and falsely appear as removals.
-    // Reject them before comparing definitions.
     let mut old_errors: HashMap<String, usize> = HashMap::new();
     for (e, _) in old.parse_errors() {
         *old_errors.entry(e).or_default() += 1;
@@ -1771,12 +1509,9 @@ pub fn diff(old: &Snapshot, new: &Snapshot, changed_files: Option<&HashSet<PathB
         return changes;
     }
 
-    // The paths whose proc definitions were added or removed among others: which
-    // old definition each new one is (see `align`)
     let mut realigned = Realigned::new();
     let new_procs = compare_types(old, new, &mut changes, &mut realigned);
     let old_key = |key: &ProcKey| old_key(&realigned, key);
-    // Parents first, whatever their paths
     let depth = |path: &str| {
         let mut depth = 0;
         let mut at = new.find_type(path);
@@ -1814,20 +1549,16 @@ pub fn diff(old: &Snapshot, new: &Snapshot, changed_files: Option<&HashSet<PathB
 
     let (mut old_declared, mut new_declared) = (DeclaredSettings::new(), DeclaredSettings::new());
     for (key, _) in new.procs.iter() {
-        // A new definition among others is one of the new procs. The rest are
-        // known by their numbers in the running world, the old ones.
         let Some(old_key) = old_key(key) else {
             continue;
         };
         let (Some((_, old_value)), Some((_, new_value))) = (old.find(&old_key), new.find(key))
         else {
-            // New and removed procs were refused with the types
             continue;
         };
 
         let moved_file =
             old.file_name(old_value.location.file) != new.file_name(new_value.location.file);
-        // Default arguments are compiled into the start of the body
         let defaults = |v: &ProcValue| {
             v.parameters
                 .iter()
@@ -1835,8 +1566,6 @@ pub fn diff(old: &Snapshot, new: &Snapshot, changed_files: Option<&HashSet<PathB
                 .collect::<Vec<_>>()
         };
         let params_changed = signature(old_value) != signature(new_value);
-        // Inherited from the declaration, so they can change with code
-        // elsewhere
         let settings = new.settings_with(key, &mut new_declared);
         let settings = match (
             old.settings_with(&old_key, &mut old_declared) == settings,
@@ -1854,7 +1583,6 @@ pub fn diff(old: &Snapshot, new: &Snapshot, changed_files: Option<&HashSet<PathB
             || params_changed
             || moved_file
         {
-            // An `in` list expression the parameter didn't have
             let new_list = |name: &str, expression: &dreammaker::ast::Expression| {
                 old_value
                     .parameters
@@ -1891,7 +1619,6 @@ pub fn diff(old: &Snapshot, new: &Snapshot, changed_files: Option<&HashSet<PathB
                     proc: old_key,
                     lines,
                 }),
-                // Lines can't be moved one for one: compiled again
                 LineChange::Recompile => match new.compile_code(key).and_then(|mut reload| {
                     new.compile_in_lists(key, &mut reload, |_, _| false)?;
                     Ok(reload)
@@ -1915,12 +1642,8 @@ pub fn diff(old: &Snapshot, new: &Snapshot, changed_files: Option<&HashSet<PathB
     changes
 }
 
-/// Map new definitions to old definitions after insertions and removals.
-/// `None` identifies a new definition.
 type Realigned = HashMap<String, Vec<Option<u32>>>;
 
-/// The old key of the definition `key` names in the new parse, `None` for a
-/// new one.
 fn old_key(realigned: &Realigned, key: &ProcKey) -> Option<ProcKey> {
     match realigned.get(&key.path) {
         None => Some(key.clone()),
@@ -1935,8 +1658,6 @@ fn old_key(realigned: &Realigned, key: &ProcKey) -> Option<ProcKey> {
     }
 }
 
-/// Recompile users of changed constants or declarations when their
-/// bytecode changes, even if their source is unchanged.
 fn const_users(old: &Snapshot, new: &Snapshot, realigned: &Realigned, changes: &mut Changes) {
     if changes.consts.is_empty()
         && changes.retyped.is_empty()
@@ -1945,16 +1666,12 @@ fn const_users(old: &Snapshot, new: &Snapshot, realigned: &Realigned, changes: &
     {
         return;
     }
-    // Use identifier occurrences in AST debug text as a cheap prefilter.
     let names: Vec<String> = changes
         .consts
         .iter()
         .chain(&changes.retyped)
         .map(|c| format!("{c:?}"))
         .collect();
-    // Only `type::var` embeds a default's value or source location in code.
-    // Looking for any use of `var` would recompile nearly everything for
-    // common names such as `name` or `icon`.
     let moved: Vec<String> = changes
         .defaults_changed
         .iter()
@@ -1973,8 +1690,6 @@ fn const_users(old: &Snapshot, new: &Snapshot, realigned: &Realigned, changes: &
         let (Some(_), Some((_, new_value))) = (old.find(&old_key), new.find(key)) else {
             continue;
         };
-        // Avoid formatting every proc: only source containing `::` can
-        // reference a moved default.
         if names.is_empty() && !new.source_has(new_value, "::", &mut files) {
             continue;
         }
@@ -1987,7 +1702,6 @@ fn const_users(old: &Snapshot, new: &Snapshot, realigned: &Realigned, changes: &
         let (Ok(before), Ok(after)) = (old.compile(&old_key), new.compile(key)) else {
             continue;
         };
-        // Moved lines only need moving
         let code = |nodes: &[Node]| -> Vec<Node> {
             nodes
                 .iter()
@@ -1996,8 +1710,6 @@ fn const_users(old: &Snapshot, new: &Snapshot, realigned: &Realigned, changes: &
                 .collect()
         };
         if code(&before.nodes) == code(&after.nodes) {
-            // A default's line moved: the lines move with it, where they map
-            // one for one (this proc's own may have moved too)
             match line_map(&before.nodes, &after.nodes) {
                 Some(lines) => {
                     let lines: Vec<(u32, u32)> = lines.into_iter().collect();
@@ -2020,7 +1732,6 @@ fn const_users(old: &Snapshot, new: &Snapshot, realigned: &Realigned, changes: &
             new.compile_in_lists(key, &mut reload, |_, _| false)?;
             Ok(reload)
         });
-        // Its new code has its new lines
         changes.line_moves.retain(|m| m.proc != old_key);
         match reload {
             Ok(reload) => changes.reloads.push(ProcReload {
@@ -2032,12 +1743,9 @@ fn const_users(old: &Snapshot, new: &Snapshot, realigned: &Realigned, changes: &
     }
 }
 
-/// Required update for an unchanged proc whose source locations moved.
 enum LineChange {
     Same,
-    /// Each line it records, old and new
     Moved(Vec<(u32, u32)>),
-    /// Line numbers cannot be remapped independently across files; recompile.
     Recompile,
 }
 
@@ -2055,12 +1763,9 @@ fn line_move(
             Some(map) => lines.extend(map),
             None => return LineChange::Recompile,
         },
-        // Without the compiler, all we know is where the proc starts
         _ => {}
     }
     if lines.is_empty() {
-        // Every line from the header to the end of the body, by the header's
-        // shift
         let Some(range) = old_value.body_range.as_ref() else {
             return LineChange::Same;
         };
@@ -2075,8 +1780,6 @@ fn line_move(
     LineChange::Moved(lines.into_iter().collect())
 }
 
-/// Map corresponding DbgLines in old and new code. Return `None` for
-/// conflicting mappings, or an empty map when DbgLine counts differ.
 fn line_map(old: &[Node], new: &[Node]) -> Option<BTreeMap<u32, u32>> {
     let (old_lines, new_lines) = (dbg_lines(old), dbg_lines(new));
     let mut lines = BTreeMap::new();
@@ -2100,8 +1803,6 @@ fn dbg_lines(nodes: &[Node]) -> Vec<u32> {
         .collect()
 }
 
-/// A proc's parameters as BYOND keeps them: names and input types, not
-/// default values (which are code).
 fn signature(
     v: &ProcValue,
 ) -> Vec<(
@@ -2123,8 +1824,6 @@ fn signature(
         .collect()
 }
 
-/// Read parameter metadata, excluding `...` and absolute-path parameters
-/// as DreamMaker does.
 fn params(v: &ProcValue) -> Vec<Param> {
     use dreammaker::ast::InputType;
     v.parameters
@@ -2133,7 +1832,6 @@ fn params(v: &ProcValue) -> Vec<Param> {
         .map(|p| {
             let mut input = p.var_type.input_type;
             if input.is_empty() {
-                // `obj/thing` alone allows what its root type is
                 let path: Vec<&str> = p.var_type.type_path.iter().map(|s| s.as_str()).collect();
                 input = match path.as_slice() {
                     ["atom"] => InputType::ATOM,
@@ -2155,10 +1853,8 @@ fn params(v: &ProcValue) -> Vec<Param> {
         .collect()
 }
 
-/// File declarations used to detect proc-body-only edits.
 #[derive(Default)]
 struct FileContents<'a> {
-    /// (type, name) -> declaration, type, value
     vars: BTreeMap<
         (String, String),
         (
@@ -2166,11 +1862,8 @@ struct FileContents<'a> {
             Option<dreammaker::ast::Expression>,
         ),
     >,
-    /// (type, name) -> the line of a default written in the file
     var_lines: BTreeMap<(String, String), u32>,
-    /// (type, name) -> kind, flags of the procs it declares
     declarations: BTreeMap<(String, String), String>,
-    /// (type, name) -> its definitions, in order (with keys, in the snapshot)
     procs: BTreeMap<(String, String), Vec<(Option<ProcKey>, &'a ProcValue)>>,
 }
 
@@ -2217,7 +1910,6 @@ impl<'a> FileContents<'a> {
     }
 }
 
-/// The macros a file defines and takes away, in order
 fn macros_in(
     history: &DefineHistory,
     file: FileId,
@@ -2244,12 +1936,8 @@ fn macros_in(
     (defined, undefined)
 }
 
-/// The settings of the definitions that declare procs, by the declaring type
-/// (its address) and the proc's name: overrides start from them.
 type DeclaredSettings = HashMap<(usize, String), Result<ProcSettings, String>>;
 
-/// Resolve settings from the declaring definition and this override.
-/// Overrides do not inherit `set` statements from preceding overrides.
 fn settings_of(
     ty: TypeRef,
     name: &str,
@@ -2282,7 +1970,6 @@ fn settings_of(
     proc_settings(value, base)
 }
 
-/// A definition's `set` statements, on top of `base`.
 fn proc_settings(v: &ProcValue, base: ProcSettings) -> Result<ProcSettings, String> {
     use dreammaker::ast::{Expression, SettingMode, Term};
     let mut out = base;
@@ -2342,8 +2029,6 @@ fn proc_settings(v: &ProcValue, base: ProcSettings) -> Result<ProcSettings, Stri
     Ok(out)
 }
 
-/// `set src`'s source, as an `in` list's word. `src = usr` and `src = usr.loc`
-/// are kinds of their own.
 fn verb_src(value: &dreammaker::ast::Expression, equals: bool) -> Option<u32> {
     use dreammaker::ast::{Expression, Follow, Term};
     if equals {
@@ -2369,7 +2054,6 @@ fn verb_src(value: &dreammaker::ast::Expression, equals: bool) -> Option<u32> {
     builtin_in_list(Some(value))
 }
 
-/// Every `set` statement in a proc, in order.
 fn settings(code: Option<&Block>) -> Vec<&Statement> {
     fn visit<'a>(block: &'a Block, out: &mut Vec<&'a Statement>) {
         for stmt in block.iter() {
@@ -2419,7 +2103,6 @@ fn settings(code: Option<&Block>) -> Vec<&Statement> {
     out
 }
 
-/// Where an expression starts, as near as the AST says.
 fn value_location(
     expression: &dreammaker::ast::Expression,
     otherwise: dreammaker::Location,
@@ -2430,11 +2113,9 @@ fn value_location(
     }
 }
 
-/// A var a type's init proc sets.
 #[derive(Clone)]
 struct Init {
     var: String,
-    /// The type whose definition it is
     on: String,
     value: dreammaker::ast::Expression,
     location: dreammaker::Location,
@@ -2442,14 +2123,10 @@ struct Init {
 
 impl PartialEq for Init {
     fn eq(&self, other: &Self) -> bool {
-        // Spanned ignores locations, so a moved line is the same
         self.var == other.var && self.on == other.on && self.value == other.value
     }
 }
 
-/// Merge inherited computed initializers with those declared on this type.
-/// Remove overridden ancestor initializers, then append local computed values.
-/// Global and static variables initialize once at world startup.
 fn inits<'a>(t: TypeRef, memo: &'a mut HashMap<usize, Vec<Init>>) -> &'a [Init] {
     if !memo.contains_key(&t.index().index()) {
         let mut list = match t.parent_type() {
@@ -2472,7 +2149,6 @@ fn inits<'a>(t: TypeRef, memo: &'a mut HashMap<usize, Vec<Init>>) -> &'a [Init] 
                 }
                 if let Some(value) = &var.value.expression {
                     if var_constant(var).is_none() {
-                        // Subtypes run it as it is
                         let mut value = value.clone();
                         type_macro_is(&mut value, &t.get().path);
                         list.push(Init {
@@ -2490,7 +2166,6 @@ fn inits<'a>(t: TypeRef, memo: &'a mut HashMap<usize, Vec<Init>>) -> &'a [Init] 
     &memo[&t.index().index()]
 }
 
-/// Bind `__TYPE__` to the type declaring this initializer.
 fn type_macro_is(expression: &mut dreammaker::ast::Expression, path: &str) {
     use dreammaker::ast::{Expression, Follow, Ident, PathOp, Prefab, RelativePath, Term};
     fn term(term: &mut Term, path: &str) {
@@ -2583,7 +2258,6 @@ fn type_macro_is(expression: &mut dreammaker::ast::Expression, path: &str) {
     }
 }
 
-/// The types whose init procs changed, and their new code.
 fn compare_inits(old: &Snapshot, new: &Snapshot, changes: &mut Changes) {
     let (mut old_memo, mut new_memo) = (HashMap::new(), HashMap::new());
     for n in new.tree.iter_types() {
@@ -2594,9 +2268,6 @@ fn compare_inits(old: &Snapshot, new: &Snapshot, changes: &mut Changes) {
         match old.find_type(&n.get().path) {
             Some(o) if inits(o, &mut old_memo) == new_inits.as_slice() => continue,
             Some(_) => {}
-            // A new type initially copies its nearest existing ancestor's runtime
-            // init proc. That proc may still initialize defaults removed in this
-            // reload, so the new type must be checked too.
             None => {
                 let mut at = n.parent_type();
                 let mut copied = None;
@@ -2636,8 +2307,6 @@ fn compare_inits(old: &Snapshot, new: &Snapshot, changes: &mut Changes) {
     }
 }
 
-/// A type's definitions of a proc, without SpacemanDMM's declarations of
-/// BYOND's own procs.
 fn real(p: &dreammaker::objtree::TypeProc) -> Vec<&ProcValue> {
     p.value
         .iter()
@@ -2645,8 +2314,6 @@ fn real(p: &dreammaker::objtree::TypeProc) -> Vec<&ProcValue> {
         .collect()
 }
 
-/// Match definitions in order by source file, then by code for multiple
-/// definitions in one file. `None` identifies additions.
 fn align(
     old: &Snapshot,
     new: &Snapshot,
@@ -2664,7 +2331,6 @@ fn align(
             2
         }
     };
-    // The heaviest common subsequence
     let mut best = vec![vec![0u32; m + 1]; n + 1];
     for i in (0..n).rev() {
         for j in (0..m).rev() {
@@ -2693,8 +2359,6 @@ fn align(
     map
 }
 
-/// Report removed definitions. Keep global entries for existing call sites
-/// and remove them only from override numbering.
 fn removed(
     old: &Snapshot,
     n: TypeRef,
@@ -2725,13 +2389,11 @@ fn removed(
     }
 }
 
-/// Whether a type's var is one of BYOND's own.
 fn is_builtin(t: TypeRef, name: &str) -> bool {
     t.get_var_declaration(name)
         .is_some_and(|d| d.get().location.file == FileId::BUILTINS)
 }
 
-/// Whether the type or one of its ancestors sets a built-in var in code.
 fn sets_builtin(t: TypeRef, name: &str) -> bool {
     let mut at = Some(t);
     while let Some(t) = at {
@@ -2747,10 +2409,7 @@ fn sets_builtin(t: TypeRef, name: &str) -> bool {
     false
 }
 
-/// The built-in vars whose constant values a reload can set on a type: the
-/// fields of its record, and those it lists with their values.
 const BUILTIN_VARS: &[&str] = &[
-    // Fields
     "name",
     "desc",
     "icon",
@@ -2764,7 +2423,6 @@ const BUILTIN_VARS: &[&str] = &[
     "maptext_y",
     "maptext_width",
     "maptext_height",
-    // Flags
     "density",
     "opacity",
     "gender",
@@ -2772,7 +2430,6 @@ const BUILTIN_VARS: &[&str] = &[
     "mouse_opacity",
     "animate_movement",
     "appearance_flags",
-    // Listed
     "icon_w",
     "icon_z",
     "bounds",
@@ -2803,7 +2460,6 @@ const BUILTIN_VARS: &[&str] = &[
     "mouse_drop_pointer",
     "mouse_over_pointer",
     "override",
-    // Client values stored in the type's built-in list.
     "fps",
     "view",
     "perspective",
@@ -2811,15 +2467,12 @@ const BUILTIN_VARS: &[&str] = &[
     "default_verb_category",
     "edge_limit",
     "mouse_pointer_icon",
-    // A mob type's, in the mob table
     "key",
     "sight",
     "see_in_dark",
     "see_invisible",
 ];
 
-/// Reports a type the running world doesn't have, with the fields of its
-/// record that aren't its parent's, as DreamMaker works them out.
 fn new_type(new: &Snapshot, n: TypeRef, changes: &mut Changes) {
     let path = n.get().path.clone();
     let Some(parent) = n.parent_type() else {
@@ -2841,7 +2494,6 @@ fn new_type(new: &Snapshot, n: TypeRef, changes: &mut Changes) {
         if name == "parent_type" {
             continue;
         }
-        // One that isn't a constant is set by the type's init proc
         let Some(value) = var_constant(var) else {
             continue;
         };
@@ -2860,8 +2512,6 @@ fn new_type(new: &Snapshot, n: TypeRef, changes: &mut Changes) {
         return;
     }
 
-    // Without a name of its own or an ancestor's, a type is named for its
-    // path, and its text is the first letter of its name
     let mut name = fields
         .iter()
         .find(|(field, _)| field == "name")
@@ -2889,8 +2539,6 @@ fn new_type(new: &Snapshot, n: TypeRef, changes: &mut Changes) {
     });
 }
 
-/// Compare types, collect unsupported edits and default changes, and return
-/// new proc definitions to compile with their type, name and declaration flags.
 fn compare_types(
     old: &Snapshot,
     new: &Snapshot,
@@ -2917,7 +2565,6 @@ fn compare_types(
         ));
     }
 
-    // A new type is compared with an empty one
     let no_vars = Default::default();
     let no_procs = Default::default();
     for path in new_types.keys() {
@@ -2941,8 +2588,6 @@ fn compare_types(
         let declaration =
             |v: &dreammaker::objtree::TypeVar| v.declaration.as_ref().map(|d| d.var_type.clone());
         for (name, var) in nv.iter() {
-            // Most built-ins are type-record fields. Sound and similar types
-            // store theirs as defaults in the var table.
             if o.is_none()
                 && is_builtin(n, name.as_str())
                 && !builtin_in_var_table(n, name.as_str())
@@ -2961,10 +2606,8 @@ fn compare_types(
                         var_default(old, new, path, name.as_str(), true, changes);
                     }
                 }
-                // Overriding an inherited var, which it didn't before
                 None => var_default(old, new, path, name.as_str(), false, changes),
                 Some(old_var) if declaration(old_var) != declaration(var) => {
-                    // Type metadata affects compilation only; recompile dependent code.
                     let storage = |v: &dreammaker::objtree::TypeVar| {
                         v.declaration.as_ref().map(|d| {
                             (
@@ -2999,7 +2642,6 @@ fn compare_types(
                     if redeclared {
                         redeclare(new, n, name.as_str(), old_var, var, changes);
                     }
-                    // Unless that gave it its values
                     let valued = redeclared
                         && (static_like(old_var) != static_like(var)
                             || kind(var).is_some_and(|k| k.1));
@@ -3010,8 +2652,6 @@ fn compare_types(
                 Some(old_var) if old_var.value.expression != var.value.expression => {
                     var_default(old, new, path, name.as_str(), false, changes);
                 }
-                // Compare moved defaults by path: inserting an include renumbers
-                // subsequent files without moving their source locations.
                 Some(old_var)
                     if old.place(old_var.value.location) != new.place(var.value.location) =>
                 {
@@ -3030,10 +2670,8 @@ fn compare_types(
                     "{shown}: var {name} was removed from source but retained in the running world"
                 ));
             } else if n.get_var_declaration(name.as_str()).is_some() {
-                // No longer overridden here: the type goes back to what it inherits
                 var_default(old, new, path, name.as_str(), false, changes);
             }
-            // (else the var itself was removed, warned about where it was declared)
         }
 
         let op = o.map_or(&no_procs, |o| &o.get().procs);
@@ -3046,8 +2684,6 @@ fn compare_types(
             let verb = n
                 .get_proc_declaration(name.as_str())
                 .is_some_and(|d| d.kind == dreammaker::ast::ProcDeclKind::Verb);
-            // Preserve source order when inserting or removing proc definitions;
-            // the runtime renumbers them after application.
             if new_count != old_count {
                 let map = align(old, new, &old_values, &new_values);
                 for override_id in (0..old_count).filter(|i| !map.contains(&Some(*i))) {
@@ -3067,12 +2703,8 @@ fn compare_types(
                     });
                 }
                 for (override_id, _) in map.iter().enumerate().filter(|(_, old)| old.is_none()) {
-                    // One before the first the type had leaves that one the
-                    // declaration (`proc/`) it was made with
                     let declared = override_id == 0 && proc.declaration.is_some() && old_count == 0;
                     if n.is_root() && !declared {
-                        // DreamMaker makes it a proc of its own (`/name`), and
-                        // calls still go to the declared one
                         changes.warnings.push(format!(
                             "{path}: additional global definition is unreachable; calls retain the original definition, matching DreamMaker"
                         ));
@@ -3126,8 +2758,6 @@ fn compare_types(
     new_procs
 }
 
-/// A var declared on type `n` that the old code didn't have. False when it
-/// can't be added.
 fn new_var(
     snapshot: &Snapshot,
     n: TypeRef,
@@ -3146,7 +2776,6 @@ fn new_var(
         .as_ref()
         .map(|d| d.var_type.flags)
         .unwrap_or_default();
-    // Validate declarations DreamMaker would reject.
     let at = var
         .declaration
         .as_ref()
@@ -3178,7 +2807,6 @@ fn new_var(
     }
     let static_like = flags.is_static() || flags.is_const() || n.is_root();
     let (value, init) = if static_like {
-        // The world sets it when it starts, so the reload sets it now
         match static_initial(snapshot, n, var) {
             Ok(value) => value,
             Err(e) => {
@@ -3193,10 +2821,7 @@ fn new_var(
     } else {
         match var_constant(var) {
             Some(value) => (value, None),
-            // The init proc sets it on new instances
             None => {
-                // BYOND's normal initial() placeholder would also become the value
-                // on existing instances. Use null for new computed defaults instead.
                 if new_type {
                     changes.warnings.push(format!(
                         "{shown}: new var {name} has a computed default; initial() remains null until restart"
@@ -3221,7 +2846,6 @@ fn new_var(
     true
 }
 
-/// Find an ancestor or descendant whose declaration of `name` would conflict with `n`.
 fn declared_elsewhere(n: TypeRef, name: &str) -> Option<String> {
     let declares = |t: TypeRef| {
         t.get()
@@ -3229,7 +2853,6 @@ fn declared_elsewhere(n: TypeRef, name: &str) -> Option<String> {
             .get(name)
             .is_some_and(|v| v.declaration.is_some())
     };
-    // Same-named globals do not conflict with type vars.
     let mut at = n.parent_type().filter(|t| !t.is_root());
     while let Some(t) = at {
         if declares(t) {
@@ -3240,8 +2863,6 @@ fn declared_elsewhere(n: TypeRef, name: &str) -> Option<String> {
     if n.is_root() {
         return None;
     }
-    // Follow actual parents, not path prefixes: `/obj` inherits from `/atom/movable`,
-    // and `parent_type` can change a type's ancestry.
     let descends = |t: TypeRef| {
         let mut at = t.parent_type();
         while let Some(parent) = at {
@@ -3258,8 +2879,6 @@ fn declared_elsewhere(n: TypeRef, name: &str) -> Option<String> {
         .map(|t| t.get().path.clone())
 }
 
-/// Whether a const initializer lacks a valid constant value. Lists, `new`,
-/// constructors such as `matrix()` and `icon()`, and runtime expressions are invalid.
 fn needs_constant(var: &dreammaker::objtree::TypeVar) -> bool {
     use dreammaker::constants::Constant;
     let is_const = var
@@ -3280,7 +2899,6 @@ fn needs_constant(var: &dreammaker::objtree::TypeVar) -> bool {
     )
 }
 
-/// Reject a changed const value if it is no longer constant. Return whether rejected.
 fn refused_const_value(new: &Snapshot, n: TypeRef, name: &str, changes: &mut Changes) -> bool {
     let Some(var) = n.get().vars.get(name).filter(|var| needs_constant(var)) else {
         return false;
@@ -3298,8 +2916,6 @@ fn refused_const_value(new: &Snapshot, n: TypeRef, name: &str, changes: &mut Cha
     true
 }
 
-/// Find initializers SpacemanDMM folds but DreamMaker rejects: `type`,
-/// `parent_type` and comparisons. Reload accepts these with a warning.
 fn dm_refused_const(var: &dreammaker::objtree::TypeVar) -> Option<&'static str> {
     use dreammaker::ast::{BinaryOp, Expression, Term};
     fn why(expr: &Expression) -> Option<&'static str> {
@@ -3340,7 +2956,6 @@ fn refused_const_warning(place: &str, name: &str, why: &str) -> String {
     )
 }
 
-/// A declared var's flags, as BYOND keeps them
 fn byond_flags(flags: dreammaker::ast::VarTypeFlags, global: bool) -> u32 {
     let mut byond_flags = 0;
     if flags.is_static() || global {
@@ -3355,13 +2970,11 @@ fn byond_flags(flags: dreammaker::ast::VarTypeFlags, global: bool) -> u32 {
     byond_flags
 }
 
-/// Extract a static local's containing proc from its `proc:PATH#N` scope.
 fn static_proc_path(scope: &str) -> Option<&str> {
     let path = scope.strip_prefix("proc:")?;
     Some(path.rsplit_once('#').map_or(path, |(path, _)| path))
 }
 
-/// Extract the same-name declaration index from `proc:PATH#N`.
 fn static_number(scope: &str) -> u32 {
     scope
         .rsplit_once('#')
@@ -3369,7 +2982,6 @@ fn static_number(scope: &str) -> u32 {
         .unwrap_or(0)
 }
 
-/// Return an initial constant, or null with code for the world to run once.
 fn static_initial(
     snapshot: &Snapshot,
     n: TypeRef,
@@ -3393,8 +3005,6 @@ fn static_initial(
     Ok((ConstValue::Null, Some(Box::new(code))))
 }
 
-/// Update variable declaration flags and recompile users. Instance variables
-/// receive per-type defaults; static variables use global slots.
 fn redeclare(
     new: &Snapshot,
     n: TypeRef,
@@ -3421,7 +3031,6 @@ fn redeclare(
     };
 
     if is_static(flags) {
-        // A static var keeps the value it has, unless it wasn't one
         if !is_static(old_flags) || flags.is_const() {
             match static_initial(new, n, var) {
                 Ok((value, init)) => {
@@ -3446,8 +3055,6 @@ fn redeclare(
     if !is_static(old_flags) {
         return;
     }
-    // Each type's default, the constants grouped; the init procs set the
-    // others on new instances
     let mut defaults: Vec<VarDefault> = vec![];
     let mut computed = false;
     for ty in new.tree.iter_types() {
@@ -3481,7 +3088,6 @@ fn redeclare(
     changes.var_defaults.extend(defaults);
 }
 
-/// Find the nearest type defining this variable's default.
 fn defined_on<'a>(t: TypeRef<'a>, name: &str) -> Option<TypeRef<'a>> {
     let mut at = Some(t);
     while let Some(ty) = at {
@@ -3493,14 +3099,11 @@ fn defined_on<'a>(t: TypeRef<'a>, name: &str) -> Option<TypeRef<'a>> {
     None
 }
 
-/// Resolve a variable default. Inner `None` means computed by an init proc.
 fn default_value(t: TypeRef, name: &str) -> Option<Option<ConstValue>> {
     let var = defined_on(t, name)?.get().vars.get(name)?;
     Some(var_constant(var))
 }
 
-/// Resolve a constant default. SpacemanDMM does not fold static or tmp
-/// initializers, so those require a literal value.
 fn var_constant(var: &dreammaker::objtree::TypeVar) -> Option<ConstValue> {
     match &var.value.expression {
         None => Some(ConstValue::Null),
@@ -3511,8 +3114,6 @@ fn var_constant(var: &dreammaker::objtree::TypeVar) -> Option<ConstValue> {
     }
 }
 
-/// Collect a changed default for `path` and inheriting subtypes.
-/// `is_new` identifies a newly declared variable.
 fn var_default(
     old: &Snapshot,
     new: &Snapshot,
@@ -3532,12 +3133,9 @@ fn var_default(
         return;
     };
     let flags = declaration.get().var_type.flags;
-    // Built-ins stored in a var table, such as sound vars, use ordinary defaults.
     let in_var_table = builtin_in_var_table(n, name);
     let builtin = declaration.get().location.file == FileId::BUILTINS
         && (!in_var_table || !sets_own_builtin(n, name));
-    // A global const is set now (no code writes it), and the code it was
-    // folded into compiled again
     if n.is_root() && flags.is_const() && !is_new {
         if refused_const_value(new, n, name, changes) {
             return;
@@ -3568,13 +3166,9 @@ fn var_default(
         }
         return;
     }
-    // A new var starts with its value; an existing global keeps the one it
-    // has now. `global_init::compare` reports changed initializers.
     if n.is_root() || flags.is_static() {
         return;
     }
-    // Type constants use global slots. Update their values and recompile
-    // users that folded the old value (see `const_users`).
     if flags.is_const() {
         if is_new {
             return;
@@ -3590,7 +3184,6 @@ fn var_default(
                 .warnings
                 .push(refused_const_warning(shown, name, why));
         }
-        // (a built-in one, like `parent_type`, isn't a global)
         if builtin {
             return;
         }
@@ -3623,13 +3216,10 @@ fn var_default(
         return;
     }
 
-    // The launcher reloads the whole client script (see `Snapshot::client_script`).
     if builtin && name == "script" && n.get().path == "/client" {
         return;
     }
 
-    // World settings and some client settings are read at startup from the
-    // world record, so changes need a rebuild.
     if builtin && in_world_record(n, name) {
         if !is_new {
             changes.deferred.push(
@@ -3645,22 +3235,16 @@ fn var_default(
         return;
     }
 
-    // `/type::var` is compiled into the code that says it, which is
-    // compiled again (see `const_users`)
     if !is_new && !changes.defaults_changed.iter().any(|c| c == name) {
         changes.defaults_changed.push(name.to_owned());
     }
 
-    // Inherit from the running parent: SpacemanDMM lacks some built-in
-    // defaults, including mob density, layer and see_in_dark.
     if builtin
         && !is_new
         && !sets_own_builtin(n, name)
         && (in_var_table || BUILTIN_VARS.contains(&name))
         && !matches!(name, "name" | "text")
     {
-        // A built-in type's original default is unavailable after an override.
-        // Its parent's value can differ (mob layer 4, movable layer 3).
         if !in_var_table && reparent::builtin_base(n).as_deref() == Some(n.get().path.as_str()) {
             changes.refused.push(
                 Refusal::new(
@@ -3672,7 +3256,6 @@ fn var_default(
             );
             return;
         }
-        // Existing instances read the var table, as with ordinary vars.
         if !in_var_table {
             changes.warnings.push(format!(
                 "{shown}: {name}: built-in default applies only to new instances"
@@ -3685,7 +3268,6 @@ fn var_default(
         return;
     }
 
-    // Existing instances have already run their computed initializers.
     let Some(Some(value)) = default_value(n, name) else {
         if !is_new && !builtin {
             changes.warnings.push(format!(
@@ -3701,7 +3283,6 @@ fn var_default(
         }
     }
 
-    // The type and its subtypes that don't set the var themselves
     let mut types = vec![];
     for ty in new.tree.iter_types() {
         let mut at = ty;
@@ -3751,8 +3332,6 @@ fn var_default(
 
 const SETTING_CHANGED: &str = "changed setting";
 
-/// Client vars stored in the world record; the others use the type's
-/// built-in value list.
 const CLIENT_SETTINGS: &[&str] = &[
     "authenticate",
     "command_text",
@@ -3765,8 +3344,6 @@ const CLIENT_SETTINGS: &[&str] = &[
     "show_verb_panel",
 ];
 
-/// Whether a built-in var of `t` is kept in the world record: every `/world`
-/// setting, and some of `/client`'s.
 fn in_world_record(t: TypeRef, name: &str) -> bool {
     match t.get().path.as_str() {
         "/world" => true,
@@ -3775,11 +3352,8 @@ fn in_world_record(t: TypeRef, name: &str) -> bool {
     }
 }
 
-/// Built-in types whose built-in vars use the var table rather than
-/// type-record fields.
 const VAR_TABLE_BUILTINS: &[&str] = &["/sound", "/particles", "/exception", "/regex", "/icon"];
 
-/// Whether a built-in var of `t` is kept in its var table.
 fn builtin_in_var_table(t: TypeRef, name: &str) -> bool {
     t.get_var_declaration(name).is_some_and(|d| {
         d.get().location.file == FileId::BUILTINS
@@ -3787,7 +3361,6 @@ fn builtin_in_var_table(t: TypeRef, name: &str) -> bool {
     })
 }
 
-/// Whether the source sets this built-in directly on the type.
 fn sets_own_builtin(t: TypeRef, name: &str) -> bool {
     t.get()
         .vars
@@ -3795,7 +3368,6 @@ fn sets_own_builtin(t: TypeRef, name: &str) -> bool {
         .is_some_and(|v| v.value.location.file != FileId::BUILTINS)
 }
 
-/// `n` and subtypes inheriting `name` from it, in parent-first order.
 fn inheriting(new: &Snapshot, n: TypeRef, name: &str) -> Vec<String> {
     let mut types = vec![];
     for ty in new.tree.iter_types() {
@@ -3820,9 +3392,6 @@ fn inheriting(new: &Snapshot, n: TypeRef, name: &str) -> Vec<String> {
     types.into_iter().map(|(_, path)| path).collect()
 }
 
-/// Update name/text defaults on `n` and inheriting types. Without an
-/// explicit inherited name, derive it from the path; default text is
-/// the name's first letter.
 fn builtin_names(
     new: &Snapshot,
     n: TypeRef,
@@ -3880,7 +3449,6 @@ fn const_value(constant: &dreammaker::constants::Constant) -> Option<ConstValue>
         Constant::Float(f) => ConstValue::Number(*f),
         Constant::String(s) => ConstValue::String(crate::compiler::text(s.as_str())?),
         Constant::Resource(s) => ConstValue::Resource(s.to_string()),
-        // Proc paths too (`/proc/x`, `/datum/a/verb/y`)
         Constant::Prefab(pop) if pop.vars.is_empty() => {
             let path: Vec<&str> = pop.path.iter().map(|s| s.as_str()).collect();
             ConstValue::Path(format!("/{}", path.join("/")))
@@ -3889,8 +3457,6 @@ fn const_value(constant: &dreammaker::constants::Constant) -> Option<ConstValue>
     })
 }
 
-/// Return a proc definition's source range, from header through body.
-/// For the last proc in a file, use that file's end if the range ends in the next file.
 fn proc_lines(value: &ProcValue) -> std::ops::RangeInclusive<u32> {
     let start = value.location.line;
     let end = match &value.body_range {
@@ -3901,8 +3467,6 @@ fn proc_lines(value: &ProcValue) -> std::ops::RangeInclusive<u32> {
     start..=end
 }
 
-/// The names that follow `::` in DM source (`/type::name`, `x::name`), with
-/// their lines
 fn names_after_scope(text: &str) -> Vec<(String, u32)> {
     let mut found = vec![];
     for (i, line) in text.lines().enumerate() {

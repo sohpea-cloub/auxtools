@@ -37,7 +37,6 @@ pub fn disassemble<'a, E: DisassembleEnv>(
     let mut instructions = Vec::with_capacity(bytecode.len() / 2);
     let mut err = None;
 
-    // TODO: Move me
     loop {
         match Instruction::disassemble(&mut state) {
             Ok((ins, dbg)) => {

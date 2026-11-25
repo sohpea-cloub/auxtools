@@ -1,24 +1,5 @@
 name: Release
 
-# Run from master with a release version such as 3.0.0.
-#
-# Required setup:
-# - A release environment restricted to master.
-# - A Marketplace Trusted Publishing policy for publisher sohpea:
-#   repository auxtools/auxtools, workflow release.yml, environment release.
-# - An Open VSX trusted publisher for extension sohpea.auxtools with the same
-#   repository, workflow and environment.
-# - A deploy key with write access and permission to bypass the rulesets
-#   protecting master and v* tags. Store its private key in the release
-#   environment's RELEASE_DEPLOY_KEY secret.
-#
-# The tag and master are pushed atomically. If master advances before the
-# push, start a new workflow run.
-#
-# Retry a failed Publish job to resume publishing. It skips this run's
-# already-pushed tag, preserves an existing GitHub release and skips an
-# extension version already in the Marketplace or Open VSX.
-
 on:
   workflow_dispatch:
     inputs:
@@ -29,7 +10,6 @@ on:
 
 permissions: {}
 
-# Separate from the concurrency group in ci.yml.
 concurrency:
   group: release
   cancel-in-progress: false
@@ -54,7 +34,6 @@ jobs:
         with:
           persist-credentials: false
 
-      # Marketplace releases require MAJOR.MINOR.PATCH without a prerelease suffix.
       - name: Check the version
         run: |
           fail() { echo "::error::$1"; exit 1; }
@@ -86,8 +65,6 @@ jobs:
           IFS=. read -r major minor patch <<<"$VERSION"
           next="$major.$minor.$((patch + 1))-dev"
           ci/set-version.py "$next"
-          # ci.yml knows this commit by its author and subject, and builds
-          # it without running the tests again.
           git commit --quiet -am "Start development on $next"
           git branch dev
 
@@ -117,8 +94,8 @@ jobs:
     timeout-minutes: 15
     environment: release
     permissions:
-      contents: write # Push commits and create releases.
-      id-token: write # Marketplace and Open VSX trusted publishing.
+      contents: write
+      id-token: write
     env:
       VERSION: ${{ inputs.version }}
     steps:
@@ -130,7 +107,6 @@ jobs:
         with:
           node-version: 24
 
-      # Fail on tool installation before pushing release refs.
       - name: Install vsce and ovsx
         run: npm ci --prefix ci/vsce --ignore-scripts --no-audit --no-fund
 
@@ -174,7 +150,6 @@ jobs:
         run: |
           git fetch --no-tags "$RUNNER_TEMP/release.bundle" "refs/tags/v$VERSION:refs/tags/v$VERSION" refs/heads/dev:refs/heads/dev
           git log --oneline -3 dev
-          # On retry, skip this run's completed push even if master has advanced.
           if [ "$(git ls-remote --tags origin "refs/tags/v$VERSION" | cut -f 1)" = "$(git rev-parse "refs/tags/v$VERSION")" ]; then
             echo "Tag v$VERSION already pushed"
           else

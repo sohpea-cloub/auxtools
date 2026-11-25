@@ -1,5 +1,3 @@
-// Prints dmasm's compile_expr output for each line of stdin. For comparing
-// compiler output across changes.
 use std::io::BufRead;
 
 fn main() {

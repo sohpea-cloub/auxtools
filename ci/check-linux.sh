@@ -1,14 +1,9 @@
 #!/bin/sh
-# Check 32-bit Linux runtime requirements against Ubuntu 22.04:
-# glibc <= 2.35, libstdc++ <= 12, and an explicit shared-library allowlist.
-#
-#     ci/check-linux.sh FILE...
 set -eu
 GLIBC=2.35
 GLIBCXX=3.4.30
 LIBRARIES="libc.so.6 libm.so.6 libgcc_s.so.1 libstdc++.so.6 ld-linux.so.2 libdl.so.2 libpthread.so.0 librt.so.1"
 
-# The newest version of a library's symbols ($2: GLIBC, GLIBCXX) $1 uses
 newest() {
 	objdump -T "$1" | grep -o "${2}_[0-9][0-9.]*" | cut -d _ -f 2 | sort -uV | tail -n 1
 }

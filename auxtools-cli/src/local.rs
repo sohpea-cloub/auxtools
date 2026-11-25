@@ -1,7 +1,3 @@
-//! Connect to worlds over local sockets (named pipes on Windows).
-//! Endpoints are identified by process ID. Reboot disconnects clients; new
-//! connections wait for the next world to finish loading.
-
 use std::{
 	io::{self, Read, Write},
 	path::{Path, PathBuf},
@@ -17,20 +13,17 @@ use interprocess::{
 
 use crate::server_types::{world_socket_name, world_socket_name_for, Request, Response, PROTOCOL_VERSION};
 
-/// The name a world's process listens on
 pub fn world_name(pid: u32) -> String {
 	world_socket_name(pid)
 }
 
 fn connect_to(name: String) -> io::Result<Stream> {
-	// Avoid waiting indefinitely for a named pipe instance during shutdown.
 	ConnectOptions::new()
 		.name(name.to_ns_name::<GenericNamespaced>()?)
 		.wait_mode(ConnectWaitMode::Timeout(Duration::from_secs(1)))
 		.connect_sync()
 }
 
-/// Connect to the world in `pid`. Report incompatible protocol versions.
 pub fn connect(pid: u32) -> io::Result<Stream> {
 	connect_to(world_name(pid)).map_err(|e| match other_protocol(pid) {
 		Some(theirs) => io::Error::other(format!(
@@ -42,17 +35,14 @@ pub fn connect(pid: u32) -> io::Result<Stream> {
 	})
 }
 
-/// How far past this version to look for a newer debug library
 const NEWER_PROTOCOLS: u32 = 16;
 
-/// Find an incompatible endpoint's protocol version without sending messages.
 pub fn other_protocol(pid: u32) -> Option<u32> {
 	(1..=PROTOCOL_VERSION + NEWER_PROTOCOLS)
 		.filter(|version| *version != PROTOCOL_VERSION)
 		.find(|version| connect_to(world_socket_name_for(*version, pid)).is_ok())
 }
 
-/// Connection supporting reads and writes on separate threads.
 #[derive(Clone)]
 pub struct Shared(Arc<Stream>);
 
@@ -78,7 +68,6 @@ impl Write for Shared {
 	}
 }
 
-/// Send a message to the debug server, or from a test server to a client.
 pub fn send(stream: &mut impl Write, message: &impl serde::Serialize) -> io::Result<()> {
 	let data = bincode::serialize(message).map_err(io::Error::other)?;
 	stream.write_all(&(data.len() as u32).to_le_bytes())?;
@@ -86,9 +75,7 @@ pub fn send(stream: &mut impl Write, message: &impl serde::Serialize) -> io::Res
 	stream.flush()
 }
 
-/// Reads a message from the debug server
 pub fn receive(stream: &mut impl Read) -> io::Result<Response> {
-	// The debug server limits requests to this, and nothing it sends is bigger
 	const MAX_MESSAGE_LEN: u32 = 256 * 1024 * 1024;
 
 	let mut len = [0u8; 4];
@@ -102,43 +89,26 @@ pub fn receive(stream: &mut impl Read) -> io::Result<Response> {
 	bincode::deserialize(&data).map_err(io::Error::other)
 }
 
-/// A world that can be attached to
 #[derive(Debug, serde::Serialize)]
 pub struct World {
 	pub pid: u32,
-	/// Its program's file name
 	pub program: String,
-	/// The world it runs, from its command line
 	pub dmb: Option<PathBuf>,
 	pub args: Vec<String>,
 	pub cwd: String,
-	/// The version of the protocol its debug library speaks
 	pub protocol: u32,
-	/// Whether the protocol matches. Incompatible worlds cannot be queried
-	/// or attached to.
 	pub compatible: bool,
-	/// Whether the world answered within [`PROBE_PATIENCE`]. `None` for
-	/// incompatible worlds, which are not queried.
 	pub responsive: Option<bool>,
-	/// Debugger initialization failure, if any. The world remains running
-	/// and supports only stop requests.
 	pub unavailable: Option<String>
 }
 
-/// Response to a query for world information.
 enum Probed {
-	/// Command line and working directory.
 	Info(Vec<String>, String),
-	/// Debugger initialization failure.
 	Unavailable(String)
 }
 
-/// How long to wait for all world probes.
 pub const PROBE_PATIENCE: Duration = Duration::from_secs(5);
 
-/// Query BYOND processes concurrently. Keep unresponsive worlds in the list
-/// with their world details unknown.
-/// List incompatible endpoints without sending protocol messages.
 pub fn worlds() -> Vec<World> {
 	let probes: Vec<_> = server_processes()
 		.into_iter()
@@ -178,18 +148,13 @@ pub fn worlds() -> Vec<World> {
 					unavailable: Some(why),
 					..unknown(PROTOCOL_VERSION, true, Some(true))
 				}),
-				// The debugger accepts connections but did not answer.
 				Some(Err(_)) => Some(unknown(PROTOCOL_VERSION, true, Some(false))),
-				// Check for an incompatible endpoint after a failed connection
-				// or query.
 				Some(Ok(Err(_))) | None => other_protocol(pid).map(|protocol| unknown(protocol, false, None))
 			}
 		})
 		.collect()
 }
 
-/// Query world details on a worker thread. The world handles requests
-/// between DM instructions, so a stalled world may never answer.
 fn probe(stream: Stream) -> std::sync::mpsc::Receiver<io::Result<Probed>> {
 	let (sender, receiver) = std::sync::mpsc::channel();
 	std::thread::spawn(move || {
@@ -211,13 +176,11 @@ fn probe(stream: Stream) -> std::sync::mpsc::Receiver<io::Result<Probed>> {
 	receiver
 }
 
-/// The .dmb a BYOND program's command line runs
 pub fn world_dmb(args: &[String], cwd: &str) -> Option<PathBuf> {
 	let dmb = args.iter().skip(1).find(|arg| arg.to_ascii_lowercase().ends_with(".dmb"))?;
 	Some(Path::new(cwd).join(dmb))
 }
 
-/// The processes that might be BYOND servers, by id, with their program's name
 #[cfg(unix)]
 fn server_processes() -> Vec<(u32, String)> {
 	let Ok(entries) = std::fs::read_dir("/proc") else {
@@ -261,15 +224,11 @@ fn server_processes() -> Vec<(u32, String)> {
 	found
 }
 
-/// Whether process `pid` is still running
 #[cfg(unix)]
 pub fn alive(pid: u32) -> bool {
-	// Signal 0 only checks
 	if unsafe { libc::kill(pid as i32, 0) } != 0 {
 		return false;
 	}
-	// Signal 0 also succeeds for zombies. Check the process state in
-	// `stat`, since only our own children are reliably reaped.
 	let zombie = std::fs::read_to_string(format!("/proc/{}/stat", pid))
 		.ok()
 		.and_then(|stat| Some(stat.rsplit_once(") ")?.1.starts_with('Z')));
@@ -294,7 +253,6 @@ pub fn alive(pid: u32) -> bool {
 	}
 }
 
-/// Ends process `pid`
 pub fn kill(pid: u32) {
 	#[cfg(unix)]
 	unsafe {

@@ -1,15 +1,3 @@
-//! Debugs a small world through the launcher, in the Debug Adapter Protocol,
-//! and checks what a client sees of each thing the debugger does: breakpoints,
-//! stepping, pausing, stack frames, variables, expressions, runtime errors,
-//! several sessions at once, reboots, and all of it while the code is hot
-//! reloaded.
-//!
-//! Build the launcher and the debug library first:
-//! `cargo build -p auxtools-cli -p debug_server -p dap_test`, then run this
-//! from the repository's root with `BYOND_PATH` set. Arguments name the groups
-//! to run (see `GROUPS`); none runs them all. `LAUNCHER_TEST_SERVER` and
-//! `LAUNCHER_TEST_ARGS` are `launcher_test`'s.
-
 #[allow(dead_code)]
 mod client;
 mod groups;
@@ -27,7 +15,6 @@ use paths::ByondCommand;
 
 static CHECKS: AtomicUsize = AtomicUsize::new(0);
 
-/// One thing checked
 pub fn ok(what: &str) {
 	CHECKS.fetch_add(1, Ordering::Relaxed);
 	println!("ok: {}", what);
@@ -74,11 +61,8 @@ fn main() {
 		);
 	}
 
-	// The launcher looks for edited files this often, in milliseconds, in
-	// place of twice a second: the tests wait for every reload
 	std::env::set_var("AUXTOOLS_WATCH_INTERVAL", "50");
 
-	// Left behind by a run that failed
 	let _ = std::fs::remove_file(world::host_file("fail_early"));
 	let res = Command::new(paths::find_dm())
 		.with_byond_paths()

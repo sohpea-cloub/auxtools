@@ -1,18 +1,12 @@
-//! Start profiling or return an HTML report through `auxtoolsProfile`.
-
 use super::*;
 use crate::profile;
 
-/// Arguments for `auxtoolsProfile`
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct ProfileArguments {
-	/// `start` or `stop`
 	action: String,
-	/// Procs to measure, as `/PATH[#N]`. Every proc if there are none.
 	#[serde(default)]
 	procs: Vec<String>,
-	/// Number of procs to include with instruction listings, by self time.
 	#[serde(default = "listed")]
 	top: usize
 }

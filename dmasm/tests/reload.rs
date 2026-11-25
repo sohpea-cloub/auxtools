@@ -1,5 +1,3 @@
-//! Source snapshot comparison and incremental reload tests.
-
 use std::collections::HashSet;
 use std::path::PathBuf;
 
@@ -9,7 +7,6 @@ use dmasm::reload::{
 };
 use dmasm::{Instruction, Node};
 
-/// A codebase in a temporary directory: `world.dme` including `code.dm`.
 struct World {
     dir: PathBuf,
 }
@@ -41,12 +38,10 @@ impl Drop for World {
     }
 }
 
-/// `changes`, for where a test has a binding of that name.
 fn changes_of(name: &str, before: &str, after: &str) -> Changes {
     changes(name, before, after)
 }
 
-/// The changes from `before` to `after`, with code.dm as the edited file.
 fn changes(name: &str, before: &str, after: &str) -> Changes {
     let world = World::new(name, before);
     let old = world.parse();
@@ -85,7 +80,6 @@ fn a_changed_body_is_compiled() {
     assert!(changes.line_moves.is_empty());
     let reload = &changes.reloads[0];
     assert_eq!(reload.locals, ["x"]);
-    // With debug info, named by the file's path from the .dme
     assert_eq!(
         reload.nodes.first(),
         Some(&Node::Instruction(
@@ -95,8 +89,6 @@ fn a_changed_body_is_compiled() {
     );
 }
 
-/// Nested .dme includes can use non-project-relative debug names,
-/// e.g. _std/tgs.dm becomes tgs.dm.
 #[test]
 fn files_of_an_included_environment_are_named_as_it_names_them() {
     let world = World::new("names", "/proc/a()\n\treturn 1\n");
@@ -130,10 +122,8 @@ fn files_of_an_included_environment_are_named_as_it_names_them() {
     assert_eq!(file_of(&old, "/a"), "code/code.dm");
     assert_eq!(file_of(&old, "/b"), "std.dm");
     assert_eq!(file_of(&old, "/c"), "sub/more.dm");
-    // Diagnostic source paths remain project-relative.
     assert_eq!(old.proc_file(&key("/b", 0)).as_deref(), Some("lib/std.dm"));
 
-    // Reloaded bytecode retains the original debug source name.
     std::fs::write(dir.join("lib/std.dm"), "/proc/b()\n\treturn 4\n").unwrap();
     let changes = diff(&old, &world.parse(), None);
     assert_eq!(reloaded(&changes), [key("/b", 0)]);
@@ -148,7 +138,6 @@ fn files_of_an_included_environment_are_named_as_it_names_them() {
 
 #[test]
 fn a_file_included_earlier_moves_no_defaults() {
-    // An earlier include changes file IDs, not default locations.
     let world = World::new(
         "renumbered",
         "/obj/thing\n\tname = \"thing\"\n\n/proc/a()\n\treturn /obj/thing::name\n",
@@ -216,7 +205,6 @@ fn a_const_change_recompiles_its_users() {
     let changes = changes("const", before, &after);
     assert!(changes.refused.is_empty(), "{:?}", changes.refused);
     assert_eq!(changes.consts, ["LIMIT", "SIZE"]);
-    // Both are globals, set to their new values now
     let set: Vec<(&str, &str, Option<ConstValue>)> = changes
         .redeclared
         .iter()
@@ -229,10 +217,7 @@ fn a_const_change_recompiles_its_users() {
             ("/datum/thing", "SIZE", Some(ConstValue::Number(5.0)))
         ]
     );
-    // d names SIZE only in a string, so its code is the same
     assert_eq!(reloaded(&changes), [key("/datum/thing/c", 0)]);
-    // Recompiled procs already have current debug lines; do not also
-    // apply a line-only update that would restore old bytecode.
     let changes = changes_of(
         "const-moved",
         before,
@@ -244,7 +229,6 @@ fn a_const_change_recompiles_its_users() {
         moved,
         [key("/a", 0), key("/b", 0), key("/datum/thing/d", 0)]
     );
-    // (no "only after a restart" warning for a const)
     assert!(changes.warnings.is_empty(), "{:?}", changes.warnings);
 }
 
@@ -269,7 +253,6 @@ fn a_new_const_is_a_global() {
         .map(|v| (v.type_path.as_str(), v.var.as_str(), v.flags))
         .collect();
     assert_eq!(new, [("/datum/other", "J", 3), ("/datum/thing", "K", 3)]);
-    // not a default in the types' var tables
     assert!(
         changes.var_defaults.is_empty(),
         "{:?}",
@@ -284,7 +267,6 @@ fn a_var_declared_with_another_type_recompiles_its_users() {
     let changes = changes("retyped", before, &after);
     assert!(changes.refused.is_empty(), "{:?}", changes.refused);
     assert_eq!(changes.retyped, ["items"]);
-    // Whatever count compiles to now, other is left alone
     assert!(!reloaded(&changes).contains(&key("/datum/holder/other", 0)));
 }
 
@@ -300,8 +282,6 @@ fn vars_declared_another_way() {
             .collect()
     };
 
-    // Converting to static moves the value into a global slot and
-    // recompiles reads to use it.
     let changes = changes_of(
         "to-static",
         base,
@@ -325,7 +305,6 @@ fn vars_declared_another_way() {
     );
     assert_eq!(reloaded(&changes), [key("/datum/a/g", 0), key("/f", 0)]);
 
-    // Converting back restores per-type defaults, including subtype overrides.
     let before = base.replace("var/x = 1", "var/static/x = 1");
     let after = base.replace("/datum/a/b\n", "/datum/a/b\n\tx = 5\n");
     let changes = changes_of("from-static", &before, &after);
@@ -347,7 +326,6 @@ fn vars_declared_another_way() {
         ]
     );
 
-    // tmp changes flags only; existing static values are preserved.
     let changes = changes_of("to-tmp", base, &base.replace("var/x = 1", "var/tmp/x = 1"));
     assert_eq!(redeclared(&changes), [("x".to_owned(), 4, None)]);
     assert!(reloaded(&changes).is_empty());
@@ -358,7 +336,6 @@ fn vars_declared_another_way() {
     );
     assert_eq!(redeclared(&changes), [("x".to_owned(), 5, None)]);
 
-    // `as` is only for compiling
     let changes = changes_of("as", base, &base.replace("var/x = 1", "var/x = 1 as num"));
     assert!(redeclared(&changes).is_empty());
 }
@@ -412,7 +389,6 @@ fn refusal(name: &str, before: &str, after: &str) -> String {
     shown(&changes.refused).join("\n")
 }
 
-/// Display refusals as text.
 fn shown(refused: &[Refusal]) -> Vec<String> {
     refused.iter().map(Refusal::to_string).collect()
 }
@@ -495,13 +471,11 @@ fn builtin_var_defaults() {
                 all.clone()
             ),
             ("pixel_x".to_owned(), ConstValue::Number(5.0), both),
-            // (text is the first letter of the name, where it isn't set)
             ("text".to_owned(), ConstValue::String("b".to_owned()), all),
         ]
     );
     assert!(changes.var_defaults.is_empty());
 
-    // Ones a reload can't set
     let refused = refusal("builtin-mob", "/mob/a\n", "/mob/a\n\tckey = \"someone\"\n");
     assert!(refused.contains("built-in default"), "{}", refused);
 }
@@ -576,7 +550,6 @@ fn removed_procs_and_vars_stay() {
 
 #[test]
 fn a_removed_var_a_subtype_overrode_stays() {
-    // The subtype's override goes with the var: nothing to set there
     let before = "/datum/thing\n\tvar/a = 1\n/datum/thing/sub\n\ta = 2\n";
     let after = "/datum/thing\n/datum/thing/sub\n";
     let changes = changes("removed-override", before, after);
@@ -620,7 +593,6 @@ fn removed_overrides_are_unlinked() {
     assert!(changes.refused.is_empty(), "{:?}", changes.refused);
     assert_eq!(changes.removed_procs.len(), 2);
 
-    // Remove an earlier definition and renumber the remaining overrides.
     let changes = changes_of(
         "removed-first",
         before,
@@ -635,7 +607,6 @@ fn removed_overrides_are_unlinked() {
     assert_eq!(removed, [key("/datum/a/b/f", 0)]);
     assert!(reloaded(&changes).is_empty(), "{:?}", reloaded(&changes));
 
-    // A global proc's definitions are only taken out of the numbering
     let changes = changes_of(
         "removed-global",
         before,
@@ -658,8 +629,6 @@ fn definitions_come_among_the_others() {
     let before =
         "/datum/a/proc/f()\n\treturn 1\n/datum/a/f()\n\treturn 2\n/datum/a/f()\n\treturn 3\n";
 
-    // Insert a definition between existing ones. Requests still identify
-    // existing procs by their old runtime indexes.
     let after = before.replace(
         "/datum/a/f()\n\treturn 2\n",
         "/datum/a/f()\n\treturn 9\n/datum/a/f()\n\treturn 2\n",
@@ -677,7 +646,6 @@ fn definitions_come_among_the_others() {
     let moved: Vec<ProcKey> = changes.line_moves.iter().map(|m| m.proc.clone()).collect();
     assert_eq!(moved, [key("/datum/a/f", 1), key("/datum/a/f", 2)]);
 
-    // With a change to one after it, which the world knows by its old number
     let changes = changes_of(
         "inserted-and-changed",
         before,
@@ -692,8 +660,6 @@ fn definitions_come_among_the_others() {
     assert_eq!(added, [key("/datum/a/f", 1)]);
     assert_eq!(reloaded(&changes), [key("/datum/a/f", 2)]);
 
-    // Alignment prefers changing later definitions and appending one
-    // over deleting and recreating several entries.
     let after = before.replace("/datum/a/f()\n\treturn 2\n", "").replace(
         "/datum/a/f()\n\treturn 3\n",
         "/datum/a/f()\n\treturn 3\n/datum/a/f()\n\treturn 5\n/datum/a/f()\n\treturn 6\n",
@@ -977,7 +943,6 @@ fn another_definition_of_a_global_proc_is_a_proc_of_its_own() {
         .map(|p| (p.code.proc.clone(), p.type_path.as_str(), p.declared))
         .collect();
     assert_eq!(added, [(key("/g", 1), "", false)]);
-    // DreamMaker's calls go to the first definition
     assert!(
         changes.warnings.iter().any(|w| w.contains("unreachable")),
         "{:?}",
@@ -987,7 +952,6 @@ fn another_definition_of_a_global_proc_is_a_proc_of_its_own() {
 
 #[test]
 fn in_lists_are_the_words_dreammaker_writes() {
-    // What DreamMaker 516.1688 wrote for each
     let cases = [
         ("mob/a in view()", Some(0x7D01)),
         ("mob/a in view(3)", Some(0x0301)),
@@ -1037,7 +1001,6 @@ fn in_list_expressions_are_kept_or_compiled() {
     assert!(changes.refused.is_empty(), "{:?}", changes.refused);
     assert_eq!(changes.reloads[0].params[0].in_list, InList::Kept);
 
-    // A new one is compiled into a proc that returns the list, on the type
     let changes = changes_of(
         "in-list-changed",
         before,
@@ -1060,7 +1023,6 @@ fn in_list_expressions_are_kept_or_compiled() {
         "{}",
         dmasm::format(&code.nodes)
     );
-    // With its file and line, as DreamMaker gives a DEBUG build's
     let text = dmasm::format(&code.nodes);
     assert!(
         text.starts_with("DbgFile") && text.contains("DbgLine 3"),
@@ -1085,7 +1047,6 @@ fn defaults_that_arent_constants_change_the_init_procs() {
     assert!(first.init_procs.iter().all(|i| i.code.is_some()));
     assert!(first.var_defaults.is_empty());
 
-    // A new var whose default isn't a constant, and one that becomes a constant
     let after = before
         .replace("\tvar/n = 2\n", "\tvar/n = 2\n\tvar/list/k = list(\"k\")\n")
         .replace("l = list(3)", "l = null");
@@ -1105,7 +1066,6 @@ fn defaults_that_arent_constants_change_the_init_procs() {
     );
     assert_eq!(second.var_defaults.len(), 1, "{:?}", second.var_defaults);
     assert_eq!(second.var_defaults[0].types, ["/datum/a/c"]);
-    // New computed variables have null initial() values; report the limitation.
     assert!(
         second
             .warnings
@@ -1243,7 +1203,6 @@ fn globals_and_statics_that_arent_constants_come_with_code_to_run_once() {
 
 #[test]
 fn verb_settings_are_the_words_dreammaker_writes() {
-    // (code, flags, packed word) as DreamMaker 516.1688 wrote them
     let cases: &[(&str, u32, u32)] = &[
         ("", 0x4, 0xFF),
         ("set src = usr", 0x6, 0x20FF),
@@ -1333,8 +1292,6 @@ fn settings_come_from_the_declaration() {
     let snapshot = world.parse();
     let settings = |path: &str| snapshot.settings(&key(path, 0)).unwrap();
     assert_eq!(settings("/mob/a").name.as_deref(), Some("A \"verb\""));
-    // Overrides inherit declaration settings plus their own settings.
-    // They do not pass their settings to subsequent overrides.
     let sub = settings("/mob/sub/a");
     assert_eq!(
         (
@@ -1348,7 +1305,6 @@ fn settings_come_from_the_declaration() {
     let subsub = settings("/mob/sub/sub/a");
     assert_eq!((subsub.waitfor, subsub.background), (false, false));
 
-    // Changing the declaration updates override settings without replacing code.
     let changes = changes(
         "settings-inherited",
         &code("set waitfor = 0"),
@@ -1371,7 +1327,6 @@ fn settings_come_from_the_declaration() {
         ]
     );
 
-    // Body-only changes preserve settings.
     let changes = changes_of(
         "settings-inherited",
         &code(""),
@@ -1389,7 +1344,6 @@ fn one_file_parsed_again_on_its_own() {
     let edited: HashSet<PathBuf> = vec![PathBuf::from("code/code.dm")].into_iter().collect();
     let mut old = world.parse();
 
-    // Incremental and full parses must produce the same changes.
     let after = before.replace("\treturn TWO\n", "\tvar/y = TWO\n\treturn y\n");
     world.write(&after);
     let reload = old.reload_file(&world.dir, file).unwrap();
@@ -1405,7 +1359,6 @@ fn one_file_parsed_again_on_its_own() {
     assert_eq!(reload.changes.line_moves[0].proc, key("/datum/a/g", 0));
     old.keep(reload);
 
-    // The next edit is to the code as it was kept
     let again = after.replace("return 3", "return 4");
     world.write(&again);
     let reload = old.reload_file(&world.dir, file).unwrap();
@@ -1413,7 +1366,6 @@ fn one_file_parsed_again_on_its_own() {
     assert!(reload.changes.line_moves.is_empty());
     old.keep(reload);
 
-    // Non-body changes require a full project parse.
     for (name, code, why) in [
         ("var", again.replace("var/x = 1", "var/x = 2"), "vars"),
         (
@@ -1438,7 +1390,6 @@ fn one_file_parsed_again_on_its_own() {
             again.replace("\treturn 4", "\tset waitfor = FALSE\n\treturn 4"),
             "`set`s",
         ),
-        // Static initializers require the full diff.
         (
             "static",
             again.replace("\treturn 4", "\tvar/static/s = 1\n\treturn 4"),
@@ -1455,7 +1406,6 @@ fn one_file_parsed_again_on_its_own() {
 
 #[test]
 fn a_changed_default_recompiles_type_scope_users() {
-    // `/datum/thing::size` is the default, compiled into the code
     let before = "/datum/thing\n\tvar/size = 2\n/datum/thing/big\n/proc/a()\n\treturn /datum/thing/big::size\n/proc/b()\n\treturn 2\n";
     let after = before.replace("/datum/thing/big\n", "/datum/thing/big\n\tsize = 9\n");
     let changes = changes("type-scope-default", before, &after);
@@ -1476,13 +1426,11 @@ fn a_new_parent_type_is_a_reparent_and_nothing_else() {
         "{:?}",
         changes
     );
-    // (parent_type is a built-in const, not a global to set)
     assert!(changes.redeclared.is_empty(), "{:?}", changes.redeclared);
 }
 
 #[test]
 fn a_new_parent_type_recompiles_other_procs_that_hold_what_it_inherits() {
-    // Reparenting changes embedded constants in otherwise unchanged /mob procs.
     let before = "/datum/a\n\tvar/size = 1\n\tvar/const/limit = 3\n\
                   /datum/b\n\tvar/size = 2\n\tvar/const/limit = 7\n\
                   /datum/a/c\n\
@@ -1531,8 +1479,6 @@ fn a_removed_name_goes_back_to_each_types_own() {
     );
 }
 
-/// The changes when types.dm goes from `before` to `after`, code.dm (which
-/// includes it) being `code`; only types.dm counts as edited.
 fn types_changes(name: &str, code: &str, before: &str, after: &str) -> Changes {
     let world = World::new(name, &format!("{code}#include \"types.dm\"\n"));
     std::fs::write(world.dir.join("code/types.dm"), before).unwrap();
@@ -1545,7 +1491,6 @@ fn types_changes(name: &str, code: &str, before: &str, after: &str) -> Changes {
 
 #[test]
 fn a_type_scope_default_that_moves_moves_its_users_lines() {
-    // Moving a default updates :: users in files that were not edited.
     let code = "\n\n\n/proc/f()\n\treturn /datum/u::x\n";
     let changes = types_changes(
         "moved-default",
@@ -1561,8 +1506,6 @@ fn a_type_scope_default_that_moves_moves_its_users_lines() {
 
 #[test]
 fn a_type_scope_default_whose_lines_clash_is_compiled_again() {
-    // The proc and default share a line number in different files.
-    // A single line-number mapping cannot update just one; recompile.
     let changes = types_changes(
         "clashing-default",
         "/proc/f()\n\treturn /datum/u::x\n",
@@ -1575,7 +1518,6 @@ fn a_type_scope_default_whose_lines_clash_is_compiled_again() {
 
 #[test]
 fn a_type_scope_default_moved_to_another_file_is_compiled_again() {
-    // Its debug info names the file the default is in now
     let world = World::new(
         "default-to-code",
         "#include \"types.dm\"\n/proc/f()\n\treturn /datum/u::x\n",
@@ -1591,8 +1533,6 @@ fn a_type_scope_default_moved_to_another_file_is_compiled_again() {
 
 #[test]
 fn a_moved_default_read_with_scope_needs_the_full_read() {
-    // A moved default referenced through :: requires a full parse
-    // to update dependent debug locations.
     let world = World::new(
         "moved-default-one-file",
         "/proc/g()\n\treturn 1\n/datum/u\n\tvar/x = 3\n/datum/w\n\tvar/name = \"w\"\n/proc/f()\n\treturn /datum/u::x\n",
@@ -1607,7 +1547,6 @@ fn a_moved_default_read_with_scope_needs_the_full_read() {
             "{e}"
         ),
     }
-    // An unreferenced moved default can use the single-file path.
     let world = World::new(
         "moved-unread-default",
         "/proc/g()\n\treturn 1\n/datum/w\n\tvar/name = \"w\"\n/proc/f(obj/o)\n\treturn o::name\n",
@@ -1620,7 +1559,6 @@ fn a_moved_default_read_with_scope_needs_the_full_read() {
 
 #[test]
 fn a_constant_beyond_32_bits_at_a_bit_operator_is_warned_about() {
-    // Warn for the intentional difference in out-of-range bit conversion.
     let changes = changes(
         "big-bits",
         "/proc/f(x)\n\treturn x\n",
@@ -1645,7 +1583,6 @@ fn a_constant_beyond_32_bits_at_a_bit_operator_is_warned_about() {
 
 #[test]
 fn a_static_local_s_initializer_names_its_own_proc() {
-    // Static initializers such as tgstation verb registration use the containing proc's `__PROC__`.
     let before = "/datum/a\n/datum/a/proc/f()\n\treturn 1\n";
     let after = "/proc/reg(p)\n\treturn p\n/datum/a\n/datum/a/proc/f()\n\tvar/static/r = reg(__PROC__)\n\treturn 1\n";
     let changes = changes("static-proc", before, after);
@@ -1674,7 +1611,6 @@ fn a_static_local_s_initializer_names_its_own_proc() {
 #[test]
 fn what_dreammaker_refuses_to_build_is_refused() {
     let before = "var/x = 1\n/datum/a\n/datum/a/b\n/datum/c\n\tvar/list/l = list(1)\n";
-    // Reject conflicting declarations on a type and its subtype.
     for (name, after) in [(
         "dup-down",
         before
@@ -1691,7 +1627,6 @@ fn what_dreammaker_refuses_to_build_is_refused() {
             changes.refused
         );
     }
-    // Follow parent types rather than path prefixes: /obj inherits from /atom/movable.
     let obj = "/obj/item\n\tvar/foo = 1\n";
     let refused = changes(
         "dup-parents",
@@ -1706,14 +1641,12 @@ fn what_dreammaker_refuses_to_build_is_refused() {
         "{:?}",
         refused
     );
-    // Globals may share a name with type vars.
     let changes_ok = changes(
         "dup-global",
         before,
         &before.replace("/datum/a\n", "/datum/a\n\tvar/x = 2\n"),
     );
     assert!(changes_ok.refused.is_empty(), "{:?}", changes_ok.refused);
-    // Reject non-constant values in new consts and vars changed to const.
     let new_const = before.replace("/datum/a\n", "/datum/a\n\tvar/const/list/k = list(1, 2)\n");
     let refused = changes("const-new", before, &new_const).refused;
     assert!(
@@ -1732,7 +1665,6 @@ fn what_dreammaker_refuses_to_build_is_refused() {
         "{:?}",
         refused
     );
-    // Reject non-constant replacements for existing const values.
     let had_const = "var/const/g = 1\n/datum/a\n\tvar/const/k = 1\n";
     for (name, after) in [
         ("const-list", had_const.replace("k = 1", "k = list(1, 2)")),
@@ -1750,7 +1682,6 @@ fn what_dreammaker_refuses_to_build_is_refused() {
             refused
         );
     }
-    // Allow constant replacements and expressions using other consts.
     let had_const = format!("{had_const}\tvar/const/k2 = k + 1\n");
     for after in [
         had_const.replace("k = 1", "k = 2"),
@@ -1760,7 +1691,6 @@ fn what_dreammaker_refuses_to_build_is_refused() {
         let refused = changes("const-other", &had_const, &after).refused;
         assert!(refused.is_empty(), "{:?}", refused);
     }
-    // Constructors are invalid const values, but valid for non-const vars.
     for value in [
         "matrix()",
         "icon('x.dmi')",
@@ -1794,7 +1724,6 @@ fn what_dreammaker_refuses_to_build_is_refused() {
             changes_ok.refused
         );
     }
-    // Numbers, text and paths are valid constants.
     let fine = before.replace(
         "/datum/a\n",
         "/datum/a\n\tvar/const/n = 1 << 3\n\tvar/const/t = \"text\"\n\tvar/const/p = /datum/c\n",
@@ -1806,7 +1735,6 @@ fn what_dreammaker_refuses_to_build_is_refused() {
 #[test]
 fn consts_dreammaker_folds_are_taken_and_those_it_refuses_warned_about() {
     let before = "var/const/gconst = 3\n/datum/a\n/datum/c\n\tvar/const/c1 = 1\n";
-    // Accept constants DreamMaker folds beyond SpacemanDMM's evaluator.
     for value in [
         "sqrt(4)",
         "round(1.5)",
@@ -1824,14 +1752,12 @@ fn consts_dreammaker_folds_are_taken_and_those_it_refuses_warned_about() {
         let got = changes("const-folded", before, &after);
         assert!(got.refused.is_empty(), "{value}: {:?}", got.refused);
     }
-    // Non-const vars may use recovered consts.
     let after = before.replace(
         "/datum/a\n",
         "/datum/a\n\tvar/const/k = sqrt(16)\n\tvar/y = k + 1\n",
     );
     let got = changes("const-used", before, &after);
     assert!(got.refused.is_empty(), "{:?}", got.refused);
-    // Check the folded values against DreamMaker.
     let world = World::new(
         "const-values",
         &before.replace(
@@ -1855,14 +1781,12 @@ fn consts_dreammaker_folds_are_taken_and_those_it_refuses_warned_about() {
         Some("\"9dd4e461268c8034f5c8564e155c67a6\"")
     );
     assert_eq!(value("i").as_deref(), Some("1"));
-    // Resolve chains of const dependencies.
     let after = before.replace(
         "/datum/a\n",
         "/datum/a\n\tvar/const/k = sqrt(16)\n\tvar/const/k2 = k + 1\n",
     );
     let got = changes("const-chain", before, &after);
     assert!(got.refused.is_empty(), "{:?}", got.refused);
-    // Warn when SpacemanDMM accepts an initializer DreamMaker rejects.
     for (value, why) in [
         ("type", "it reads type"),
         ("parent_type", "it reads parent_type"),
@@ -1884,7 +1808,6 @@ fn consts_dreammaker_folds_are_taken_and_those_it_refuses_warned_about() {
             got.warnings
         );
     }
-    // Do not warn for valid const initializers.
     let after = before.replace("/datum/a\n", "/datum/a\n\tvar/const/k = 1 + 2\n");
     let got = changes("const-plain", before, &after);
     assert!(
@@ -1894,7 +1817,6 @@ fn consts_dreammaker_folds_are_taken_and_those_it_refuses_warned_about() {
         "{:?}",
         got.warnings
     );
-    // Reject initializers neither evaluator can fold.
     let after = before.replace("/datum/a\n", "/datum/a\n\tvar/const/k = min(1, 2)\n");
     let got = changes("const-unfolded", before, &after);
     assert!(
@@ -1903,7 +1825,6 @@ fn consts_dreammaker_folds_are_taken_and_those_it_refuses_warned_about() {
     );
 }
 
-/// Use current source locations; alternate formatting omits them.
 #[test]
 fn refusals_are_placed_in_the_new_source() {
     let before =
@@ -1915,7 +1836,6 @@ fn refusals_are_placed_in_the_new_source() {
             .map(|r| (r.file.clone().unwrap_or_default(), r.line, format!("{r:#}")))
             .collect()
     };
-    // Use the compiler error's line, not the proc header.
     assert_eq!(
         placed(
             "placed-compile",
@@ -1927,7 +1847,6 @@ fn refusals_are_placed_in_the_new_source() {
             "/datum/a/f: doesn't compile: unsupported statement: switch case that isn't a simple constant".to_owned()
         )]
     );
-    // Use the parent_type assignment's location.
     assert_eq!(
         placed("placed-reparent", &before.replace("= /obj", "= /datum/b")),
         [(
@@ -1948,7 +1867,6 @@ fn a_var_declared_twice_on_one_type_is_refused_where_it_is() {
         shown(&refused),
         ["code/code.dm:5: parse error: duplicate definition of var/w"]
     );
-    // Locate a valueless declaration at the end of its source file, rather than in the .dme.
     let after = before.replace("/datum/t\n", "/datum/t\n\tvar/vars\n");
     let refused = changes("dup-builtin", before, &after).refused;
     assert_eq!(
@@ -1966,7 +1884,6 @@ fn a_var_declared_twice_on_one_type_is_refused_where_it_is() {
 
 #[test]
 fn an_error_mended_by_reading_its_file_again_is_gone() {
-    // A proc-body error hides no definitions; recovered consts are not parse errors.
     let broken =
         "/datum/a\n\tvar/const/k = sqrt(16)\n/datum/a/proc/f()\n\tvar/x = 1 +\n\treturn x\n";
     let world = World::new("mended", broken);
@@ -1981,7 +1898,6 @@ fn an_error_mended_by_reading_its_file_again_is_gone() {
         .unwrap();
     old.keep(reload);
     assert!(old.parse_errors().is_empty(), "{:?}", old.parse_errors());
-    // A repaired error must not block later additions.
     world.write(&format!(
         "{}/proc/g()\n\treturn 2\n",
         broken.replace("1 +", "1 + 2")
@@ -1992,9 +1908,6 @@ fn an_error_mended_by_reading_its_file_again_is_gone() {
 
 #[test]
 fn a_new_type_doesnt_keep_the_init_proc_its_parent_loses() {
-    // The runtime ancestor still has an init proc for `l`. A new subtype
-    // must not inherit it after `l` becomes static, or each instance would
-    // reset the static to list(1).
     let before = "/datum/a\n\tvar/list/l = list(1)\n/datum/a/b\n";
     let after = "/datum/a\n\tvar/static/list/l = list(1)\n/datum/a/b\n/datum/a/b/c\n";
     let reloaded = changes("new-type-init", before, after);
@@ -2014,7 +1927,6 @@ fn a_new_type_doesnt_keep_the_init_proc_its_parent_loses() {
         ]
     );
 
-    // No init proc is needed when none of the ancestors had one.
     let fresh = changes(
         "new-type-no-init",
         "/datum/a\n\tvar/x = 1\n",
@@ -2055,7 +1967,6 @@ fn a_built_in_a_type_stops_setting_comes_from_its_parent() {
 
 #[test]
 fn a_built_in_a_built_in_type_stops_setting_needs_a_rebuild() {
-    // The running parent lacks the mob's original built-in layer.
     let own = changes(
         "builtin-inherited-builtin-type",
         "/mob\n\tlayer = 9\n/mob/m\n",
@@ -2070,7 +1981,6 @@ fn a_built_in_a_built_in_type_stops_setting_needs_a_rebuild() {
         "{:?}",
         own.builtin_inherited
     );
-    // Removing a sound var-table entry restores BYOND's default.
     let table = changes(
         "builtin-inherited-var-table",
         "/sound\n\tpan = 10\n",
@@ -2092,7 +2002,6 @@ fn a_setting_back_as_built_waits_for_nothing() {
         deferred(&changes),
         ["/world: fps: changed setting (rebuild)"]
     );
-    // Saved back as built: the world has that value already
     world.write("/world\n\tfps = 10\n");
     let back = world.parse();
     let mut changes = diff(&changed, &back, Some(&edited));
@@ -2105,7 +2014,6 @@ fn a_setting_back_as_built_waits_for_nothing() {
     assert!(changes.restart_settings.is_empty());
 }
 
-/// The deferred changes, as `path: name: why (until)`
 fn deferred(changes: &Changes) -> Vec<String> {
     let mut shown: Vec<String> = changes
         .deferred
@@ -2133,7 +2041,6 @@ fn world_and_client_settings_apply_after_a_restart() {
         "{:?}",
         changes.builtin_defaults
     );
-    // An added setting replaces BYOND's built-in default.
     assert_eq!(
         deferred(&changes),
         [
@@ -2264,7 +2171,6 @@ fn a_parent_change_comes_with_its_subtree() {
             (
                 "/obj/t".to_owned(),
                 "/obj/b".to_owned(),
-                // No ancestor supplies the name; derive it from the path.
                 vec![(
                     "/obj/t".to_owned(),
                     s(&[]),
@@ -2281,7 +2187,6 @@ fn a_parent_change_comes_with_its_subtree() {
 fn parent_changes_a_reload_refuses() {
     let base = "/datum/a\n\tvar/x = 1\n/datum/a/proc/f()\n\treturn 1\n/datum/b\n/datum/t\n\tparent_type = /datum/a\n\tx = 2\n/datum/u\n\tparent_type = /datum/a\n\tvar/y = 1\n/datum/u/proc/g()\n\treturn 1\n/datum/b/var/y = 2\n/datum/b/proc/g()\n\treturn 2\n/obj/o\n\tparent_type = /obj\n";
     let cases = [
-        // overrides a var the new ancestors don't declare
         (
             "undeclared",
             base.replace(
@@ -2290,7 +2195,6 @@ fn parent_changes_a_reload_refuses() {
             ),
             "undefined var 'x'",
         ),
-        // declares what the new ancestors declare
         (
             "duplicate",
             base.replace(
@@ -2299,7 +2203,6 @@ fn parent_changes_a_reload_refuses() {
             ),
             "declares var y",
         ),
-        // an obj can't become a datum
         (
             "kind",
             base.replace(
@@ -2321,7 +2224,6 @@ fn parent_changes_a_reload_refuses() {
     }
 }
 
-/// The skin is the last `.dmf` included, `#if` respected, from the `.dme`'s directory.
 #[test]
 fn the_skin_is_the_last_interface_file_included() {
     let world = World::new("skin", "/proc/a()\n\treturn 1\n");
@@ -2343,7 +2245,6 @@ fn the_skin_is_the_last_interface_file_included() {
         .any(|file| file.extension() == Some("dmf".as_ref())));
 }
 
-/// Map paths respect conditional includes and are relative to the project.
 #[test]
 fn maps_are_the_map_files_included() {
     let world = World::new("maps", "/proc/a()\n\treturn 1\n");
@@ -2406,7 +2307,6 @@ fn a_resource_file_names_the_code_and_defaults_that_use_it() {
     );
     let snapshot = world.parse();
 
-    // Names match as DreamMaker resolves them, in any case
     let lamp = snapshot.resource_users(&["icons\\LAMP.dmi".to_owned()]);
     assert!(lamp.refused.is_empty(), "{:?}", lamp.refused);
     assert_eq!(reloaded(&lamp), vec![key("/states", 0)]);
@@ -2494,13 +2394,11 @@ fn a_declaration_moved_up_to_a_parent_is_taken() {
     let after = "/datum/hud\n\tvar/list/sue = null\n/datum/hud/human\n/datum/hud/robot\n\tsue = list(1)\n/datum/open/proc/upd()\n\treturn 0\n/datum/open/river/upd()\n\treturn ..() + 1\n";
     let changes = changes("moved-up", before, after);
     assert!(changes.refused.is_empty(), "{:?}", changes.refused);
-    // The parent's declaration is new; the subtypes keep theirs
     assert_eq!(changes.new_vars.len(), 1, "{:?}", changes.new_vars);
     assert_eq!(changes.new_vars[0].type_path, "/datum/hud");
     let mut moved_from = changes.new_vars[0].moved_from.clone();
     moved_from.sort();
     assert_eq!(moved_from, ["/datum/hud/human", "/datum/hud/robot"]);
-    // The retained tmp var takes the ancestor's new declaration flags.
     let redeclared: Vec<&str> = changes
         .redeclared
         .iter()
@@ -2515,7 +2413,6 @@ fn a_declaration_moved_up_to_a_parent_is_taken() {
         "{:?}",
         changes.warnings
     );
-    // The river's proc overrides the new one
     assert_eq!(changes.new_procs.len(), 1);
     assert_eq!(changes.new_procs[0].type_path, "/datum/open");
     assert!(changes
@@ -2523,14 +2420,12 @@ fn a_declaration_moved_up_to_a_parent_is_taken() {
         .iter()
         .any(|r| r.proc.path == "/datum/open/river/upd"));
 
-    // Static slots cannot be retained separately from the ancestor's.
     let refused = refusal(
         "moved-up-static",
         "/datum/a\n/datum/a/b\n\tvar/static/s = 1\n",
         "/datum/a\n\tvar/static/s = 1\n/datum/a/b\n",
     );
     assert!(refused.contains("as a static or const var"), "{}", refused);
-    // A formerly static var can move when the new declaration is nonstatic.
     let unstatic = changes_of(
         "moved-up-unstatic",
         "/datum/a\n/datum/a/b\n\tvar/static/s = 1\n",
@@ -2545,7 +2440,6 @@ fn a_declaration_moved_up_to_a_parent_is_taken() {
         ),
         ("/datum/a/b", 0)
     );
-    // Moving a proc declaration must not change it into a verb.
     let refused = refusal(
         "moved-up-verb",
         "/mob/a\n/mob/a/b/proc/v()\n\treturn 1\n",
@@ -2556,7 +2450,6 @@ fn a_declaration_moved_up_to_a_parent_is_taken() {
 
 #[test]
 fn a_moved_up_proc_that_names_itself_is_compiled_again() {
-    // `__PROC__` names an override without `/proc`
     let before = "/datum/a\n/datum/a/b/proc/f()\n\treturn __PROC__\n";
     let after = "/datum/a/proc/f()\n\treturn 0\n/datum/a/b/f()\n\treturn __PROC__\n";
     let changes = changes("moved-up-proc-name", before, after);
@@ -2574,7 +2467,6 @@ fn a_moved_up_proc_that_names_itself_is_compiled_again() {
     );
 }
 
-/// Assignments in a global init proc, in order, with source lines.
 fn global_init_sets(changes: &Changes) -> Vec<String> {
     let init = changes.global_init.as_ref().expect("no global init proc");
     let mut line = 0;
@@ -2595,7 +2487,6 @@ fn global_init_sets(changes: &Changes) -> Vec<String> {
     sets
 }
 
-/// Omitting initializers must preserve the count of var-table assignments.
 #[test]
 fn global_init_without_some_vars() {
     let before = "var/a = 5\nvar/b = a * 2\n/proc/f()\n\tvar/static/y = rand(1, 2)\n\treturn y\nvar/c = b + 1\n";
@@ -2612,7 +2503,6 @@ fn global_init_without_some_vars() {
     assert_eq!(changes.global_init.as_ref().unwrap().table, 0);
 }
 
-/// Count same-named proc statics to resolve runtime slots from their code.
 #[test]
 fn global_init_counts_a_procs_statics_of_a_name() {
     let before = "/proc/f()\n\tif (prob(50))\n\t\tvar/static/z = rand(1, 2)\n\t\treturn z\n\telse\n\t\tvar/static/z = rand(3, 4)\n\t\treturn z\n\
@@ -2630,8 +2520,6 @@ fn global_init_counts_a_procs_statics_of_a_name() {
     );
 }
 
-/// Resolve earlier statics within their proc, even when other procs reuse
-/// the name, as in tgstation's `wrapped_default_list = list(default_list)`.
 #[test]
 fn global_init_reads_a_procs_earlier_statics() {
     let before = "var/list/base = list(1)\n/proc/f()\n\tvar/static/list/d = base\n\tvar/static/list/w = list(d)\n\treturn w\n\
@@ -2682,7 +2570,6 @@ fn changed_initializers_give_a_rebuilds_global_init_proc() {
             "proc:/proc/f#0:y @8"
         ]
     );
-    // The running world keeps its value; a reboot runs the new initializer
     assert_eq!(
         deferred(&changes),
         ["(global): a: changed initializer (reboot)"]
@@ -2705,7 +2592,6 @@ fn changed_initializers_give_a_rebuilds_global_init_proc() {
         .collect();
     assert_eq!(made, [&Node::Instruction(Instruction::PushInt(2), ())]);
 
-    // A new one among the others, a static of a proc, one now constant
     let changes = changes_of(
         "global_init_added",
         before,
@@ -2725,7 +2611,6 @@ fn changed_initializers_give_a_rebuilds_global_init_proc() {
         ]
     );
 
-    // A computed initializer that was constant is null until it's worked out
     let changes = changes_of(
         "global_init_now_computed",
         before,
@@ -2747,7 +2632,6 @@ fn changed_initializers_give_a_rebuilds_global_init_proc() {
         Node::Instruction(Instruction::GetVar(dmasm::Variable::Null), ())
     ));
 
-    // Nothing to give when no initializer changed
     let changes = changes_of(
         "global_init_unchanged",
         before,
@@ -2756,8 +2640,6 @@ fn changed_initializers_give_a_rebuilds_global_init_proc() {
     assert!(changes.global_init.is_none());
 }
 
-/// Failed initializer compilation warns and retains the build's init proc.
-/// Includes within a file retain their declaration order.
 #[test]
 fn global_init_left_out_with_a_warning() {
     let changes = changes(
@@ -2779,7 +2661,6 @@ fn global_init_left_out_with_a_warning() {
         ["(global): b: changed initializer (rebuild)"]
     );
 
-    // A file included partway through another: its declarations come there
     let world = World::new(
         "global_init_after_include",
         "var/a = 5\n#include \"more.dm\"\nvar/b = a + 1\n",
@@ -2792,7 +2673,6 @@ fn global_init_left_out_with_a_warning() {
     assert_eq!(global_init_sets(&changes), [":a @1", ":c @1", ":b @3"]);
 }
 
-/// Global initializers follow include order rather than file-name order.
 #[test]
 fn global_init_in_the_order_files_are_included() {
     let world = World::new("global_init_two_files", "var/a = 5\nvar/b = c + 1\n");
@@ -2813,9 +2693,6 @@ fn global_init_in_the_order_files_are_included() {
     assert_eq!(changes.global_init.as_ref().unwrap().table, 1);
 }
 
-/// Ordering rules checked against DreamMaker: declaration order, subtype
-/// entry points, grouped proc statics, overrides, leading `/var/name`
-/// globals and deferred references to declarations not yet visited.
 #[test]
 fn global_init_in_dreammakers_order() {
     let cases = [
@@ -2898,8 +2775,6 @@ var/datum/h3 = list(3)
     }
 }
 
-/// DreamMaker initializer-order fixtures: `=== name: order`, then source.
-/// Expected orders match 516.1688; three rules below vary across 515.1637–516.1689.
 #[test]
 fn global_init_orders_dreammaker_gave() {
     let cases: Vec<(&str, &str, &str)> = include_str!("global_init_orders.txt")
@@ -2940,7 +2815,6 @@ fn global_init_orders_dreammaker_gave() {
     assert!(wrong.is_empty(), "{}", wrong.join("\n"));
 
     let source = |name: &str| cases.iter().find(|case| case.0 == name).unwrap().2;
-    // 515 doesn't make a call to a list's proc wait
     assert_eq!(
         order_on("gg1", source("gg1"), Some((515, 1647))),
         "colors hair z x"
@@ -2949,7 +2823,6 @@ fn global_init_orders_dreammaker_gave() {
         order_on("gg1", source("gg1"), Some((516, 1648))),
         "colors z x hair"
     );
-    // Before 516.1685 `/type::var` runs in its turn among what waits
     assert_eq!(
         order_on("jj1", source("jj1"), Some((516, 1684))),
         "x y g a h"
@@ -2958,7 +2831,6 @@ fn global_init_orders_dreammaker_gave() {
         order_on("jj1", source("jj1"), Some((516, 1685))),
         "x y g h a"
     );
-    // Before 515.1643 /mutable_appearance is one of the late types
     assert_eq!(
         order_on("y8", source("y8"), Some((515, 1642))),
         "i ar t o m am a d c y s ic ma db dq e r mu df ge p z"
@@ -2969,7 +2841,6 @@ fn global_init_orders_dreammaker_gave() {
     );
 }
 
-/// Use dmasm ordering for both existing and newly added initializers.
 #[test]
 fn global_init_after_a_reload_is_in_dmasms_order() {
     let sets = |changes: &Changes| -> Vec<String> {
@@ -2989,7 +2860,6 @@ fn global_init_after_a_reload_is_in_dmasms_order() {
             })
             .collect()
     };
-    // An added global runs where it is declared
     let added = changes(
         "global_init_own_order",
         "var/a = list(1)\nvar/b = list(2)\nvar/c = list(3)\n",
@@ -2997,7 +2867,6 @@ fn global_init_after_a_reload_is_in_dmasms_order() {
     );
     assert_eq!(sets(&added), ["a", "x", "b", "c"]);
 
-    // Reset the former constant, then initialize it before dependent globals.
     let reads_later = changes_of(
         "global_init_own_order_reads_later",
         "var/a = 10\nvar/b = a\nvar/c = -3.25\n",
@@ -3032,7 +2901,6 @@ fn changed_initializers_are_deferred_to_a_reboot() {
     assert!(lines.contains(&("a".to_owned(), Some(2))), "{:?}", lines);
     assert!(lines.contains(&("z".to_owned(), Some(9))), "{:?}", lines);
 
-    // Moved down with nothing else changed: nothing to defer
     let changes = changes_of("deferred-moved", before, &format!("\n\n{}", before));
     assert!(changes.deferred.is_empty(), "{:?}", changes.deferred);
 }

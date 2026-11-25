@@ -12,13 +12,7 @@ access_modifiers! {
     Src = 0xFFCE,
     Args = 0xFFCF,
     Dot = 0xFFD0,
-    // UnkFFD1 = 0xFFD1,
-    // UnkFFD2 = 0xFFD2,
-    // UnkFFD3 = 0xFFD3,
-    // UnkFFD4 = 0xFFD4,
     PtrDeref = 0xFFD5,
-    // UnkFFD6 = 0xFFD6,
-    // UnkFFD7 = 0xFFD7,
     Cache = 0xFFD8,
     Arg = 0xFFD9,
     Local = 0xFFDA,
@@ -28,12 +22,7 @@ access_modifiers! {
     DynamicVerb = 0xFFDE,
     StaticProc = 0xFFDF,
     StaticVerb = 0xFFE0,
-    // UnkFFE1 = 0xFFE1,
-    // UnkFFE2 = 0xFFE2,
 
-    // These are used for r-value list accessors
-    // Cache2 = list key
-    // Cache3 = reference to Cache[Cache2]
     CacheKey = 0xFFE3,
     CacheIndex = 0xFFE4,
 
@@ -41,20 +30,12 @@ access_modifiers! {
     Null = 0xFFE6,
     Initial = 0xFFE7,
     IsSaved = 0xFFE8,
-    // UnkFFE9 = 0xFFE9,
-    // UnkFFEA = 0xFFEA,
-    // UnkFFEB = 0xFFEB,
-    // UnkFFEC = 0xFFEC,
-    // UnkFFED = 0xFFED,
     PtrRef = 0xFFEF,
 
-    // 516's two proc vars. Each reads as a /callee value: the frame above the
-    // running proc, and the running proc's own.
     Caller = 0xFFF0,
     Callee = 0xFFF1,
 }
 
-// 0xFFF1 is where the interpreter's own switch over these words ends.
 pub fn is_access_modifier(value: u32) -> bool {
     (0xFFCD..=0xFFF1).contains(&value)
 }

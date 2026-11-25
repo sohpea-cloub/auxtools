@@ -1,6 +1,3 @@
-//! Index resource references so edited files trigger recompilation.
-//! Recompiled code resolves each name to the new resource-cache entry.
-
 use std::collections::HashMap;
 
 use dreammaker::objtree::TypeRef;
@@ -11,27 +8,20 @@ use super::{
     Snapshot, VarDefault, BUILTIN_VARS,
 };
 
-/// Code and defaults referencing a resource file.
 #[derive(Debug, Default)]
 pub(super) struct Users {
     procs: Vec<ProcKey>,
-    /// Types and vars whose own default is this resource.
     defaults: Vec<(String, String)>,
-    /// Types whose computed initializers reference this resource.
     inits: Vec<String>,
 }
 
-/// Users by normalized resource name (see `normalized`)
 #[derive(Debug, Default)]
 pub(super) struct Index(HashMap<String, Users>);
 
-/// Names compare as DreamMaker resolves them: either slash, any case
 fn normalized(name: &str) -> String {
     name.replace('\\', "/").to_ascii_lowercase()
 }
 
-/// Extract resource names from AST debug text. Both `Term::Resource("x")`
-/// and `Constant::Resource(x)` print as `Resource("x")`.
 fn names_in(text: &str, out: &mut Vec<String>) {
     let mut rest = text;
     while let Some(at) = rest.find("Resource(\"") {
@@ -103,9 +93,6 @@ impl Index {
 }
 
 impl Snapshot {
-    /// Recompile procs, var defaults and type initializers referencing `names`,
-    /// including `FILE_DIR` spellings. Globals, statics and consts retain their
-    /// runtime values; warn about const references.
     pub fn resource_users(&self, names: &[String]) -> Changes {
         let index = self.resource_index.get_or_init(|| Index::build(self));
         let mut changes = Changes::default();
@@ -146,7 +133,6 @@ impl Snapshot {
             self.resource_default(ty, var, &mut changes);
         }
 
-        // Computed defaults run in each inheriting subtype's init proc too.
         let mut memo = HashMap::new();
         for ty in self.tree.iter_types() {
             if ty.is_root() {
@@ -177,8 +163,6 @@ impl Snapshot {
         changes
     }
 
-    /// Reapply this resource default to `ty` and inheriting subtypes, resolving
-    /// the name to the edited file.
     fn resource_default(&self, ty: TypeRef, var: &str, changes: &mut Changes) {
         let shown = if ty.is_root() {
             "(global)"

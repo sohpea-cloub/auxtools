@@ -57,14 +57,12 @@ def set_version(version):
 	body = replace_once(VERSION_LINE, rf"\g<1>{version}\g<3>", section.group(1), "the workspace version")
 	CARGO_TOML.write_text(manifest[: section.start(1)] + body + manifest[section.end(1) :])
 
-	# Workspace packages have no source field in Cargo.lock.
 	lock = CARGO_LOCK.read_text()
 	for name in workspace_crates(manifest):
 		entry = re.compile(rf'(\[\[package\]\]\nname = "{re.escape(name)}"\nversion = ")[^"]+(")(?!\nsource)')
 		lock = replace_once(entry, rf"\g<1>{version}\g<2>", lock, f"{name} in Cargo.lock")
 	CARGO_LOCK.write_text(lock)
 
-	# Preserve package.json's formatting.
 	package = PACKAGE_JSON.read_text()
 	package = replace_once(re.compile(r'^(\t"version": ")[^"]+(")', re.M), rf"\g<1>{version}\g<2>", package, "the version in package.json")
 	if json.loads(package)["version"] != version:

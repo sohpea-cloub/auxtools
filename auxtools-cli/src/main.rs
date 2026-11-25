@@ -1,6 +1,3 @@
-//! CLI entry point. `auxtools dap` runs the debug adapter on stdin/stdout;
-//! other commands launch worlds or connect directly to their debug servers.
-
 mod adapter;
 mod cli;
 mod code;

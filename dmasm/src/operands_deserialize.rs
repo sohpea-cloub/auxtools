@@ -19,7 +19,6 @@ impl OperandDeserialize for u32 {
     where
         E: ParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
     {
-        // TODO: hex/binary literals
         map_res(digit1, |x: &str| x.parse::<u32>())(i)
     }
 }
@@ -29,7 +28,6 @@ impl OperandDeserialize for i32 {
     where
         E: ParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
     {
-        // TODO: hex/binary literals
         map_res(recognize(tuple((opt(one_of("+-")), digit1))), |x: &str| {
             x.parse::<i32>()
         })(i)
@@ -59,11 +57,6 @@ impl OperandDeserialize for DMString {
     where
         E: ParseError<&'a str> + FromExternalError<&'a str, std::num::ParseIntError>,
     {
-        // TODO: String formatting
-        // map(
-        //     delimited(char('"'), recognize(take_while(|x| x != '"')), char('"')),
-        //     |x: &str| DMString(x.into()),
-        // )(i)
         unimplemented!()
     }
 }

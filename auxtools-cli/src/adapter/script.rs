@@ -1,8 +1,5 @@
-//! Client script reloads and reconnect notifications.
-
 use super::*;
 
-/// Notify editors that connected clients need to reconnect for the new script.
 #[derive(serde::Serialize)]
 struct ScriptEvent {
 	clients: u32,
@@ -14,8 +11,6 @@ impl Event for ScriptEvent {
 }
 
 impl Adapter {
-	/// Apply `request`'s client script, including after a reboot.
-	/// Return whether the world accepted it.
 	pub(super) fn reload_script(&mut self, request: aux::ScriptRequest, restored: bool) -> bool {
 		let result = match self.request(&AuxRequest::Script(request)) {
 			Ok(AuxResponse::Script(result)) => result,

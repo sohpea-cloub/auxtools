@@ -1,5 +1,3 @@
-//! Several launchers debugging one world at once
-
 use serde_json::json;
 
 use crate::{client, ok, world::World};
@@ -10,7 +8,6 @@ pub fn run() {
 	let mut b = World::attach(pid);
 	b.catch_runtimes(false);
 
-	// One's breakpoint stops the world for both
 	a.break_on(&["leaf_1"]);
 	a.run("middle");
 	a.stop_on("breakpoint", "/leaf", "leaf_1");
@@ -31,7 +28,6 @@ pub fn run() {
 	a.finish("middle");
 	ok("resume events reach other sessions");
 
-	// Each has its own, and setting one's leaves the other's alone
 	b.break_on(&["middle_3"]);
 	a.run("middle");
 	for (proc, mark) in [("/leaf", "leaf_1"), ("/leaf", "leaf_1"), ("/middle", "middle_3")] {
@@ -52,7 +48,6 @@ pub fn run() {
 	a.run_through("middle");
 	ok("independent session breakpoints");
 
-	// Both on one line, each with a condition: leaf(3), then leaf(8)
 	a.break_if(&[("leaf_1", "x == 3")]);
 	b.break_if(&[("leaf_1", "x == 8")]);
 	a.run("middle");
@@ -75,7 +70,6 @@ pub fn run() {
 	b.event("continued");
 	ok("independent conditions at one location");
 
-	// One steps, the other follows
 	a.break_on(&["middle_1"]);
 	a.run("middle");
 	a.stop_on("breakpoint", "/middle", "middle_1");
@@ -86,7 +80,6 @@ pub fn run() {
 	b.stop_on("step", "/leaf", "leaf_1");
 	ok("step events reach both sessions");
 
-	// A third arrives in the middle of it
 	let mut c = World::attach(pid);
 	c.catch_runtimes(false);
 	c.stop_on("step", "/leaf", "leaf_1");
@@ -97,8 +90,6 @@ pub fn run() {
 	a.finish("middle");
 	ok("attach to an existing pause");
 
-	// Whether to pause on runtime errors is each session's own say, but a
-	// pause is everyone's
 	a.catch_runtimes(true);
 	a.run("fail_null");
 	for session in [&mut a, &mut b, &mut c] {
@@ -111,8 +102,6 @@ pub fn run() {
 	a.run_through("fail_null");
 	ok("any session can request runtime stops");
 
-	// A session leaves in the middle of a stop that was its own: the world
-	// stays paused for the others
 	b.break_on(&["leaf_1"]);
 	c.break_on(&["middle_3"]);
 	a.run("middle");
@@ -130,8 +119,6 @@ pub fn run() {
 	);
 	ok("remaining debugger retains pause");
 
-	// Its breakpoint went with it: leaf() is called once more, and doesn't
-	// stop
 	a.resume();
 	c.event("continued");
 	a.stop_on("breakpoint", "/middle", "middle_3");
@@ -139,7 +126,6 @@ pub fn run() {
 	a.resume_through("middle");
 	ok("disconnect removes owned breakpoints");
 
-	// So does one whose launcher dies
 	c.launcher.child.kill().unwrap();
 	c.launcher.child.wait().unwrap();
 	for _ in 0..3 {
@@ -152,7 +138,6 @@ pub fn run() {
 	last_one_leaves();
 }
 
-/// A world run without debugging, and one session that debugs it for a while
 fn last_one_leaves() {
 	let mut runner = World::launch(json!({ "noDebug": true }));
 	runner.configure();
@@ -166,8 +151,6 @@ fn last_one_leaves() {
 	runner.run_through("plain");
 	ok("last debugger disconnect resumes");
 
-	// The launcher that runs the world is connected to it all along, to
-	// reload it, and a pause isn't its to end: it doesn't keep one going
 	let mut session = World::attach(pid);
 	session.request("pause", json!({ "threadId": 0 }));
 	session.stopped("pause");

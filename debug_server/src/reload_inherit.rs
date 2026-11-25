@@ -1,11 +1,5 @@
-//! Restore inherited built-in defaults after override removals or parent
-//! changes. Read from the running parent: source metadata does not always
-//! include BYOND's own defaults.
-
 use super::*;
 
-/// Locate a built-in in the type record. Only the location matters,
-/// so any accepted value is sufficient.
 fn places(var: &str) -> Result<Vec<BuiltinWrite>, String> {
 	[ConstValue::Null, ConstValue::Number(1.0), ConstValue::String("neuter".to_owned())]
 		.iter()
@@ -13,9 +7,6 @@ fn places(var: &str) -> Result<Vec<BuiltinWrite>, String> {
 		.ok_or_else(|| format!("{}: built-in var is unsupported by hot reload", var))
 }
 
-/// A movable's bound and step vars are also kept worked out in a block at
-/// +0x40: bound_x and bound_y (16 bits each), bound_width and bound_height,
-/// then step_x, step_y and step_size as floats. (byte offset, mask)
 fn bounds_place(var: &str) -> Option<(usize, u32)> {
 	Some(match var {
 		"bound_x" => (0x40, 0xFFFF),
@@ -29,8 +20,6 @@ fn bounds_place(var: &str) -> Option<(usize, u32)> {
 	})
 }
 
-/// Type built-in list entries: name string ID, then PushVal-encoded value
-/// (numbers use an extra word).
 pub(super) fn listed_entries(list: &[u32]) -> Vec<Vec<u32>> {
 	let mut out = vec![];
 	let mut at = 0;
@@ -54,7 +43,6 @@ fn set_listed(type_id: u32, entries: &[Vec<u32>]) -> Result<(), String> {
 	runtime_tables::set_type_field(type_id, type_fields::BUILTIN_VALUES, list)
 }
 
-/// Retain an additional reference for a string copied into a type record.
 fn keep_string(id: u32) {
 	if id != NONE {
 		unsafe {
@@ -66,17 +54,14 @@ fn keep_string(id: u32) {
 	}
 }
 
-/// Built-in types whose built-ins use var-table entries, not record fields.
 const VAR_TABLE_BUILTINS: &[&str] = &["/sound", "/particles", "/exception", "/regex", "/icon"];
 
-/// Whether `type_id` inherits built-ins stored in a var table.
 pub(super) fn builtin_in_table(type_id: u32, _var: &str) -> bool {
 	type_and_ancestors(type_id)
 		.into_iter()
 		.any(|t| VAR_TABLE_BUILTINS.contains(&type_path(t).as_str()))
 }
 
-/// Copy a built-in var-table entry from `from`, or remove it if absent.
 fn copy_table_entry(type_id: u32, from: u32, var: &str) -> Result<(), String> {
 	let key = leaked_string(var)?;
 	let table = |t: u32| -> Result<Vec<u32>, String> {
@@ -90,7 +75,6 @@ fn copy_table_entry(type_id: u32, from: u32, var: &str) -> Result<(), String> {
 	runtime_tables::set_type_field(type_id, type_fields::VAR_TABLE, id)
 }
 
-/// Gives `type_id` the value `from` has for a built-in var.
 pub(super) fn copy_builtin(type_id: u32, from: u32, var: &str) -> Result<(), String> {
 	use runtime_tables::{set_type_field, type_field};
 	use BuiltinWrite::*;
@@ -128,7 +112,6 @@ pub(super) fn copy_builtin(type_id: u32, from: u32, var: &str) -> Result<(), Str
 				}
 			}
 			Mob(var, _) => {
-				// (only mob types are in the mob table)
 				let mut parent = None;
 				if runtime_tables::set_mob_type(from, |mob| parent = Some(*mob)).is_err() {
 					continue;
@@ -149,7 +132,6 @@ pub(super) fn copy_builtin(type_id: u32, from: u32, var: &str) -> Result<(), Str
 	Ok(())
 }
 
-/// Types inheriting built-in values, in parent-first order.
 pub(super) fn prepare(inherited: &[BuiltinInherited], prepared: &mut Prepared, errors: &mut Vec<String>) {
 	let mut out = vec![];
 	for i in inherited {
@@ -169,7 +151,6 @@ pub(super) fn prepare(inherited: &[BuiltinInherited], prepared: &mut Prepared, e
 	prepared.builtin_inherits = out.into_iter().map(|(_, t, var)| (t, var)).collect();
 }
 
-/// Apply inherited defaults after the reload's explicit built-in values.
 pub(super) fn apply(inherits: &[(u32, String)], warnings: &mut Vec<String>) {
 	for (type_id, var) in inherits {
 		let copied = runtime_tables::type_field(*type_id, type_fields::PARENT).and_then(|parent| copy_builtin(*type_id, parent, var));

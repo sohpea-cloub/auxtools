@@ -1,6 +1,3 @@
-//! Encode DM string escapes, text macros and embedded-expression markers.
-//! Input retains escape pairs; line continuations have already been removed.
-
 use std::fmt;
 
 use crate::operands::DMString;
@@ -22,22 +19,16 @@ impl fmt::Display for StringError {
     }
 }
 
-/// A plain string literal.
 pub(super) fn parse(data: &str) -> Result<DMString, StringError> {
     let mut builder = TextBuilder::new();
     builder.push(data)?;
     Ok(DMString(builder.buf))
 }
 
-/// Marks a value embedded with `[...]`.
 const EMBED: u8 = 0x01;
-/// An embedded value at the start of a sentence, which BYOND may capitalize.
 const EMBED_SENTENCE: u8 = 0x02;
-/// An embedded value after an article macro such as `\the`.
 const EMBED_ARTICLE: u8 = 0x03;
 
-/// Text macros and their codes. `space` says whether the macro swallows one
-/// space after it.
 struct Macro {
     name: &'static str,
     code: u8,
@@ -47,9 +38,7 @@ struct Macro {
 
 #[derive(PartialEq, Clone, Copy)]
 enum MacroKind {
-    /// Applies to the next embedded value (`\the [x]`).
     Article,
-    /// Takes the embedded value that follows directly (`\ref[x]`).
     TakesEmbed,
     Other,
 }
@@ -315,25 +304,14 @@ const MACROS: &[Macro] = &[
     },
 ];
 
-/// Builds the bytes of a text literal, interpolated or not.
 pub(super) struct TextBuilder {
     pub buf: Vec<u8>,
-    /// Nothing but whitespace, quotes and HTML tags since the start or the
-    /// end of the last sentence.
     sentence_start: bool,
-    /// The last thing was an article macro.
     after_article: bool,
-    /// A `\ref` or another macro that takes the next embedded value, however
-    /// much text comes first. With no value after it, it's dropped.
     pending_embed: Option<u8>,
-    /// Inside an HTML tag, with what `sentence_start` was before it. A tag as
-    /// a whole doesn't count as text, but what's inside it does.
     in_tag: Option<bool>,
-    /// `sentence_start` at the start of the last tag.
     tag_start: bool,
-    /// The colour in force (`\red`'s code), if one is.
     colour: Option<u8>,
-    /// The styles (`\bold`, `\italic`, ...) in force, by their codes.
     styles: Vec<u8>,
     embeds: u32,
 }
@@ -355,18 +333,14 @@ impl TextBuilder {
 
     fn text_byte(&mut self, b: u8) {
         self.buf.push(b);
-        // Restore sentence state when closing a tag. A standalone `>` also
-        // restores the last tag-start state, or the initial string state.
         if b == b'>' {
             self.sentence_start = self.in_tag.take().unwrap_or(self.tag_start);
             return;
         }
         match b {
-            // (a `<` inside a tag starts it over)
             b'<' => {
                 self.in_tag = Some(self.sentence_start);
                 self.tag_start = self.sentence_start;
-                // (if another `<` starts the tag over, this one was text)
                 self.sentence_start = false;
             }
             b' ' | b'\t' | b'\n' | b'\r' | b'"' | b'\'' => {}
@@ -375,14 +349,12 @@ impl TextBuilder {
         }
     }
 
-    /// Text that never starts a sentence or a tag (escaped characters).
     fn literal_bytes(&mut self, bytes: &[u8]) {
         self.buf.extend_from_slice(bytes);
         self.after_article = false;
         self.sentence_start = false;
     }
 
-    /// Marks where an embedded value goes.
     pub fn embed(&mut self) {
         self.embeds += 1;
         if let Some(code) = self.pending_embed.take() {
@@ -418,7 +390,6 @@ impl TextBuilder {
                 return Err(StringError::UnexpectedEnd);
             };
 
-            // \uXXXX: that character, in UTF-8
             if next == b'u' {
                 let hex = data
                     .get(i + 1..i + 5)
@@ -434,7 +405,6 @@ impl TextBuilder {
                 }
             }
 
-            // \UXXXXXX: the same with six digits
             if next == b'U' {
                 let hex = data
                     .get(i + 1..i + 7)
@@ -450,7 +420,6 @@ impl TextBuilder {
                 }
             }
 
-            // Text macros, longest name first
             let rest = &data[i..];
             let found = MACROS
                 .iter()
@@ -468,10 +437,6 @@ impl TextBuilder {
                 let space_after = bytes.get(i) == Some(&b' ');
                 let colour = (31..=38).contains(&m.code);
                 let style = (23..=26).contains(&m.code);
-                // Starting a new color ends the previous one; repeating a style ends
-                // it. A macro ending a color or style consumes a preceding space
-                // instead of a following space.
-                // Repeating the active color resets colors entirely (code 30).
                 let mut code = m.code;
                 let ends = if colour {
                     let was = self.colour;
@@ -497,7 +462,6 @@ impl TextBuilder {
                     false
                 };
                 if ends {
-                    // (a space that's text, not the code of `\green`)
                     let n = self.buf.len();
                     if self.buf.last() == Some(&b' ') && (n < 2 || self.buf[n - 2] != 0xFF) {
                         self.buf.pop();
@@ -505,13 +469,9 @@ impl TextBuilder {
                 } else if m.space && space_after {
                     i += 1;
                 } else if m.kind == MacroKind::TakesEmbed && space_after {
-                    // `\ref [x]`: the space goes before the macro, which takes
-                    // the value right after it
                     i += 1;
                     self.buf.push(b' ');
                 }
-                // \th right after a value makes it an ordinal, in place of the
-                // value's own code
                 if m.name == "th"
                     && self.buf.len() >= 2
                     && self.buf[self.buf.len() - 2] == 0xFF
@@ -522,8 +482,6 @@ impl TextBuilder {
                 {
                     self.buf.truncate(self.buf.len() - 2);
                 }
-                // Apply only the first reference macro to the next embedded value.
-                // An earlier article has already consumed that value.
                 if m.kind == MacroKind::TakesEmbed {
                     if !self.after_article {
                         self.pending_embed.get_or_insert(m.code);
@@ -533,9 +491,6 @@ impl TextBuilder {
                 }
                 self.buf.push(0xFF);
                 self.buf.push(code);
-                // Sentence detection treats color codes as characters: blue (33)
-                // is `!`, green/black (32/34) are space/quote, and the other color
-                // codes end the sentence-start state.
                 if (31..=38).contains(&m.code) {
                     match code {
                         33 => self.sentence_start = true,
@@ -545,7 +500,6 @@ impl TextBuilder {
                     continue;
                 }
                 self.after_article = m.kind == MacroKind::Article;
-                // (an article has the next value, whatever \ref came before)
                 if self.after_article {
                     self.pending_embed = None;
                 }
@@ -561,12 +515,9 @@ impl TextBuilder {
                 b't' => self.text_byte(b'\t'),
                 b'<' => self.literal_bytes(b"&lt;"),
                 b'>' => self.literal_bytes(b"&gt;"),
-                // (a quote either way: a sentence can start after it)
                 b'"' | b'\'' => self.text_byte(next),
                 b'\\' | b'[' | b']' | b'{' | b'}' => self.literal_bytes(&[next]),
-                // `\ ` is nothing (it ends a line continuation's indent)
                 b' ' => {}
-                // \xHH: the character U+00HH, in UTF-8 (`\xe9` is é)
                 b'x' if bytes.len() >= i + 2
                     && bytes[i..i + 2].iter().all(|b| b.is_ascii_hexdigit()) =>
                 {

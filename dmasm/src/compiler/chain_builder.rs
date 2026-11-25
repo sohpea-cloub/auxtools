@@ -1,12 +1,9 @@
 use crate::operands::{DMString, GlobalVar, Variable};
 
-/// Marks a chain element that is a static var: a global, read through the
-/// cache chain like a field.
 pub const STATIC_MARKER: &[u8] = b"\0static:";
 
 fn field_var(field: DMString) -> Variable {
     match field.0.strip_prefix(STATIC_MARKER) {
-        // "name\0/declaring/type"
         Some(rest) => {
             let mut parts = rest.splitn(2, |&b| b == 0);
             let name = parts.next().unwrap_or_default();
@@ -28,8 +25,6 @@ impl ChainBuilder {
     pub fn begin(base: Variable) -> Self {
         let var = match base {
             Variable::Cache => {
-                // We're already in the cache so there's nothing to do here
-                // This null gets replaced later
                 Variable::Null
             }
 
@@ -76,7 +71,6 @@ impl ChainBuilder {
             return;
         }
 
-        // This is the first SetCache - discard the current var (which should be null)
         assert!(self.var == Variable::Null);
         self.var = Variable::SetCache(Box::new(field_var(field)), Box::new(Variable::Null));
     }
@@ -95,8 +89,6 @@ impl ChainBuilder {
         field_var(field)
     }
 
-    /// The chain with `leaf` evaluated against the final cache, e.g. a
-    /// `dynamic_proc` to call.
     pub fn get_leaf(mut self, leaf: Variable) -> Variable {
         if let Some(rhs) = Self::last_setcache_rhs(&mut self.var) {
             **rhs = leaf;

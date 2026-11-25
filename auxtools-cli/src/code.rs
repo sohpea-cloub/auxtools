@@ -1,8 +1,3 @@
-//! Parse source and watch files for hot reload.
-//! The source worker uses `dmasm::reload` to compile changes; the adapter
-//! applies them and reports the result. SpacemanDMM contexts are thread-bound,
-//! so all parsing stays on this worker thread.
-
 use std::{
 	cell::{Cell, RefCell},
 	collections::{HashMap, HashSet},
@@ -20,20 +15,12 @@ use dmasm::reload::{diff, Changes, ParseOptions, ProcKey, Refusal, Snapshot, Unt
 
 use crate::{adapter::Input, dap::Output, resources::Resources, script::Script, skin::Skin};
 
-/// How often to look for changed files
 const INTERVAL: Duration = Duration::from_millis(500);
-/// How long changed files have to stay as they are before they're reloaded
 const SETTLE: Duration = Duration::from_millis(200);
-/// Milliseconds to use for both instead, for tests that edit a file in one
-/// write and then wait for its reload
 const INTERVAL_VAR: &str = "AUXTOOLS_WATCH_INTERVAL";
-/// Limit polling to 1 / LOOKING_SHARE of the worker's time.
 const LOOKING_SHARE: u32 = 5;
-/// Allowance for Linux file timestamps lagging the clock by a coarse timer
-/// tick.
 const STAMP_LAG: Duration = Duration::from_millis(50);
 
-/// `usual`, or what `AUXTOOLS_WATCH_INTERVAL` gives if that is shorter
 fn interval(usual: Duration) -> Duration {
 	static GIVEN: OnceLock<Option<Duration>> = OnceLock::new();
 	let given = GIVEN.get_or_init(|| std::env::var(INTERVAL_VAR).ok()?.parse().ok().map(Duration::from_millis));
@@ -42,90 +29,58 @@ fn interval(usual: Duration) -> Duration {
 
 pub struct Options {
 	pub dme: PathBuf,
-	/// The running .dmb; rebuilds establish a new source baseline.
 	pub dmb: PathBuf,
-	/// DreamMaker's command line defines, as `(name, value)`
 	pub defines: Vec<(String, Option<String>)>,
 	pub hot_reload: bool
 }
 
-/// Events from the source worker to the adapter.
 pub enum Event {
-	/// Running code changed; breakpoint lines may need remapping.
 	Changed,
 	Failed(String),
-	/// Source synchronization is complete; the connected world can run.
 	Ready,
-	/// The files are being watched: a change from now on is reloaded
 	Watching,
-	/// Changed files are being prepared for reload.
 	Reloading,
-	/// Reload processing finished, whether applied or not.
 	Looked,
-	/// Refused changes still missing from the world, with absolute paths.
-	/// Sent whenever the set changes.
 	Refusals(Vec<Refusal>),
-	/// Files newer than the `.dmb`, relative to the `.dme` directory.
-	/// The world may not include their edits.
 	Outdated(Vec<String>),
-	/// Changes prepared for `world`, identified by `Command::Connected`.
-	/// The adapter replies with `Command::Reloaded`. `notes` become journal
-	/// warnings.
 	Reload {
 		request: Box<HotReloadRequest>,
 		summary: Summary,
 		notes: Vec<String>,
 		world: u64
 	},
-	/// Unapplied changes and source-read errors. `Refusal::until` gives the
-	/// required action. Both are journaled.
 	NotReloaded {
 		summary: String,
 		errors: Vec<String>,
 		refused: Vec<Refusal>,
 		warnings: Vec<String>
 	},
-	/// Source edits with no runtime changes, for the journal.
 	NothingChanged {
 		warnings: Vec<String>
 	},
-	/// Source macros sent after parsing and whenever reload changes them.
 	Macros(Vec<Macro>),
-	/// A new skin for `world`. The adapter replies with `Command::Reloaded`.
 	Skin {
 		request: SkinRequest,
-		/// Relative to the `.dme` directory.
 		file: PathBuf,
-		/// Files referenced by this skin but absent from the built skin.
 		images: Vec<String>,
-		/// Restore after reboot, before clients log in.
 		restored: bool,
 		world: u64
 	},
-	/// Client script update. The adapter replies with `Command::Reloaded`.
 	Script {
 		request: ScriptRequest,
-		/// Restore after reboot, before clients log in.
 		restored: bool,
 		world: u64
 	}
 }
 
-/// Commands from the adapter to the source worker.
 pub enum Command {
-	/// A world connected with this BYOND version and connection generation.
 	Connected { byond: (u32, u32), world: u64 },
-	/// Whether the last reload was applied
 	Reloaded(bool),
-	/// Resources cached by the last reload; sent before `Reloaded`.
 	Resources(Vec<ReloadedResource>),
-	/// Selected defines. Defer resulting code changes until reboot.
 	Defines(Vec<(String, Option<String>)>)
 }
 
-/// Start source worker `worker`, which tags its events with that number.
 pub fn start(mut options: Options, out: Arc<Output>, inputs: mpsc::Sender<Input>, worker: u64) -> mpsc::Sender<Command> {
-	// Clients use absolute source paths.
 	if let Ok(dme) = std::path::absolute(&options.dme) {
 		options.dme = dme;
 	}
@@ -166,58 +121,36 @@ pub fn start(mut options: Options, out: Arc<Output>, inputs: mpsc::Sender<Input>
 
 struct Code {
 	options: Options,
-	/// Parse options matching the running build.
 	parse_options: RefCell<ParseOptions>,
-	/// Selected defines used to parse edits and adopt rebuilt worlds.
 	wanted_defines: RefCell<Option<Vec<(String, Option<String>)>>>,
-	/// The selection changed: compare the whole source again.
 	defines_moved: Cell<bool>,
-	/// Defines currently active in the world, including changes applied at
-	/// reboot.
 	running_defines: RefCell<Vec<(String, Option<String>)>>,
 	root: PathBuf,
 	out: Arc<Output>,
 	inputs: mpsc::Sender<Input>,
-	/// Worker number included in events.
 	worker: u64,
 	commands: mpsc::Receiver<Command>,
-	/// A reboot occurred while awaiting a reload response.
 	reconnected: Cell<bool>,
-	/// Connection generation used to prepare reloads.
 	world: Cell<u64>,
-	/// A full parse occurred since the last heap trim.
 	parsed: Cell<bool>,
-	/// Start time of the last full parse.
 	parse_started: Cell<SystemTime>,
-	/// The macros the world was last given
 	macros: RefCell<Option<Vec<Macro>>>,
-	/// `FILE_DIR` search paths for resource lookups.
 	resource_dirs: RefCell<Vec<String>>,
-	/// Resource IDs reported by the last reload.
 	reloaded_resources: RefCell<Vec<ReloadedResource>>,
-	/// Resource names referenced by the last reload's code.
 	named_resources: RefCell<Vec<String>>,
-	/// Refused changes still missing from the world, with absolute paths.
 	refusals: RefCell<Vec<Refusal>>,
-	/// Outstanding problems last sent to the adapter.
 	reported: RefCell<Vec<Refusal>>
 }
 
-/// Track running source and pending disk changes.
 struct Watching {
-	/// Source baseline from the first connection or latest `.dmb` rebuild.
 	built: Snapshot,
-	/// Files changed since `built`
 	edited_since_built: HashSet<PathBuf>,
 	dmb_modified: Option<SystemTime>,
-	/// Current running source when it differs from `built`.
 	applied: Option<Snapshot>,
 	files: Watched,
 	skin: Skin,
 	script: Script,
-	/// Watched resource files and their current IDs.
 	resources: Resources,
-	/// Original resource IDs, used after reboot.
 	built_resources: Resources
 }
 
@@ -226,7 +159,6 @@ impl Code {
 		self.out.console(format!("Hot reload: {}", message.into()));
 	}
 
-	/// Schedule source synchronization for a newly connected world.
 	fn connected(&self, world: u64) {
 		self.world.set(world);
 		self.reconnected.set(true);
@@ -236,7 +168,6 @@ impl Code {
 		self.inputs.send(Input::Code { worker: self.worker, event }).is_ok()
 	}
 
-	/// Parse with the running build's defines.
 	fn parse(&self) -> Result<Snapshot, String> {
 		let defines = self.parse_options.borrow().defines.clone();
 		self.parse_with(defines)
@@ -249,7 +180,6 @@ impl Code {
 		Snapshot::parse(&self.options.dme, &ParseOptions { defines, byond })
 	}
 
-	/// Use selected defines for edits, falling back to the build defines.
 	fn selected_defines(&self) -> Vec<(String, Option<String>)> {
 		match &*self.wanted_defines.borrow() {
 			Some(defines) => defines.clone(),
@@ -258,8 +188,6 @@ impl Code {
 	}
 
 	fn run(self) {
-		// Parse after connecting: DM_VERSION and conditional compilation depend
-		// on the running world's BYOND build.
 		let byond = loop {
 			match self.commands.recv() {
 				Ok(Command::Connected { byond, world }) => {
@@ -272,8 +200,6 @@ impl Code {
 			}
 		};
 		self.parse_options.borrow_mut().byond = Some(byond);
-		// Record this before parsing so a rebuild during the parse is detected
-		// as a new baseline on the next connection.
 		let dmb_modified = self.dmb_modified();
 
 		let built = match self.parse() {
@@ -310,7 +236,6 @@ impl Code {
 			},
 			resources
 		};
-		// Send macros before reporting readiness.
 		if !self.give_macros() {
 			return;
 		}
@@ -344,7 +269,6 @@ impl Code {
 					return;
 				}
 			}
-			// Defines can change code in any file.
 			if self.defines_moved.take() {
 				let edited = watching.edited_since_built.clone();
 				if !self.send(Event::Reloading) || !self.reload_code(watching, edited) || !self.send(Event::Looked) {
@@ -357,14 +281,12 @@ impl Code {
 		}
 	}
 
-	/// Reload disk changes. Returns false if the adapter disconnected.
 	fn look(&self, watching: &mut Watching) -> bool {
 		let mut changed = watching.files.changed(&self.root);
 		if changed.is_empty() {
 			return true;
 		}
 
-		// Editors save in steps, and a checkout touches many files
 		loop {
 			std::thread::sleep(interval(SETTLE));
 			let more = watching.files.changed(&self.root);
@@ -378,7 +300,6 @@ impl Code {
 			return false;
 		}
 		watching.skin.take_edit(&mut changed);
-		// Resource files, then code, then the skin and the client script
 		let resource_files: Vec<PathBuf> = changed.iter().filter(|f| watching.resources.files.contains_key(*f)).cloned().collect();
 		if !resource_files.is_empty() {
 			changed.retain(|f| !watching.resources.files.contains_key(f));
@@ -392,16 +313,12 @@ impl Code {
 		self.reload_skin(watching, false) && self.reload_script(watching, false) && self.send(Event::Looked)
 	}
 
-	/// Reload the changed DM files. Return false on adapter disconnect.
 	fn reload_code(&self, watching: &mut Watching, changed: HashSet<PathBuf>) -> bool {
-		// Changed defines require a full source comparison.
 		let selected = self.selected_defines();
 		let other_defines = selected != *self.running_defines.borrow();
-		// Held changes require a full diff so edits in other files wait too.
 		let held = !self.outstanding().is_empty();
 		if let (false, false, [file]) = (held, other_defines, changed.iter().collect::<Vec<_>>().as_slice()) {
 			let file = (*file).clone();
-			// Use the last applied snapshot, including incremental file parses.
 			let current = match watching.applied.as_mut() {
 				Some(applied) => applied,
 				None => &mut watching.built
@@ -424,7 +341,6 @@ impl Code {
 						Some(false) => true
 					};
 				}
-				// Fall back to parsing the whole project.
 				Err(_) => {}
 			}
 		}
@@ -445,7 +361,6 @@ impl Code {
 		changes.settings_as_built(&watching.built, &new);
 		watching.edited_since_built.extend(changed.iter().cloned());
 
-		// A file the new parse includes for the first time
 		for file in files(&new, &self.options.dme) {
 			watching.files.add(&self.root, &file, self.parse_started.get());
 		}
@@ -471,24 +386,18 @@ impl Code {
 		}
 	}
 
-	/// Restore reloads after a reboot, or adopt a rebuilt `.dmb` as the
-	/// baseline. Send `Event::Ready` when the world can resume. Return false on
-	/// disconnect.
 	fn catch_up(&self, watching: &mut Watching) -> bool {
 		let dmb_modified = self.dmb_modified();
 		if dmb_modified != watching.dmb_modified {
-			// The rebuilt world can run while we parse its source.
 			if !self.ready() {
 				return false;
 			}
 			self.log("using the rebuilt .dmb");
 			watching.dmb_modified = dmb_modified;
-			// Adopt the latest selected defines with the rebuilt world.
 			if let Some(defines) = self.wanted_defines.take() {
 				self.parse_options.borrow_mut().defines = defines;
 			}
 			*self.running_defines.borrow_mut() = self.parse_options.borrow().defines.clone();
-			// Include pending edits in the baseline rather than reloading them.
 			watching.files.changed(&self.root);
 			match self.parse() {
 				Ok(built) => {
@@ -520,15 +429,11 @@ impl Code {
 			return self.send(Event::Changed) && self.give_macros();
 		}
 
-		// A reboot resets the resource cache. Restore edits once the world
-		// has loaded its own resources.
 		watching.applied = None;
-		// The world runs the build's code again until the restore applies.
 		*self.running_defines.borrow_mut() = self.parse_options.borrow().defines.clone();
 		let selected = self.selected_defines();
 		let other_defines = selected != *self.running_defines.borrow();
 		watching.built.clear_patches();
-		// Restore the skin before clients log in.
 		watching.skin.rebooted();
 		if !self.reload_skin(watching, true) {
 			return false;
@@ -570,12 +475,9 @@ impl Code {
 		if !self.restore_resources(watching, &resource_files) || !self.ready() {
 			return false;
 		}
-		// Send evaluation macros after releasing the world.
 		!applied || self.give_macros()
 	}
 
-	/// Read resources from the world's `.dmb` and `.rsc`. Warn about edits
-	/// since the build; leave them unchanged until the next save.
 	fn read_resources(&self, sources: &[PathBuf]) -> Resources {
 		let resources = match Resources::read(&self.root, &self.options.dmb, sources) {
 			Ok(resources) => resources,
@@ -588,8 +490,6 @@ impl Code {
 		resources
 	}
 
-	/// Restore resource edits after reboot. The world applies them once its
-	/// data is loaded, before its atoms' New(). Return false on disconnect.
 	fn restore_resources(&self, watching: &mut Watching, files: &[PathBuf]) -> bool {
 		if files.is_empty() {
 			return true;
@@ -597,9 +497,6 @@ impl Code {
 		self.reload_resources(watching, files)
 	}
 
-	/// Reload edited resources and recompile their code and default users.
-	/// The world caches new IDs and updates appearances using the old IDs.
-	/// Return false on disconnect.
 	fn reload_resources(&self, watching: &mut Watching, files: &[PathBuf]) -> bool {
 		let changed = watching.resources.changed(&self.root, files);
 		if changed.is_empty() {
@@ -634,8 +531,6 @@ impl Code {
 					let name = path.to_string_lossy().replace('\\', "/");
 					match reloaded.iter().find(|r| r.path == name) {
 						Some(r) => watching.resources.reloaded(path, r.id, *crc),
-						// A loading world defers the reload and tracks the
-						// resource ID itself.
 						None => watching.resources.shown(path, *crc)
 					}
 				}
@@ -645,8 +540,6 @@ impl Code {
 		}
 	}
 
-	/// Watch new resource references absent from the build. Later saves
-	/// reload those files too.
 	fn watch_named(&self, watching: &mut Watching) {
 		for name in self.named_resources.take() {
 			if let Some(file) = watching.resources.named(&self.root, &name) {
@@ -655,7 +548,6 @@ impl Code {
 		}
 	}
 
-	/// Warn that parse errors make the source baseline incomplete.
 	fn warn_of_errors(&self, built: &Snapshot) {
 		let errors = built.parse_errors();
 		if errors.is_empty() {
@@ -675,10 +567,6 @@ impl Code {
 		}
 	}
 
-	/// Warn about source and resource files edited after the build. Source
-	/// watching assumes the initial files match the build and applies later
-	/// edits only. Resources keep their built content until the next save.
-	/// Return false on disconnect.
 	fn warn_of_later_edits(&self, files: &[PathBuf], resources: &Resources, built: Option<SystemTime>) -> bool {
 		let mut later: Vec<String> = resources
 			.edited_since_built(&self.root)
@@ -701,8 +589,6 @@ impl Code {
 		self.send(Event::Outdated(later))
 	}
 
-	/// Release the world unless a newer connection needs synchronization first.
-	/// Return false if sending `Event::Ready` fails.
 	fn ready(&self) -> bool {
 		while let Ok(command) = self.commands.try_recv() {
 			match command {
@@ -714,7 +600,6 @@ impl Code {
 		self.reconnected.get() || self.send(Event::Ready)
 	}
 
-	/// Send macros if they changed. Returns false if the adapter disconnected.
 	fn give_macros(&self) -> bool {
 		let options = ParseOptions {
 			defines: self.running_defines.borrow().clone(),
@@ -734,8 +619,6 @@ impl Code {
 		self.send(Event::Macros(macros))
 	}
 
-	/// Journal a source-read failure. Returns false if the adapter
-	/// disconnected.
 	fn not_reloaded(&self, error: String) -> bool {
 		self.send(Event::NotReloaded {
 			summary: "couldn't read the code".to_owned(),
@@ -745,13 +628,6 @@ impl Code {
 		})
 	}
 
-	/// Apply `changes` from runtime snapshot `before` through the adapter.
-	/// Return `None` on disconnect. After reboot, install the replacement
-	/// global init proc before global initialization.
-	/// Refused or deferred changes hold the whole set. `whole` replaces all
-	/// outstanding problems; resource reloads report only a partial diff.
-	/// `read_with` identifies changed defines used for this diff. Adopt them
-	/// after applying the changes, deferring code changes until reboot.
 	fn reload(
 		&self,
 		changes: &Changes,
@@ -761,11 +637,8 @@ impl Code {
 		whole: bool,
 		read_with: Option<Vec<(String, Option<String>)>>
 	) -> Option<bool> {
-		// A reboot satisfies deferred initializers, but not rebuild
-		// requirements.
 		let applies_now = |deferred: &&Refusal| restarted && deferred.until == Until::Reboot;
 		let mut request = reload_request(changes);
-		// Defines that change no code need no reboot.
 		let changes_nothing = changes.refused.is_empty()
 			&& changes.deferred.is_empty()
 			&& request.is_empty()
@@ -775,7 +648,6 @@ impl Code {
 			.defines_refusal()
 			.filter(|refusal| !applies_now(&refusal) && !(read_with.is_some() && changes_nothing));
 		if !changes.refused.is_empty() || !changes.deferred.iter().all(|d| applies_now(&d)) || defines.is_some() {
-			// Clients use absolute source paths.
 			let refused = changes
 				.refused
 				.iter()
@@ -806,7 +678,6 @@ impl Code {
 		let files: Vec<String> = resources.iter().map(|r| r.path.clone()).collect();
 		request.resources = resources;
 		request.resource_dirs = self.resource_dirs.borrow().clone();
-		// The running world determines whether removed vars actually exist.
 		let notes: Vec<String> = changes.warnings.iter().filter(|note| removed_var(note).is_none()).cloned().collect();
 		if request.is_empty() && request.removed_vars.is_empty() {
 			for why in &notes {
@@ -834,8 +705,6 @@ impl Code {
 			match self.commands.recv() {
 				Ok(Command::Reloaded(applied)) => break applied,
 				Ok(Command::Resources(reloaded)) => *self.reloaded_resources.borrow_mut() = reloaded,
-				// The adapter rejects reloads prepared before a reboot;
-				// `catch_up` will prepare them for the new world.
 				Ok(Command::Connected { world, .. }) => self.connected(world),
 				Ok(Command::Defines(defines)) => self.defines_wanted(defines),
 				Err(_) => return None
@@ -852,8 +721,6 @@ impl Code {
 		Some(applied)
 	}
 
-	/// Replace outstanding problems for a full diff, or append partial results.
-	/// Send the set if changed. Return false on disconnect.
 	fn refused_by(&self, refused: Vec<Refusal>, whole: bool) -> bool {
 		let mut now = if whole { vec![] } else { self.refusals.borrow().clone() };
 		for refusal in refused {
@@ -865,8 +732,6 @@ impl Code {
 		self.report()
 	}
 
-	/// Report problems that differ from the last report. Return false on
-	/// disconnect.
 	fn report(&self) -> bool {
 		let now = self.outstanding();
 		if *self.reported.borrow() == now {
@@ -876,21 +741,17 @@ impl Code {
 		self.send(Event::Refusals(now))
 	}
 
-	/// Clear refusals after rebuilding and report the change. Return false on
-	/// disconnect.
 	fn rebuilt(&self) -> bool {
 		self.refusals.borrow_mut().clear();
 		self.report() && self.send(Event::Watching)
 	}
 
-	/// Outstanding source changes and build-flag mismatches.
 	fn outstanding(&self) -> Vec<Refusal> {
 		let mut outstanding = self.refusals.borrow().clone();
 		outstanding.extend(self.defines_refusal());
 		outstanding
 	}
 
-	/// Schedule a full source comparison with the selected defines.
 	fn defines_wanted(&self, defines: Vec<(String, Option<String>)>) {
 		if self.wanted_defines.borrow().as_ref() != Some(&defines) {
 			*self.wanted_defines.borrow_mut() = Some(defines);
@@ -898,7 +759,6 @@ impl Code {
 		}
 	}
 
-	/// Report define changes pending reboot.
 	fn defines_refusal(&self) -> Option<Refusal> {
 		let wanted = self.wanted_defines.borrow();
 		let wanted = wanted.as_ref()?;
@@ -927,8 +787,6 @@ impl Code {
 		})
 	}
 
-	/// Update the skin if it differs from the world's. Return false on
-	/// disconnect.
 	fn reload_skin(&self, watching: &mut Watching, restored: bool) -> bool {
 		let Some(change) = watching.skin.change(&self.root) else {
 			return true;
@@ -958,8 +816,6 @@ impl Code {
 		}
 	}
 
-	/// Update the client script if it differs from the world's.
-	/// Return false on disconnect.
 	fn reload_script(&self, watching: &mut Watching, restored: bool) -> bool {
 		if let Some(why) = watching.script.problem() {
 			self.log(format!("client script: {}; the world keeps the script it has", why));
@@ -991,9 +847,7 @@ impl Code {
 	}
 }
 
-/// Resource literals referenced by a reload's code and defaults.
 fn resource_names(request: &HotReloadRequest) -> Vec<String> {
-	/// Collect resource names while resolving other assembly operands.
 	#[derive(Default)]
 	struct Named(Vec<String>);
 
@@ -1094,7 +948,6 @@ fn resource_names(request: &HotReloadRequest) -> Vec<String> {
 	named.0
 }
 
-/// Merge a resource file's required changes into the existing changes.
 fn merge(changes: &mut Changes, more: Changes) {
 	for reload in more.reloads {
 		if !changes.reloads.iter().any(|r| r.proc == reload.proc) {
@@ -1112,13 +965,10 @@ fn merge(changes: &mut Changes, more: Changes) {
 	changes.refused.extend(more.refused);
 }
 
-/// Reject additions exposed by a repaired parse error: they may already exist
-/// in the built world. Re-adding them could create unintended proc overrides.
 fn refuse_hidden(old: &Snapshot, new: &Snapshot, changes: &mut Changes) {
 	if changes.new_types.is_empty() && changes.new_procs.is_empty() && changes.new_vars.is_empty() {
 		return;
 	}
-	// Ignore line changes when matching errors; moving one does not fix it.
 	let mut fixed = old.parse_errors();
 	for (error, _) in new.parse_errors() {
 		if let Some(at) = fixed.iter().position(|(e, _)| *e == error) {
@@ -1141,7 +991,6 @@ fn refuse_hidden(old: &Snapshot, new: &Snapshot, changes: &mut Changes) {
 	}
 }
 
-/// Require a rebuild when included maps differ from the compiled world.
 fn refuse_other_maps(built: &Snapshot, new: &Snapshot, changes: &mut Changes) {
 	let listed = |maps: &[PathBuf], others: &[PathBuf]| {
 		maps.iter()
@@ -1164,8 +1013,6 @@ fn refuse_other_maps(built: &Snapshot, new: &Snapshot, changes: &mut Changes) {
 	}
 }
 
-/// Split `Snapshot::parse_errors` text into file, line and message.
-/// Keep unlocated text as the message.
 fn located(error: &str) -> (Option<&str>, Option<u32>, &str) {
 	let place = error.split_once(": ").and_then(|(place, text)| {
 		let (file, line) = place.rsplit_once(':')?;
@@ -1177,10 +1024,7 @@ fn located(error: &str) -> (Option<&str>, Option<u32>, &str) {
 	}
 }
 
-/// Reload summary that can exclude removals skipped by the running world.
 pub struct Summary {
-	/// Actions, display names with optional removed-proc paths, and plural
-	/// labels.
 	parts: Vec<(&'static str, Vec<(String, Option<String>)>, &'static str)>,
 	line_moves: usize
 }
@@ -1266,7 +1110,6 @@ impl Summary {
 		}
 	}
 
-	/// List cached resource files before code changes.
 	fn with_resources(mut self, files: Vec<String>) -> Self {
 		if !files.is_empty() {
 			self.parts
@@ -1275,7 +1118,6 @@ impl Summary {
 		self
 	}
 
-	/// Format the summary, excluding removed procs listed in `skipped`.
 	pub fn text(&self, skipped: &[String]) -> String {
 		let mut said: Vec<String> = self
 			.parts
@@ -1303,10 +1145,8 @@ impl Summary {
 	}
 }
 
-/// Suffix used by dmasm's retained-definition diagnostics.
 pub const RETAINED: &str = " was removed from source but retained in the running world";
 
-/// Extract a removed type var for verification by the running world.
 fn removed_var(note: &str) -> Option<RemovedVar> {
 	let (type_path, var) = note.strip_suffix(RETAINED)?.split_once(": var ")?;
 	type_path.starts_with('/').then(|| RemovedVar {
@@ -1333,9 +1173,6 @@ fn proc_code(r: &dmasm::reload::ProcReload) -> HotReloadProc {
 	}
 }
 
-/// Exclude statics declared before the edit so their slots and values survive.
-/// Unread statics are absent from proc bytecode; sending them again would
-/// allocate duplicate slots and rerun their initializers.
 fn without_existing_statics(request: &mut HotReloadRequest, before: &Snapshot) {
 	for code in &mut request.procs {
 		if code.statics.is_empty() {
@@ -1345,7 +1182,6 @@ fn without_existing_statics(request: &mut HotReloadRequest, before: &Snapshot) {
 			path: code.proc.path.clone(),
 			override_id: code.proc.override_id
 		};
-		// New procs have no existing statics.
 		let Ok(old) = before.compile(&key) else {
 			continue;
 		};
@@ -1354,7 +1190,6 @@ fn without_existing_statics(request: &mut HotReloadRequest, before: &Snapshot) {
 	}
 }
 
-/// What the debug server is sent for `changes`
 pub fn reload_request(changes: &Changes) -> HotReloadRequest {
 	HotReloadRequest {
 		new_types: changes.new_types.clone(),
@@ -1409,7 +1244,6 @@ pub fn reload_request(changes: &Changes) -> HotReloadRequest {
 	}
 }
 
-/// The files a parse read, the .dme too
 fn files(snapshot: &Snapshot, dme: &Path) -> Vec<PathBuf> {
 	let mut files = snapshot.files();
 	files.push(dme.to_owned());
@@ -1417,10 +1251,8 @@ fn files(snapshot: &Snapshot, dme: &Path) -> Vec<PathBuf> {
 	files
 }
 
-/// Return freed parse memory to the OS; glibc can retain large unused heaps.
 fn give_back_memory() {
 	#[cfg(all(target_os = "linux", target_env = "gnu"))]
-	// SAFETY: malloc_trim only releases unused memory.
 	unsafe {
 		libc::malloc_trim(0);
 	}
@@ -1430,26 +1262,19 @@ fn modified_time(root: &Path, file: &Path) -> Option<SystemTime> {
 	std::fs::metadata(root.join(file)).and_then(|m| m.modified()).ok()
 }
 
-/// Watched files and their modification times, grouped by directory.
-/// Windows directory listings include timestamps, avoiding a file open
-/// for every timestamp check.
 #[derive(Default)]
 struct Watched {
-	/// Root-relative directories, with filenames normalized by `listed`.
 	dirs: HashMap<PathBuf, HashMap<OsString, Vec<PathBuf>>>,
 	times: HashMap<PathBuf, Option<SystemTime>>,
-	/// Duration of the last poll.
 	took: Duration
 }
 
 impl Watched {
-	/// Watch files read by a parse starting at `read`.
 	fn new(root: &Path, files: &[PathBuf], read: SystemTime) -> Self {
 		let mut watched = Self::default();
 		for file in files {
 			watched.insert(file);
 		}
-		// Record initial timestamps using the same lookup as later polls.
 		watched.changed(root);
 		for time in watched.times.values_mut() {
 			*time = unless_saved_since(*time, read);
@@ -1457,7 +1282,6 @@ impl Watched {
 		watched
 	}
 
-	/// Register an untracked file read by a parse starting at `read`.
 	fn add(&mut self, root: &Path, file: &Path, read: SystemTime) {
 		let Some((dir, name)) = self.insert(file) else {
 			return;
@@ -1470,8 +1294,6 @@ impl Watched {
 		self.times.insert(file.to_owned(), unless_saved_since(time, read));
 	}
 
-	/// Register `file` without a timestamp. Return its directory and normalized
-	/// name, or `None` if already tracked.
 	fn insert(&mut self, file: &Path) -> Option<(PathBuf, OsString)> {
 		if self.times.contains_key(file) {
 			return None;
@@ -1488,7 +1310,6 @@ impl Watched {
 		Some((dir, name))
 	}
 
-	/// Files changed since the last poll.
 	fn changed(&mut self, root: &Path) -> HashSet<PathBuf> {
 		let started = Instant::now();
 		let mut changed = HashSet::new();
@@ -1496,7 +1317,6 @@ impl Watched {
 			let listed = listed_times(&root.join(dir), names);
 			for (name, files) in names {
 				for file in files {
-					// Fall back to metadata for missing or unmatched entries.
 					let time = listed.get(name).copied().unwrap_or_else(|| modified_time(root, file));
 					if let Some(was) = self.times.get_mut(file).filter(|was| **was != time) {
 						*was = time;
@@ -1510,22 +1330,16 @@ impl Watched {
 	}
 }
 
-/// Clear timestamps near or after the parse start so the next poll rechecks
-/// files that may have changed while being read. The clock allowance can
-/// also cause a harmless reread of a file saved just before parsing.
 fn unless_saved_since(time: Option<SystemTime>, read: SystemTime) -> Option<SystemTime> {
 	time.filter(|time| *time + STAMP_LAG < read)
 }
 
-/// Read watched timestamps from a Windows directory listing. Return an empty
-/// map elsewhere, where listings would require a metadata lookup per file.
 fn listed_times<'a>(dir: &Path, names: &'a HashMap<OsString, Vec<PathBuf>>) -> HashMap<&'a OsString, Option<SystemTime>> {
 	let Some(entries) = cfg!(windows).then(|| std::fs::read_dir(dir).ok()).flatten() else {
 		return HashMap::new();
 	};
 	entries
 		.flatten()
-		// Use target metadata for symlinks, not the link timestamp.
 		.filter(|entry| entry.file_type().is_ok_and(|kind| !kind.is_symlink()))
 		.filter_map(|entry| {
 			let (name, _) = names.get_key_value(&listed(&entry.file_name()))?;
@@ -1534,7 +1348,6 @@ fn listed_times<'a>(dir: &Path, names: &'a HashMap<OsString, Vec<PathBuf>>) -> H
 		.collect()
 }
 
-/// Normalize filenames for case-insensitive matching on Windows.
 fn listed(name: &OsStr) -> OsString {
 	if cfg!(windows) {
 		name.to_string_lossy().to_lowercase().into()
@@ -1543,11 +1356,8 @@ fn listed(name: &OsStr) -> OsString {
 	}
 }
 
-/// Preprocessor and BYOND defines excluded from source macro exports.
 const NOT_THE_CODES: [&str; 4] = ["DM_VERSION", "DM_BUILD", "FILE_DIR", "SPACEMAN_DMM"];
 
-/// Export macros still defined after preprocessing, sorted by name.
-/// Use the snapshot's defines and BYOND version; exclude built-in macros.
 pub fn macros(dme: &Path, options: &ParseOptions) -> Result<Vec<Macro>, String> {
 	let ctx = dreammaker::Context::default();
 	let mut pp = dreammaker::Preprocessor::new(&ctx, dme.to_owned()).map_err(|e| format!("couldn't read {}: {}", dme.display(), e))?;
@@ -1566,8 +1376,6 @@ pub fn macros(dme: &Path, options: &ParseOptions) -> Result<Vec<Macro>, String> 
 	pp.by_ref().for_each(drop);
 	let history = pp.finalize();
 
-	// An active definition ends beyond every file. If a name was redefined,
-	// export only its final definition.
 	let mut defined: HashMap<String, (u16, Macro)> = HashMap::new();
 	for (range, (name, define)) in history.iter() {
 		let at_end = range.end.file == dreammaker::FileId::UNKNOWN && range.end.line == !0;
@@ -1598,7 +1406,6 @@ pub fn macros(dme: &Path, options: &ParseOptions) -> Result<Vec<Macro>, String> 
 	Ok(macros)
 }
 
-/// `NAME` or `NAME=VALUE`, as DreamMaker takes them after `-D`
 pub fn parse_define(define: &str) -> (String, Option<String>) {
 	match define.split_once('=') {
 		Some((name, value)) => (name.to_owned(), Some(value.to_owned())),
@@ -1638,7 +1445,6 @@ mod tests {
 		};
 		assert_eq!(changed(&mut watched), Vec::<String>::new());
 
-		// Modified, created and deleted files.
 		write("code/b.dm", at(5));
 		write("code/sub/c.dm", at(5));
 		write("code/new.dm", at(5));
@@ -1647,22 +1453,18 @@ mod tests {
 		std::fs::remove_file(root.join("code/a.dm")).unwrap();
 		assert_eq!(changed(&mut watched), ["code/a.dm"]);
 
-		// A file discovered by a later parse.
 		write("code/later.dm", at(0));
 		watched.add(&root, Path::new("code/later.dm"), at(1));
 		assert_eq!(changed(&mut watched), Vec::<String>::new());
 		write("code/later.dm", at(9));
 		assert_eq!(changed(&mut watched), ["code/later.dm"]);
 
-		// Track differently cased paths to the same Windows file.
 		if cfg!(windows) {
 			watched.add(&root, Path::new("code/SUB/C.dm"), at(1));
 			write("code/sub/c.dm", at(12));
 			assert_eq!(changed(&mut watched), ["code/SUB/C.dm", "code/sub/c.dm"]);
 		}
 
-		// Recheck files saved during the parse, including newly discovered
-		// files.
 		write("code/b.dm", at(20));
 		write("code/during.dm", at(20));
 		let mut watched = Watched::new(&root, &files[..3], at(19));

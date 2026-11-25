@@ -1,19 +1,13 @@
-//! Resolve stddef.dm proc locations for stack frames. The debug server supplies
-//! the source text; normal proc locations come from the world's debug info.
-
 use std::collections::HashMap;
 
 use dreammaker::Context;
 
-/// A proc as the debug server knows it
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub struct ProcId {
-	/// `/type/name`, `/name` for a global proc
 	pub path: String,
 	pub override_id: u32
 }
 
-/// `/mob/proc/Life` as `/mob/Life`
 pub fn strip_declaration(path: &str) -> String {
 	let mut parts: Vec<&str> = path.split('/').collect();
 	if parts.len() >= 3 && matches!(parts[parts.len() - 2], "proc" | "verb") {
@@ -22,7 +16,6 @@ pub fn strip_declaration(path: &str) -> String {
 	parts.join("/")
 }
 
-/// Parse stddef.dm proc locations from the source supplied by the server.
 pub struct Stddef {
 	pub text: String,
 	lines: HashMap<ProcId, u32>

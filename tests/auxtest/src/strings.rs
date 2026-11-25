@@ -21,7 +21,6 @@ fn test_strings() {
 			assert_eq!(funcs::get_string_table_entry(&mut string_b_entry, string_b), 1);
 		}
 
-		// New strings should start with a reference count of 0.
 		if (*string_a_entry).ref_count != 0 {
 			return Err(runtime!("test_string: string_a's reference count != 0"));
 		}
@@ -30,8 +29,6 @@ fn test_strings() {
 			return Err(runtime!("test_string: string_a's reference count != 0"));
 		}
 
-		// Creating a value from our strings should result in both having a
-		// reference count of 1.
 		let value_a = Value::new(values::ValueTag::String, values::ValueData { string: string_a });
 
 		let value_b = Value::new(values::ValueTag::String, values::ValueData { string: string_b });
@@ -46,8 +43,6 @@ fn test_strings() {
 
 		let concatenated = Proc::find("/proc/concat_strings").unwrap().call(&[&value_a, &value_b])?;
 
-		// Returned value should be equal to string_a_contents ..
-		// string_b_contents and have a ref count of 1
 		if concatenated.raw.tag != values::ValueTag::String {
 			return Err(runtime!("test_string: concat_strings did not return a string"));
 		}
@@ -66,8 +61,6 @@ fn test_strings() {
 			return Err(runtime!("test_string: expected_concat != actual_concat"));
 		}
 
-		// The strings should still have a reference count of 1 after
-		// concat_strings has used them
 		if (*string_a_entry).ref_count != 1 {
 			return Err(runtime!("test_string: string_a's reference count != 1 after concat_strings"));
 		}
@@ -76,7 +69,6 @@ fn test_strings() {
 			return Err(runtime!("test_string: string_a's reference count != 1 after concat_strings"));
 		}
 
-		// Rust strings are UTF-8: "aé" has three bytes and two characters.
 		let accented = Value::from_string("a\u{e9}")?;
 		let lengths = Proc::find("/proc/text_lengths").unwrap().call(&[&accented])?.as_list()?;
 		let lengths = (1..=3)
@@ -89,8 +81,6 @@ fn test_strings() {
 			));
 		}
 
-		// DreamMaker and dmasm encode "\xff\x41" as UTF-8 ÿ followed by A.
-		// Latin-1 conversion would corrupt the second character.
 		let escaped = Value::from_string_raw(b"\xc3\xbf\x41")?;
 		let lengths = Proc::find("/proc/text_lengths").unwrap().call(&[&escaped])?.as_list()?;
 		let second = lengths.get(3.0).and_then(|v| v.as_number())?;

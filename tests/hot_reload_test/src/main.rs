@@ -1,9 +1,3 @@
-//! Edits the source of a running world and hot reloads it the way a watcher
-//! would: dmasm compiles what changed, and the debug server swaps it in.
-
-// test_runner already knows how to find BYOND, debug_test has a client, and
-// the debug server's message types aren't exported from its cdylib. All of
-// them are pulled in as source.
 #[allow(dead_code)]
 #[path = "../../debug_test/src/client.rs"]
 mod client;
@@ -26,8 +20,6 @@ use dmasm::reload::{diff, Changes, ParseOptions, Snapshot};
 use paths::ByondCommand;
 use server_types::*;
 
-/// The world's source, in a copy the test can edit, and how it was last
-/// parsed.
 struct Source {
 	dir: PathBuf,
 	options: ParseOptions,
@@ -69,8 +61,6 @@ impl Source {
 		}
 	}
 
-	/// Puts the source back as the world was built from it, which is what a
-	/// rebooted world runs, and parses it
 	fn restore(&mut self) {
 		self.copy_files();
 		self.snapshot = None;
@@ -85,7 +75,6 @@ impl Source {
 		std::fs::read_to_string(self.dir.join(file)).unwrap()
 	}
 
-	/// The line `needle` is on, counting from 1.
 	fn line_of(&self, file: &str, needle: &str) -> u32 {
 		let text = self.text(file);
 		let at = text.find(needle).unwrap_or_else(|| panic!("{:?} isn't in {}", needle, file));
@@ -96,14 +85,10 @@ impl Source {
 		self.snapshot = Some(Snapshot::parse(&self.dme(), &self.options).unwrap());
 	}
 
-	/// Replaces `from` (which has to be there exactly once) with `to`, and
-	/// returns what changed since the last parse.
 	fn edit(&mut self, file: &str, from: &str, to: &str) -> Changes {
 		self.edit_many(file, &[(from, to)])
 	}
 
-	/// Makes each replacement, as for `edit`, and returns what they changed
-	/// together.
 	fn edit_many(&mut self, file: &str, edits: &[(&str, &str)]) -> Changes {
 		let mut text = self.text(file);
 		for (from, to) in edits {
@@ -120,8 +105,6 @@ impl Source {
 		changes
 	}
 
-	/// Apply an edit expected to be rejected, and return the reasons. Leave the
-	/// source edited.
 	fn edit_refused(&mut self, file: &str, from: &str, to: &str) -> Vec<String> {
 		let text = self.text(file);
 		assert_eq!(text.matches(from).count(), 1, "{:?} should be in {} once", from, file);
@@ -131,12 +114,9 @@ impl Source {
 		let edited: HashSet<PathBuf> = [Path::new(file).to_owned()].into_iter().collect();
 		let changes = diff(&old, self.snapshot.as_ref().unwrap(), Some(&edited));
 		assert!(!changes.refused.is_empty(), "the edit wasn't refused");
-		// Omit locations from diagnostic comparisons.
 		changes.refused.iter().map(|refusal| format!("{:#}", refusal)).collect()
 	}
 
-	/// Move the unique occurrence of `code` between file ends in a single
-	/// reload.
 	fn move_code(&mut self, code: &str, from: &str, to: &str) -> Changes {
 		let text = self.text(from);
 		assert_eq!(text.matches(code).count(), 1, "{:?} should be in {} once", code, from);
@@ -229,19 +209,15 @@ fn reload_request(changes: &Changes) -> Request {
 	})
 }
 
-/// Resource ID from a resource `\ref`, such as `[0xc000003]`.
 fn resource_id(reference: &str) -> u32 {
 	let hex = reference.trim_matches('"').trim_start_matches("[0x").trim_end_matches(']');
 	u32::from_str_radix(hex, 16).unwrap_or_else(|_| panic!("{} isn't a resource reference", reference)) & 0xFF_FFFF
 }
 
-/// Replace and reload a resource file as the watcher does, recompiling
-/// its code/default users and updating appearances using `ids`.
 fn reload_resource(client: &mut Client, source: &Source, file: &str, edited: &str, ids: Vec<u32>) -> HotReloadResult {
 	reload_resources(client, source, &[(file, edited, ids)])
 }
 
-/// Reload several (file, edited, ids) replacements together.
 fn reload_resources(client: &mut Client, source: &Source, files: &[(&str, &str, Vec<u32>)]) -> HotReloadResult {
 	for (file, edited, _) in files {
 		std::fs::copy(source.dir.join(edited), source.dir.join(file)).unwrap();
@@ -288,8 +264,6 @@ fn eval(client: &mut Client, command: &str) -> String {
 	}
 }
 
-/// Whether an expression goes to sleep, which is how one tells that a proc
-/// it calls waits for another's sleep
 fn sleeps(client: &mut Client, command: &str) -> bool {
 	match client.request(Request::Eval {
 		frame_id: None,
@@ -302,7 +276,6 @@ fn sleeps(client: &mut Client, command: &str) -> bool {
 	}
 }
 
-/// Evaluates `command` until it gives `expected`.
 fn wait_for(client: &mut Client, command: &str, expected: &str) {
 	let start = Instant::now();
 	loop {
@@ -321,7 +294,6 @@ fn wait_for(client: &mut Client, command: &str, expected: &str) {
 	}
 }
 
-/// The line the top frame of the paused world is on.
 fn paused_line(client: &mut Client) -> (String, Option<u32>) {
 	match client.request(Request::StackFrames {
 		stack_id: 0,
@@ -357,17 +329,13 @@ fn main() {
 
 	let world = World::start(&source.dir.join("hot_reload_test_host.dmb"), &[]);
 
-	// A debugger and a watcher, attached at the same time. The watcher sends
-	// the reloads, except where the debugger's own connection is tested.
 	let mut client = world.connect();
-	// Each client says whether it wants runtime errors
 	client.send(Request::CatchRuntimes {
 		uncaught: Some(Default::default()),
 		caught: None
 	});
 	let mut watcher = world.connect_watcher();
 
-	// Parsed as DreamMaker does for the BYOND version the world runs on
 	let (version, build) = match watcher.request(Request::ByondVersion) {
 		Response::ByondVersion { version, build } => (version, build),
 		other => panic!("expected ByondVersion, got {:?}", other)
@@ -376,7 +344,6 @@ fn main() {
 	source.options.byond = Some((version, build));
 	source.parse();
 
-	// New code for a proc
 	assert_eq!(eval(&mut client, "answer()"), "1");
 	let changes = source.edit("reload.dm", "/proc/answer()\n\treturn 1", "/proc/answer()\n\treturn 2");
 	assert_eq!(changes.reloads.len(), 1);
@@ -384,8 +351,6 @@ fn main() {
 	assert_eq!(eval(&mut client, "answer()"), "2");
 	println!("ok: proc bytecode replacement");
 
-	// A call that was sleeping when its proc changed finishes on the code it
-	// started with. New calls run the new code.
 	assert_eq!(eval(&mut client, "sleeper_state"), "\"sleeping\"");
 	let changes = source.edit(
 		"reload.dm",
@@ -399,14 +364,12 @@ fn main() {
 	wait_for(&mut client, "sleeper_state", "\"new code finished\"");
 	println!("ok: active calls retain old bytecode");
 
-	// Recursion into the new code
 	assert_eq!(eval(&mut client, "factorial(4)"), "24");
 	let changes = source.edit("reload.dm", "return n * factorial(n - 1)", "return n * factorial(n - 1) + 1");
 	reload(&mut watcher, &changes);
 	assert_eq!(eval(&mut client, "factorial(4)"), "41");
 	println!("ok: recursive proc reload");
 
-	// More locals than the proc's frames had room for
 	assert_eq!(eval(&mut client, "few_locals()"), "1");
 	let changes = source.edit(
 		"reload.dm",
@@ -419,7 +382,6 @@ fn main() {
 	assert_eq!(eval(&mut client, "few_locals()"), "21");
 	println!("ok: expanded locals table");
 
-	// A static local keeps its value
 	assert_eq!(eval(&mut client, "counter()"), "1");
 	assert_eq!(eval(&mut client, "counter()"), "2");
 	let changes = source.edit("reload.dm", "\tcount++", "\tcount += 10");
@@ -427,9 +389,6 @@ fn main() {
 	assert_eq!(eval(&mut client, "counter()"), "12");
 	println!("ok: static local value preservation");
 
-	// A breakpoint stays on its line, and the watcher can reload while the
-	// debugger has the world paused.: with new code it stays on the same line,
-	// and when the proc moves it moves with it
 	let line = source.line_of("reload.dm", "\tx += 1");
 	let old_offset = offset_of(&mut client, "/breakpoint_target", line);
 	let response = client.request(Request::BreakpointSet {
@@ -449,8 +408,6 @@ fn main() {
 	assert_eq!(client.expect_pause(), BreakpointReason::Breakpoint);
 	assert_eq!(paused_line(&mut client), ("/breakpoint_target".to_owned(), Some(line)));
 
-	// Two more lines in answer() move everything below it, and the world is
-	// paused while it happens
 	let changes = source.edit(
 		"reload.dm",
 		"/proc/answer()\n\treturn 2",
@@ -459,7 +416,6 @@ fn main() {
 	assert!(changes.line_moves.iter().any(|m| m.proc.path == "/breakpoint_target"));
 	let result = reload(&mut watcher, &changes);
 	assert!(result.warnings.is_empty(), "{:?}", result.warnings);
-	// The paused frame's code is as it was, two lines further down the file
 	assert_eq!(paused_line(&mut client), ("/breakpoint_target".to_owned(), Some(line + 2)));
 	client.resume();
 
@@ -471,7 +427,6 @@ fn main() {
 	assert_eq!(eval(&mut client, "answer()"), "3");
 	println!("ok: breakpoint line remapping");
 
-	// The debug-client still knows it by the offset it set it at
 	let response = client.request(Request::BreakpointUnset {
 		instruction: InstructionRef {
 			proc: ProcRef {
@@ -486,8 +441,6 @@ fn main() {
 	wait_for(&mut client, "breakpoint_armed", "0");
 	println!("ok: remove remapped breakpoint by original offset");
 
-	// An initializer failure during a paused reload must not reach the
-	// caller's catch when execution resumes.
 	let line = source.line_of("reload.dm", "\ty += 1");
 	let offset = offset_of(&mut client, "/caught_target", line);
 	let at = InstructionRef {
@@ -520,7 +473,6 @@ fn main() {
 	assert_eq!(eval(&mut client, "caught_by_tick"), "null");
 	println!("ok: initializer error isolation");
 
-	// Moving a proc between files must preserve its statement breakpoints.
 	let line = source.line_of("reload.dm", "\tx += 1");
 	let offset = offset_of(&mut client, "/breakpoint_target", line);
 	let at = InstructionRef {
@@ -554,10 +506,6 @@ fn main() {
 	reload(&mut watcher, &changes);
 	println!("ok: breakpoints move with a proc to another file");
 
-	// Two debuggers have a breakpoint on one line, and new code above it in
-	// its proc moves it. Each knows it by its old offset until it sets it
-	// anew: one that has, and then sets and takes away a breakpoint at the
-	// old offset, means the new code that's there.
 	let breakpoint = |client: &mut Client, offset: u32, set: bool| {
 		let instruction = InstructionRef {
 			proc: ProcRef {
@@ -588,9 +536,6 @@ fn main() {
 			)
 		}
 	};
-	// A line of new code in place of a blank one keeps the breakpoint's
-	// line where it is, and puts that line's code further on: the new
-	// line's code is where the breakpoint was.
 	let changes = source.edit("reload.dm", "\tvar/x = 1\n\tx += 1", "\tvar/x = 1\n\n\tx += 1");
 	reload(&mut watcher, &changes);
 	let mut other = world.connect();
@@ -608,7 +553,6 @@ fn main() {
 		"the new line isn't where the old one was"
 	);
 	assert_ne!(new_offset, old_offset);
-	// As the launcher does after a reload, then one at the old offset
 	breakpoint(&mut client, old_offset, false);
 	breakpoint(&mut client, new_offset, true);
 	breakpoint(&mut client, old_offset, true);
@@ -618,7 +562,6 @@ fn main() {
 	assert_eq!(other.expect_pause(), BreakpointReason::Breakpoint);
 	assert_eq!(paused_line(&mut client), ("/breakpoint_target".to_owned(), Some(line)));
 	client.resume();
-	// The other one still knows it by its old offset
 	breakpoint(&mut other, old_offset, false);
 	other.leave();
 	breakpoint(&mut client, new_offset, false);
@@ -628,7 +571,6 @@ fn main() {
 	reload(&mut watcher, &changes);
 	println!("ok: breakpoint aliases are client-specific");
 
-	// A runtime in new code reports the new code's line
 	let changes = source.edit(
 		"reload.dm",
 		"/proc/runtime_target()\n\treturn 1",
@@ -645,7 +587,6 @@ fn main() {
 	client.resume();
 	println!("ok: runtime error in reloaded code");
 
-	// Report the object used to name an exception.
 	let changes = source.edit(
 		"reload.dm",
 		"\tvar/list/nothing\n\treturn nothing.len",
@@ -659,7 +600,6 @@ fn main() {
 	}
 	client.resume();
 	println!("ok: exception named with an object");
-	// Resolve resource paths with different filename case, matching DreamMaker.
 	std::fs::write(source.dir.join("Case_Probe.txt"), "found").unwrap();
 	let changes = source.edit(
 		"reload.dm",
@@ -669,8 +609,6 @@ fn main() {
 	reload(&mut watcher, &changes);
 	assert_eq!(eval(&mut client, "runtime_target()"), "\"found\"");
 	println!("ok: resource named in another case");
-	// Cache logpoint expressions, invalidating for src type and newly added
-	// globals.
 	let changes = source.edit(
 		"reload.dm",
 		"/proc/runtime_target()\n",
@@ -723,7 +661,6 @@ fn main() {
 	assert_eq!(logged(&mut client, "/datum/cache_probe/sub"), "extra 5, global 7");
 	println!("ok: logpoint expressions compiled once, for each type of src and reload");
 
-	// A proc auxtools hooked never runs its bytecode
 	let changes = source.edit(
 		"main.dm",
 		"/proc/auxtools_launched_world_del()\n\tCRASH(\"auxtools not loaded\")",
@@ -737,8 +674,6 @@ fn main() {
 	);
 	println!("ok: hooked-proc warning");
 
-	// The debugger's own connection takes reloads too. Requests sent back to
-	// back, the way VS Code sends them.
 	let changes = source.edit("reload.dm", "\treturn 3", "\treturn 4");
 	client.send(reload_request(&changes));
 	client.send(Request::Eval {
@@ -753,7 +688,6 @@ fn main() {
 	}
 	println!("ok: ordered reload and evaluation");
 
-	// A new global proc, called from a changed one
 	let changes = source.edit(
 		"reload.dm",
 		"/proc/uses_helper()\n\treturn 0",
@@ -763,7 +697,6 @@ fn main() {
 	reload(&mut watcher, &changes);
 	assert_eq!(eval(&mut client, "uses_helper()"), "8");
 	assert_eq!(eval(&mut client, "helper()"), "7");
-	// With its lines, as the world was built with DEBUG
 	let response = client.request(Request::Offset {
 		proc: ProcRef {
 			path: "/helper".to_owned(),
@@ -774,7 +707,6 @@ fn main() {
 	assert!(matches!(response, Response::Offset { offset: Some(_) }), "{:?}", response);
 	println!("ok: new global proc");
 
-	// A new proc on a type: existing instances of it and its subtypes have it
 	let changes = source.edit(
 		"reload.dm",
 		"/datum/animal/proc/speak()\n\treturn sound",
@@ -784,8 +716,6 @@ fn main() {
 	assert_eq!(eval(&mut client, "old_dog.describe()"), "\"woof on 4 legs\"");
 	println!("ok: new type proc");
 
-	// A new override between a proc and a subtype's override of it: the
-	// subtype's ..() goes through it now
 	assert_eq!(eval(&mut client, "old_puppy.speak()"), "\"woof?\"");
 	let changes = source.edit(
 		"reload.dm",
@@ -797,8 +727,6 @@ fn main() {
 	assert_eq!(eval(&mut client, "old_puppy.speak()"), "\"woof!?\"");
 	println!("ok: new override and subtype parent calls");
 
-	// A new var default reaches instances that never set the var, new ones,
-	// and subtypes that inherit it, but not a subtype that sets its own
 	eval(&mut client, "write_legs()");
 	let changes = source.edit("reload.dm", "\tvar/legs = 4", "\tvar/legs = 3");
 	assert_eq!(changes.var_defaults.len(), 1);
@@ -810,8 +738,6 @@ fn main() {
 	assert_eq!(eval(&mut client, "initial(old_dog.legs)"), "3");
 	println!("ok: variable default update");
 
-	// New vars: an instance var, overridden by a subtype, a static var, a tmp
-	// var and a global, used by new procs. Existing instances have them.
 	let changes = source.edit(
 		"reload.dm",
 		"\tvar/legs = 3\n",
@@ -831,7 +757,6 @@ fn main() {
 	assert_eq!(eval(&mut client, "(\"tail\" in old_dog.vars)"), "1");
 	println!("ok: new variables");
 
-	// global.vars lists the new global, and finds it by name
 	assert_eq!(eval(&mut client, "(\"flock_size\" in global.vars)"), "1");
 	assert_eq!(eval(&mut client, "global.vars[\"flock_size\"]"), "12");
 	assert_eq!(eval(&mut client, "global.vars[\"flock_size\"] = 13"), "13");
@@ -839,14 +764,12 @@ fn main() {
 	assert_eq!(eval(&mut client, "(\"herd\" in global.vars)"), "0");
 	println!("ok: new global in global.vars");
 
-	// The default of a var a reload added
 	let changes = source.edit("reload.dm", "\tvar/tail = 1\n", "\tvar/tail = 2\n");
 	reload(&mut watcher, &changes);
 	assert_eq!(eval(&mut client, "old_dog.tail"), "2");
 	assert_eq!(eval(&mut client, "new_bird_tail()"), "0");
 	println!("ok: new variable default");
 
-	// A new parameter, by name too
 	let changes = source.edit(
 		"reload.dm",
 		"/proc/greet(n)\n\treturn \"hi [n]\"\n\n/proc/greet_named()\n\treturn \"unchanged\"",
@@ -857,7 +780,6 @@ fn main() {
 	assert_eq!(eval(&mut client, "greet_named()"), "\"hi bo?\"");
 	println!("ok: new parameter");
 
-	// A parameter whose name nothing in the world had
 	let changes = source.edit(
 		"reload.dm",
 		"/proc/greet(n, sound = \"!\")\n\treturn \"hi [n][sound]\"\n\n/proc/greet_named()\n\treturn greet(\"bo\", sound = \"?\")",
@@ -868,7 +790,6 @@ fn main() {
 	assert_eq!(eval(&mut client, "greet_named()"), "\"hi bo!~\"");
 	println!("ok: new parameter name");
 
-	// New static locals: one in a proc that has another, and one in a new proc
 	let before: u32 = eval(&mut client, "counter()").parse().unwrap();
 	let changes = source.edit(
 		"reload.dm",
@@ -882,10 +803,8 @@ fn main() {
 	assert_eq!(eval(&mut client, "visits()"), "12");
 	println!("ok: new static locals");
 
-	// Reject duplicate var declarations on a type and its subtype.
 	const CAT: &str = "/datum/animal/cat\n\tsound = \"meow\"\n";
 	const DUPE: &str = "/datum/animal\n\tvar/dupe = 1\n\n/datum/animal/cat\n\tsound = \"meow\"\n\tvar/dupe = 2\n";
-	// dmasm should reject this before sending it to the world.
 	let refused = source.edit_refused("reload.dm", CAT, DUPE);
 	assert!(
 		refused
@@ -897,8 +816,6 @@ fn main() {
 	source.edit("reload.dm", DUPE, CAT);
 	println!("ok: duplicate var definition refused by type");
 
-	// Re-adding a retained var reuses its declaration and applies the new
-	// default.
 	let changes = source.edit("reload.dm", "\tvar/spare = 1\n", "");
 	reload(&mut watcher, &changes);
 	let changes = source.edit("reload.dm", "/datum/animal\n", "/datum/animal\n\tvar/spare = 3\n");
@@ -914,9 +831,6 @@ fn main() {
 	assert_eq!(eval(&mut client, "var/datum/animal/a = new /datum/animal\nreturn a.spare"), "3");
 	println!("ok: a var removed and declared again");
 
-	// More definitions of a proc on a type that has one: one more of the dog's
-	// speak(), which the puppy's ..() goes through now, and two for the cat
-	// in one reload, the second calling the first
 	let changes = source.edit(
 		"reload.dm",
 		"/proc/caller_sees()\n\tvar/x = slow()\n\treturn isnull(x)\n",
@@ -936,13 +850,11 @@ fn main() {
 	assert_eq!(eval(&mut client, "cat_says()"), "\"MEOW~\"");
 	println!("ok: additional proc definitions");
 
-	// Taking a definition away: calls and the puppy's ..() go to the one before
 	let changes = source.edit("reload.dm", "/datum/animal/dog/speak()\n\treturn \"[..()]!!\"\n", "");
 	assert_eq!(changes.removed_procs.len(), 1, "{:?}", changes.removed_procs);
 	reload(&mut watcher, &changes);
 	assert_eq!(eval(&mut client, "old_dog.speak()"), "\"woof!\"");
 	assert_eq!(eval(&mut client, "old_puppy.speak()"), "\"woof!?\"");
-	// and putting it back
 	let changes = source.edit(
 		"reload.dm",
 		"/proc/cat_says()\n",
@@ -953,7 +865,6 @@ fn main() {
 	assert_eq!(eval(&mut client, "old_puppy.speak()"), "\"woof!!!?\"");
 	println!("ok: remove and restore definition");
 
-	// Re-adding an identical proc must allocate a fresh ID.
 	let without = "/proc/cat_says()\n";
 	let with = "/proc/again()\n\treturn 7\n\n/proc/cat_says()\n";
 	let mut removal = None;
@@ -969,13 +880,10 @@ fn main() {
 		assert!(result.warnings.is_empty(), "round {}: {:?}", round, result.warnings);
 		removal = Some(changes);
 	}
-	// Repeated removal produces a warning without rejecting the reload.
 	let result = reload(&mut watcher, &removal.unwrap());
 	assert_eq!(result.warnings.len(), 1, "{:?}", result.warnings);
 	println!("ok: repeated proc addition and removal");
 
-	// A new parameter next to `in` lists: one BYOND has built in, and an
-	// expression it keeps
 	let changes = source.edit(
 		"reload.dm",
 		"/proc/in_lists(mob/m in world, o in global.vars)\n\treturn 1",
@@ -986,9 +894,6 @@ fn main() {
 	assert_eq!(eval(&mut client, "in_lists(n = 6)"), "6");
 	println!("ok: parameter addition preserves input lists");
 
-	// A default that isn't a constant: new instances of the type and the
-	// subtype that inherits it get it, the subtype with its own doesn't, and
-	// instances that exist keep theirs
 	let changes = source.edit("reload.dm", "\tvar/list/items = list(\"a\")", "\tvar/list/items = list(\"a\", \"b\")");
 	assert_eq!(
 		changes.init_procs.len(),
@@ -1003,8 +908,6 @@ fn main() {
 	assert_eq!(eval(&mut client, "jointext(old_bag.items, \",\")"), "\"a\"");
 	println!("ok: computed default update");
 
-	// New vars whose defaults aren't constants, on a type with an init proc
-	// and one without
 	let changes = source.edit(
 		"reload.dm",
 		"\tvar/list/items = list(\"a\", \"b\")\n",
@@ -1018,7 +921,6 @@ fn main() {
 	assert_eq!(eval(&mut client, "isnull(old_bag.tags)"), "1");
 	println!("ok: new computed variables");
 
-	// And back to a constant
 	let changes = source.edit("reload.dm", "\tvar/list/items = list(\"a\", \"b\")\n", "\tvar/list/items = null\n");
 	reload(&mut watcher, &changes);
 	assert_eq!(eval(&mut client, "new_items(/datum/bag)"), "\"none\"");
@@ -1026,8 +928,6 @@ fn main() {
 	assert_eq!(eval(&mut client, "new_tags()"), "2");
 	println!("ok: computed default becomes constant");
 
-	// New types: a subtype of a type the world has, a subtype of that, and a
-	// datum, with vars, overrides, built-in fields and procs of their own
 	let changes = source.edit(
 		"reload.dm",
 		"/obj/crate/proc/describe_crate()\n",
@@ -1053,12 +953,10 @@ fn main() {
 	assert_eq!(eval(&mut client, "length(typesof(/obj/crate))"), "3");
 	assert_eq!(eval(&mut client, "istype(new /obj/crate/big_crate/huge, /obj/crate/big_crate)"), "1");
 	assert_eq!(eval(&mut client, "istype(new /obj/crate, /obj/crate/big_crate)"), "0");
-	// Types after it in the preorder still know their subtypes
 	assert_eq!(eval(&mut client, "length(typesof(/datum/animal))"), "5");
 	assert_eq!(eval(&mut client, "istype(old_puppy, /datum/animal/dog)"), "1");
 	println!("ok: new types");
 
-	// Cache failed lookups before adding the type and the proc.
 	assert_eq!(eval(&mut client, "text2path(\"/datum/sought\")"), "null");
 	assert_eq!(eval(&mut client, "text2path(\"/proc/sought_maker\")"), "null");
 	let changes = source.edit(
@@ -1071,8 +969,6 @@ fn main() {
 	reload(&mut watcher, &changes);
 	assert_eq!(eval(&mut client, "sought_maker()"), "1");
 	assert_eq!(eval(&mut client, "istype(new /datum/sought, /datum/sought)"), "1");
-	// Cached misses resolve after reload on builds with a supported cache
-	// layout.
 	let build: u32 = eval(&mut client, "world.byond_build").parse().unwrap();
 	if build >= if cfg!(windows) { 1641 } else { 1644 } {
 		assert_eq!(eval(&mut client, "text2path(\"/datum/sought\")"), "/datum/sought");
@@ -1081,8 +977,6 @@ fn main() {
 	}
 	println!("ok: reload after cached path lookup failures");
 
-	// Globals and statics whose initial values aren't constants get them once,
-	// as when the world starts
 	let changes = source.edit(
 		"reload.dm",
 		"/proc/crate_report(type)\n",
@@ -1096,16 +990,12 @@ fn main() {
 	assert_eq!(eval(&mut client, "once_local()"), "2");
 	println!("ok: computed global and static initializers");
 
-	// set waitfor = 0: the caller no longer waits for the sleep, which an
-	// expression can't sit through
 	assert!(sleeps(&mut client, "caller_sees()"));
 	let changes = source.edit("reload.dm", "/proc/slow()\n\tsleep(1)", "/proc/slow()\n\tset waitfor = 0\n\tsleep(1)");
 	reload(&mut watcher, &changes);
 	assert_eq!(eval(&mut client, "caller_sees()"), "1");
 	println!("ok: waitfor setting");
 
-	// An override's settings come from the declaration, so a change there
-	// reaches it, though its code is the same
 	assert_eq!(eval(&mut client, "nap_skipped(/datum/napper/cat)"), "1");
 	let changes = source.edit(
 		"reload.dm",
@@ -1117,8 +1007,6 @@ fn main() {
 	assert!(sleeps(&mut client, "nap_skipped(/datum/napper/cat)"));
 	println!("ok: declaration settings inheritance");
 
-	// Verbs: a new one and an override with `..()`, which things made from
-	// then on get, settings from the declaration, and taking the override away
 	assert_eq!(eval(&mut client, "verb_report(old_helper)"), "\"Greet:Helpers\"");
 	let changes = source.edit(
 		"reload.dm",
@@ -1127,7 +1015,6 @@ fn main() {
 		 \"[..()]!\"\n"
 	);
 	reload(&mut watcher, &changes);
-	// As DreamMaker lists them: the type's own, newest first, then its parent's
 	assert_eq!(
 		eval(&mut client, "verb_report(new /mob/helper/small)"),
 		"\"Greet:Helpers,Wave Hello:,Greet:Helpers\""
@@ -1153,8 +1040,6 @@ fn main() {
 	assert_eq!(eval(&mut client, "helper_greets(new /mob/helper/small)"), "\"hi\"");
 	println!("ok: verb changes");
 
-	// Another definition of a global proc is a proc of its own, which calls
-	// don't reach, as in a build
 	let changes = source.edit(
 		"reload.dm",
 		"/proc/first_def()\n\treturn \"first\"\n",
@@ -1165,7 +1050,6 @@ fn main() {
 	assert_eq!(eval(&mut client, "first_def()"), "\"first\"");
 	println!("ok: additional global definition");
 
-	// A new `in` list expression (which only a client's command would show)
 	let changes = source.edit(
 		"reload.dm",
 		"/proc/first_def()\n",
@@ -1175,7 +1059,6 @@ fn main() {
 	assert_eq!(eval(&mut client, "pick_from(8)"), "8");
 	println!("ok: new parameter input lists");
 
-	// New prefabs, one used twice
 	let changes = source.edit(
 		"reload.dm",
 		"/proc/first_def()\n",
@@ -1187,8 +1070,6 @@ fn main() {
 	assert_eq!(eval(&mut client, "prefab_report()"), "\"custom 11 11 crate 3 1\"");
 	println!("ok: new prefabs");
 
-	// Built-in vars: on a new type (a field, flags and listed ones), and new
-	// defaults on a type the world has, which subtypes that don't set them get
 	let changes = source.edit(
 		"reload.dm",
 		"/proc/first_def()\n",
@@ -1206,7 +1087,6 @@ fn main() {
 		"/obj/crate\n\tname = \"crate\"\n",
 		"/obj/crate\n\tname = \"box\"\n\tpixel_y = 3\n"
 	);
-	// (text, the first letter of the name, with it)
 	assert_eq!(changes.builtin_defaults.len(), 3, "{:?}", changes.builtin_defaults);
 	reload(&mut watcher, &changes);
 	assert_eq!(eval(&mut client, "builtin_report(/obj/crate)"), "\"box 255 0 3  32 neuter 0 1 \"");
@@ -1225,7 +1105,6 @@ fn main() {
 	);
 	println!("ok: built-in variable defaults");
 
-	// Removing an override inherits the runtime parent's built-in default.
 	let changes = source.edit(
 		"reload.dm",
 		"\tname = \"box\"\n\tpixel_y = 3\n",
@@ -1242,8 +1121,6 @@ fn main() {
 	assert_eq!(eval(&mut client, "(new /obj/crate/fancy).pixel_y"), "0");
 	println!("ok: built-in override removal");
 
-	// Removing a built-in type's override needs a rebuild: parent defaults
-	// can differ (area layer 1, atom layer 2).
 	let changes = source.edit("reload.dm", "/proc/first_def()\n", "/area\n\tlayer = 9\n\n/proc/first_def()\n");
 	reload(&mut watcher, &changes);
 	assert_eq!(eval(&mut client, "(new /area).layer"), "9");
@@ -1255,13 +1132,11 @@ fn main() {
 		"{:?}",
 		refused
 	);
-	// Restore agreement between runtime and source.
 	let changes = source.edit("reload.dm", "/proc/first_def()\n", "/area\n\tlayer = 9\n\n/proc/first_def()\n");
 	reload(&mut watcher, &changes);
 	assert_eq!(eval(&mut client, "(new /area).layer"), "9");
 	println!("ok: built-in type default reset rejection");
 
-	// Cover var-table built-ins and record-list bounds.
 	let changes = source.edit(
 		"reload.dm",
 		"/proc/first_def()\n",
@@ -1276,18 +1151,14 @@ fn main() {
 	]);
 	assert_eq!(changes.var_defaults.len(), 3, "{:?}", changes.var_defaults);
 	reload(&mut watcher, &changes);
-	// Check the type's name; new() replaces it on exceptions in 515.1637.
 	assert_eq!(eval(&mut client, "initial(/exception/hot_reload::name)"), "\"two\"");
 	assert_eq!(eval(&mut client, "initial(/sound/hot_reload::channel)"), "5");
-	// A static sharing a built-in's name on another type is a distinct var.
 	assert_eq!(eval(&mut client, "initial(/sound/hot_reload::falloff)"), "2");
 	assert_eq!(eval(&mut client, "hr_named_falloff(new /sound/hot_reload)"), "\"2 7 9\"");
 	assert_eq!(eval(&mut client, "(new /obj/crate/bounded).bound_width"), "8");
 	assert_eq!(eval(&mut client, "(new /obj/crate/bounded).bound_height"), "24");
 	println!("ok: var-table built-ins and bounds");
 
-	// Reparent procs, ..(), vars, New(), built-ins and type queries.
-	// Existing instances receive new procs and defaults.
 	let changes = source.edit(
 		"reload.dm",
 		"/proc/first_def()\n",
@@ -1320,7 +1191,6 @@ fn main() {
 		),
 		"\" 3 2\""
 	);
-	// Explicit bounds and steps override the new parent's.
 	assert_eq!(
 		eval(
 			&mut client,
@@ -1328,13 +1198,11 @@ fn main() {
 		),
 		"\"8 48 2\""
 	);
-	// Existing instances use new procs and defaults but ran the old New().
 	assert_eq!(eval(&mut client, "hr_kept.f()"), "\"tb\"");
 	assert_eq!(
 		eval(&mut client, "\"[istype(hr_kept, /datum/hr_b)] [hr_kept.x] [hr_kept.y]\""),
 		"\"1 2 3\""
 	);
-	// and back again
 	let changes = source.edit("reload.dm", "\tparent_type = /datum/hr_b\n", "\tparent_type = /datum/hr_a\n");
 	reload(&mut watcher, &changes);
 	assert_eq!(eval(&mut client, "(new /datum/hr_t/sub).f()"), "\"ta\"");
@@ -1342,8 +1210,6 @@ fn main() {
 	assert_eq!(eval(&mut client, "(new /datum/hr_t).x"), "1");
 	println!("ok: parent type change");
 
-	// Move var/proc declarations to an ancestor. Existing subtypes retain
-	// their declarations; the proc becomes an override of the new ancestor's.
 	let changes = source.edit(
 		"reload.dm",
 		"/proc/first_def()\n",
@@ -1367,7 +1233,6 @@ fn main() {
 		)
 	]);
 	assert!(changes.refused.is_empty(), "{:?}", changes.refused);
-	// A redeclaration not listed as moved-from must still be rejected.
 	let mut unmarked = reload_request(&changes);
 	if let Request::HotReload(request) = &mut unmarked {
 		for var in &mut request.new_vars {
@@ -1394,16 +1259,12 @@ fn main() {
 	assert_eq!(eval(&mut client, "(new /datum/mv_hud/human/sub).upd()"), "\"human>hud\"");
 	assert_eq!(eval(&mut client, "(new /datum/mv_hud/plain).upd()"), "\"hud\"");
 	assert_eq!(eval(&mut client, "hascall(new /datum/mv_hud/robot, \"upd\")"), "1");
-	// Runtime errors must use the proc's new override path.
 	let error = eval(&mut client, "mv_error()");
 	assert!(error.contains("proc name: upd (/datum/mv_hud/human/upd)"), "{}", error);
-	// Existing instances retain their values and use the new code.
 	assert_eq!(eval(&mut client, "json_encode(mv_kept.sue)"), "\"[\\\"human\\\"]\"");
 	assert_eq!(eval(&mut client, "mv_kept.upd()"), "\"human>hud\"");
 	println!("ok: declarations moved to an ancestor");
 
-	// Reparent sound types: retain explicit var-table built-ins and copy
-	// inherited defaults from the new parent.
 	let sound = "\"[(new /sound/hr_st).pan] [(new /sound/hr_st).frequency] [(new /sound/hr_st).priority]\"";
 	assert_eq!(eval(&mut client, sound), "\"10 3 0\"");
 	let changes = source.edit("main.dm", "\tparent_type = /sound/hr_sa\n", "\tparent_type = /sound/hr_sb\n");
@@ -1412,24 +1273,20 @@ fn main() {
 	assert_eq!(eval(&mut client, sound), "\"0 3 5\"");
 	println!("ok: sound parent change");
 
-	// A type's const: the code that uses it is compiled again
 	assert_eq!(eval(&mut client, "kept_limits.max_doubled()"), "6");
 	let changes = source.edit("main.dm", "\tvar/const/MAX = 3\n", "\tvar/const/MAX = 7\n");
 	assert_eq!(changes.consts, ["MAX"]);
 	reload(&mut watcher, &changes);
 	assert_eq!(eval(&mut client, "kept_limits.max_doubled()"), "14");
-	// read alone it's its global, which has the new value
 	assert_eq!(eval(&mut client, "kept_limits.MAX"), "7");
 	println!("ok: type const update");
 
-	// A new const on a type: a global, with its value
 	let changes = source.edit("main.dm", "\tvar/const/MAX = 7\n", "\tvar/const/MAX = 7\n\tvar/const/MIN = 2\n");
 	assert!(changes.refused.is_empty(), "{:?}", changes.refused);
 	reload(&mut watcher, &changes);
 	assert_eq!(eval(&mut client, "kept_limits.MIN"), "2");
 	println!("ok: new type const");
 
-	// A global const's new value, read alone and folded
 	assert_eq!(eval(&mut client, "json_encode(limit_all())"), "\"[10,11]\"");
 	let changes = source.edit("main.dm", "var/const/LIMIT_ALL = 10\n", "var/const/LIMIT_ALL = 20\n");
 	assert!(changes.warnings.is_empty(), "{:?}", changes.warnings);
@@ -1437,14 +1294,12 @@ fn main() {
 	assert_eq!(eval(&mut client, "json_encode(limit_all())"), "\"[20,21]\"");
 	println!("ok: global const update");
 
-	// A var declared with another type: only the code that uses it cares
 	let changes = source.edit("main.dm", "/datum/limits/var/list/things = null\n", "/datum/limits/var/things = null\n");
 	assert_eq!(changes.retyped, ["things"]);
 	reload(&mut watcher, &changes);
 	assert_eq!(eval(&mut client, "kept_limits.thing_count()"), "0");
 	println!("ok: variable type change");
 
-	// A proc's new name, which call() by name finds it by
 	assert_eq!(eval(&mut client, "call(kept_limits, \"Label\")()"), "\"labelled\"");
 	let changes = source.edit("main.dm", "\tset name = \"Label\"\n", "\tset name = \"Tag\"\n");
 	reload(&mut watcher, &changes);
@@ -1452,8 +1307,6 @@ fn main() {
 	assert_eq!(eval(&mut client, "call(kept_limits, \"label\")()"), "\"labelled\"");
 	println!("ok: proc rename");
 
-	// A new mob type, with a mob var of its own and its parent's verbs, and a
-	// new default for a mob var of a mob type the world has
 	let changes = source.edit(
 		"reload.dm",
 		"/proc/first_def()\n",
@@ -1477,7 +1330,6 @@ fn main() {
 	);
 	println!("ok: new mob types");
 
-	// Something that can't be done leaves everything as it was
 	let mut request = reload_request(&source.edit("reload.dm", "\treturn 4", "\treturn 5"));
 	if let Request::HotReload(HotReloadRequest { procs, .. }) = &mut request {
 		let mut bad = procs[0].clone();
@@ -1494,8 +1346,6 @@ fn main() {
 	assert_eq!(eval(&mut client, "answer()"), "4");
 	println!("ok: rejected reload preserves existing code");
 
-	// Removing definitions absent from the built world must not claim to remove
-	// runtime code.
 	let request = Request::HotReload(HotReloadRequest {
 		removed_procs: vec![dmasm::reload::RemovedProc {
 			proc: dmasm::reload::ProcKey {
@@ -1529,8 +1379,6 @@ fn main() {
 	]);
 	println!("ok: removals the world never had");
 
-	// A definition among a type's others goes where the source has it in the
-	// `..()` chain, and the world numbers them again as the source does
 	let changes = source.edit(
 		"main.dm",
 		"/datum/chain/say()\n\treturn ..() + \"3\"",
@@ -1554,11 +1402,9 @@ fn main() {
 	};
 	assert!(definition_at(&mut client, 1, source.line_of("main.dm", "\treturn ..() + \"2\"")));
 	assert!(definition_at(&mut client, 2, source.line_of("main.dm", "\treturn ..() + \"3\"")));
-	// The one after it is known by its new number now
 	let changes = source.edit("main.dm", "\treturn ..() + \"3\"", "\treturn ..() + \"4\"");
 	reload(&mut watcher, &changes);
 	assert_eq!(eval(&mut client, "the_chain.say()"), "\"124\"");
-	// And one taken out of the middle
 	let changes = source.edit("main.dm", "/datum/chain/say()\n\treturn ..() + \"2\"\n\n", "");
 	assert_eq!(changes.removed_procs.len(), 1);
 	reload(&mut watcher, &changes);
@@ -1566,7 +1412,6 @@ fn main() {
 	assert!(definition_at(&mut client, 1, source.line_of("main.dm", "\treturn ..() + \"4\"")));
 	println!("ok: insert and remove type proc definitions");
 
-	// A var made static: one value for all, which the code that uses it reads
 	assert_eq!(eval(&mut client, "declared_one.read_count()"), "1");
 	let changes = source.edit("main.dm", "\tvar/count = 1", "\tvar/static/count = 7");
 	assert_eq!(changes.redeclared.len(), 1);
@@ -1574,7 +1419,6 @@ fn main() {
 	assert_eq!(eval(&mut client, "declared_one.read_count()"), "7");
 	eval(&mut client, "declared_one.count = 8");
 	assert_eq!(eval(&mut client, "(new /datum/declared/sub).read_count()"), "8");
-	// Back again, with a subtype that sets it: each type has its own default
 	let changes = source.edit_many("main.dm", &[
 		("\tvar/static/count = 7", "\tvar/count = 2"),
 		("/datum/declared/sub\n", "/datum/declared/sub\n\tcount = 3\n")
@@ -1582,7 +1426,6 @@ fn main() {
 	reload(&mut watcher, &changes);
 	assert_eq!(eval(&mut client, "(new /datum/declared).read_count()"), "2");
 	assert_eq!(eval(&mut client, "(new /datum/declared/sub).read_count()"), "3");
-	// A const, and a tmp
 	assert_eq!(eval(&mut client, "issaved(declared_one.count)"), "1");
 	let changes = source.edit_many("main.dm", &[
 		("\tvar/shared = 10", "\tvar/const/shared = 11"),
@@ -1591,13 +1434,11 @@ fn main() {
 	reload(&mut watcher, &changes);
 	assert_eq!(eval(&mut client, "declared_one.read_shared()"), "11");
 	assert_eq!(eval(&mut client, "issaved(declared_one.count)"), "0");
-	// A static whose value is worked out once
 	let changes = source.edit("main.dm", "\tvar/many = null", "\tvar/static/list/many = list(1, 2, 3)");
 	reload(&mut watcher, &changes);
 	assert_eq!(eval(&mut client, "declared_one.many_count()"), "3");
 	println!("ok: static, const and tmp declaration transitions");
 
-	// Builtins, a key worked out and __TYPE__ in a global proc
 	let changes = source.edit(
 		"main.dm",
 		"/proc/compiled_late()\n\treturn 0",
@@ -1612,8 +1453,6 @@ fn main() {
 	assert_eq!(eval(&mut client, "compiled_late()"), "\"1,0,5,1,3\"");
 	println!("ok: additional compiler forms");
 
-	// A verb's definitions, a world proc's and a global proc's come and go
-	// among the others too
 	let definition_at = |client: &mut Client, path: &str, override_id: u32, line: u32| {
 		matches!(
 			client.request(Request::Offset {
@@ -1628,8 +1467,6 @@ fn main() {
 	};
 	assert_eq!(eval(&mut client, "verb_chain.speak()"), "\"ac\"");
 	assert_eq!(eval(&mut client, "world.chant()"), "\"xz\"");
-	// (A mob made before keeps the verbs it had, and its verbs' `..()` goes
-	// through them)
 	let changes = source.edit_many("main.dm", &[
 		(
 			"/mob/chain_verbs/speak()\n\treturn ..() + \"c\"",
@@ -1647,7 +1484,6 @@ fn main() {
 	assert_eq!(changes.new_procs.len(), 3);
 	let result = reload(&mut watcher, &changes);
 	assert_eq!(eval(&mut client, "(new /mob/chain_verbs).speak()"), "\"abc\"");
-	// Listed as DreamMaker lists them, newest first
 	assert_eq!(eval(&mut client, "verb_names(new /mob/chain_verbs)"), "\"speak,speak,other,speak\"");
 	assert_eq!(eval(&mut client, "world.chant()"), "\"xyz\"");
 	assert_eq!(eval(&mut client, "solo()"), "\"declared\"");
@@ -1660,7 +1496,6 @@ fn main() {
 		let line = source.line_of("main.dm", needle);
 		assert!(definition_at(&mut client, path, 2, line), "{} isn't numbered 2", path);
 	}
-	// And taken out of the middle again
 	let changes = source.edit_many("main.dm", &[
 		("/mob/chain_verbs/speak()\n\treturn ..() + \"b\"\n\n", ""),
 		("/world/chant()\n\treturn ..() + \"y\"\n\n", ""),
@@ -1681,8 +1516,6 @@ fn main() {
 	}
 	println!("ok: verb, world and global definition edits");
 
-	// A world/Del of the world's own: the source's numbers hold, with the
-	// debugger's own world/Del set apart, and it stays beneath that one
 	let changes = source.edit(
 		"main.dm",
 		"var/datum/limits/kept_limits = new\n",
@@ -1699,8 +1532,6 @@ fn main() {
 	);
 	println!("ok: world/Del source override numbering");
 
-	// Icon edits update literals, defaults, existing appearances, overlays,
-	// mouse pointers and new instances.
 	assert_eq!(eval(&mut client, "make_lamps()"), "\"made\"");
 	assert_eq!(eval(&mut client, "lamp_states()"), "\"on,off\"");
 	let built_lamp = resource_id(&eval(&mut client, "lamp_ref()"));
@@ -1716,7 +1547,6 @@ fn main() {
 	assert_eq!(resource_id(&eval(&mut client, "\"\\ref[placed_lamp.mouse_over_pointer]\"")), lamp.id);
 	println!("ok: resource reload of an icon");
 
-	// Sound literals and defaults resolve to the new resource.
 	let built_beep = resource_id(&eval(&mut client, "beep_ref()"));
 	let result = reload_resource(&mut watcher, &source, "beep.wav", "beep_edited.wav", vec![built_beep]);
 	let beep = result.resources.first().unwrap_or_else(|| panic!("no resource in {:?}", result));
@@ -1725,8 +1555,6 @@ fn main() {
 	assert_eq!(resource_id(&eval(&mut client, "default_sound_ref()")), beep.id);
 	println!("ok: resource reload of a sound");
 
-	// Reload two files together. Values retained from the build must keep
-	// the old resource even when the client supplies that ID too.
 	assert_eq!(eval(&mut client, "make_crate()"), "\"made\"");
 	let built_crate = resource_id(&eval(&mut client, "crate_ref()"));
 	let held = "\"\\ref[held_lamp.icon]\"";
@@ -1744,8 +1572,6 @@ fn main() {
 	assert_eq!(resource_id(&eval(&mut client, held)), built_lamp);
 	println!("ok: resource reload of two files");
 
-	// Saving crate.dmi with the built lamp's content shares its resource ID.
-	// Later saves must leave that ID and held lamp values unchanged.
 	let result = reload_resource(&mut watcher, &source, "crate.dmi", "lamp_built.dmi", vec![crate_id]);
 	assert_eq!(result.resources[0].id, built_lamp, "{:?}", result);
 	assert!(
@@ -1759,8 +1585,6 @@ fn main() {
 	assert_eq!(eval(&mut client, "states_of(placed_crate.icon)"), "\"on,off\"");
 	println!("ok: resource reload with shared content");
 
-	// Restoring lamp.dmi's built content restores its own resource ID;
-	// its next save can replace that ID.
 	let third = resource_id(&eval(&mut client, "lamp_ref()"));
 	let result = reload_resource(&mut watcher, &source, "lamp.dmi", "lamp_built.dmi", vec![third]);
 	assert_eq!(result.resources[0].id, built_lamp, "{:?}", result);
@@ -1771,8 +1595,6 @@ fn main() {
 	assert_eq!(eval(&mut client, "states_of(placed_lamp.icon)"), "\"on,off,new\"");
 	println!("ok: resource reload with restored built content");
 
-	// Shutting auxtools down puts back what the world had, which BYOND frees
-	// itself. The world then starts again from its .dmb.
 	eval(&mut client, "request_reboot()");
 	client.wait_closed();
 	let mut client = world.connect();
@@ -1783,7 +1605,6 @@ fn main() {
 	assert_eq!(eval(&mut client, "old_dog.legs"), "4");
 	println!("ok: reboot after reload");
 
-	// After reboot, reload the edited icon over the built resource again.
 	assert_eq!(eval(&mut client, "make_lamps()"), "\"made\"");
 	assert_eq!(eval(&mut client, "lamp_states()"), "\"on,off\"");
 	assert_eq!(resource_id(&eval(&mut client, "lamp_ref()")), built_lamp);
@@ -1795,7 +1616,6 @@ fn main() {
 	assert_eq!(eval(&mut client, "overlay_states()"), "\"on,off,new\"");
 	println!("ok: resource reload after a reboot");
 
-	// A world with more appearances than 16-bit ids
 	let lamp = result.resources[0].id;
 	assert_eq!(eval(&mut client, "make_many_appearances()"), "\"made\"");
 	let result = reload_resource(&mut watcher, &source, "lamp.dmi", "lamp_third.dmi", vec![lamp]);
@@ -1806,8 +1626,6 @@ fn main() {
 	watcher.wait_closed();
 	println!("ok: resource reload past 65,535 appearances");
 
-	// The watcher doesn't need a debugger there. With the debugger gone, the
-	// world says what it runs.
 	client.send(Request::Disconnect);
 	client.wait_closed();
 	let mut watcher = world.connect_watcher();

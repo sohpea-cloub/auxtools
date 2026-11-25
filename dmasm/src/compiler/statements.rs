@@ -1,5 +1,3 @@
-//! Compile statements using DreamMaker's control-flow and cache rules.
-
 use dreammaker::ast::{
     AssignOp, Block, Expression, Follow, Spanned, Statement, Term, UnaryOp, VarStatement,
 };
@@ -14,9 +12,6 @@ pub(super) fn emit_proc_body(
     source: &ProcSource,
     code: &Block,
 ) -> Result<(), CompileError> {
-    // DreamMaker's first debug line is the first nonempty line after the
-    // header, including an empty macro expansion or `;`. An empty body can
-    // use the next proc's header.
     let first_statement = code.first().map(|stmt| stmt.location.line);
     let first_line = source
         .value
@@ -28,7 +23,6 @@ pub(super) fn emit_proc_body(
     super::known_bugs::check(compiler, source, code);
     let mut scan = LabelScan::default();
     label_iterators(code, 0, &mut scan);
-    // Treat a bare name targeted by goto as a label, unless `name:` declares it.
     for (name, depth) in scan.bare {
         if scan.gotos.contains(&name) && !scan.labels.contains_key(&name) {
             scan.labels.insert(name.clone(), depth);
@@ -37,7 +31,6 @@ pub(super) fn emit_proc_body(
     }
     ctx(compiler).label_iterators = scan.labels;
 
-    // Default arguments: `if (isnull(arg)) arg = default`, at the header's line
     let params = source
         .value
         .parameters
@@ -64,8 +57,6 @@ pub(super) fn emit_proc_body(
                 "; dmasm divides",
             );
         }
-        // `x = a in L` is the default a, with L what a verb's argument is
-        // picked from: the `in` isn't the default's
         let default = match default {
             Expression::BinaryOp {
                 op: dreammaker::ast::BinaryOp::In,
@@ -74,7 +65,6 @@ pub(super) fn emit_proc_body(
             } => &**lhs,
             other => other,
         };
-        // (`datum/x = new` makes the parameter's type)
         compiler.implicit_type = implicit_type_for(compiler, &param.var_type.type_path.to_string());
         let kind = compiler.emit_expr(default.clone());
         compiler.implicit_type = None;
@@ -84,7 +74,6 @@ pub(super) fn emit_proc_body(
         compiler.emit_label(skip);
     }
 
-    // A return type (`as num`) records the header line again after parameter defaults.
     let return_type = source
         .ty
         .get()
@@ -105,18 +94,13 @@ fn emit_block(compiler: &mut Compiler, block: &Block) -> Result<(), CompileError
     emit_block_inner(compiler, block, false)
 }
 
-/// Labels and goto targets in a proc.
 #[derive(Default)]
 struct LabelScan {
-    /// How many for-in iterators are active at each `label:`.
     labels: std::collections::HashMap<String, u32>,
-    /// Active iterator depth at each bare-name label candidate.
     bare: std::collections::HashMap<String, u32>,
-    /// The names gotos jump to.
     gotos: std::collections::HashSet<String>,
 }
 
-/// How many for-in iterators are active at each label of `block`.
 fn label_iterators(block: &[Spanned<Statement>], depth: u32, out: &mut LabelScan) {
     for stmt in block.iter() {
         match &stmt.elem {
@@ -178,7 +162,6 @@ fn label_iterators(block: &[Spanned<Statement>], depth: u32, out: &mut LabelScan
     }
 }
 
-/// Whether a bare-name statement is a goto target without a matching `name:` label.
 pub(super) fn is_bare_label(block: &[Spanned<Statement>], expr: &Expression) -> bool {
     let Some(name) = bare_name(expr) else {
         return false;
@@ -188,7 +171,6 @@ pub(super) fn is_bare_label(block: &[Spanned<Statement>], expr: &Expression) -> 
     scan.gotos.contains(name) && !scan.labels.contains_key(name)
 }
 
-/// Extract the identifier from a bare-name expression.
 fn bare_name(expr: &Expression) -> Option<&str> {
     match expr {
         Expression::Base { term, follow } if follow.is_empty() => match &term.elem {
@@ -199,7 +181,6 @@ fn bare_name(expr: &Expression) -> Option<&str> {
     }
 }
 
-/// `skip_first_line`: the first statement's DbgLine was already emitted.
 fn emit_block_inner(
     compiler: &mut Compiler,
     block: &Block,
@@ -208,7 +189,6 @@ fn emit_block_inner(
     compiler.proc.as_mut().unwrap().scopes.push(vec![]);
     let mut skip_next = false;
     for (i, stmt) in block.iter().enumerate() {
-        // `spawn` without a block of its own spawns the statement after it
         if skip_next {
             skip_next = false;
             continue;
@@ -223,10 +203,7 @@ fn emit_block_inner(
             ctx.next_line = found.ok().map(|i| ctx.next_lines[i].1);
             ctx.next_line
         };
-        // DreamMaker records the lookahead line before `return "[x]"` itself.
         match &stmt.elem {
-            // A multiline operator's line precedes the statement line
-            // (`f(a,\n\tb) + 1`).
             Statement::Expr(expr)
                 if compiler.read_on_line(expr).is_some_and(|l| l > line)
                     && matches!(
@@ -237,7 +214,6 @@ fn emit_block_inner(
                 Some(after) => {
                     compiler.emit_ins(Instruction::DbgLine(after));
                     compiler.emit_ins(Instruction::DbgLine(line));
-                    // Suppress the text's end-line record here.
                     compiler.skip_compound = true;
                 }
                 None if !(skip_first_line && i == 0) => {
@@ -281,8 +257,6 @@ fn emit_value(compiler: &mut Compiler, expr: &Expression) -> Result<(), CompileE
     Ok(())
 }
 
-/// Multiline `if` and `while` conditions record their closing parenthesis.
-/// The next term then records its own line, even if unchanged.
 fn condition_end(compiler: &mut Compiler, condition: &Spanned<Expression>) {
     if let Some(end) = super::line_at(ctx(compiler).end_lines, condition.location) {
         compiler.read_on(end);
@@ -299,8 +273,6 @@ fn emit_condition_jz(
     Ok(())
 }
 
-/// Evaluates a condition into the test flag. `==` and `in` set the flag
-/// themselves, so DreamMaker doesn't fetch it into a value and test it again.
 fn emit_condition(compiler: &mut Compiler, expr: &Expression) -> Result<(), CompileError> {
     compiler.condition_chain = matches!(
         expr,
@@ -311,7 +283,6 @@ fn emit_condition(compiler: &mut Compiler, expr: &Expression) -> Result<(), Comp
     );
     emit_value(compiler, expr)?;
     compiler.condition_chain = false;
-    // (not what a `&&` or `||` folded to: see `fold::is_logic`)
     if let (false, Some(Node::Instruction(Instruction::GetFlag, _))) =
         (super::fold::is_logic(expr), compiler.nodes.last())
     {
@@ -346,8 +317,6 @@ fn emit_statement(
     ) {
         ctx(compiler).clear_new_vars = true;
     }
-    // DreamMaker starts every for loop without knowing what the cache holds,
-    // and ends every loop that way too
     let is_loop = matches!(
         stmt,
         Statement::ForLoop { .. }
@@ -390,7 +359,6 @@ fn emit_statement_inner(
                 if follow.is_empty() && matches!(&term.elem, Term::Ident(i) if i.as_str() == "."))
             };
             match value {
-                // End returns `.` anyway
                 Some(expr) if is_dot(expr) => compiler.emit_ins(Instruction::End),
                 Some(expr) => {
                     compiler.regroup_root = true;
@@ -402,7 +370,6 @@ fn emit_statement_inner(
             Ok(())
         }
 
-        // Arms with constant conditions are dropped or become the else
         Statement::If { arms, else_arm }
             if arms
                 .iter()
@@ -410,8 +377,6 @@ fn emit_statement_inner(
         {
             let mut live: Vec<(Spanned<Expression>, Block)> = vec![];
             let mut else_block = else_arm.clone();
-            // (a false arm after the last live one still leaves its jump to
-            // the end, as if there were an else)
             let mut dropped_after = false;
             for (cond, block) in arms.iter() {
                 match super::fold::value(compiler, &cond.elem) {
@@ -430,8 +395,6 @@ fn emit_statement_inner(
                 else_block = Some(Default::default());
             }
             if live.is_empty() {
-                // (DreamMaker forgets the cache even where nothing is left,
-                // and after the arm it keeps)
                 compiler.cache = None;
                 if let Some(block) = &else_block {
                     emit_block(compiler, block)?;
@@ -474,14 +437,12 @@ fn emit_statement_inner(
         }
 
         Statement::While { condition, block } => {
-            // A loop whose condition is always false is left out
             if super::fold::value(compiler, &condition.elem).is_some_and(|c| !c.truthy()) {
                 return Ok(());
             }
             let head = compiler.new_label();
             let end = compiler.new_label();
             compiler.emit_loop_label(head.clone());
-            // A condition that's always true isn't tested
             if super::fold::value(compiler, &condition.elem).map_or(true, |c| !c.truthy()) {
                 condition_end(compiler, condition);
                 emit_condition_jz(compiler, &condition.elem, &end)?;
@@ -500,7 +461,6 @@ fn emit_statement_inner(
             emit_loop_body(compiler, block, &cont, &end)?;
             compiler.emit_label(cont);
             match super::fold::value(compiler, &condition.elem).map(|c| c.truthy()) {
-                // `while (FALSE)` doesn't loop, `while (TRUE)` always does
                 Some(false) => {}
                 Some(_) => compiler.emit_ins(Instruction::JmpLoop(Label::Named(head))),
                 None => {
@@ -543,7 +503,6 @@ fn emit_statement_inner(
         }
 
         Statement::ForList(for_list) => {
-            // `for (x in a to b)` counts like `for (x = a to b)`
             if let Some(Expression::BinaryOp {
                 op: dreammaker::ast::BinaryOp::To,
                 lhs,
@@ -573,10 +532,7 @@ fn emit_statement_inner(
                 (compiler.emit_find_var(for_list.name.clone())?, ty)
             };
             let var = lvalue_var(compiler, var)?;
-            // DreamMaker reads the list afresh, not from what the cache held
-            // before the loop
             compiler.cache = None;
-            // view(), range() and friends have iterators of their own
             let kind = match &for_list.in_list {
                 Some(list) => match iterator_kind(list) {
                     Some((kind, args)) => {
@@ -600,8 +556,6 @@ fn emit_statement_inner(
                 }
             };
             let nested = ctx(compiler).iterators > 0;
-            // What the loop takes from the list: the `as` types, or else the
-            // kind of the declared type, checked exactly with istype()
             let input = for_list.input_type.filter(|i| !i.is_empty()).or_else(|| {
                 for_list
                     .var_type
@@ -613,8 +567,6 @@ fn emit_statement_inner(
                 Some(input) => (crate::TypeFilter::from_bits_truncate(input.bits()), None),
                 _ => loop_filter(compiler, &declared),
             };
-            // All datums of a type, `for (var/datum/T/x)`: the iterator is given
-            // the type to look for (`in world` goes over the world's atoms instead)
             if for_list.in_list.is_none() && filter.is_empty() && input.is_none() {
                 if let Some(path) = check.take() {
                     compiler.emit_ins(Instruction::PushVal(Value::Path(path)));
@@ -639,7 +591,6 @@ fn emit_statement_inner(
                 compiler.emit_ins(Instruction::JzLoop(Label::Named(head.clone())));
             }
             ctx(compiler).iterators += 1;
-            // (only a nested loop pushed an iterator to drop)
             if nested {
                 ctx(compiler).cleanups.push(Instruction::IterPop);
             }
@@ -706,7 +657,6 @@ fn emit_statement_inner(
         Statement::Vars(vars) => {
             let next_line = ctx(compiler).next_line;
             for (i, var) in vars.iter().enumerate() {
-                // The other declarations end at a comma on the same line.
                 let next = if i + 1 == vars.len() {
                     next_line
                 } else {
@@ -735,7 +685,6 @@ fn emit_statement_inner(
             let mut arm_labels = vec![];
             for (values, _) in cases.iter() {
                 let label = compiler.new_label();
-                // DreamMaker lists one arm's values last to first
                 for case in values.elem.iter().rev() {
                     match case {
                         dreammaker::ast::Case::Exact(e) => {
@@ -778,13 +727,10 @@ fn emit_statement_inner(
             Ok(())
         }
 
-        // Settings are metadata, not code
         Statement::Setting { .. } => Ok(()),
 
         Statement::Break(label) | Statement::Continue(label) => {
             let target = find_loop(compiler, label.as_ref().map(|l| l.as_str()))?;
-            // Leaving inner loops drops their iterators and range bounds,
-            // innermost first
             let live = if matches!(stmt, Statement::Break(_)) {
                 target.break_cleanups
             } else {
@@ -798,8 +744,6 @@ fn emit_statement_inner(
             for ins in cleanups {
                 compiler.emit_ins(ins);
             }
-            // Inside a try block (wherever the loop is) DreamMaker leaves with the
-            // try-ending jumps
             let in_try = ctx(compiler).try_depth > 0;
             compiler.emit_ins(match (matches!(stmt, Statement::Break(_)), in_try) {
                 (true, false) => Instruction::Jmp(Label::Named(target.break_label)),
@@ -817,8 +761,6 @@ fn emit_statement_inner(
             }
             let after = compiler.new_label();
             compiler.emit_ins(Instruction::Spawn(Label::Named(after.clone())));
-            // (The spawned code is still in its loops: a `continue` there
-            // goes on with the loop in the new thread)
             let res = emit_block(compiler, block);
             res?;
             compiler.emit_ins(Instruction::End);
@@ -849,7 +791,6 @@ fn emit_statement_inner(
             ctx(compiler).scopes.push(vec![]);
             match catch_params.first() {
                 Some(param) => {
-                    // `catch (var/exception/e)`: the path's last element is the name
                     let path = param.to_string();
                     let mut parts: Vec<&str> = path.split('/').filter(|p| !p.is_empty()).collect();
                     let name = parts.pop().unwrap_or("e").to_owned();
@@ -862,7 +803,6 @@ fn emit_statement_inner(
                         format!("/{}", parts.join("/"))
                     };
                     let slot = ctx(compiler).declare_typed_local(&name, ty);
-                    // cleared first like any new var, where DreamMaker does that
                     if !ctx(compiler).loops.is_empty() || ctx(compiler).clear_new_vars {
                         compiler.emit_ins(Instruction::PushVal(Value::Null));
                         compiler.emit_ins(Instruction::SetVar(Variable::Local(slot)));
@@ -880,7 +820,6 @@ fn emit_statement_inner(
 
         Statement::Label { name, block } => {
             compiler.emit_label(format!("USER_{}", name));
-            // (the first loop in the block, even after other statements)
             let is_loop = block.iter().any(|s| {
                 matches!(
                     s.elem,
@@ -894,8 +833,6 @@ fn emit_statement_inner(
                 )
             });
             if is_loop {
-                // The loop it labels takes the name, but `break name` leaves the
-                // block, dropping the loop's iterator itself
                 let end = compiler.new_label();
                 let cleanups = ctx(compiler).cleanups.len();
                 ctx(compiler).pending_loop_name =
@@ -906,7 +843,6 @@ fn emit_statement_inner(
                 compiler.emit_label(end);
                 return Ok(());
             }
-            // A block: `break name` jumps past it
             let end = compiler.new_label();
             let cleanups = ctx(compiler).cleanups.len();
             ctx(compiler).loops.push(LoopLabels {
@@ -924,18 +860,15 @@ fn emit_statement_inner(
             Ok(())
         }
 
-        // Jumping out of nested for-in loops drops their iterators
         Statement::Goto(name) => {
             let depth = ctx(compiler)
                 .label_iterators
                 .get(name.as_str())
                 .copied()
                 .unwrap_or(0);
-            // (the outermost loop's iterator wasn't pushed)
             for _ in depth.max(1)..ctx(compiler).iterators {
                 compiler.emit_ins(Instruction::IterPop);
             }
-            // (in a try block, wherever the label is, with TryJmp)
             let label = Label::Named(format!("USER_{}", name));
             let in_try = ctx(compiler).try_depth > 0;
             compiler.emit_ins(if in_try {
@@ -968,8 +901,6 @@ fn emit_statement_inner(
                     .declare_typed_local(kv.key.as_str(), var_type.type_path.to_string());
                 compiler.emit_ins(Instruction::PushVal(Value::Null));
                 compiler.emit_ins(Instruction::SetVar(Variable::Local(k)));
-                // The value var is declared after reading into the loop body:
-                // record that line, then the loop's line again.
                 let body_line = kv
                     .block
                     .first()
@@ -999,7 +930,6 @@ fn emit_statement_inner(
             if nested {
                 compiler.emit_ins(Instruction::IterPush);
             }
-            // The key is filtered like a for-in loop's var
             let input = kv.key_input_type.filter(|i| !i.is_empty()).or_else(|| {
                 kv.var_type
                     .as_ref()
@@ -1031,7 +961,6 @@ fn emit_statement_inner(
                 compiler.emit_ins(Instruction::JzLoop(Label::Named(head.clone())));
             }
             ctx(compiler).iterators += 1;
-            // (only a nested loop pushed an iterator to drop)
             if nested {
                 ctx(compiler).cleanups.push(Instruction::IterPop);
             }
@@ -1049,8 +978,6 @@ fn emit_statement_inner(
             Ok(())
         }
 
-        // DreamMaker clears the reference before deleting what it held, and
-        // deleting src ends the proc
         Statement::Del(expr) => {
             emit_value(compiler, expr)?;
             let target = strip_parens(expr);
@@ -1082,10 +1009,8 @@ fn emit_statement_inner(
     }
 }
 
-/// A switch case's value, which must be a compile-time constant.
 fn constant_value(compiler: &mut Compiler, expr: &Expression) -> Result<Value, CompileError> {
     match super::fold::value(compiler, expr) {
-        // (a case of -0 is 0)
         Some(super::fold::Constant::Number(n)) => return Ok(Value::Number(n + 0.0)),
         Some(super::fold::Constant::Text(t)) => {
             return Ok(Value::DMString(crate::operands::DMString(t)))
@@ -1115,7 +1040,6 @@ fn constant_value(compiler: &mut Compiler, expr: &Expression) -> Result<Value, C
 
 fn emit_for_init(compiler: &mut Compiler, init: &Statement, line: u32) -> Result<(), CompileError> {
     match init {
-        // `for (x, x < 10, x++)`: naming the variable does nothing
         Statement::Expr(Expression::Base { term, follow })
             if follow.is_empty() && matches!(term.elem, Term::Ident(_)) =>
         {
@@ -1132,12 +1056,6 @@ fn emit_for_init(compiler: &mut Compiler, init: &Statement, line: u32) -> Result
     }
 }
 
-/// Compile a var statement. A `new` of the declared type (`var/L[] = new()`)
-/// invalidates field-chain caching.
-///
-/// For an initializer starting with interpolated text (`var/s = "[x]"`),
-/// record the lookahead line before the value. Its first compound term
-/// then records its own line; for text, this is the end line.
 fn text_read_ahead(compiler: &mut Compiler, var: &VarStatement, next_line: Option<u32>) {
     if var.var_type.flags.is_static() || var.var_type.flags.is_const() {
         return;
@@ -1153,8 +1071,6 @@ fn text_read_ahead(compiler: &mut Compiler, var: &VarStatement, next_line: Optio
     }
 }
 
-/// Lookahead line after initial interpolated text, or `next_line` when
-/// the text ends the expression.
 fn after_leading_text(expr: &Expression, next_line: Option<u32>) -> Option<u32> {
     match expr {
         Expression::Base { term, follow } => match (&term.elem, follow.first()) {
@@ -1193,7 +1109,6 @@ fn emit_var_statement(
     var: &VarStatement,
     null_first: bool,
 ) -> Result<(), CompileError> {
-    // `var/x = a in list(...)` is `var/x = a` with the list as x's `in` clause
     let in_clause;
     let var = match &var.value {
         Some(Expression::BinaryOp {
@@ -1208,8 +1123,6 @@ fn emit_var_statement(
         }
         _ => var,
     };
-    // A local const is a global like a static local; a number or text is also
-    // folded into constant expressions that use it
     if var.var_type.flags.is_const() {
         use dreammaker::constants::Constant as C;
         let value = match var
@@ -1231,7 +1144,6 @@ fn emit_var_statement(
                 .insert(var.name.as_str().to_owned(), value);
         }
     }
-    // Static locals are globals, set up when the world starts
     if var.var_type.flags.is_static() || var.var_type.flags.is_const() {
         let ty = var.var_type.type_path.to_string();
         let value = match &var.value {
@@ -1248,7 +1160,6 @@ fn emit_var_statement(
         ctx(compiler).declare_static(var.name.as_str(), ty, value, var.value.clone());
         return Ok(());
     }
-    // The initializer can't see the variable it initializes
     let ty = var.var_type.type_path.to_string();
     compiler.implicit_type = implicit_type_for(compiler, &ty);
     let slot_var = |compiler: &mut Compiler| {
@@ -1265,7 +1176,6 @@ fn emit_var_statement(
         }
         return Ok(());
     }
-    // `var/L[n]` is declared without a value and then given its list
     let sized_list = matches!(&var.value, Some(Expression::Base { term, .. })
         if term.location.file == dreammaker::FileId::UNKNOWN && matches!(term.elem, Term::NewPrefab { .. }));
     match &var.value {
@@ -1288,7 +1198,6 @@ fn emit_var_statement(
         None => {
             compiler.implicit_type = None;
             let local = slot_var(compiler);
-            // Inside a loop it's cleared on every pass
             if !ctx(compiler).loops.is_empty() || ctx(compiler).clear_new_vars {
                 compiler.emit_ins(Instruction::PushVal(Value::Null));
                 compiler.emit_ins(Instruction::SetVar(local));
@@ -1298,8 +1207,6 @@ fn emit_var_statement(
     Ok(())
 }
 
-/// The iterator kind a for-in loop over a builtin like view() uses, and its
-/// arguments.
 fn iterator_kind(list: &Expression) -> Option<(u32, &[Expression])> {
     let Expression::Base { term, follow } = strip_parens(list) else {
         return None;
@@ -1312,7 +1219,6 @@ fn iterator_kind(list: &Expression) -> Option<(u32, &[Expression])> {
     };
     let kind = match name.as_str() {
         "block" if args.len() == 2 => 6,
-        // (with up to three coordinates left out, as nulls)
         "block" if (3..=6).contains(&args.len()) => 19,
         "view" => 7,
         "oview" => 8,
@@ -1330,14 +1236,11 @@ fn iterator_kind(list: &Expression) -> Option<(u32, &[Expression])> {
     Some((kind, args))
 }
 
-/// The iterator filter for a loop variable declared as `ty`, and the type to
-/// check items against when the filter alone doesn't pin it down.
 fn loop_filter(compiler: &Compiler, ty: &str) -> (crate::TypeFilter, Option<String>) {
     use crate::TypeFilter as F;
     if ty.is_empty() {
         return (F::empty(), None);
     }
-    // (`var/list/T/x` is checked as a T, or as a list if T isn't a type)
     let ty = match ty.strip_prefix("/list") {
         Some(rest) if rest.starts_with('/') => {
             if compiler
@@ -1379,12 +1282,10 @@ fn loop_filter(compiler: &Compiler, ty: &str) -> (crate::TypeFilter, Option<Stri
     (filter, if exact { None } else { Some(path) })
 }
 
-/// What a bare `new` makes for a variable declared as `ty`.
 fn implicit_type_for(compiler: &Compiler, ty: &str) -> Option<String> {
     if ty.is_empty() {
         return None;
     }
-    // (`list` anywhere in the path: `var/datum/d/list/x` is a list too)
     if is_list_path(ty) {
         return Some("/list".to_owned());
     }
@@ -1394,19 +1295,16 @@ fn implicit_type_for(compiler: &Compiler, ty: &str) -> Option<String> {
         .tree
         .find(ty)
         .map(|t| t.get().path.clone());
-    // Resolve debugger world types during assembly, beyond the builtin-only parse.
     match found {
         None if compiler.expr_scope.is_some() => Some(ty.to_owned()),
         found => found,
     }
 }
 
-/// Whether a var's declared type makes it a list: `list` is one of its parts.
 fn is_list_path(ty: &str) -> bool {
     ty.split('/').any(|part| part == "list")
 }
 
-/// `/list` when the expression is a variable declared as a list.
 fn list_type_of(compiler: &Compiler, expr: &Expression) -> Option<String> {
     super::procs::declared_type_path(compiler, expr)
         .filter(|p| is_list_path(p))
@@ -1449,8 +1347,6 @@ fn emit_loop_body(
     res
 }
 
-/// Whether the code from `start` uses the cache, calls a global proc or reads
-/// a list element (so `x.y ||= v` saves the cache around v).
 fn saves_cache(compiler: &Compiler, start: usize) -> bool {
     compiler.nodes[start..].iter().any(|n| {
         matches!(n, Node::Instruction(i, _) if super::procs::touches_cache(i)
@@ -1458,16 +1354,12 @@ fn saves_cache(compiler: &Compiler, start: usize) -> bool {
     })
 }
 
-/// Whether `value` would save the cache with nothing folded: it's compiled
-/// that way and thrown away.
 fn unfolded_saves_cache(compiler: &mut Compiler, value: &Expression) -> bool {
     unfolded_has(compiler, value, |compiler, start| {
         compiler.global_field || saves_cache(compiler, start)
     })
 }
 
-/// Whether `found` holds of `value`'s code (from the place it's given) with
-/// nothing folded: it's compiled that way and thrown away.
 pub(super) fn unfolded_has(
     compiler: &mut Compiler,
     value: &Expression,
@@ -1501,7 +1393,6 @@ pub(super) fn unfolded_has(
     saves
 }
 
-/// An expression without the parentheses around it: `(x) = y` assigns to x.
 fn unparenthesised(expr: &Expression) -> Expression {
     let mut expr = expr;
     while let Expression::Base { term, follow } = expr {
@@ -1513,7 +1404,6 @@ fn unparenthesised(expr: &Expression) -> Expression {
     expr.clone()
 }
 
-/// The writable variable an expression's result names.
 fn lvalue_var(compiler: &mut Compiler, kind: EvalKind) -> Result<Variable, CompileError> {
     match kind {
         EvalKind::Var(var) if super::is_writable(&var) => Ok(var),
@@ -1529,8 +1419,6 @@ fn lvalue_var(compiler: &mut Compiler, kind: EvalKind) -> Result<Variable, Compi
     }
 }
 
-/// Whether `del` clears what it's given: a variable, a field (other than
-/// builtin constants like `type`) or a list element.
 fn is_deletable_place(expr: &Expression) -> bool {
     let Expression::Base { term, follow } = expr else {
         return false;
@@ -1571,22 +1459,15 @@ fn strip_parens(expr: &Expression) -> &Expression {
     expr
 }
 
-/// Split safe-access targets into segments after each `?.`, plus an
-/// optional final index. Segments can contain calls and list indexes.
 pub(super) struct SafeChain {
     segments: Vec<Vec<Follow>>,
     last: Vec<Follow>,
     index: Option<Expression>,
 }
 
-/// What a write to a `?.` place does with the place.
 pub(super) enum SafeWrite<'w> {
-    /// Assign the value to it (the only thing a list element allows).
     Assign,
-    /// The instructions that change it.
     Change(&'w dyn Fn(Variable) -> Vec<Instruction>),
-    /// `||=` (or `&&=` when false) as a statement: the value is found and
-    /// assigned only when the place's value doesn't decide it.
     Logical { or: bool },
 }
 
@@ -1600,7 +1481,6 @@ fn is_safe_follow(f: &Follow) -> bool {
     )
 }
 
-/// `follow` starts at the first `?` access. None unless it's a place.
 pub(super) fn safe_chain(follow: &[Follow]) -> Option<SafeChain> {
     use dreammaker::ast::{ListAccessKind as L, PropertyAccessKind as K};
     let mut segments: Vec<Vec<Follow>> = vec![];
@@ -1619,7 +1499,6 @@ pub(super) fn safe_chain(follow: &[Follow]) -> Option<SafeChain> {
             }
             Follow::Index(L::Normal, e) if last => index = Some((**e).clone()),
             Follow::Index(L::Normal, _) => segments.last_mut()?.push(f.clone()),
-            // `L?[k]`: the list itself is the last segment's place
             Follow::Index(L::Safe, e) if last => {
                 segments.push(vec![]);
                 index = Some((**e).clone())
@@ -1640,7 +1519,6 @@ pub(super) fn safe_chain(follow: &[Follow]) -> Option<SafeChain> {
     })
 }
 
-/// `a?.b.c` as what comes before the first `?` and the chain after.
 fn safe_place(expr: &Expression) -> Option<(Expression, SafeChain)> {
     let Expression::Base { term, follow } = expr else {
         return None;
@@ -1656,7 +1534,6 @@ fn safe_place(expr: &Expression) -> Option<(Expression, SafeChain)> {
 }
 
 impl SafeChain {
-    /// The last segment's field names, when it's all fields.
     fn fields(&self) -> Option<Vec<String>> {
         self.last
             .iter()
@@ -1667,7 +1544,6 @@ impl SafeChain {
             .collect()
     }
 
-    /// Split the last segment after its final call or index, before trailing fields.
     fn computed(&self) -> (Vec<Follow>, Vec<String>) {
         let split = self
             .last
@@ -1684,14 +1560,11 @@ impl SafeChain {
         (self.last[..split].to_vec(), fields)
     }
 
-    /// Whether `write` can be done to the place, in a statement or for its
-    /// value.
     pub fn writable(&self, write: &SafeWrite, value_form: bool) -> bool {
         match (self.fields(), write) {
             (Some(_), SafeWrite::Assign) => self.index.is_some(),
             (Some(_), SafeWrite::Change(_)) => true,
             (Some(_), SafeWrite::Logical { .. }) => !value_form,
-            // `a?.f().x`, `a?.L[k].x[i]`: a call's result isn't a place
             (None, SafeWrite::Assign) => self.index.is_some(),
             (None, _) => {
                 self.index.is_some() || matches!(self.last.last(), Some(Follow::Field(..)))
@@ -1700,7 +1573,6 @@ impl SafeChain {
     }
 }
 
-/// Find the first call after `start` if its arguments changed the receiver cache.
 fn call_after_cache_use(compiler: &Compiler, start: usize) -> Option<usize> {
     let call = start
         + compiler.nodes[start..]
@@ -1712,7 +1584,6 @@ fn call_after_cache_use(compiler: &Compiler, start: usize) -> Option<usize> {
         .then_some(call)
 }
 
-/// Restore the receiver before the call and report DreamMaker's cache bug.
 fn restore_receiver(compiler: &mut Compiler, call: usize) {
     compiler.warn_bug(SAFE_RECEIVER_BUG, SAFE_RECEIVER_OURS);
     compiler
@@ -1723,10 +1594,6 @@ fn restore_receiver(compiler: &mut Compiler, call: usize) {
         .insert(call, Node::Instruction(Instruction::PopCache, ()));
 }
 
-/// Write through a safe-access chain with its initial receiver on the stack.
-/// Skip on null. `value_form` returns the assigned result or null.
-/// `place` supplies static type information; `static_var` identifies
-/// a globally stored target. The chain must be writable.
 pub(super) fn emit_safe_chain_write(
     compiler: &mut Compiler,
     chain: SafeChain,
@@ -1755,7 +1622,6 @@ pub(super) fn emit_safe_chain_write(
         if segment.is_empty() {
             break;
         }
-        // The segment is read from the cache
         let start = compiler.nodes.len();
         let kind =
             super::follow::emit_typed(compiler, segment, EvalKind::Var(Variable::Cache), None)?;
@@ -1787,8 +1653,6 @@ pub(super) fn emit_safe_chain_write(
         ))
     };
     let Some(fields) = fields else {
-        // Evaluate the value before the final receiver, then write its field
-        // or element and restore the holder.
         let (computed, fields) = computed;
         let value_used_cache = compiler.nodes[value_start..]
             .iter()
@@ -1803,8 +1667,6 @@ pub(super) fn emit_safe_chain_write(
         if value_form && copies {
             compiler.emit_ins(Instruction::PushTop);
         }
-        // Restore the holder after the value changes the cache. DreamMaker
-        // uses the cached object as the receiver.
         if value_used_cache {
             compiler.warn_bug(SAFE_RECEIVER_BUG, SAFE_RECEIVER_OURS);
             compiler.emit_ins(Instruction::PopCache);
@@ -1870,7 +1732,6 @@ pub(super) fn emit_safe_chain_write(
                         });
                     }
                 }
-                // Preserve the assignment target while evaluating the value.
                 let start = compiler.nodes.len();
                 compiler.implicit_type = implicit;
                 emit_value(compiler, value.expect("a value"))?;
@@ -1976,7 +1837,6 @@ pub(super) fn emit_safe_chain_write(
             } else {
                 Instruction::Jz(Label::Named(end.clone()))
             });
-            // The place is kept around a value that changes the cache
             let start = compiler.nodes.len();
             compiler.implicit_type = implicit;
             emit_value(compiler, value.expect("a value"))?;
@@ -2002,8 +1862,6 @@ pub(super) fn emit_safe_chain_write(
     Ok(())
 }
 
-/// The global a place ending in a static var's field is (`a?.s`, or the list
-/// in `a?.s[k]` when `indexed`).
 pub(super) fn static_place(
     compiler: &Compiler,
     place: &Expression,
@@ -2025,7 +1883,6 @@ pub(super) fn static_place(
     )
 }
 
-/// The same for the fields `follow` of a value of type `ty`.
 pub(super) fn static_member(
     compiler: &Compiler,
     ty: Option<dreammaker::objtree::TypeRef>,
@@ -2056,7 +1913,6 @@ pub(super) fn static_member(
     )))
 }
 
-/// A write to the place `a?.b`. False if it can't be written this way.
 pub(super) fn emit_safe_write(
     compiler: &mut Compiler,
     place: &Expression,
@@ -2071,7 +1927,6 @@ pub(super) fn emit_safe_write(
         return Ok(false);
     }
     emit_value(compiler, &base)?;
-    // A static var is written directly (`a?.n.s = x` doesn't read a.n)
     let static_var = static_place(compiler, place, chain.index.is_some());
     emit_safe_chain_write(
         compiler,
@@ -2086,13 +1941,11 @@ pub(super) fn emit_safe_write(
 }
 
 fn emit_expr_statement(compiler: &mut Compiler, expr: &Expression) -> Result<(), CompileError> {
-    // A type path on its own line does nothing at all
     if matches!(expr, Expression::Base { term, follow }
         if follow.is_empty() && matches!(&term.elem, Term::Prefab(p) if p.vars.is_empty()))
     {
         return Ok(());
     }
-    // nor does a variable, a field of one or null (`x`, `(a.b)`)
     if let Expression::Base { term, follow } = strip_parens(expr) {
         let plain = matches!(term.elem, Term::Ident(_) | Term::Null)
             && follow.iter().all(|f| {
@@ -2110,8 +1963,6 @@ fn emit_expr_statement(compiler: &mut Compiler, expr: &Expression) -> Result<(),
         }
     }
     emit_expr_statement_inner(compiler, expr)?;
-    // Flag-only tests leave no stack value to pop. Preserve the separate
-    // comparison sequence `Teq; Pop; GetFlag; Pop`.
     let n = compiler.nodes.len();
     if n >= 3
         && matches!(
@@ -2129,7 +1980,6 @@ fn emit_expr_statement(compiler: &mut Compiler, expr: &Expression) -> Result<(),
     {
         compiler.nodes.truncate(n - 2);
     }
-    // (`(x |= y)` counts too, and so does reading into x with `>>`)
     let assignment = match strip_parens(expr) {
         Expression::BinaryOp {
             op: dreammaker::ast::BinaryOp::RShift,
@@ -2145,7 +1995,6 @@ fn emit_expr_statement(compiler: &mut Compiler, expr: &Expression) -> Result<(),
         ),
         _ => false,
     };
-    // (except `(x = y)` compiled as a value and popped; `(x |= y)` counts)
     let n = compiler.nodes.len();
     let value_set = n >= 2
         && matches!(
@@ -2167,7 +2016,6 @@ fn emit_expr_statement_inner(
     expr: &Expression,
 ) -> Result<(), CompileError> {
     match expr {
-        // `x = a in L` is `(x = a) in L`, whose result DreamMaker leaves be
         Expression::BinaryOp {
             op: dreammaker::ast::BinaryOp::In,
             lhs,
@@ -2203,7 +2051,6 @@ fn emit_expr_statement_inner(
             Ok(())
         }
 
-        // `a?.b ||= v`
         Expression::AssignOp {
             op: op @ (AssignOp::OrAssign | AssignOp::AndAssign),
             lhs,
@@ -2229,8 +2076,6 @@ fn emit_expr_statement_inner(
             emit_value(compiler, rhs)?;
             compiler.implicit_type = None;
             warn_pointer_index(compiler, lhs);
-            // (no line for the place of `-=` and the like; `=` to a list
-            // element gets one)
             compiler.place = *op != AssignOp::Assign;
             let kind = compiler.emit_inner_expr(unparenthesised(lhs))?;
             if *op == AssignOp::Assign {
@@ -2258,7 +2103,6 @@ fn emit_expr_statement_inner(
             let Some(Follow::Unary(op)) = follow.last().map(|f| f.elem.clone()) else {
                 unreachable!()
             };
-            // (`(*p)++` steps what p points at)
             let inner = unparenthesised(&Expression::Base {
                 term: term.clone(),
                 follow: follow[..follow.len() - 1].to_vec().into_boxed_slice(),
@@ -2283,7 +2127,6 @@ fn emit_expr_statement_inner(
             Ok(())
         }
 
-        // `x ||= y` as a statement: if (!x) x = y
         Expression::AssignOp {
             op: op @ (AssignOp::OrAssign | AssignOp::AndAssign),
             lhs,
@@ -2297,21 +2140,14 @@ fn emit_expr_statement_inner(
                     Instruction::Jz(Label::Named(end.to_owned()))
                 }
             };
-            // `x ||= new()` makes x's declared type
             let implicit = compiler
                 .static_type_name(lhs)
                 .or_else(|| list_type_of(compiler, lhs));
-            // A list element or field is found once, and kept in the cache
-            // (saved around the new value if that uses the cache too)
             let kind = compiler.emit_inner_expr((**lhs).clone())?;
             if matches!(kind, EvalKind::ListRef | EvalKind::Field(..)) {
                 let field = matches!(kind, EvalKind::Field(..));
                 let var = lvalue_var(compiler, kind)?;
-                // Re-emit the field target unless it was cached before the test.
-                // Do not reuse field chains loaded by the test when evaluating the RHS.
                 let before = compiler.cache.clone();
-                // (and as the test read it: `src.x` written out doesn't reuse a
-                // cache a bare `x` loaded, for the assignment either)
                 let explicit_src = compiler.explicit_src;
                 compiler.emit_ins(Instruction::GetVar(var.clone()));
                 if field && compiler.cache.as_ref().is_some_and(|h| h.len() > 1) {
@@ -2324,12 +2160,9 @@ fn emit_expr_statement_inner(
                 compiler.global_field = false;
                 emit_value(compiler, rhs)?;
                 compiler.implicit_type = None;
-                // Use source-level cache dependencies, including global calls,
-                // list indexes and subexpressions removed by constant folding.
                 let saves = std::mem::take(&mut compiler.global_field)
                     || saves_cache(compiler, start)
                     || unfolded_saves_cache(compiler, rhs);
-                // (a list element's key too, when the value indexes a list)
                 let saves_key = !field
                     && compiler.nodes[start..]
                         .iter()
@@ -2360,7 +2193,6 @@ fn emit_expr_statement_inner(
             compiler.emit_ins(Instruction::GetVar(var.clone()));
             compiler.emit_ins(Instruction::Test);
             compiler.emit_ins(jump(&end));
-            // (the value doesn't reuse a chain through fields)
             compiler.end_assignment_statement();
             compiler.implicit_type = implicit.clone();
             emit_value(compiler, rhs)?;
@@ -2382,7 +2214,6 @@ fn emit_expr_statement_inner(
             rhs,
         } => emit_input(compiler, lhs, rhs),
 
-        // `animate()` uses named-call argument rules (see `named_call_end`).
         Expression::Base { term, follow }
             if follow.is_empty()
                 && matches!(&term.elem, Term::Call(name, _) if name.as_str() == "animate") =>
@@ -2409,8 +2240,6 @@ fn emit_expr_statement_inner(
 
         other => {
             emit_value(compiler, other)?;
-            // Statement calls use the statement opcode except for parenthesized
-            // calls or receivers saved on the cache stack.
             let n = compiler.nodes.len();
             let parenthesized = matches!(other, Expression::Base { term, follow }
                 if follow.is_empty() && matches!(term.elem, Term::Expr(_)));
@@ -2427,7 +2256,6 @@ fn emit_expr_statement_inner(
                     *ins = Instruction::CallStatement(var, count);
                 }
             }
-            // missile() leaves nothing (and can't be a value)
             if !matches!(
                 compiler.nodes.last(),
                 Some(Node::Instruction(Instruction::Missile, _))
@@ -2439,8 +2267,6 @@ fn emit_expr_statement_inner(
     }
 }
 
-/// Resolve the left operand of statement I/O. Savefile entries such as
-/// `S["key"]` use Index.
 fn emit_io_target(compiler: &mut Compiler, target: &Expression) -> Result<(), CompileError> {
     if let Expression::Base { term, follow } = target {
         if let Some(Follow::Index(dreammaker::ast::ListAccessKind::Normal, key)) =
@@ -2459,7 +2285,6 @@ fn emit_io_target(compiler: &mut Compiler, target: &Expression) -> Result<(), Co
     emit_value(compiler, target)
 }
 
-/// `source >> place` as a statement reads input into place.
 fn emit_input(
     compiler: &mut Compiler,
     source: &Expression,
@@ -2496,7 +2321,6 @@ fn emit_output(
                         ("link", 1) => Some(Instruction::Link),
                         ("ftp", 1 | 2) => Some(Instruction::OutputFtp),
                         ("run", 1) => Some(Instruction::OutputRun),
-                        // x << load_resource(a, b): the target counts as an argument
                         ("load_resource", _) => Some(Instruction::LoadResource(n as u32 + 1)),
                         _ => None,
                     };
@@ -2554,8 +2378,6 @@ pub(super) fn aug_instruction(op: AssignOp, var: Variable) -> Instruction {
     }
 }
 
-/// `a?.b ||= v` (or `&&=`) as a value: a.b, or v when that's false and gets
-/// assigned, or null when a is null. Only for a plain `a?.b.c` place.
 pub(super) fn emit_safe_logical_assign(
     compiler: &mut Compiler,
     place: &Expression,
@@ -2599,7 +2421,6 @@ pub(super) fn emit_safe_logical_assign(
     compiler.implicit_type = compiler.static_type_name(place);
     emit_value(compiler, rhs)?;
     compiler.implicit_type = None;
-    // (DM doesn't keep the place when v changes the cache; we do)
     if compiler.nodes[start..]
         .iter()
         .any(|n| matches!(n, Node::Instruction(i, _) if super::procs::touches_cache(i)))
@@ -2614,8 +2435,6 @@ pub(super) fn emit_safe_logical_assign(
     Ok(true)
 }
 
-/// A parameter default DreamMaker reads as a path when it's written without
-/// spaces: a var or a field of one (`a.b`), divided by a number
 fn path_division(default: &Expression) -> bool {
     let Expression::BinaryOp {
         op: dreammaker::ast::BinaryOp::Div,
@@ -2634,8 +2453,6 @@ fn path_division(default: &Expression) -> bool {
     name_chain && number
 }
 
-/// Before 516.1685 the list of `a?.L[k] += v` is read from the cache, which
-/// the value has changed when it uses the cache itself
 fn warn_list_from_cache(compiler: &Compiler) {
     let since = compiler
         .nodes
@@ -2653,25 +2470,20 @@ fn warn_list_from_cache(compiler: &Compiler) {
     }
 }
 
-/// What DreamMaker's code does with `*p[i]`, and what `*p[i]` gets in its
-/// place
 pub(super) const POINTER_INDEX_BUG: &str =
     "`*p[i]`: from 516.1668 DreamMaker leaves the index out, a \"bad index\" error for a list of \
      pointers";
 pub(super) const POINTER_INDEX_OURS: &str = "; dmasm dereferences the indexed element";
 
-/// `a?.f(b.x).v = b.y`, and `a?.f(b.x).v` read
 pub(super) const SAFE_RECEIVER_BUG: &str =
     "`?.` chains that continue after a call or list access (`a?.f(b.x).v = b.y`): DreamMaker \
      uses the receiver left by the arguments or assigned value (b)";
 pub(super) const SAFE_RECEIVER_OURS: &str = "; dmasm uses a";
 
-/// `a?.b ||= c` before 516.1673
 const SAFE_LOGICAL_BUG: &str =
     "`?.` in `||=` or `&&=`: before 516.1673 DreamMaker leaves out its null tests (a runtime \
      error on null, and the first object's var with two `?.`)";
 
-/// `*p[i] = x`: from 516.1668 DreamMaker leaves the index out
 pub(super) fn warn_pointer_index(compiler: &Compiler, place: &Expression) {
     if let Expression::Base { follow, .. } = strip_parens(place) {
         if compiler

@@ -3,15 +3,11 @@ use auxtools::*;
 pub struct AssembleEnv;
 
 impl AssembleEnv {
-	// Runs `code` in the expression stub with `name` set to `arg` and returns
-	// what it evaluates to
 	fn eval_with_name(code: &str, arg: &str) -> Option<Value> {
 		let arg = Value::from_string(arg).ok()?;
 		Self::eval_with(code, &[("name", &arg)])
 	}
 
-	// Runs `code` in the expression stub with the names given set, and returns
-	// what it evaluates to, unless that's null
 	fn eval_with(code: &str, params: &[(&str, &Value)]) -> Option<Value> {
 		let names: Vec<&str> = params.iter().map(|(name, _)| *name).collect();
 		let values: Vec<&Value> = params.iter().map(|(_, value)| *value).collect();
@@ -30,8 +26,6 @@ impl AssembleEnv {
 		Some(res)
 	}
 
-	/// Whether `object` has a proc or verb called `name`, its own or
-	/// inherited
 	pub fn has_proc(object: &Value, name: &str) -> bool {
 		let Ok(name) = Value::from_string(name) else {
 			return false;
@@ -40,7 +34,6 @@ impl AssembleEnv {
 	}
 }
 
-/// Find the last definition at `/type/name`, as a call on that type would.
 fn last_definition(path: &str) -> Option<Proc> {
 	let mut last = None;
 	let mut n = 0;
@@ -51,8 +44,6 @@ fn last_definition(path: &str) -> Option<Proc> {
 	last
 }
 
-/// Resolve a type from the runtime table, using the value tag of its nearest
-/// ancestor that text2path() can resolve.
 fn added_type(path: &str) -> Option<(u8, u32)> {
 	let id = crate::hot_reload::type_id(path)?;
 	let tag = ancestry(path)
@@ -64,9 +55,6 @@ fn added_type(path: &str) -> Option<(u8, u32)> {
 	Some((tag, id))
 }
 
-/// Type paths from `ty` through its actual parents, nearest first.
-/// Follow the runtime table, including builtin and explicit parent_type
-/// ancestry. Fall back to path prefixes if the table is unavailable.
 fn ancestry(ty: &str) -> Vec<String> {
 	let ty = ty.trim_end_matches('/');
 	if let Some(paths) = crate::hot_reload::ancestry(ty) {
@@ -89,8 +77,6 @@ fn found(proc: Proc, warning: Option<String>) -> dmasm::compiler::FoundProc {
 	}
 }
 
-/// Resolve `ty::name()` to the nearest definition in the type ancestry,
-/// matching DreamMaker.
 pub fn type_proc(ty: &str, name: &str) -> Result<dmasm::compiler::FoundProc, String> {
 	if dmasm::assembler::AssembleEnv::get_type(&mut AssembleEnv, ty).is_none() {
 		return Err(format!("there's no type {} in the running world", ty));
@@ -102,9 +88,6 @@ pub fn type_proc(ty: &str, name: &str) -> Result<dmasm::compiler::FoundProc, Str
 		.ok_or_else(|| format!("{} has no proc called {}", ty, name))
 }
 
-/// Resolve `/type/proc/name` or `/type/verb/name` to the first definition on
-/// the original declaring type. Warn if that type differs from the written
-/// path, which DreamMaker rejects. Only `/proc/name` resolves a global proc.
 pub fn proc_path(path: &str) -> Option<dmasm::compiler::FoundProc> {
 	let (ty, name) = path.rsplit_once("/proc/").or_else(|| path.rsplit_once("/verb/"))?;
 	if name.is_empty() || name.contains('/') {
@@ -131,8 +114,6 @@ impl dmasm::assembler::AssembleEnv for AssembleEnv {
 		let string = StringRef::from_raw(string).ok()?;
 		let id = string.get_id();
 
-		// We leak here because the assembled code now holds a reference to this
-		// string
 		std::mem::forget(string);
 
 		Some(id.0)
@@ -160,14 +141,10 @@ impl dmasm::assembler::AssembleEnv for AssembleEnv {
 		Proc::find(path).map(|p| p.id.0)
 	}
 
-	// This is... pretty crazy
 	fn get_type(&mut self, path: &str) -> Option<(u8, u32)> {
 		match path {
-			// text2path() returns null for these two
 			"/list" => return Some((raw_types::values::ValueTag::ListTypepath as u8, 0)),
 			"/savefile" => return Some((raw_types::values::ValueTag::SaveFileTypepath as u8, 0)),
-			// text2path() gives /client's path id as the data, but the code
-			// DreamMaker compiles always has 0
 			"/client" => return Some((raw_types::values::ValueTag::ClientTypepath as u8, 0)),
 			_ => {}
 		}
@@ -178,22 +155,14 @@ impl dmasm::assembler::AssembleEnv for AssembleEnv {
 		if let Some(id) = crate::hot_reload::image_type(path) {
 			return Some((raw_types::values::ValueTag::ImageTypepath as u8, id));
 		}
-		// text2path() caches failed lookups. Check the runtime type table for
-		// types added since the lookup.
 		if let Some(found) = added_type(path) {
 			return Some(found);
 		}
 
-		// Without `/proc/`, a proc path names the last definition, matching
-		// DreamMaker. text2path() does not resolve this form.
 		last_definition(path).map(|proc| (raw_types::values::ValueTag::ProcRef as u8, proc.id.0))
 	}
 
-	// fcopy_rsc() hands back the cache entry a file already has, and adds the
-	// file to the cache if it isn't there yet
 	fn get_resource_index(&mut self, path: &str) -> Option<u32> {
-		// Before resources load, fcopy_rsc() allocates IDs the build later
-		// reuses for other files (see `world_resources`).
 		if !crate::world_resources::is_loaded() {
 			return crate::world_resources::built_id(&resource_file(path)?);
 		}
@@ -209,18 +178,13 @@ impl dmasm::assembler::AssembleEnv for AssembleEnv {
 	}
 }
 
-/// The `FILE_DIR` directories of the code being reloaded (see
-/// `HotReloadRequest::resource_dirs`)
 pub(crate) static RESOURCE_DIRS: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(vec![]);
 
-/// Search for resources in the world's directory, then in `FILE_DIR` order.
 fn resource_paths(path: &str) -> impl Iterator<Item = String> + '_ {
 	let dirs = RESOURCE_DIRS.lock().map(|dirs| dirs.clone()).unwrap_or_default();
 	std::iter::once(path.to_owned()).chain(dirs.into_iter().map(move |dir| format!("{}/{}", dir.trim_end_matches('/'), path)))
 }
 
-/// Resolve a resource path relative to the world's directory, matching
-/// `get_resource_index`.
 pub(crate) fn resource_file(path: &str) -> Option<std::path::PathBuf> {
 	resource_paths(path).find_map(|path| {
 		let file = std::path::Path::new(&path);
@@ -231,10 +195,6 @@ pub(crate) fn resource_file(path: &str) -> Option<std::path::PathBuf> {
 	})
 }
 
-/// Resolve resource paths case-insensitively, matching DreamMaker on Linux.
-/// Prefer exact path components, then the first sorted case-insensitive match.
-/// Return `None` if the path already exists or any component cannot be
-/// resolved.
 fn case_insensitive_path(path: &str) -> Option<String> {
 	use std::path::{Component, Path, PathBuf};
 

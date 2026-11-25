@@ -1,14 +1,9 @@
-//! Compare small-proc compilation against observed DreamMaker 516 bytecode.
-
 use dmasm::compiler::{compile_proc, ProcSource};
 
-/// Compiles proc `name` of type `ty` ("" for global procs) from `code`, and
-/// returns its instructions one per line, without debug info.
 fn compile(code: &str, ty: &str, name: &str) -> String {
     compile_on(code, ty, name, dmasm::ByondVersion::LATEST)
 }
 
-/// Compile a proc for the specified BYOND version.
 fn compile_on(code: &str, ty: &str, name: &str, byond: dmasm::ByondVersion) -> String {
     let ctx = dreammaker::Context::default();
     let pp = dreammaker::Preprocessor::from_buffer(&ctx, "test.dm".into(), code.to_owned());
@@ -48,7 +43,6 @@ fn compile_on(code: &str, ty: &str, name: &str, byond: dmasm::ByondVersion) -> S
         .join("\n")
 }
 
-/// Asserts that `lines` appear in `code` consecutively.
 #[track_caller]
 fn assert_has(code: &str, lines: &[&str]) {
     let want = lines.join("\n");
@@ -244,7 +238,6 @@ fn same_named_static_locals_in_one_proc_are_different_globals() {
     );
 }
 
-/// Calls can invalidate cached field chains; reload after non-receiver calls.
 #[test]
 fn chain_reloaded_after_call() {
     let code = compile(
@@ -258,7 +251,6 @@ fn chain_reloaded_after_call() {
     );
 }
 
-/// `/type::proc()` is the type's own override.
 #[test]
 fn type_proc_reference_override() {
     let code = compile(
@@ -269,7 +261,6 @@ fn type_proc_reference_override() {
     assert_has(&code, &["PushVal /obj/a/p"]);
 }
 
-/// `var/x = a in list(...)` is `var/x = a`: the list is x's `in` clause.
 #[test]
 fn var_in_clause() {
     let code = compile(
@@ -280,16 +271,12 @@ fn var_in_clause() {
     assert_has(&code, &["GetVar arg(0)", "SetVar local(0)"]);
 }
 
-/// Out-of-range conversion produces x86 integer sentinel 0x80000000,
-/// so ~(65536 ** 2) becomes 0xFFFFFF.
 #[test]
 fn bit_not_of_huge_number() {
     let code = compile("/proc/f()\n\treturn ~(65536 ** 2)\n", "", "f");
     assert_has(&code, &["PushVal 16777215"]);
 }
 
-/// Builtin vars like `type` are declared const but differ per object: never
-/// folded, so `loc?.type || "x"` keeps its first operand.
 #[test]
 fn builtin_const_not_folded() {
     let code = compile(
@@ -300,8 +287,6 @@ fn builtin_const_not_folded() {
     assert!(code.contains("SetCacheJmpIfNull"), "{}", code);
 }
 
-/// Receiver calls retain the cached old object until an assignment
-/// statement or non-receiver call invalidates the chain.
 #[test]
 fn chain_kept_after_call() {
     let code = compile(
@@ -325,7 +310,6 @@ fn chain_kept_after_call() {
 
 #[test]
 fn safe_src_is_not_an_explicit_src_chain() {
-    // `src?.x` leaves nothing for the next chain to treat as written with `src.`
     let code = compile(
         "/mob/var/mob/m\n/mob/var/x\n/mob/var/y\n/mob/var/list/t\n/mob/proc/f()\n\tif(src?.t)\n\t\treturn 0\n\tvar/g = m.x\n\treturn m.y\n",
         "/mob",
@@ -350,12 +334,9 @@ fn a_logical_operator_folded_to_its_first_value_forgets_the_cache() {
             "f",
         )
     };
-    // A plain value: the cache has a.m, and a.m.y is read from there
     for kept in ["5", "\"s\"", "b"] {
         assert_has(&code(kept), &["GetVar cache[\"y\"]", "Ret"]);
     }
-    // A `&&` or `||`, and one that's folded away to its first value too: the
-    // cache is set again
     for forgotten in [
         "1 || b",
         "\"s\" || b",
@@ -373,8 +354,6 @@ fn a_logical_operator_folded_to_its_first_value_forgets_the_cache() {
     }
 }
 
-/// DreamMaker drops an empty initializer before a semicolon, so
-/// for (; a < 5; a++) initializes with a < 5 and tests a++.
 #[test]
 fn a_for_with_an_empty_first_part_is_read_past_it() {
     let code = |head: &str| {
@@ -387,13 +366,11 @@ fn a_for_with_an_empty_first_part_is_read_past_it() {
     let shifted = code("; a < 5; a++");
     assert_has(&shifted, &["GetVar arg(0)", "PushInt 5", "Tl", "Pop"]);
     assert_has(&shifted, &["PostInc arg(0)", "Test", "Jz"]);
-    // Comma separators preserve the empty initializer.
     let plain = code(", a < 5, a++");
     assert_has(&plain, &["GetVar arg(0)", "PushInt 5", "Tl", "Test", "Jz"]);
     assert!(plain.contains("\nInc arg(0)\nJmpLoop"), "{plain}");
 }
 
-/// `global.name` and `::name` of a const fold as the name alone does.
 #[test]
 fn a_global_const_named_through_global_folds() {
     let code = |body: &str| {
@@ -409,12 +386,10 @@ fn a_global_const_named_through_global_folds() {
     assert_has(&code("return ::gc + 1"), &["PushInt 8", "Ret"]);
     assert_has(&code("return gc + 1"), &["PushInt 10", "Ret"]);
     assert_has(&code("return global.gc ? a : 2"), &["GetVar arg(0)", "Ret"]);
-    // alone it's read from the global
     assert_has(&code("return global.gc"), &["GetVar global(\"gc\")", "Ret"]);
     assert!(code("switch (a)\n\t\tif (global.gc)\n\t\t\treturn 1").contains("Switch default => "));
 }
 
-/// `new` for a var with `list` anywhere in its type makes a list.
 #[test]
 fn an_implicit_new_for_a_list_of_a_type() {
     let code = compile(
@@ -437,7 +412,6 @@ fn an_implicit_new_for_a_list_of_a_type() {
     );
 }
 
-/// Statement-specific builtin forms.
 #[test]
 fn rarer_forms_of_builtins_on_their_own_line() {
     let code = |body: &str| {
@@ -447,7 +421,6 @@ fn rarer_forms_of_builtins_on_their_own_line() {
             "f",
         )
     };
-    // statpanel(Panel, Value) has no name
     assert_has(
         &code("statpanel(a, b)"),
         &[
@@ -470,7 +443,6 @@ fn rarer_forms_of_builtins_on_their_own_line() {
             "Ret",
         ],
     );
-    // outside `<<` each argument is worked out and dropped
     assert_has(
         &code("output(a, b)"),
         &[
@@ -482,7 +454,6 @@ fn rarer_forms_of_builtins_on_their_own_line() {
             "Ret",
         ],
     );
-    // anything after animate()'s object that isn't named stops the animation
     assert_has(
         &code("animate(a, b, c)"),
         &[
@@ -495,7 +466,6 @@ fn rarer_forms_of_builtins_on_their_own_line() {
     );
 }
 
-/// Standalone variable reads emit no code. Flag-only tests need no Pop.
 #[test]
 fn a_line_that_does_nothing() {
     let code = |body: &str| {
@@ -512,19 +482,16 @@ fn a_line_that_does_nothing() {
         &code("isarea(a)"),
         &["GetVar arg(0)", "IsArea", "GetVar arg(1)", "Ret"],
     );
-    // a comparison keeps its drops
     assert_has(
         &code("a == b"),
         &["Teq", "Pop", "GetFlag", "Pop", "GetVar arg(1)", "Ret"],
     );
-    // and a call is still made
     assert_has(
         &code("isnull(a)"),
         &["GetVar arg(0)", "IsNull", "Pop", "GetVar arg(1)", "Ret"],
     );
 }
 
-/// `x * x` is a square however x is written.
 #[test]
 fn a_variable_times_itself_is_squared() {
     let code = |expr: &str| compile(&format!("var/g\n/proc/f(a)\n\treturn {expr}\n"), "", "f");
@@ -537,7 +504,6 @@ fn a_variable_times_itself_is_squared() {
         &code("global.g * g"),
         &["GetVar global(\"g\")", "PowSquare", "Ret"],
     );
-    // (a local of the name isn't the global)
     let shadowed = compile(
         "var/g\n/proc/f(a)\n\tvar/g = a\n\treturn g * global.g\n",
         "",
@@ -546,7 +512,6 @@ fn a_variable_times_itself_is_squared() {
     assert!(!shadowed.contains("PowSquare"), "{}", shadowed);
 }
 
-/// Zero-weight pick() entries retain cases from 516.1689; -0 behaves as 0.
 #[test]
 fn a_pick_of_weight_0_and_a_case_of_minus_0() {
     let v = |build| dmasm::ByondVersion::new(516, build);
@@ -559,7 +524,6 @@ fn a_pick_of_weight_0_and_a_case_of_minus_0() {
             .to_owned()
     };
 
-    // 516.1689: b's case is at a's threshold, and the last entry is the default
     let code = compile_on(middle, "", "f", v(1689));
     let cases = table(&code);
     assert_eq!(cases.matches("=>").count(), 3, "{}", cases);
@@ -578,7 +542,6 @@ fn a_pick_of_weight_0_and_a_case_of_minus_0() {
         .trim();
     assert_has(&code, &[&format!("{target}:"), "GetVar arg(1)"]);
     assert_eq!(warnings_for(last, v(1689)), [] as [String; 0]);
-    // (a text weight counts as 0 and has a case on every build)
     for build in [1688, 1689] {
         let code = compile_on(
             "/proc/f(a, b)\n\treturn pick(\"x\"; a, 3; b)\n",
@@ -589,15 +552,11 @@ fn a_pick_of_weight_0_and_a_case_of_minus_0() {
         assert!(table(&code).contains(" 0 =>"), "{}", code);
     }
 
-    // Before: one case (a's third of the draw) and the default, with b's
-    // value still written
     let code = compile_on(middle, "", "f", v(1688));
     let cases = table(&code);
     assert_eq!(cases.matches("=>").count(), 2, "{}", cases);
     assert!(cases.contains("21845 =>"), "{}", cases);
     assert!(code.contains("GetVar arg(1)"), "{}", code);
-    // A final zero-weight entry would jump outside the proc in DreamMaker.
-    // Emit a compatibility warning and use a valid weighted entry.
     let code = compile_on(last, "", "f", v(1688));
     let cases = table(&code);
     assert_eq!(cases.matches("=>").count(), 1, "{}", cases);
@@ -626,7 +585,6 @@ fn a_pick_of_weight_0_and_a_case_of_minus_0() {
     );
 }
 
-/// A parameter's `x = a in L` has the default a.
 #[test]
 fn a_parameter_default_stops_at_in() {
     let code = compile(
@@ -635,11 +593,9 @@ fn a_parameter_default_stops_at_in() {
         "f",
     );
     assert_has(&code, &["GetVar arg(0)", "SetVar arg(1)"]);
-    // in parentheses it's the test
     assert!(code.contains("IsIn"), "{code}");
 }
 
-/// Compound assignments used as values invalidate cached field chains.
 #[test]
 fn a_chain_through_fields_isnt_reused_after_a_change_as_a_value() {
     let code = |body: &str| {
@@ -671,14 +627,12 @@ fn a_chain_through_fields_isnt_reused_after_a_change_as_a_value() {
             &format!("SetVarExpr {whole}"),
         ],
     );
-    // a plain assignment as a value does reuse it
     assert_has(
         &code("return a.m.x + (a.m.x = b)"),
         &["GetVar arg(1)", "SetVarExpr cache[\"x\"]", "Add"],
     );
 }
 
-/// DreamMaker writes the field of `x.f ||= v` the way it read it for the test.
 #[test]
 fn a_logical_assignment_writes_its_field_as_it_read_it() {
     let code = |body: &str| {
@@ -688,7 +642,6 @@ fn a_logical_assignment_writes_its_field_as_it_read_it() {
             "f",
         )
     };
-    // The cache has src from the statement before: read from it, written to it
     assert_has(
         &code("src.y = 1\n\tsrc.x &&= b"),
         &[
@@ -699,8 +652,6 @@ fn a_logical_assignment_writes_its_field_as_it_read_it() {
             "SetVar cache[\"x\"]",
         ],
     );
-    // A bare `y` loaded it, which `src.x` written out doesn't read from, or
-    // write to
     assert_has(
         &code("y = 1\n\tsrc.x &&= b"),
         &[
@@ -725,7 +676,6 @@ fn a_logical_assignment_writes_its_field_as_it_read_it() {
 
 #[test]
 fn dropped_constant_forgets_cache() {
-    // `0 || a.m` is `a.m`, but DreamMaker forgets what the cache held
     let code = compile(
         "/datum/var/datum/m\n/datum/var/x\n/datum/var/y\n/proc/f(datum/a)\n\tif(a.m.x)\n\t\treturn (0 || a.m.y)\n",
         "",
@@ -742,7 +692,6 @@ fn dropped_constant_forgets_cache() {
 
 #[test]
 fn datum_loop_in_world_goes_over_atoms() {
-    // `in world` is the world's atoms, checked for the type; without it, all datums
     let code = compile(
         "/datum/foo\n/proc/f()\n\tfor (var/datum/foo/x in world)\n\t\tworld.log << x\n\tfor (var/datum/foo/y)\n\t\tworld.log << y\n",
         "",
@@ -757,7 +706,6 @@ fn datum_loop_in_world_goes_over_atoms() {
 
 #[test]
 fn text_squared_is_pow_square() {
-    // DreamMaker squares text, null and paths too, but not embedded text
     let code = compile(
         "/proc/f(x)\n\t. = \"a\" * \"a\"\n\treturn \"[x]\" * \"[x]\"\n",
         "",
@@ -769,7 +717,6 @@ fn text_squared_is_pow_square() {
 
 #[test]
 fn bit_ops_fold_like_dreammaker() {
-    // ~ takes a u32 (negative is 0, over 2**32 is all ones); & | ^ << >> clamp to i32
     let code = compile(
         "/proc/f()\n\t. = ~(65536**3)\n\t. = ~(2**31+256)\n\t. = ~(-1)\n\t. = (2**33) & 16777215\n\t. = (-5) | 0\n\treturn (2**31+256) >> 8\n",
         "",
@@ -867,7 +814,6 @@ fn proc_argument_keys_worked_out() {
             "CallGlobalArgList /proc/g",
         ],
     );
-    // A safe access is an assignment, passed as it is
     let src =
         "/datum/t\n\tvar/b\n/proc/g(...)\n/proc/f()\n\tvar/datum/t/a = new\n\treturn g(a?.b = 1)\n";
     let code = compile(src, "", "f");
@@ -894,8 +840,6 @@ fn switch_with_no_cases() {
 
 #[test]
 fn parenthesised_assignment_is_a_list_key() {
-    // Parentheses preserve key/value syntax in list constructors,
-    // but make an assignment expression in proc calls.
     let code = compile("/proc/f(a, b, c)\n\treturn list(a, (b = 1), c)\n", "", "f");
     assert_has(
         &code,
@@ -933,7 +877,6 @@ fn writing_through_a_pointer() {
     assert_has(&code, &["PushInt 2", "SetVar *local(0)", "GetVar arg(0)"]);
     let code = compile("/proc/f(a)\n\tvar/p = &a\n\t*p += 2\n\treturn a\n", "", "f");
     assert_has(&code, &["PushInt 2", "AugAdd *local(0)", "GetVar arg(0)"]);
-    // as a value, the value is copied first
     let code = compile("/proc/f(a)\n\tvar/p = &a\n\treturn (*p = 3)\n", "", "f");
     assert_has(&code, &["PushInt 3", "PushTop", "SetVar *local(0)", "Ret"]);
     let code = compile(
@@ -946,7 +889,6 @@ fn writing_through_a_pointer() {
 
 #[test]
 fn pointer_to_a_field() {
-    // the & goes on the field, after finding its holder
     let src =
         "/datum/t\n\tvar/v = 1\n/proc/f()\n\tvar/datum/t/T = new\n\tvar/p = &T.v\n\treturn *p\n";
     assert_has(
@@ -958,7 +900,6 @@ fn pointer_to_a_field() {
         &compile(src, "/datum/t", "m"),
         &["GetVar cache = src; &cache[\"v\"]", "SetVar local(0)"],
     );
-    // `&(T.v)` is the same; `*(&T.v)` reads the pointer it makes
     let src = "/datum/t\n\tvar/v = 1\n/proc/f()\n\tvar/datum/t/T = new\n\tvar/p = &(T.v)\n\treturn *(&T.v)\n";
     assert_has(
         &compile(src, "", "f"),
@@ -978,12 +919,10 @@ fn pointer_to_a_field() {
 
 #[test]
 fn new_without_arguments_is_true_in_a_test() {
-    // Constant constructors can be folded away in conditions.
     let src = "/datum/t\n/proc/f(a, b)\n\treturn (new /datum/t ? a : b)\n";
     assert_eq!(compile(src, "", "f"), "GetVar arg(0)\nRet\nEnd");
     let src = "/datum/t\n/proc/f(a, b)\n\treturn !(new /datum/t()) || (new /datum/t && a)\n";
     assert_eq!(compile(src, "", "f"), "GetVar arg(0)\nRet\nEnd");
-    // Value contexts and nonconstant arguments still allocate.
     let src = "/datum/t\n/proc/f(a, b)\n\treturn (new /datum/t || a)\n";
     assert_has(
         &compile(src, "", "f"),
@@ -1053,7 +992,6 @@ fn logical_assignment_through_safe_access() {
         ]
         .join("\n")
     );
-    // a value that uses the cache keeps the place around it
     let src = "/datum/t\n\tvar/v\n\tvar/datum/t/n\n/proc/f(datum/t/a, b)\n\ta?.v &&= a.n\n";
     assert_has(
         &compile(src, "", "f"),
@@ -1078,7 +1016,6 @@ fn writing_what_a_call_returns_through_safe_access() {
             "g",
         )
     };
-    // Evaluate the value before the call and restore the holder after assignment.
     assert_eq!(
         body("a?.f(1).x = b"),
         [
@@ -1096,7 +1033,6 @@ fn writing_what_a_call_returns_through_safe_access() {
         ]
         .join("\n")
     );
-    // Restore a after the assigned value changes the receiver cache.
     assert_has(
         &body("a?.f(1).x = a.n.x"),
         &[
@@ -1107,7 +1043,6 @@ fn writing_what_a_call_returns_through_safe_access() {
             "Call dynamic_proc(\"f\") 1",
         ],
     );
-    // Keep the assigned value as the expression result.
     assert_has(
         &body("return (a?.f(1).n.x = b)"),
         &[
@@ -1146,7 +1081,6 @@ fn writing_what_a_call_returns_through_safe_access() {
             "AugAdd cache[cache_key]",
         ],
     );
-    // Preserve the target while evaluating the right side of `||=`.
     assert_has(
         &body("a?.L[1].x ||= a.x"),
         &[
@@ -1193,11 +1127,9 @@ fn or_assign_saves_the_cache_for_some_values() {
             "f",
         )
     };
-    // Static/const reads through . and global.x do not require saving the cache.
     for v in ["o.st", "o.k", "global.gx", "gx"] {
         assert!(!value(v).contains("PushCache"), "{v}: {}", value(v));
     }
-    // Fields, list indexes, global calls and :: can require a cache save.
     for v in ["o.m", "L[1]", "/datum/t::st", "o::st"] {
         assert!(value(v).contains("PushCache"), "{v}: {}", value(v));
     }
@@ -1205,7 +1137,6 @@ fn or_assign_saves_the_cache_for_some_values() {
 
 #[test]
 fn safe_access_to_a_const_is_not_folded() {
-    // `a?.k` is null when a is, so it isn't the constant
     let src =
         "/datum/t\n\tvar/const/k = 256\n/proc/f(datum/t/a)\n\tif (a?.k) return 1\n\treturn 2\n";
     assert_has(
@@ -1222,7 +1153,6 @@ fn safe_access_to_a_const_is_not_folded() {
 
 #[test]
 fn hex_escapes_are_characters() {
-    // `\xe9` is é, stored as UTF-8
     let code = compile("/proc/f()\n\treturn \"\\xe9t\\x41\"\n", "", "f");
     assert_has(&code, &["PushVal \"étA\"", "Ret"]);
 }
@@ -1246,13 +1176,11 @@ fn hashes_of_text_fold() {
             "Ret",
         ],
     );
-    // the text as UTF-8
     let code = compile("/proc/f()\n\treturn md5(\"\\xff\")\n", "", "f");
     assert_has(
         &code,
         &["PushVal \"f3f7437e8c1f303fc6742d9368b36cf6\"", "Ret"],
     );
-    // not of a number
     let code = compile("/proc/f()\n\treturn md5(1)\n", "", "f");
     assert_has(&code, &["PushInt 1", "Md5"]);
 }
@@ -1272,7 +1200,6 @@ fn folded_var_defaults_have_their_escapes() {
 
 #[test]
 fn constant_lists_are_true_in_a_test() {
-    // Constant list/alist/newlist/new constructors are truthy without allocation.
     for v in [
         "list(1, \"k\" = 2)",
         "list()",
@@ -1283,14 +1210,12 @@ fn constant_lists_are_true_in_a_test() {
         let code = compile(&format!("/proc/f(a, b)\n\treturn ({v} ? a : b)\n"), "", "f");
         assert_eq!(code, "GetVar arg(0)\nRet\nEnd", "{v}");
     }
-    // Nonconstant constructors still run before testing.
     let code = compile("/proc/f(a, b)\n\treturn (list(a) ? a : b)\n", "", "f");
     assert_has(&code, &["GetVar arg(0)", "NewList 1", "Test"]);
 }
 
 #[test]
 fn a_const_chosen_by_a_constant_test_is_read_alone() {
-    // `7 && K` is K, read from its global, but `1 && 2` is 2
     let types = "/datum/t\n\tvar/const/k = 1000\n";
     for v in [
         "(7 && /datum/t::k)",
@@ -1332,7 +1257,6 @@ fn type_and_proc_macros_fold_in_a_test() {
 
 #[test]
 fn call_arguments_are_a_procs() {
-    // `(n = 1)` is an assignment passed in its place
     let code = compile(
         "/proc/f(o, n)\n\treturn call(o, \"f\")((n = 1), 2)\n",
         "",
@@ -1348,7 +1272,6 @@ fn call_arguments_are_a_procs() {
             "CallName 2",
         ],
     );
-    // (with a named argument, as in any call, it's n's value as a key)
     let code = compile(
         "/proc/f(o, n)\n\treturn call(o, \"f\")((n = 1), x = 2)\n",
         "",
@@ -1375,7 +1298,6 @@ fn a_false_else_if_leaves_its_jump() {
         "f",
     );
     assert_has(&code, &["SetVar arg(1)", "Jmp LAB_0000", "LAB_0001:"]);
-    // not when it comes before a live arm
     let code = compile(
         "/proc/f(a, b)\n\tif (0) b = 1\n\telse if (a) b = 2\n\treturn b\n",
         "",
@@ -1386,7 +1308,6 @@ fn a_false_else_if_leaves_its_jump() {
 
 #[test]
 fn or_assign_goes_by_the_source_of_a_folded_value() {
-    // `0 && o.m` folds to 0, but reads a field in the source
     let types = "/datum/t\n\tvar/n = 1\n\tvar/m = 2\n\tvar/static/st = 3\n";
     let code = compile(
         &format!("{types}/proc/f(datum/t/o)\n\to.n &&= (0 && o.m)\n"),
@@ -1394,7 +1315,6 @@ fn or_assign_goes_by_the_source_of_a_folded_value() {
         "f",
     );
     assert_has(&code, &["PushCache", "PushInt 0", "PopCache"]);
-    // a static read isn't one
     let code = compile(
         &format!("{types}/proc/f(datum/t/o)\n\to.n &&= (0 && o.st)\n"),
         "",
@@ -1460,7 +1380,6 @@ fn initial_of_a_static_or_const_is_its_globals() {
             "Add",
         ],
     );
-    // through ?., later ones are saved around
     let code = compile(
         &format!("{types}/proc/f(datum/t/a)\n\treturn initial(a?.o?.n)\n"),
         "",
@@ -1480,7 +1399,6 @@ fn initial_of_a_static_or_const_is_its_globals() {
     );
 }
 
-/// Compile src proc f with debug info; map external files to other.dm.
 fn compile_with_lines(src: &str) -> Vec<String> {
     let ctx = dreammaker::Context::default();
     let pp = dreammaker::Preprocessor::from_buffer(&ctx, "test.dm".into(), src.to_owned());
@@ -1517,7 +1435,6 @@ fn compile_with_lines(src: &str) -> Vec<String> {
 
 #[test]
 fn a_type_scope_default_records_where_it_is_written() {
-    // (same file: its line, and the statement's line still counts)
     let code =
         compile_with_lines("/datum/u\n\tvar/x = 3\n/proc/f(a)\n\ta = /datum/u::x\n\treturn a\n");
     assert_eq!(
@@ -1538,8 +1455,6 @@ fn a_type_scope_default_records_where_it_is_written() {
 
 #[test]
 fn only_compound_terms_record_a_later_line() {
-    // Only compound terms record a new line after an embedded default;
-    // variables, fields and literals do not.
     let code = compile_with_lines("/proc/g()\n/proc/f(datum/a)\n\ta = list(1,\n\t\ta,\n\t\ta.type,\n\t\t-1,\n\t\t1 + 2,\n\t\t\"[a]\",\n\t\tg())\n");
     let lines: Vec<&str> = code
         .iter()
@@ -1551,8 +1466,6 @@ fn only_compound_terms_record_a_later_line() {
 
 #[test]
 fn after_a_default_the_next_compound_term_records_its_line() {
-    // Record the proc's line after a later or external default, even
-    // when || can skip the restoring expression.
     let code = compile_with_lines(
         "/proc/f(a)\n\tif (text(\"[]\", /datum/u::x) || \"[a]\")\n\t\ta = 1\n/datum/u\n\tvar/x = 3\n",
     );
@@ -1574,7 +1487,6 @@ fn after_a_default_the_next_compound_term_records_its_line() {
 
 #[test]
 fn locate_in_a_list_in_another() {
-    // `locate(X) in a in b` is `(locate(X) in a) in b`
     let code = compile(
         "/datum/t\n/proc/f(a, b)\n\treturn locate(/datum/t) in a in b\n",
         "",
@@ -1588,7 +1500,6 @@ fn locate_in_a_list_in_another() {
 
 #[test]
 fn for_loop_separators_can_be_mixed() {
-    // DreamMaker takes `for(a; b, c)` and `for(a, b; c)` as `for(a; b; c)` (tgstation has both)
     let body = |head: &str| {
         compile(
             &format!("/proc/f(n)\n\tvar/i\n\tfor({head})\n\t\tworld.log << i\n"),
@@ -1604,7 +1515,6 @@ fn for_loop_separators_can_be_mixed() {
 
 #[test]
 fn assert_keeps_raw_strings_as_written() {
-    // `#x` writes a raw string the way the source does
     let code = compile(
         "/proc/f(a)\n\tASSERT(a == @{\"brace\"} || a == @'one')\n",
         "",
@@ -1618,8 +1528,6 @@ fn assert_keeps_raw_strings_as_written() {
 
 #[test]
 fn the_place_of_an_augmented_assignment_records_no_line() {
-    // Compound assignment targets suppress their own debug line,
-    // unlike plain assignment targets.
     let lines = |code: Vec<String>| {
         code.into_iter()
             .filter(|l| l.starts_with("DbgLine"))
@@ -1639,9 +1547,6 @@ fn the_place_of_an_augmented_assignment_records_no_line() {
 
 #[test]
 fn a_folded_default_from_another_file_still_names_the_file_again() {
-    // A folded external default still requires restoring the proc's
-    // file at the next recorded line. The test maps external files
-    // to other.dm.
     let ctx = dreammaker::Context::default();
     let mut pp = dreammaker::Preprocessor::from_buffer(
         &ctx,
@@ -1698,7 +1603,6 @@ fn a_folded_default_from_another_file_still_names_the_file_again() {
     );
 }
 
-/// Debug records for two assignments, with `/datum/u::x` defined in another file.
 fn records_with_default_from_other_file(expr: &str) -> Vec<String> {
     let ctx = dreammaker::Context::default();
     let mut pp = dreammaker::Preprocessor::from_buffer(
@@ -1742,8 +1646,6 @@ fn records_with_default_from_other_file(expr: &str) -> Vec<String> {
         .collect()
 }
 
-/// Folded-away operands must not change the debug file. Live operands
-/// referencing defaults in another file must restore the proc's file.
 #[test]
 fn a_default_from_another_file_in_an_operand_folded_away_names_nothing() {
     let files = |expr: &str| {
@@ -1772,7 +1674,6 @@ fn a_default_from_another_file_in_an_operand_folded_away_names_nothing() {
     }
 }
 
-/// Restore the proc's file and line after a constant condition from another file.
 #[test]
 fn a_constant_condition_from_another_file_names_the_line_again() {
     assert_eq!(
@@ -1787,9 +1688,6 @@ fn a_constant_condition_from_another_file_names_the_line_again() {
     );
 }
 
-/// The compiler folds angles and colors as Linux DreamMaker does and warns
-/// where Windows folding differs. At runtime, DreamDaemon uses Linux angle
-/// results on both platforms; color results follow the local platform.
 #[test]
 fn a_fold_that_windows_has_differently_is_warned_about() {
     let latest = dmasm::ByondVersion::LATEST;
@@ -1803,7 +1701,6 @@ fn a_fold_that_windows_has_differently_is_warned_about() {
         let w = warnings(expr, byond);
         assert!(w.is_empty(), "{expr} on {byond:?}: {w:?}");
     };
-    // Inverse-trig result differs by one f32 rounding step.
     warned(
         "arctan(2)",
         "arctan(2) is folded to 63.43495, matching Linux DreamMaker and runtime evaluation",
@@ -1815,9 +1712,7 @@ fn a_fold_that_windows_has_differently_is_warned_about() {
     quiet("arctan(1)", latest);
     quiet("arcsin(0.5)", latest);
     quiet("arctan(a)", latest);
-    // (before 515.1644 Linux's was Windows')
     quiet("arctan(2)", dmasm::ByondVersion::new(515, 1637));
-    // Color channel near a half-integer boundary.
     warned(
         "rgb(0, 60, 25, space = COLORSPACE_HSV)",
         "rgb() is folded to #401919, matching Linux DreamMaker",
@@ -1829,14 +1724,12 @@ fn a_fold_that_windows_has_differently_is_warned_about() {
     quiet("rgb(0, 60, 26, space = COLORSPACE_HSV)", latest);
     quiet("rgb(127.5, 2, 3)", latest);
     quiet("rgb(0, 60, a, space = COLORSPACE_HSV)", latest);
-    // Before 515.1647, boundary colors remain runtime expressions.
     quiet(
         "rgb(0, 60, 25, space = COLORSPACE_HSV)",
         dmasm::ByondVersion::new(515, 1637),
     );
 }
 
-/// Compile proc `name` on `ty` (empty for global procs).
 fn compiled_of(
     code: &str,
     ty: &str,
@@ -1870,7 +1763,6 @@ fn compiled_of(
 
 fn warnings_of(code: &str, ty: &str, name: &str, byond: dmasm::ByondVersion) -> Vec<String> {
     let compiled = compiled_of(code, ty, name, byond);
-    // Each BYOND bug also appears in the reload warnings.
     for bug in &compiled.byond_bugs {
         let text = match bug.line {
             Some(line) => format!("line {}: {}", line, bug.text),
@@ -1895,7 +1787,6 @@ fn warnings_about_byonds_bugs_are_told_from_the_rest() {
             .map(|bug| bug.text)
             .collect()
     };
-    // BYOND bug reports omit dmasm workaround details.
     let pointer = "/proc/f(list/L)\n\treturn *L[1]\n";
     assert_eq!(
         bugs(pointer, 1688),
@@ -1915,9 +1806,7 @@ fn warnings_about_byonds_bugs_are_told_from_the_rest() {
     assert!(compiled.byond_bugs[0]
         .text
         .ends_with("leaves the division out"));
-    // 516.1689 fixes the jump.
     assert_eq!(bugs(weights, 1689), [] as [String; 0]);
-    // Compatibility differences do not count as BYOND bugs.
     let wide = "/proc/f(a)\n\treturn (-1e10) ^ a\n";
     assert_eq!(bugs(wide, 1688), [] as [String; 0]);
     let compiled = compiled_of(wide, "", "f", dmasm::ByondVersion::new(516, 1688));
@@ -1940,7 +1829,6 @@ fn code_that_byond_gets_wrong_is_warned_about() {
         assert!(w.is_empty(), "{name} of {code:?} on {byond:?}: {w:?}");
     };
 
-    // `continue LABEL` to a labelled do while inside a counted loop
     let labelled = |outer: &str, go_on: &str| {
         format!(
             "/proc/f()\n\t{outer}\n\t\tvar/i = 0\n\t\tinner:\n\t\t\tdo\n\t\t\t\ti++\n\
@@ -1970,7 +1858,6 @@ fn code_that_byond_gets_wrong_is_warned_about() {
         "f",
         latest,
     );
-    // Labelled while loops are unaffected.
     quiet(
         "/proc/f()\n\tfor (var/j in 1 to 2)\n\t\tvar/i = 0\n\t\tinner:\n\t\t\twhile (i < 2)\n\
          \t\t\t\ti++\n\t\t\t\tcontinue inner\n",
@@ -1979,7 +1866,6 @@ fn code_that_byond_gets_wrong_is_warned_about() {
         latest,
     );
 
-    // A loop over a list, a try, a loop over a list
     let nested = |outer: &str, between: &str, inner: &str| {
         format!(
             "/proc/f()\n\t{outer}\n\t\ttry\n\t\t\t{between}\n\t\t\t\t{inner}\n\
@@ -2013,7 +1899,6 @@ fn code_that_byond_gets_wrong_is_warned_about() {
         "f",
         latest,
     );
-    // Catching inside the inner loop is safe, as is omitting try.
     quiet(
         "/proc/f()\n\tfor (var/a in list(1))\n\t\tfor (var/b in list(1))\n\t\t\ttry\n\
          \t\t\t\tthrow 1\n\t\t\tcatch\n\t\t\t\treturn\n",
@@ -2028,12 +1913,10 @@ fn code_that_byond_gets_wrong_is_warned_about() {
         latest,
     );
 
-    // A pointer in a list, read where it sits
     let pointer = "/proc/f()\n\tvar/v\n\tvar/list/L = list(&v)\n\treturn *L[1]\n";
     warned(pointer, "", "f", v(1668), "leaves the index out");
     quiet(pointer, "", "f", v(1667));
 
-    // Overloads BYOND calls and then ignores, or doesn't call
     let types = "/datum/t/proc/operator<<=(b)\n\treturn 1\n/datum/t/proc/operator>>=(b)\n\treturn 1\n\
                  /datum/t/proc/operator++()\n\treturn 1\n/datum/t/proc/operator--()\n\treturn 1\n\
                  /datum/t/proc/operator**(b)\n\treturn 1\n/datum/t/proc/operator*(b)\n\treturn 1\n\
@@ -2070,7 +1953,6 @@ fn code_that_byond_gets_wrong_is_warned_about() {
     quiet(types, "/turf/x", "Uncross", latest);
 }
 
-/// The warnings for global proc f of `code`, compiled for `byond`
 fn warnings_for(code: &str, byond: dmasm::ByondVersion) -> Vec<String> {
     let ctx = dreammaker::Context::default();
     let pp = dreammaker::Preprocessor::from_buffer(&ctx, "test.dm".into(), code.to_owned());
@@ -2178,8 +2060,6 @@ fn deliberate_differences_and_copied_quirks_are_warned_about() {
 
 #[test]
 fn initial_of_a_static_field() {
-    // initial(x::v) remains a runtime read even when x::v alone folds.
-    // Static variables still resolve to their global slots.
     let src = "/obj/item\n\tvar/throwforce = 7\n\tvar/static/sv = 3\n\tvar/obj/item/other\n\
         /proc/a()\n\treturn initial(/obj/item::throwforce)\n\
         /proc/b()\n\treturn initial(/obj/item::sv)\n\
@@ -2223,25 +2103,21 @@ fn initial_of_a_static_field() {
 
 #[test]
 fn a_name_alone_on_its_line_that_a_goto_names_is_a_label() {
-    // DreamMaker accepts both bare-name and `name:` labels.
     let src = "/proc/f()\n\tvar/i = 0\n\tagain\n\ti++\n\tif (i < 5)\n\t\tgoto again\n\treturn i\n";
     let code = compile(src, "", "f");
     assert_eq!(
         code,
         "PushInt 0\nSetVar local(0)\nUSER_again:\nInc local(0)\nGetVar local(0)\nPushInt 5\nTl\nTest\nJz LAB_0002\nJmpLoop USER_again\nLAB_0002:\nLAB_0001:\nGetVar local(0)\nRet\nEnd"
     );
-    // Jumping out of a for-in loop must release its iterator.
     let src = "/proc/f(L)\n\tout\n\tfor (var/x in L)\n\t\tif (x) goto out\n";
     let code = compile(src, "", "f");
     assert!(code.contains("USER_out:"), "{code}");
-    // Untargeted names remain expression statements.
     let code = compile("/proc/f(a)\n\ta\n\treturn 1\n", "", "f");
     assert!(!code.contains("USER_"), "{code}");
 }
 
 #[test]
 fn a_proc_of_the_world_s_never_calls_by_name() {
-    // World procs retain typed compilation; only debugger code falls back to call-by-name.
     let src = "/mob/proc/known()\n/proc/f(mob/M, x)\n\tM.known()\n\tM.unknown()\n\tx:unknown()\n";
     let code = compile(src, "", "f");
     assert!(!code.contains("CallName"), "{code}");
@@ -2249,7 +2125,6 @@ fn a_proc_of_the_world_s_never_calls_by_name() {
     assert!(code.contains("dynamic_proc(\"unknown\")"), "{code}");
 }
 
-/// The DbgLines of `f` compiled from `src`.
 fn dbg_lines(src: &str) -> Vec<String> {
     compile_with_lines(src)
         .into_iter()
@@ -2259,7 +2134,6 @@ fn dbg_lines(src: &str) -> Vec<String> {
 
 #[test]
 fn the_first_line_is_the_first_with_anything_on_it() {
-    // First-line rules checked against DreamMaker 515.1637 and 516.1688.
     let empty_macro = "#define EMPTY\n/proc/f()\n\tEMPTY\n\tvar/x\n\treturn x\n";
     assert_eq!(
         dbg_lines(empty_macro),
@@ -2269,10 +2143,8 @@ fn the_first_line_is_the_first_with_anything_on_it() {
     assert_eq!(dbg_lines(semicolon), ["DbgLine 2", "DbgLine 3"]);
     let doc_comment = "/proc/f()\n\t/// doc\n\treturn 1\n";
     assert_eq!(dbg_lines(doc_comment), ["DbgLine 3"]);
-    // A multiline macro call starts at its name.
     let call_macro = "#define CALL(a, b) world.log << list(a, b)\n/proc/f()\n\tCALL(1,\n\t\t2)\n";
     assert_eq!(dbg_lines(call_macro), ["DbgLine 3", "DbgLine 4"]);
-    // An empty body uses the next nonempty line.
     let empty = "/proc/f()\n\t// nothing\n\n/proc/g()\n";
     assert_eq!(dbg_lines(empty), ["DbgLine 4"]);
     let before_a_type = "/proc/f()\n\n/datum\n\tvar/v\n";
@@ -2287,9 +2159,7 @@ fn a_return_type_records_the_header_after_the_first_line() {
 
 #[test]
 fn lines_read_on_are_recorded_as_dreammaker_does() {
-    // Lookahead records checked against DreamMaker 515.1637 and 516.1688.
     let lines = |src: &str| dbg_lines(&format!("/proc/f(a, b)\n{src}"));
-    // past text with an embedded expression: the next line
     assert_eq!(
         lines("\tf(1)\n\tvar/s = \"[a]\"\n\treturn s\n"),
         [
@@ -2304,19 +2174,16 @@ fn lines_read_on_are_recorded_as_dreammaker_does() {
         lines("\tif(a)\n\t\treturn \"[a]\"\n\treturn 1\n"),
         ["DbgLine 2", "DbgLine 4", "DbgLine 3", "DbgLine 4"]
     );
-    // the value of `for (k, v in L)`: the loop's body
     assert_eq!(
         lines("\tfor(var/k, v in a)\n\t\tf(v)\n"),
         ["DbgLine 2", "DbgLine 3", "DbgLine 2", "DbgLine 3"]
     );
-    // where a call with named arguments, a condition or text ends
     assert_eq!(lines("\tf(1,\n\t\tb = 2)\n"), ["DbgLine 2", "DbgLine 3"]);
     assert_eq!(
         lines("\tif(f(1,\n\t\t2))\n\t\tf(3)\n"),
         ["DbgLine 2", "DbgLine 3", "DbgLine 2", "DbgLine 4"]
     );
     assert_eq!(lines("\ta = {\"x\n[a]\ny\"}\n"), ["DbgLine 2", "DbgLine 4"]);
-    // an operator on a later line
     assert_eq!(lines("\ta = a \\\n\t\t+ 1\n"), ["DbgLine 2", "DbgLine 3"]);
     assert_eq!(
         lines("\ta = f(1,\n\t\t2) + 3\n"),

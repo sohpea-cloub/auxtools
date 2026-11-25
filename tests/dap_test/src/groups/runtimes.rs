@@ -1,5 +1,3 @@
-//! Runtime errors
-
 use serde_json::json;
 
 use crate::{
@@ -7,13 +5,10 @@ use crate::{
 	world::{host_file, World}
 };
 
-/// Waits for the world to stop on a runtime error that nothing catches, and
-/// checks its message and where it is
 fn stopped_on(world: &mut World, message: &str, proc: &str, mark: &str) {
 	stopped_on_a(world, false, message, proc, mark);
 }
 
-/// The same, for one that's caught or not
 fn stopped_on_a(world: &mut World, caught: bool, message: &str, proc: &str, mark: &str) {
 	let kind = if caught { "caught runtime error" } else { "runtime error" };
 	let event = world.event("stopped");
@@ -57,8 +52,6 @@ pub fn run() {
 	assert!(trace[2].starts_with("/sc_fail_null (errors.dm:"), "{:?}", trace);
 	ok("runtime exception call stack");
 
-	// The proc that failed is over, and so is its caller's line; the scenario
-	// carries on
 	let after = world.count("dap: after the failure");
 	world.resume_through("fail_null");
 	assert_eq!(world.count("dap: after the failure"), after + 1);
@@ -86,7 +79,6 @@ pub fn run() {
 	world.resume_through("fail_spawned");
 	ok("runtime error in spawned code");
 
-	// The scenario divides by zero; the block it spawned fails after
 	world.run("fail_twice");
 	stopped_on(&mut world, "Division by zero", "/fail_divide", "fail_divide");
 	world.resume();
@@ -94,8 +86,6 @@ pub fn run() {
 	world.resume_through("fail_twice");
 	ok("consecutive runtime errors");
 
-	// Callee errors end only the failing proc. Evaluation continues and reports
-	// the error.
 	world.run_to("middle", "/leaf", "leaf_1");
 	let frame = world.frame_id();
 	let got = world.request("evaluate", json!({ "expression": "fail_null()", "frameId": frame, "context": "watch" }));
@@ -106,12 +96,10 @@ pub fn run() {
 		 expression",
 		line
 	));
-	// An error in the expression frame fails evaluation.
 	let why = world.refused("evaluate", json!({ "expression": "list()[1]", "frameId": frame, "context": "watch" }));
 	assert_eq!(why, "runtime error: list index out of bounds");
 	assert!(!world.has_event("stopped"), "an expression's runtime error stopped the world again");
 	assert_eq!(world.eval("x"), "3");
-	// Variable-view assignments must report called-proc errors too.
 	let arguments = world.scope(&frame, "Arguments");
 	let reported = world.count("runtime error in a called proc");
 	let now = world.request(
@@ -142,9 +130,7 @@ pub fn run() {
 	world.end();
 }
 
-/// Runtime errors inside a `try`, and exceptions thrown
 fn caught_and_thrown(world: &mut World) {
-	// The world carries on through what its own code deals with
 	let said = world.count("dap: caught cannot read from list");
 	world.run_through("fail_caught");
 	world.run_through("fail_caught_here");
@@ -152,8 +138,6 @@ fn caught_and_thrown(world: &mut World) {
 	assert_eq!(world.count("dap: caught cannot read from list"), said + 1);
 	ok("caught errors ignored by default");
 
-	// throw isn't a runtime error to BYOND until nothing has caught it: the
-	// stop is at the throw, before it happens
 	world.run("fail_throw");
 	stopped_on(world, "thrown on purpose", "/fail_throw", "fail_throw");
 	let logged = world.count("runtime error: thrown on purpose");
@@ -164,7 +148,6 @@ fn caught_and_thrown(world: &mut World) {
 	world.resume_through("throw_text");
 	ok("uncaught throw stops with its value");
 
-	// Both filters ticked
 	world.exception_filters(&["runtimes", "caught"], &[]);
 	world.run("fail_caught");
 	stopped_on_a(world, true, "cannot read from list", "/fail_null", "fail_null");
@@ -182,7 +165,6 @@ fn caught_and_thrown(world: &mut World) {
 	world.resume_through("fail_null");
 	ok("caught errors and throws filter");
 
-	// Only the caught ones
 	world.exception_filters(&["caught"], &[]);
 	world.run_through("fail_null");
 	world.run_through("fail_throw");
@@ -193,9 +175,7 @@ fn caught_and_thrown(world: &mut World) {
 	world.exception_filters(&["runtimes"], &[]);
 }
 
-/// Restore instruction callbacks when stepping from a runtime-error pause.
 fn steps_from_a_stop(world: &mut World) {
-	// Step into the caller after the failing proc exits.
 	world.run("fail_null");
 	stopped_on(world, "cannot read from list", "/fail_null", "fail_null");
 	world.step_on("next", "/fail_deep", "fail_deep");
@@ -203,14 +183,12 @@ fn steps_from_a_stop(world: &mut World) {
 	world.step_on("next", "/sc_fail_null", "after_failure");
 	world.resume_through("fail_null");
 
-	// Step into the local catch block.
 	world.exception_filters(&["runtimes", "caught"], &[]);
 	world.run("fail_caught_here");
 	stopped_on_a(world, true, "cannot read from list", "/fail_caught_here", "fail_caught_here");
 	world.step_on("next", "/fail_caught_here", "caught_here_catch");
 	world.resume_through("fail_caught_here");
 
-	// Step out to the caller's call site.
 	world.run("fail_caught");
 	stopped_on_a(world, true, "cannot read from list", "/fail_null", "fail_null");
 	world.step_on("stepOut", "/fail_caught", "caught_call");
@@ -219,7 +197,6 @@ fn steps_from_a_stop(world: &mut World) {
 	ok("stepping after runtime errors");
 }
 
-/// A filter's condition: text the error's message has to have, or mustn't
 fn conditions(world: &mut World) {
 	world.exception_filters(&[], &[("runtimes", "!division, !thrown")]);
 	world.run_through("fail_divide");
@@ -239,7 +216,6 @@ fn conditions(world: &mut World) {
 	world.resume_through("fail_divide");
 	ok("error inclusion alternatives");
 
-	// Each filter has its own
 	world.exception_filters(&["runtimes"], &[("caught", "thrown")]);
 	world.run_through("fail_caught");
 	world.run("throw_caught");
@@ -252,12 +228,9 @@ fn conditions(world: &mut World) {
 	world.exception_filters(&["runtimes"], &[]);
 }
 
-/// A global var's initial value fails while the world loads
 fn while_loading() {
 	let flag = host_file("fail_early");
 	std::fs::write(&flag, "yes").unwrap();
-	// The client says nothing about runtime errors: the filter is on unless
-	// it's turned off
 	let mut world = World::launch(json!({}));
 	world.request("configurationDone", json!({}));
 	stopped_on(&mut world, "cannot read from list", "/early_value", "early_failure");

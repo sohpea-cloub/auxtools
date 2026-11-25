@@ -1,7 +1,5 @@
 use auxtools::{raw_types::procs::ProcId, *};
 
-// BYOND moves its whole proc table when the table grows. A `Proc` we were
-// already holding has to keep working after the move.
 #[hook("/proc/auxtest_procs")]
 fn test_procs() {
 	let table_start = || Proc::from_id(ProcId(0)).unwrap().entry();

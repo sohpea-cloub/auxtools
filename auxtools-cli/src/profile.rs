@@ -1,5 +1,3 @@
-//! Profile reports shared by the CLI and debug adapter.
-
 use std::{collections::HashMap, path::PathBuf};
 
 use auxtools_cli::{local, server_types::*};
@@ -7,37 +5,29 @@ use serde_json::json;
 
 pub struct Report {
 	pub seconds: f64,
-	/// Why it ended: "time", "interrupted", "stopped"
 	pub ended: &'static str,
 	pub overhead_ns: f64,
-	/// Instructions run, and the nanoseconds they took
 	pub hits: u64,
 	pub own_ns: u64,
-	/// Descending self time.
 	pub procs: Vec<Listed>
 }
 
 pub struct Listed {
 	pub code: ProfiledCode,
-	/// Instruction listing, if requested.
 	pub listing: Option<Vec<Row>>
 }
 
-/// Per-instruction measurements.
 pub struct Row {
 	pub offset: u16,
 	pub text: String,
 	pub line: Option<u32>,
-	/// The line's text, on the first instruction of each run of a line
 	pub source: Option<String>,
 	pub hits: u64,
 	pub own_ns: u64,
 	pub callee_ns: u64
 }
 
-/// Measurements summed by source line.
 pub struct Line {
-	/// `FILE:LINE  PROC`
 	pub place: String,
 	pub hits: u64,
 	pub own_ns: u64,
@@ -62,7 +52,6 @@ impl Report {
 		}
 	}
 
-	/// Percent of the profile's time
 	pub fn share(&self, ns: u64) -> f64 {
 		match self.own_ns {
 			0 => 0.0,
@@ -70,7 +59,6 @@ impl Report {
 		}
 	}
 
-	/// The lines of the listed procs, longest first
 	pub fn lines(&self) -> Vec<Line> {
 		let mut lines: Vec<Line> = vec![];
 		let mut known: HashMap<(usize, u32), usize> = HashMap::new();
@@ -138,7 +126,6 @@ impl Report {
 	}
 }
 
-/// Proc path with an override index and old-code marker, if applicable.
 pub fn name(code: &ProfiledCode) -> String {
 	let name = match code.proc.override_id {
 		0 => code.proc.path.clone(),
@@ -151,7 +138,6 @@ pub fn name(code: &ProfiledCode) -> String {
 	}
 }
 
-/// Join disassembly with measurements and source text.
 pub fn listing(disassembly: &Disassembly, measured: &[ProfiledInstruction], mut source: impl FnMut(u32) -> Option<String>) -> Vec<Row> {
 	let measured: HashMap<u16, &ProfiledInstruction> = measured.iter().map(|instruction| (instruction.offset, instruction)).collect();
 	let mut line = None;
@@ -179,8 +165,6 @@ pub fn listing(disassembly: &Disassembly, measured: &[ProfiledInstruction], mut 
 		.collect()
 }
 
-/// Stop profiling and fetch listings for the slowest `listed` procs, or all
-/// procs if `None`. `ask` sends requests to the world.
 pub fn stop<E: From<String>>(ended: &'static str, listed: Option<usize>, mut ask: impl FnMut(Request) -> Result<Response, E>) -> Result<Report, E> {
 	let mut profile = |request| match ask(Request::Profile(request))? {
 		Response::Profile(reply) => Ok(reply.map_err(E::from)),
@@ -215,9 +199,7 @@ pub fn stop<E: From<String>>(ended: &'static str, listed: Option<usize>, mut ask
 	Ok(report)
 }
 
-/// Lazily cached source files.
 struct Sources {
-	/// Base directory for relative source paths.
 	directory: Option<PathBuf>,
 	files: HashMap<String, Option<Vec<String>>>
 }
@@ -241,7 +223,6 @@ impl Sources {
 	}
 }
 
-/// Nanoseconds in the unit that reads best: `812 ns`, `41.2 us`, `1.50 s`
 pub fn time(ns: u64) -> String {
 	match ns {
 		0..1_000 => format!("{} ns", ns),
@@ -251,10 +232,7 @@ pub fn time(ns: u64) -> String {
 	}
 }
 
-/// Embed report data in a standalone HTML page.
 pub fn html(report: &Report) -> String {
-	// JSON has `<` only in strings, where `\u003c` reads the same. Without it,
-	// the data could end the script element or start a comment in it.
 	let data = report.json().to_string().replace('<', "\\u003c");
 	include_str!("profile.html").replacen("/*DATA*/", &data, 1)
 }
@@ -337,7 +315,6 @@ mod tests {
 		assert_eq!(rows.len(), 5);
 		let sources: Vec<Option<&str>> = rows.iter().map(|row| row.source.as_deref()).collect();
 		assert_eq!(sources, [Some("source of 3"), None, Some("source of 4"), None, None]);
-		// Include unexecuted instructions with zero counts.
 		assert_eq!((rows[4].text.as_str(), rows[4].hits, rows[4].own_ns), ("End", 0, 0));
 		assert_eq!((rows[3].hits, rows[3].own_ns, rows[3].callee_ns), (1, 200, 100));
 	}

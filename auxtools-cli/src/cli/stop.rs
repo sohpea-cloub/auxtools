@@ -1,7 +1,3 @@
-//! Stop or reboot a world by evaluating `world.Del()` or `world.Reboot()`.
-//! Successful calls close the connection without a response. Wait for process
-//! exit or reconnection to confirm completion.
-
 use std::time::{Duration, Instant};
 
 use auxtools_cli::{
@@ -12,14 +8,10 @@ use serde_json::json;
 
 use super::{args, seconds_text, Failure, Result, World, HUNG_UP, TIMED_OUT};
 
-/// How often to look again
 const INTERVAL: Duration = Duration::from_millis(50);
 
-/// Prefix identifying an evaluation's runtime error.
 const RUNTIME_ERROR: &str = "runtime error: ";
 
-/// Send world.Del() or world.Reboot() without waiting for a response.
-/// Resume paused worlds so sleeping shutdown code can finish.
 fn ask(world: &mut World, expression: &str) -> Result<()> {
 	let request = Request::Eval {
 		frame_id: None,
@@ -29,7 +21,6 @@ fn ask(world: &mut World, expression: &str) -> Result<()> {
 	local::send(&mut world.stream, &request).map_err(|_| super::hung_up())
 }
 
-/// Whether process `pid` is gone by `until`
 fn gone_by(pid: u32, until: Instant) -> bool {
 	loop {
 		if !local::alive(pid) {
@@ -42,10 +33,6 @@ fn gone_by(pid: u32, until: Instant) -> bool {
 	}
 }
 
-/// Wait for process exit until `until`. A successful world.Del() closes
-/// the debugger without a response. A runtime-error response means the
-/// world is still running. A sleep response ends only the evaluation: keep
-/// waiting for world.Del() to finish.
 fn ended_by(world: &mut World, until: Instant) -> Result<bool> {
 	loop {
 		if !local::alive(world.pid) {
@@ -56,10 +43,7 @@ fn ended_by(world: &mut World, until: Instant) -> Result<bool> {
 			return Ok(false);
 		}
 		match world.next(Some(until.min(now + INTERVAL))) {
-			// The evaluation ended at a sleep, but world.Del() is still
-			// running.
 			Ok(Some(Response::Eval(Err(error)))) if !error.starts_with(RUNTIME_ERROR) => {}
-			// The runtime error left the world and debugger running.
 			Ok(Some(Response::Eval(_))) => {
 				return Err(format!(
 					"world.Del() failed with a runtime error (see the world's log), so the world (pid {}) is still running. Fix world/Del() or \
@@ -69,15 +53,12 @@ fn ended_by(world: &mut World, until: Instant) -> Result<bool> {
 				.into())
 			}
 			Ok(_) => {}
-			// No debugger is available to request world.Del().
 			Err(e) if world.unavailable.is_some() => return Err(e),
-			// Debugger disconnection can precede process exit.
 			Err(_) => return Ok(gone_by(world.pid, until))
 		}
 	}
 }
 
-/// What a command that's done says: a line, or with `--json` the same as JSON
 fn done(as_json: bool, document: serde_json::Value, line: String) {
 	if as_json {
 		say!("{}", document);
@@ -90,12 +71,9 @@ pub fn stop(world: &mut World, args: &args::Stop) -> Result<()> {
 	let timeout = args.timeout.unwrap_or(Duration::from_secs(10));
 	let kill_timeout = args.kill_timeout.unwrap_or(Duration::from_secs(5));
 	let pid = world.pid;
-	// (a world that went away before it was asked has stopped all the same)
 	if ask(world, "world.Del()").is_err() && local::alive(pid) {
 		return Err(format!("cannot send the shutdown request: the connection to the world with pid {} ended.", pid).into());
 	}
-	// With --kill, force termination on timeout or world.Del() failure.
-	// An unavailable debugger cannot call world.Del().
 	let failed = match ended_by(world, Instant::now() + timeout) {
 		Ok(true) => {
 			done(
@@ -184,7 +162,6 @@ pub fn reboot(world: &mut World, args: &args::Reboot) -> Result<()> {
 	let until = Instant::now() + timeout;
 	ask(world, "world.Reboot()")?;
 
-	// The world lets its clients go as it reboots
 	loop {
 		match world.next(Some(until)) {
 			Ok(Some(_)) => {}
@@ -199,8 +176,6 @@ pub fn reboot(world: &mut World, args: &args::Reboot) -> Result<()> {
 		}
 	}
 
-	// Reconnect after loading, then wait for the launcher to restore reloads
-	// and release the world.
 	let mut again: Option<World> = None;
 	loop {
 		if !local::alive(pid) {
@@ -223,10 +198,7 @@ pub fn reboot(world: &mut World, args: &args::Reboot) -> Result<()> {
 					done(args.json, json!({ "pid": pid, "rebooted": true }), format!("pid {}: rebooted", pid));
 					return Ok(());
 				}
-				// Retry response timeouts until the reboot deadline.
 				Ok(_) => {}
-				// Reconnect if the connection closes, including during another
-				// reboot.
 				Err(_) => again = None
 			}
 		}

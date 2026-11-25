@@ -1,9 +1,5 @@
 //! For when BYOND is not enough. Probably often.
 
-//#[cfg(not(target_pointer_width = "32"))]
-// compile_error!("Auxtools must be compiled for a 32-bit target");
-
-// public so `byond_ffi_fn!` can reach it from another crate
 #[doc(hidden)]
 pub mod appearance_tables;
 pub mod byond_ffi;
@@ -35,15 +31,12 @@ use std::{
 };
 
 pub use auxtools_impl::{full_shutdown, hook, init, pin_dll, runtime_handler, shutdown};
-/// For crates that need to find something else in BYOND's binary.
 pub use byond_scan;
 pub use bytecode_manager::{bytecode_at, bytecode_changes, remember_bytecode};
-/// Used by the [pin_dll] macro to set dll pinning
 pub use ctor;
 pub use hooks::{CompileTimeHook, HookFailure, ProcHook, RuntimeErrorHook};
 use init::{get_init_level, set_init_level, InitLevel};
 pub use init::{FullInitFunc, FullShutdownFunc, PartialInitFunc, PartialShutdownFunc};
-/// Used by the [hook](attr.hook.html) macro to aggregate all compile-time hooks
 pub use inventory;
 pub use list::List;
 pub use proc::Proc;
@@ -55,18 +48,13 @@ pub use symbols::{byond_build, find_recipe, find_recipe_of};
 pub use value::Value;
 pub use weak_value::WeakValue;
 
-// We need winapi to call GetModuleHandleExW which lets us prevent our DLL from
-// unloading.
 #[cfg(windows)]
 extern crate winapi;
 
 pub static PIN_DLL: AtomicBool = AtomicBool::new(true);
 
-/// wrapper for [`byond_scan::MODULE_NAME`](byond_scan::MODULE_NAME)
 pub const BYONDCORE: &str = byond_scan::MODULE_NAME;
 
-// This strange section of code retrieves our DLL using the init function's
-// address. This increments the DLL reference count, which prevents unloading.
 #[cfg(windows)]
 fn pin_dll() -> Result<(), ()> {
 	unsafe {
@@ -99,15 +87,12 @@ pub fn guard<R>(work: impl FnOnce() -> R) -> Result<R, Box<dyn Any + Send>> {
 	std::panic::catch_unwind(std::panic::AssertUnwindSafe(work))
 }
 
-/// The message of a panic [`guard`] caught.
 pub fn panic_message(payload: &(dyn Any + Send)) -> String {
 	let message = payload.downcast_ref::<&str>().copied();
 	let message = message.or_else(|| payload.downcast_ref::<String>().map(String::as_str));
 	message.unwrap_or("no message").to_owned()
 }
 
-// The first failed init. Trying again would run setup on top of what the
-// failed attempt left behind, so every later call hands this back instead.
 static INIT_FAILURE: OnceLock<String> = OnceLock::new();
 
 byond_ffi_fn! { auxtools_init(_input) {
@@ -118,7 +103,6 @@ byond_ffi_fn! { auxtools_init(_input) {
 	match try_init() {
 		Ok(()) => Some("SUCCESS".to_owned()),
 		Err(e) => {
-			// a hook must not fire in a library that only got half set up
 			hooks::clear_hooks();
 			proc::clear_procs();
 			Some(INIT_FAILURE.get_or_init(|| format!("FAILED ({})", e)).clone())
@@ -130,9 +114,6 @@ fn try_init() -> Result<(), String> {
 	try_init_with(None)
 }
 
-/// Run `prepare` after loading the proc table and before installing
-/// compile-time hooks, so it can add required procs. A panic, in `prepare` or
-/// an init function, is a failed init.
 fn try_init_with(prepare: Option<fn() -> Result<(), String>>) -> Result<(), String> {
 	guard(|| init_with(prepare)).unwrap_or_else(|panic| Err(format!("panicked: {}", panic_message(&*panic))))
 }
@@ -153,7 +134,6 @@ fn init_with(prepare: Option<fn() -> Result<(), String>>) -> Result<(), String> 
 	if get_init_level() == InitLevel::Partial {
 		did_partial = true;
 
-		// This is a heap ptr so fetch it on partial loads
 		symbols::resolve_partial()?;
 
 		proc::populate_procs();
@@ -170,7 +150,6 @@ fn init_with(prepare: Option<fn() -> Result<(), String>>) -> Result<(), String> 
 		set_init_level(InitLevel::None);
 	}
 
-	// Run user-defined initializers
 	if did_full || FULL_INIT_FUNCS_PENDING.swap(false, Ordering::Relaxed) {
 		init::run_full_init()?;
 	}
@@ -182,7 +161,6 @@ fn init_with(prepare: Option<fn() -> Result<(), String>>) -> Result<(), String> 
 	Ok(())
 }
 
-/// Initialize version, symbols and detours without a loaded world.
 fn init_full() -> Result<(), String> {
 	version::init()?;
 	symbols::resolve_full()?;
@@ -198,22 +176,14 @@ fn init_full() -> Result<(), String> {
 /// A panic in `prepare` fails the init; one in `ready` or `failed` ends that
 /// call.
 pub struct WorldLoad {
-	/// Run before compile-time hooks, after the proc table is available.
-	/// May add procs required by those hooks.
 	pub prepare: fn() -> Result<(), String>,
-	/// Runs once auxtools is initialised
 	pub ready: fn(),
-	/// Runs instead of `ready` when initialising failed
 	pub failed: fn(&str)
 }
 
 static WORLD_LOAD: OnceLock<&'static WorldLoad> = OnceLock::new();
-// Set while a world is yet to load. Read on every DM proc call.
 pub(crate) static WORLD_LOAD_PENDING: AtomicBool = AtomicBool::new(false);
-// The init funcs run after the partial init, as they would with auxtools_init
 static FULL_INIT_FUNCS_PENDING: AtomicBool = AtomicBool::new(false);
-// Marker proc and table entry identifying the exiting world.
-// Absent after the next world loads.
 static ENDING_WORLD: Mutex<Option<(raw_types::procs::ProcId, runtime_tables::ProcEntryWords)>> = Mutex::new(None);
 
 /// Initialize a library loaded before the world. Set up symbols and detours
@@ -260,7 +230,6 @@ pub fn shut_down_with_world() {
 	shutdown_partial();
 }
 
-// Calls counted by `on_proc_call` and the detour's direct path.
 pub(crate) static PROC_CALLS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 
 /// Wrapping proc-call count for activity detection. Readable from any thread.
@@ -268,8 +237,6 @@ pub fn proc_calls() -> u32 {
 	PROC_CALLS.load(Ordering::Relaxed)
 }
 
-// Work waiting for a later proc call (see `at_proc_calls`), and whether there
-// is any. Read on every DM proc call.
 static PROC_CALL_WORK: Mutex<Vec<fn() -> bool>> = Mutex::new(Vec::new());
 pub(crate) static PROC_CALL_WORK_PENDING: AtomicBool = AtomicBool::new(false);
 
@@ -281,7 +248,6 @@ pub fn at_proc_calls(work: fn() -> bool) {
 	PROC_CALL_WORK_PENDING.store(true, Ordering::Relaxed);
 }
 
-/// Proc of the world's startup call while `WorldLoad::ready` runs.
 static STARTING: Mutex<Option<raw_types::procs::ProcId>> = Mutex::new(None);
 
 /// Proc of the pending startup call during [`WorldLoad::ready`], before
@@ -291,8 +257,6 @@ pub fn starting_call() -> Option<raw_types::procs::ProcId> {
 	*STARTING.lock().unwrap()
 }
 
-/// Proc whose replacement code the startup call should run
-/// (see [`start_runs_new_code`]).
 static START_RUNS_NEW: AtomicU32 = AtomicU32::new(u32::MAX);
 
 /// Run code replaced by `ready` in the pending startup call, whose frame
@@ -302,17 +266,10 @@ pub fn start_runs_new_code(proc: raw_types::procs::ProcId) {
 	START_RUNS_NEW.store(proc.0, Ordering::Relaxed);
 }
 
-/// Entry point for every DM proc call, with its proc and `src` tag.
-/// The first eligible call completes `init_on_world_load`. Return true
-/// when the call should run its proc's replacement code
-/// (see [`start_runs_new_code`]).
 pub(crate) fn on_proc_call(proc: raw_types::procs::ProcId, src: raw_types::values::ValueTag) -> bool {
-	// Only BYOND's thread writes it
 	PROC_CALLS.store(PROC_CALLS.load(Ordering::Relaxed).wrapping_add(1), Ordering::Relaxed);
 	if PROC_CALL_WORK_PENDING.load(Ordering::Relaxed) {
-		// Taken out first: the work can make proc calls of its own
 		let work = std::mem::take(&mut *PROC_CALL_WORK.lock().unwrap());
-		// Work that panics isn't tried again
 		let waiting: Vec<_> = work.into_iter().filter(|&work| !guard(work).unwrap_or(true)).collect();
 		let mut queue = PROC_CALL_WORK.lock().unwrap();
 		queue.extend(waiting);
@@ -322,14 +279,9 @@ pub(crate) fn on_proc_call(proc: raw_types::procs::ProcId, src: raw_types::value
 	if !WORLD_LOAD_PENDING.load(Ordering::Relaxed) {
 		return false;
 	}
-	// During loading, BYOND holds type entries while running init procs on
-	// InitVarRecorders. Wait until these calls finish before changing types.
-	// The next call still precedes global initialization, map atom creation
-	// and world/New.
 	if src == raw_types::values::ValueTag::InitVarRecorder {
 		return false;
 	}
-	// Still the world that's ending, if it has what only that one was given
 	{
 		let mut ending = ENDING_WORLD.lock().unwrap();
 		if let Some((id, entry)) = *ending {

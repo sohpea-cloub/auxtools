@@ -4,14 +4,11 @@ use auxtools::*;
 
 #[hook("/proc/auxtest_value_from")]
 fn test_value_from() {
-	// Numbers
 	let value = Value::from(30);
 	if value.as_number()? != 30.0 {
 		return Err(runtime!("value_from: Value failed to convert i32"));
 	}
 
-	// Vectors
-	// The simplest case: A Vec of Value's.
 	let vector: Vec<Value> = vec![5.into()];
 	let value = Value::from(&vector);
 	let list = List::from_value(&value)?;
@@ -26,20 +23,15 @@ fn test_value_from() {
 		));
 	};
 
-	// Hashmaps
-	// The simplest case: Value -> Value
 	let mut hashmap: HashMap<Value, Value> = HashMap::new();
 	hashmap.insert(Value::from_string("meow")?, 1.into());
 	let value = Value::try_from(&hashmap)?;
 	assert_meow_equals_one(value)?;
 
-	// Slightly more complicated: String -> Value
 	let mut hashmap: HashMap<String, Value> = HashMap::new();
 	hashmap.insert("meow".to_owned(), 1.into());
 	let value = Value::try_from(&hashmap)?;
 	assert_meow_equals_one(value)?;
-
-	// Todo: Other stuff
 
 	Ok(Value::from(true))
 }

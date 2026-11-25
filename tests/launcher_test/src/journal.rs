@@ -1,6 +1,3 @@
-//! The world's record of what happened in it, read from the command line:
-//! `log`, and the waits that come from it
-
 use std::{
 	io::{BufRead, BufReader, Read},
 	path::Path,
@@ -13,7 +10,6 @@ use crate::client::{launcher_command, launcher_path};
 
 const TIMEOUT: Duration = Duration::from_secs(60);
 
-/// Runs a command against the world in process `pid`, and checks its exit code
 pub fn run(pid: u64, args: &[&str], code: i32) -> String {
 	let pid = pid.to_string();
 	let args: Vec<&str> = ["--pid", pid.as_str()].iter().chain(args).copied().collect();
@@ -22,14 +18,10 @@ pub fn run(pid: u64, args: &[&str], code: i32) -> String {
 	printed
 }
 
-/// A command left running, whose lines are read as they come
 pub struct Background {
 	child: Child,
-	/// Its stdout, line by line
 	lines: mpsc::Receiver<String>,
-	/// Its stderr, whole, once it has ended
 	errors: Option<std::thread::JoinHandle<String>>,
-	/// What it printed, so far: stdout, then stderr
 	pub printed: String
 }
 
@@ -64,8 +56,6 @@ impl Background {
 		}
 	}
 
-	/// The next line: of stdout until that ends, then of stderr. Two readers
-	/// passing lines on as they came would put them in either order.
 	fn next_line(&mut self, deadline: Instant) -> Option<String> {
 		match self.lines.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
 			Ok(line) => Some(line),
@@ -82,7 +72,6 @@ impl Background {
 		}
 	}
 
-	/// Waits for a line that has `text` in it
 	pub fn line_with(&mut self, text: &str) -> String {
 		let deadline = Instant::now() + TIMEOUT;
 		loop {
@@ -97,7 +86,6 @@ impl Background {
 		}
 	}
 
-	/// Waits for it to exit: its exit code and everything it printed
 	pub fn finish(mut self) -> (i32, String) {
 		let deadline = Instant::now() + TIMEOUT;
 		let code = loop {
@@ -107,7 +95,6 @@ impl Background {
 			assert!(Instant::now() < deadline, "timed out waiting for process exit; output: {}", self.printed);
 			std::thread::sleep(Duration::from_millis(50));
 		};
-		// Both streams have ended with it
 		while let Some(line) = self.next_line(deadline) {
 			self.printed += &line;
 			self.printed += "\n";
@@ -115,7 +102,6 @@ impl Background {
 		(code, self.printed)
 	}
 
-	/// Its process id
 	#[cfg(unix)]
 	pub fn id(&self) -> u32 {
 		self.child.id()
@@ -127,7 +113,6 @@ impl Background {
 	}
 }
 
-/// The number of the newest entry in the record
 pub fn newest(pid: u64) -> u64 {
 	let printed = run(pid, &["log", "--last", "1", "--json"], 0);
 	printed.lines().last().map_or(0, |line| {
@@ -135,8 +120,6 @@ pub fn newest(pid: u64) -> u64 {
 	})
 }
 
-/// Runtime errors go in the record, with their stacks, while the world runs
-/// on: `log --runtimes` prints them, and `--follow` as they come
 pub fn runtimes(pid: u64, dir: &Path) {
 	let before = newest(pid);
 	let since = before.to_string();
@@ -180,7 +163,6 @@ pub fn runtimes(pid: u64, dir: &Path) {
 	);
 	println!("ok: journal JSON Lines");
 
-	// It starts with what's there already, after --since
 	let mut follow = Background::start(pid, &["log", "--runtimes", "--follow", "--json", "--since", &before.to_string()]);
 	follow.line_with("cannot read from list");
 	let now = newest(pid);
@@ -196,16 +178,12 @@ pub fn runtimes(pid: u64, dir: &Path) {
 	println!("ok: follow runtime journal");
 }
 
-/// Hot reloads go in the record, applied or not, reported by the launcher
-/// that reloads the world: `wait reload` waits for one, and says whether
-/// it was applied in its exit code; an attached launcher shows them
 pub fn reloads(pid: u64, code: &Path) {
 	let source = std::fs::read_to_string(code).unwrap();
 	assert!(source.contains("\treturn 2\n"), "unexpected value() source after test setup");
 	let printed = run(pid, &["wait", "reload", "--timeout", "1"], 2);
 	assert_eq!(printed.trim(), "error: timed out after 1 second waiting for a hot reload attempt.");
 
-	// Add a known-bug warning without moving subsequent proc lines.
 	let since = newest(pid).to_string();
 	let looped = "\tfor (var/a in list(1)) { try { for (var/b in list(2)) { a += b } } catch (var/e) { a = e } }\n\treturn 3\n";
 	assert!(source.contains("\treturn 2\n\n"), "unexpected value() source after test setup");
@@ -241,7 +219,6 @@ pub fn reloads(pid: u64, code: &Path) {
 	);
 	println!("ok: rejected reload diagnostics ({})", errors);
 
-	// One with an error the launcher finds before the world is sent anything
 	let since = newest(pid).to_string();
 	std::fs::write(code, source.replace("\treturn 2\n", "\treturn ]\n")).unwrap();
 	let printed = run(pid, &["wait", "reload", "--since", &since, "--timeout", "60"], 1);
@@ -262,14 +239,12 @@ pub fn reloads(pid: u64, code: &Path) {
 		error.trim()
 	);
 
-	// One attached to the world, which doesn't reload it, hears of it
 	let mut attached = crate::client::Launcher::start();
 	attached.initialize();
 	attached.request("attach", serde_json::json!({ "processId": pid, "hotReload": false }));
 	attached.event("initialized");
 	attached.request("configurationDone", serde_json::json!({}));
 
-	// The next one, waited for as it comes
 	let waiting = Background::start(pid, &["wait", "reload", "--timeout", "60"]);
 	std::thread::sleep(Duration::from_secs(1));
 	std::fs::write(code, &source).unwrap();
@@ -325,8 +300,6 @@ pub fn reloads(pid: u64, code: &Path) {
 	);
 	println!("ok: uptime and latest reload status");
 
-	// A wait must recognize its breakpoint after reload moves it within the
-	// proc.
 	let place = format!("attach_host.dm:{}", crate::line_of(code, "\t\ttotal += i // first loop"));
 	let waiting = Background::start(pid, &["wait", "pause", "--break", &place, "--timeout", "60"]);
 	std::thread::sleep(Duration::from_secs(1));
@@ -343,8 +316,6 @@ pub fn reloads(pid: u64, code: &Path) {
 	println!("ok: wait pause keeps its breakpoint through a reload");
 }
 
-/// A reboot goes in the record, whose numbers go on in the new world:
-/// `wait reboot` waits for it, and for the new world to answer
 pub fn reboot(pid: u64, dir: &Path) {
 	let before = newest(pid);
 	let waiting = Background::start(pid, &["wait", "reboot", "--timeout", "60"]);
@@ -365,8 +336,6 @@ pub fn reboot(pid: u64, dir: &Path) {
 		"status said {}",
 		printed
 	);
-	// The load that's in the record already is one to wait for, given where to
-	// look from
 	let printed = run(pid, &["wait", "reboot", "--since", &before.to_string(), "--timeout", "5", "--json"], 0);
 	let entry: serde_json::Value = serde_json::from_str(&printed).unwrap_or_else(|_| panic!("unexpected wait reboot --json output: {}", printed));
 	assert!(
@@ -391,20 +360,17 @@ pub fn reboot(pid: u64, dir: &Path) {
 		"log --world said {}",
 		printed
 	);
-	// The launcher gives the new world the changes made since it was built
 	let printed = run(pid, &["wait", "reload", "--since", &number.to_string(), "--timeout", "60"], 0);
 	assert!(printed.contains("hot reload applied: "), "unexpected wait reload output: {}", printed);
 	println!("ok: journal continuity across reboot");
 }
 
-/// A `wait reboot` for a world that's about to end, not reboot
 pub fn wait_for_reboot(pid: u64) -> Background {
 	let waiting = Background::start(pid, &["wait", "reboot", "--timeout", "60"]);
 	std::thread::sleep(Duration::from_secs(1));
 	waiting
 }
 
-/// The world ended: the wait says it went away
 pub fn world_went_away(waiting: Background) {
 	let (exit, printed) = waiting.finish();
 	assert!(
@@ -416,7 +382,6 @@ pub fn world_went_away(waiting: Background) {
 	println!("ok: world exit during reboot wait");
 }
 
-/// Waits for the world to be running again, and says how long that took
 fn until_running(pid: u64) -> Duration {
 	let started = Instant::now();
 	loop {
@@ -428,8 +393,6 @@ fn until_running(pid: u64) -> Duration {
 	}
 }
 
-/// A held pause with --hold-max ends by itself when nobody debugging comes
-/// back to it, and the record says so; AUXTOOLS_HOLD_MAX does the same
 pub fn hold_max(pid: u64) {
 	let printed = run(pid, &["pause", "--hold-max", "2"], 0);
 	assert!(
@@ -458,7 +421,6 @@ pub fn hold_max(pid: u64) {
 		.unwrap();
 	assert!(out.status.success(), "unexpected pause output: {}", String::from_utf8_lossy(&out.stderr));
 	until_running(pid);
-	// Without it, a held pause lasts
 	run(pid, &["pause"], 0);
 	std::thread::sleep(Duration::from_secs(3));
 	assert!(

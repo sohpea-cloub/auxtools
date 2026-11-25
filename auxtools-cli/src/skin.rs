@@ -1,5 +1,3 @@
-//! Track the last `.dmf` included by the `.dme` and reload its text as a whole.
-
 use std::{
 	collections::HashSet,
 	path::{Path, PathBuf}
@@ -7,7 +5,6 @@ use std::{
 
 use auxtools_cli::server_types::SkinRequest;
 
-/// A skin's file and text
 #[derive(Clone, PartialEq, Eq)]
 struct Text {
 	path: PathBuf,
@@ -24,26 +21,20 @@ impl Text {
 	}
 }
 
-/// Built, applied and source skins.
 pub struct Skin {
 	built: Option<Text>,
 	world: Option<Text>,
-	/// Parsed skin path, relative to the `.dme` directory.
 	source: Option<PathBuf>
 }
 
-/// Skin update.
 pub struct Change {
 	pub request: SkinRequest,
-	/// Relative to the `.dme` directory.
 	pub file: PathBuf,
-	/// New image references absent from the built skin and its resources.
 	pub images: Vec<String>,
 	text: Text
 }
 
 impl Skin {
-	/// Record the skin used to build the world.
 	pub fn built(root: &Path, path: Option<&Path>) -> Skin {
 		let built = Text::read(root, path);
 		Skin {
@@ -53,23 +44,18 @@ impl Skin {
 		}
 	}
 
-	/// Remove the skin from the changed-file set; return whether it was
-	/// present.
 	pub fn take_edit(&self, changed: &mut HashSet<PathBuf>) -> bool {
 		self.source.as_ref().is_some_and(|path| changed.remove(path))
 	}
 
-	/// Update the parsed skin path.
 	pub fn parsed(&mut self, path: Option<&Path>) {
 		self.source = path.map(Path::to_owned);
 	}
 
-	/// Reset to the build's skin after reboot.
 	pub fn rebooted(&mut self) {
 		self.world = self.built.clone();
 	}
 
-	/// Pending skin update, if it differs from the world's.
 	pub fn change(&self, root: &Path) -> Option<Change> {
 		let text = Text::read(root, self.source.as_deref())?;
 		if self.world.as_ref() == Some(&text) {
@@ -95,13 +81,11 @@ impl Skin {
 		})
 	}
 
-	/// Record the applied skin.
 	pub fn applied(&mut self, change: Change) {
 		self.world = Some(change.text);
 	}
 }
 
-/// Resource-file parameters in a skin (`param = 'file'`).
 fn images(text: &[u8]) -> Vec<String> {
 	String::from_utf8_lossy(text)
 		.lines()

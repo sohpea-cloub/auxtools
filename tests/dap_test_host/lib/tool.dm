@@ -1,6 +1,3 @@
-// The world's debug info calls this file "tool.dm": it's lib.dme that
-// includes it. sub/tool.dm is "sub/tool.dm", and has code on the same lines.
-
 /proc/lib_tool(n)
 	return n * 2 // @lib_tool
 

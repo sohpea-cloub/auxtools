@@ -1,11 +1,3 @@
-//! Inject the debug library before a Windows process starts.
-//!
-//! Create the process suspended and patch its entry point with a stub. After
-//! Windows loads imports, the stub loads the library, calls
-//! `auxtools_debug_attach`, restores the original entry point and jumps to it.
-//!
-//! Both processes are 32-bit, so kernel32 functions have the same addresses.
-
 use std::{ffi::OsStr, mem::size_of, os::windows::ffi::OsStrExt, path::Path, ptr::null_mut};
 
 use winapi::{
@@ -21,11 +13,8 @@ use winapi::{
 	}
 };
 
-/// The library's function the injected code calls
 const ATTACH_EXPORT: &[u8] = b"auxtools_debug_attach\0";
 
-/// `push stub; ret`, which is what the entry point holds until the stub puts
-/// it back
 const PATCH_LEN: usize = 6;
 
 fn last_error(what: &str) -> String {
@@ -57,7 +46,6 @@ fn write(process: HANDLE, address: usize, bytes: &[u8]) -> Result<(), String> {
 	Ok(())
 }
 
-/// Subset of ntdll process information needed to locate the PEB.
 #[repr(C)]
 struct ProcessBasicInformation {
 	exit_status: i32,
@@ -70,7 +58,6 @@ struct ProcessBasicInformation {
 
 type NtQueryInformationProcess = unsafe extern "system" fn(HANDLE, u32, *mut c_void, u32, *mut u32) -> i32;
 
-/// Where the suspended program will start
 fn entry_point(process: HANDLE) -> Result<usize, String> {
 	let query: NtQueryInformationProcess = unsafe {
 		let function = GetProcAddress(GetModuleHandleA(c"ntdll.dll".as_ptr()), c"NtQueryInformationProcess".as_ptr());
@@ -81,7 +68,6 @@ fn entry_point(process: HANDLE) -> Result<usize, String> {
 	};
 
 	let mut info: ProcessBasicInformation = unsafe { std::mem::zeroed() };
-	// ProcessBasicInformation is class 0
 	let status = unsafe {
 		query(
 			process,
@@ -95,7 +81,6 @@ fn entry_point(process: HANDLE) -> Result<usize, String> {
 		return Err(format!("couldn't find the program's PEB (status {:#x})", status));
 	}
 
-	// PEB.ImageBaseAddress, then the PE header's AddressOfEntryPoint
 	let image_base: u32 = read(process, info.peb_base_address + 8)?;
 	let image_base = image_base as usize;
 	let pe_header: u32 = read(process, image_base + 0x3C)?;
@@ -114,8 +99,6 @@ fn kernel32(name: &[u8]) -> Result<u32, String> {
 	}
 }
 
-/// Has the suspended `process` load `library` and call its attach function
-/// before it runs its own code.
 pub fn attach_on_entry(process: HANDLE, library: &Path) -> Result<(), String> {
 	let entry = entry_point(process)?;
 	let original: [u8; PATCH_LEN] = read(process, entry)?;
@@ -125,8 +108,6 @@ pub fn attach_on_entry(process: HANDLE, library: &Path) -> Result<(), String> {
 
 	let path: Vec<u8> = OsStr::new(library).encode_wide().chain([0]).flat_map(u16::to_le_bytes).collect();
 
-	// The stub, then what it needs: the entry point's bytes, the library's
-	// path and the export's name
 	const CODE_LEN: usize = 64;
 	let size = CODE_LEN + PATCH_LEN + path.len() + ATTACH_EXPORT.len();
 	let stub = unsafe { VirtualAllocEx(process, null_mut(), size, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE) } as usize;
@@ -139,33 +120,32 @@ pub fn attach_on_entry(process: HANDLE, library: &Path) -> Result<(), String> {
 
 	let le = |v: usize| (v as u32).to_le_bytes();
 	let mut code = vec![];
-	code.extend([0x60, 0x9C]); // pushad; pushfd
-	code.push(0x68); // push path
+	code.extend([0x60, 0x9C]);
+	code.push(0x68);
 	code.extend(le(path_at));
-	code.push(0xB8); // mov eax, LoadLibraryW
+	code.push(0xB8);
 	code.extend(le(load_library as usize));
-	code.extend([0xFF, 0xD0]); // call eax
-	code.extend([0x85, 0xC0, 0x74, 0x13]); // test eax, eax; jz restore
-	code.push(0x68); // push name
+	code.extend([0xFF, 0xD0]);
+	code.extend([0x85, 0xC0, 0x74, 0x13]);
+	code.push(0x68);
 	code.extend(le(name_at));
-	code.push(0x50); // push eax (the module)
-	code.push(0xB8); // mov eax, GetProcAddress
+	code.push(0x50);
+	code.push(0xB8);
 	code.extend(le(get_proc_address as usize));
-	code.extend([0xFF, 0xD0]); // call eax
-	code.extend([0x85, 0xC0, 0x74, 0x02]); // test eax, eax; jz restore
-	code.extend([0xFF, 0xD0]); // call eax (cdecl, no arguments)
-							   // restore:
-	code.push(0xBE); // mov esi, saved
+	code.extend([0xFF, 0xD0]);
+	code.extend([0x85, 0xC0, 0x74, 0x02]);
+	code.extend([0xFF, 0xD0]);
+	code.push(0xBE);
 	code.extend(le(saved));
-	code.push(0xBF); // mov edi, entry
+	code.push(0xBF);
 	code.extend(le(entry));
-	code.push(0xB9); // mov ecx, PATCH_LEN
+	code.push(0xB9);
 	code.extend(le(PATCH_LEN));
-	code.extend([0xFC, 0xF3, 0xA4]); // cld; rep movsb
-	code.extend([0x9D, 0x61]); // popfd; popad
-	code.push(0x68); // push entry
+	code.extend([0xFC, 0xF3, 0xA4]);
+	code.extend([0x9D, 0x61]);
+	code.push(0x68);
 	code.extend(le(entry));
-	code.push(0xC3); // ret
+	code.push(0xC3);
 	assert!(code.len() <= CODE_LEN);
 	code.resize(CODE_LEN, 0xCC);
 	code.extend(original);
@@ -173,7 +153,6 @@ pub fn attach_on_entry(process: HANDLE, library: &Path) -> Result<(), String> {
 	code.extend(ATTACH_EXPORT);
 	write(process, stub, &code)?;
 
-	// The stub writes the entry point back from inside the program
 	let mut old = 0;
 	if unsafe { VirtualProtectEx(process, entry as *mut c_void, PATCH_LEN, PAGE_EXECUTE_READWRITE, &mut old) } == FALSE {
 		return Err(last_error("couldn't make the program's entry point writable"));
@@ -190,7 +169,6 @@ pub fn attach_on_entry(process: HANDLE, library: &Path) -> Result<(), String> {
 	Ok(())
 }
 
-/// Resume the suspended process's initial thread.
 pub fn resume(pid: u32) -> Result<(), String> {
 	unsafe {
 		let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);

@@ -1,31 +1,21 @@
-// The test asks for a scenario by setting `scenario` through the debugger. The
-// loop below runs /proc/sc_NAME in a proc of its own and says when it's over.
-// A `// @name` comment marks a line the test looks for.
-
 var/scenario
 var/ticks = 0
 var/idle_ticks = 0
 var/global_number = 5
-// What the world's shutdown code does: "refuse" doesn't shut it down
 var/on_shutdown
 var/list/global_list = list(1, "two", 3)
-// Worked out while the world loads, before world/New
 var/early_global = early_value()
 
 /proc/early_value()
-	// A runtime error while the world loads, when the test asks for one
 	if (fexists("fail_early"))
 		var/list/L = null
 		return L[1] // @early_failure
 	return 5 // @early_value
 
-// The debug server only answers a running world while DM code runs: with short
-// ticks and a loop that runs every tick, a request waits 10 ms, not 100.
 /world
 	fps = 100
 
 /world/New()
-	// pixlocs and turfs need a map
 	maxx = 3
 	maxy = 3
 	maxz = 1
@@ -35,7 +25,7 @@ var/early_global = early_value()
 		main_loop()
 
 /world/Del()
-	world.log << "dap: world/Del" // @world_del
+	world.log << "dap: world/Del"
 	if (on_shutdown == "refuse")
 		return
 	..()
@@ -51,7 +41,6 @@ var/early_global = early_value()
 				call("/proc/sc_[name]")()
 				world.log << "dap: finished [name]"
 		if (idle_ticks)
-			// Nothing of the world's runs for a while
 			var/idle = idle_ticks
 			idle_ticks = 0
 			world.log << "dap: idling"
@@ -66,8 +55,6 @@ var/early_global = early_value()
 /proc/sc_reboot()
 	world.log << "dap: rebooting"
 	world.Reboot()
-
-// Built resources and reload_new.dmi, introduced only by a reload.
 
 /proc/icon_built()
 	return 'reload_built.dmi'

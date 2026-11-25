@@ -82,15 +82,6 @@ where
     )(i)
 }
 
-/*
-fn parse_node<'a, E>(mut i: &'a str) -> IResult<&str, &str, E>
-where
-    E: ParseError<&'a str>,
-{
-    terminated(parse_instruction, alt((line_ending, eof)))(i)
-}
-*/
-
 #[cfg(test)]
 mod tests {
     use super::*;

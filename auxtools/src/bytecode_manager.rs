@@ -1,10 +1,3 @@
-// This module is in control of allocating buffers for use when replacing a
-// proc's bytecode. To keep things sane, we also have to return the pointers to
-// their original value before BYOND shuts down. We _also_ have to check if any
-// existing procs are still using our bytecode when we shut down and leak the
-// memory if so. It may be possible to avoid the leaks but it really doesn't
-// matter.
-
 use std::{
 	cell::UnsafeCell,
 	collections::{HashMap, HashSet},
@@ -15,7 +8,6 @@ use crate::{debug, raw_types, *};
 
 static mut BYTECODE_ALLOCATIONS: UnsafeCell<Option<State>> = UnsafeCell::new(None);
 
-/// Generation counter for bytecode-derived caches.
 static CHANGES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// Cache generation, incremented when hot reload repoints a proc and on
@@ -33,8 +25,6 @@ fn changed() {
 struct State {
 	allocations: HashSet<Vec<u32>>,
 	original: HashMap<raw_types::procs::ProcId, (*mut u32, u16)>,
-	// Retired bytecode buffers indexed by address. Active frames continue
-	// executing the buffer they started with.
 	remembered: HashMap<usize, Vec<u32>>
 }
 
@@ -85,7 +75,6 @@ pub fn shutdown() {
 	}
 
 	for mut vec in state.allocations {
-		// If a proc with this bytecode is still running, just leak the mrmoy
 		if active_ptrs.contains(&vec.as_mut_ptr()) {
 			std::mem::forget(vec);
 		}
@@ -132,9 +121,7 @@ pub fn set_bytecode(proc: &Proc, mut bytecode: Vec<u32>) {
 		let len = bytecode.len();
 
 		let ptr = match state.allocations.get(&bytecode) {
-			Some(bytecode) => {
-				bytecode.as_ptr() as *mut u32 // don't @ me
-			}
+			Some(bytecode) => bytecode.as_ptr() as *mut u32,
 
 			None => {
 				let ptr = bytecode.as_mut_ptr();

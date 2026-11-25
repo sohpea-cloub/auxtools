@@ -1,6 +1,5 @@
 *       text=auto eol=lf
 
-# Guaranteed to be text
 *.c     text=auto eol=lf
 *.cpp   text=auto eol=lf
 *.rs    text=auto eol=lf

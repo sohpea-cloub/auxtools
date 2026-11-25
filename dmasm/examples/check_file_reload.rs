@@ -1,8 +1,3 @@
-//! Compare incremental reload results and timing with a full project parse.
-//! Temporarily insert a statement before an indented if in each FILE, then
-//! restore the source.
-//!
-//! `cargo run --release --example check_file_reload DME FILE...`
 use std::{collections::HashSet, path::PathBuf, time::Instant};
 
 fn main() {
@@ -19,7 +14,6 @@ fn main() {
     for file in &args[1..] {
         let path = root.join(file);
         let original = std::fs::read_to_string(&path).unwrap();
-        // Find an indented if statement as the insertion point.
         let mut lines: Vec<String> = original.lines().map(str::to_owned).collect();
         let Some(at) = lines.iter().position(|l| {
             l.starts_with('\t')

@@ -1,17 +1,12 @@
-//! The world rebooting, and ending, under the debugger
-
 use serde_json::json;
 
 use crate::{client, ok, world::World};
 
-/// Waits for the world after a reboot to be running
 fn rebooted(world: &mut World, worlds: usize) {
 	world.wait_count("dap: world/New", worlds);
 	world.wait_count("The world restarted", worlds - 1);
 }
 
-/// Resolve a pending function breakpoint when reload adds its proc or after
-/// reboot, whichever happens first, then verify that it hits.
 fn told_after_reboot() {
 	let dir = super::reloading::copy_of_the_world("reboots");
 	let mut world = World::launch_in(dir.clone(), json!({ "hotReload": true }));
@@ -56,8 +51,6 @@ pub fn run() {
 	a.function_breakpoints(&["/proc/sc_middle"]);
 	b.break_on(&["middle_3"]);
 
-	// The scenario calls world.Reboot(): the world is loaded again in the
-	// same process, and each launcher connects to it again
 	a.run("reboot");
 	rebooted(&mut a, 2);
 	b.wait_output("The world restarted");
@@ -86,7 +79,6 @@ pub fn run() {
 	a.catch_runtimes(false);
 	ok("restore runtime error filters");
 
-	// An expression reboots the world it's paused in
 	a.function_breakpoints(&[]);
 	b.break_on(&[]);
 	a.run("middle");
@@ -98,7 +90,6 @@ pub fn run() {
 	a.event("continued");
 	b.event("continued");
 	rebooted(&mut a, 3);
-	// The paused frame resumes in the old world after debugger shutdown.
 	assert_eq!(a.count("bad instruction"), 0, "a breakpoint was left in the old world's code");
 	a.run("middle");
 	a.stop_on("breakpoint", "/leaf", "leaf_1");
@@ -118,7 +109,6 @@ pub fn run() {
 	a.resume_through("middle");
 	ok("consecutive reboots");
 
-	// The process is killed
 	b.drop_events("continued");
 	client::kill_process(pid);
 	a.event("terminated");
@@ -134,7 +124,6 @@ pub fn run() {
 	a.run("quit");
 	a.event("terminated");
 	b.event("terminated");
-	// Both sessions should exit without reconnecting after shutdown.
 	for world in [&a, &b] {
 		assert!(
 			!world.output.contains("waiting to reconnect"),

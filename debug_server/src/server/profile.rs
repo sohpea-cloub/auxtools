@@ -1,5 +1,3 @@
-//! Handle profiling requests and format measurements for clients.
-
 use auxtools::*;
 
 use super::Server;
@@ -46,7 +44,6 @@ impl Server {
 		}
 	}
 
-	/// Refuse requests for a profile another client started.
 	fn own_profile(&self) -> Result<(), String> {
 		if profiler::exists() && self.profiling != self.current {
 			return Err("the profile belongs to another client".to_owned());
@@ -84,8 +81,6 @@ impl Server {
 
 const NO_PROFILE: &str = "no profile has been started";
 
-/// Read the initial DbgFile and DbgLine directly to avoid disassembling
-/// thousands of procs. Breakpoints on these instructions hide their locations.
 fn start_of(bytecode: usize, proc: &Proc) -> (Option<String>, Option<u32>) {
 	let (dbg_file, dbg_line) = (dmasm::Opcode::DbgFile.word(), dmasm::Opcode::DbgLine.word());
 	let (current, len) = unsafe { proc.bytecode_mut_ptr() };

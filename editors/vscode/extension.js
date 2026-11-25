@@ -1,8 +1,3 @@
-// Register the auxtools launcher as a VS Code debug adapter, supply
-// launch/attach configurations, and report editor state.
-//
-// VS Code provides the vscode module; no additional dependencies are needed.
-
 "use strict";
 
 const childProcess = require("child_process");
@@ -20,13 +15,11 @@ function settings() {
 	return vscode.workspace.getConfiguration("auxtools");
 }
 
-// Whether this notification category is enabled.
 function notifies(kind) {
 	const chosen = settings().get("notifications") || {};
 	return chosen[kind] !== false;
 }
 
-// Resolve the launcher from settings or bundled platform binaries.
 function launcherPath(context) {
 	const configured = settings().get("launcherPath");
 	if (configured) {
@@ -36,7 +29,6 @@ function launcherPath(context) {
 	return path.join(context.extensionPath, "bin", process.platform, exe);
 }
 
-// A packaged extension's files can lose their executable bit on Linux
 function ensureExecutable(file) {
 	if (process.platform === "win32") {
 		return;
@@ -47,13 +39,10 @@ function ensureExecutable(file) {
 		try {
 			fs.chmodSync(file, 0o755);
 		} catch {
-			// Let startup report any error if chmod fails.
 		}
 	}
 }
 
-// Add the launcher directory to terminal PATH. Existing terminals need
-// to be relaunched to pick up the change.
 function exposeLauncher(context) {
 	const collection = context.environmentVariableCollection;
 	collection.clear();
@@ -69,7 +58,6 @@ function exposeLauncher(context) {
 	collection.prepend("PATH", path.dirname(launcher) + path.delimiter);
 }
 
-// Find project files, preferring the workspace-folder name and shallow paths.
 async function findFiles(extension, folder) {
 	const glob = `**/*${extension}`;
 	const pattern = folder ? new vscode.RelativePattern(folder, glob) : glob;
@@ -85,7 +73,6 @@ async function findFiles(extension, folder) {
 	});
 }
 
-// Choose the language client's world, falling back to workspace .dmb files.
 async function pickWorldFile(folder) {
 	const current = await langclient.environment(vscode, folder);
 	if (current && fs.existsSync(current.dmb)) {
@@ -106,7 +93,6 @@ async function pickWorldFile(folder) {
 	return picked && picked.uri;
 }
 
-// The running worlds that can be attached to, from `auxtools list --json`
 function listWorlds(context) {
 	const launcher = launcherPath(context);
 	ensureExecutable(launcher);
@@ -125,7 +111,6 @@ function listWorlds(context) {
 	});
 }
 
-// One running world's process id, asking when there's a choice
 async function pickWorld(context) {
 	let worlds;
 	try {
@@ -151,7 +136,6 @@ async function pickWorld(context) {
 	return picked && picked.pid;
 }
 
-// A launch configuration for a .dmb. Its .dme is the one next to it.
 function launchConfiguration(dmb, name) {
 	return {
 		type: DEBUG_TYPE,
@@ -168,8 +152,6 @@ class ConfigurationProvider {
 	}
 
 	async provideDebugConfigurations(folder) {
-		// Use the language client's commands and build task. Its CurrentDME
-		// and CurrentDMB variables belong to its own debugger.
 		if (langclient.installed(vscode)) {
 			return [
 				{
@@ -184,7 +166,6 @@ class ConfigurationProvider {
 		return [launchConfiguration(dmb, "Debug in DreamDaemon")];
 	}
 
-	// Resolve missing configuration values, including launches without launch.json.
 	async resolveDebugConfiguration(folder, config) {
 		if (!config.type && !config.request && !config.name) {
 			const dmb = await pickWorldFile(folder);
@@ -193,7 +174,6 @@ class ConfigurationProvider {
 			}
 			config = launchConfiguration(dmb.fsPath);
 		}
-		// Use the language client's environment when no world is specified.
 		if (config.request === "launch" && !config.dmb && !config.dme) {
 			const current = await langclient.environment(vscode, folder);
 			if (current) {
@@ -213,7 +193,6 @@ class ConfigurationProvider {
 		if (!config.debugLibrary && settings().get("debugLibrary")) {
 			config.debugLibrary = settings().get("debugLibrary");
 		}
-		// Match parser defines to the flags used by the launch build task.
 		const flags = config.request === "launch" && (await buildFlags.api(vscode));
 		if (flags) {
 			config.buildFlags = buildFlags.launchFlags(flags, config);
@@ -226,8 +205,6 @@ class ConfigurationProvider {
 		return config;
 	}
 
-	// Explicit SS13 Build Flags substitutions return several -D arguments
-	// in one string; split them before passing them to the parser.
 	resolveDebugConfigurationWithSubstitutedVariables(folder, config) {
 		if (Array.isArray(config.defines)) {
 			config.defines = config.defines.flatMap((define) => (/^\s*-D/.test(define) ? buildFlags.defines(define) : define.trim() ? [define] : []));
@@ -252,7 +229,6 @@ class AdapterFactory {
 	}
 }
 
-// Attaches to a running world, picked from a list
 async function attach() {
 	await vscode.debug.startDebugging(undefined, {
 		type: DEBUG_TYPE,
@@ -261,7 +237,6 @@ async function attach() {
 	});
 }
 
-// Debug the selected world in DreamDaemon.
 async function debugInDreamDaemon() {
 	const editor = vscode.window.activeTextEditor;
 	const folder = editor ? vscode.workspace.getWorkspaceFolder(editor.document.uri) : undefined;
@@ -272,7 +247,6 @@ async function debugInDreamDaemon() {
 	await vscode.debug.startDebugging(vscode.workspace.getWorkspaceFolder(dmb), launchConfiguration(dmb.fsPath));
 }
 
-// Forward flag changes to sessions with matching build tasks.
 async function followBuildFlags(context) {
 	const flags = await buildFlags.api(vscode);
 	if (!flags) {
@@ -296,13 +270,10 @@ async function followBuildFlags(context) {
 	);
 }
 
-// Report unsaved files so the launcher can distinguish editor line numbers
-// from the running source.
 function trackUnsavedFiles(context) {
 	const unsaved = new UnsavedFiles();
 	const sessions = new Set();
 	const tell = (session, message) => {
-		// Older launchers reject the extension request; ignore that response.
 		session.customRequest("auxtoolsUnsaved", message).then(undefined, () => {});
 	};
 	const update = (document) => {
@@ -328,8 +299,6 @@ function trackUnsavedFiles(context) {
 	vscode.workspace.textDocuments.forEach(update);
 }
 
-// Reconnect players to load an interface update.
-// DreamSeeker-hosted worlds must reboot instead.
 async function reconnectClients(session) {
 	session = session || vscode.debug.activeDebugSession;
 	if (!session || session.type !== DEBUG_TYPE) {
@@ -348,7 +317,6 @@ async function reconnectClients(session) {
 	}
 }
 
-// Reboot the given or active session without rebuilding or relaunching.
 async function reboot(given) {
 	const session = given && given.customRequest ? given : vscode.debug.activeDebugSession;
 	if (!session || session.type !== DEBUG_TYPE) {
@@ -362,7 +330,6 @@ async function reboot(given) {
 	}
 }
 
-// Track profiles by session and show a stop action for the active session.
 class Profiles {
 	constructor(context) {
 		this.running = new Set();
@@ -389,7 +356,6 @@ class Profiles {
 		}
 	}
 
-	// Toggle profiling for the given or active session.
 	async toggle(given) {
 		const session = given && given.customRequest ? given : vscode.debug.activeDebugSession;
 		if (!session || session.type !== DEBUG_TYPE) {
@@ -418,7 +384,6 @@ class Profiles {
 	}
 }
 
-// Show the report beside the code, with links to source lines.
 function showProfile(session, report) {
 	const panel = vscode.window.createWebviewPanel("auxtoolsProfile", "Instruction timing", vscode.ViewColumn.Beside, {
 		enableScripts: true,
@@ -429,7 +394,6 @@ function showProfile(session, report) {
 		if (message.command !== "open" || typeof message.file !== "string") {
 			return;
 		}
-		// Resolve source paths relative to the workspace.
 		const folders = [session.workspaceFolder, ...(vscode.workspace.workspaceFolders || [])].filter(Boolean);
 		for (const folder of folders) {
 			const file = vscode.Uri.joinPath(folder.uri, message.file);
@@ -447,7 +411,6 @@ function showProfile(session, report) {
 	panel.webview.html = report.html;
 }
 
-// Offer the address when DreamSeeker is unavailable.
 async function offerAddress(address, started) {
 	const message = started ? `The world started at ${address}.` : `The world is at ${address}.`;
 	if ((await vscode.window.showInformationMessage(message, "Copy Address")) === "Copy Address") {
@@ -455,7 +418,6 @@ async function offerAddress(address, started) {
 	}
 }
 
-// Join with DreamSeeker on Windows; otherwise offer the address.
 async function join(session) {
 	session = session || vscode.debug.activeDebugSession;
 	if (!session || session.type !== DEBUG_TYPE) {
@@ -472,7 +434,6 @@ async function join(session) {
 	}
 }
 
-// Join newly launched worlds, or offer the join action.
 async function worldStarted(event) {
 	const { address, started, canJoin, hosted } = event.body;
 	if (!started || !address || hosted || event.session.configuration.request !== "launch") {
@@ -492,12 +453,10 @@ async function worldStarted(event) {
 	}
 }
 
-// Launchers before 3.0.4 omit `until`; treat that as requiring a rebuild.
 function rebootOnly(problem) {
 	return problem.until === "reboot";
 }
 
-// Status bar labels and tooltips by reload state.
 const STATES = {
 	reading: { text: "$(sync~spin) Reading source", tooltip: "Reading source for hot reload." },
 	active: { text: "$(check) Hot reload", tooltip: "Save files to reload supported changes." },
@@ -517,8 +476,6 @@ const STATES = {
 	off: { text: "$(circle-slash) Hot reload off", tooltip: "Hot reload is off: " },
 };
 
-// Track reload state per session. Show the active session in the status
-// bar and refused changes in the Problems panel.
 class ReloadStatus {
 	constructor(context) {
 		this.sessions = new Map();
@@ -544,7 +501,6 @@ class ReloadStatus {
 		);
 	}
 
-	// Update the session's reload state and its held changes.
 	changed(event) {
 		const { summary, problems } = event.body;
 		let { state } = event.body;
@@ -557,11 +513,9 @@ class ReloadStatus {
 		this.show();
 	}
 
-	// Show held changes in Problems and notify once per distinct set.
 	refused(session, problems) {
 		const known = this.sessions.get(session.id);
 		if (!problems.length) {
-			// Leave other sessions' entries alone.
 			if (known.shown) {
 				this.problems.clear();
 			}
@@ -592,7 +546,6 @@ class ReloadStatus {
 			this.problems.set(uri, diagnostics);
 		}
 
-		// Notify again if the required action changes.
 		const said = problems.map((problem) => `${problem.message} (${problem.until})`).join("\n");
 		if (!notifies("rebuild") || known.said === said) {
 			return;
@@ -612,7 +565,6 @@ class ReloadStatus {
 		if (problems.every(rebootOnly)) {
 			shown(`Reboot required: ${problems[0].message}${more}.`, "Reboot");
 		} else {
-			// Restart runs the configured preLaunchTask.
 			const first = problems.find((problem) => !rebootOnly(problem));
 			shown(`Rebuild required: ${first.message}${more}.`, "Rebuild and Restart");
 		}
@@ -637,7 +589,6 @@ class ReloadStatus {
 	}
 }
 
-// Warn about edits that may be missing from the build.
 async function outdated(event) {
 	const { files } = event.body;
 	if (!files || !files.length || !notifies("outdated")) {
@@ -650,7 +601,6 @@ async function outdated(event) {
 	}
 }
 
-// World actions for the active session.
 async function worldMenu(status, profiles) {
 	const session = vscode.debug.activeDebugSession;
 	if (!session || session.type !== DEBUG_TYPE) {
@@ -675,7 +625,6 @@ async function worldMenu(status, profiles) {
 	}
 }
 
-// Offer reconnect after a skin reload.
 async function skinReloaded(event) {
 	const { file, clients, hosted } = event.body;
 	if (!clients || !notifies("reconnect")) {
@@ -690,7 +639,6 @@ async function skinReloaded(event) {
 	}
 }
 
-// Offer reconnect after a client script reload.
 async function scriptReloaded(event) {
 	const { clients, hosted } = event.body;
 	if (!clients || !notifies("reconnect")) {
@@ -741,9 +689,7 @@ function activate(context) {
 				outdated(event);
 			}
 		}),
-		// For `${command:auxtools.pickWorld}` in attach configurations
 		vscode.commands.registerCommand("auxtools.pickWorld", () => pickWorld(context)),
-		// Provide a read-only expression for hover evaluation.
 		vscode.languages.registerEvaluatableExpressionProvider(
 			{ language: "dm" },
 			{

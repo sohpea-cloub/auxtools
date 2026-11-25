@@ -39,11 +39,8 @@ struct AuxtoolsException {
     std::string message;
 };
 
-// Replace BYOND runtime errors with C++ exceptions while set.
-// Also checked by the proc-call detour in hooks.rs.
 extern "C" bool runtime_intercepted;
 
-// Sets `runtime_intercepted` for a scope
 struct RuntimeContext {
     bool outer;
 

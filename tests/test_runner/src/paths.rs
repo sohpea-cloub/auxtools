@@ -6,7 +6,6 @@ pub trait ByondCommand {
 
 #[cfg(unix)]
 impl ByondCommand for Command {
-	// TODO: This doesn't read very nice
 	fn with_byond_paths(&mut self) -> &mut Command {
 		let byond_system = find_byond();
 		let byond_bin = find_byond_bin();

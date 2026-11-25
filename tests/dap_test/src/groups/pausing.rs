@@ -1,18 +1,14 @@
-//! Pausing, and the procs asleep while the world is paused: each is a thread
-
 use std::time::Duration;
 
 use serde_json::json;
 
 use crate::{client::named, ok, world::World};
 
-/// The threads in `proc`, whatever line they're on
 fn threads_in<'a>(threads: &'a [(u64, String)], proc: &str) -> Vec<&'a (u64, String)> {
 	let with_place = format!("{}  ", proc);
 	threads.iter().filter(|(_, name)| name == proc || name.starts_with(&with_place)).collect()
 }
 
-/// The id of the one thread in `proc`
 fn thread_in(threads: &[(u64, String)], proc: &str) -> u64 {
 	match threads_in(threads, proc).as_slice() {
 		[(id, _)] => *id,
@@ -30,8 +26,6 @@ pub fn run() {
 	assert_eq!(trace["totalFrames"], 0);
 	ok("running thread without frames");
 
-	// A proc that doesn't sleep. Until it says it has started, a pause would
-	// stop the loop that starts it.
 	world.run("busy");
 	world.wait_output("dap: busy");
 	world.request("pause", json!({ "threadId": 0 }));
@@ -48,14 +42,9 @@ pub fn run() {
 	assert_eq!((stop.reason.as_str(), stop.proc.as_str()), ("step", "/sc_busy"));
 	ok("step after pause");
 
-	// A continue may overtake its queued stop event. Do not report that stale
-	// stop.
 	world.resume();
 	for _ in 0..3 {
 		world.pipeline(&[("pause", json!({ "threadId": 0 })), ("continue", json!({ "threadId": 0 }))]);
-		// A stop told before the continue was answered is one the continue
-		// ended. One told after it is a pause that took effect later: the
-		// world has to be stopped.
 		world.drop_earlier_events("stopped");
 		if let Some(stop) = world.event_within("stopped", Duration::from_secs(1)) {
 			let thread = stop["body"]["threadId"].as_u64().unwrap();
@@ -68,13 +57,8 @@ pub fn run() {
 	world.finish("busy");
 	assert!(!world.has_event("stopped"), "the world stopped again during busy");
 
-	// Nothing of the world's runs for three seconds: it pauses in the
-	// debugger's own loop, which isn't shown as a thread
 	world.eval_global("idle_ticks = 30");
 	world.wait_output("dap: idling");
-	// It says so two instructions before it sleeps, and a pause sent now can
-	// get there first. Its loop counts its turns: once the count stands still
-	// it is asleep.
 	loop {
 		let ticks = world.eval_global("ticks");
 		std::thread::sleep(Duration::from_millis(30));
@@ -98,7 +82,6 @@ pub fn run() {
 	world.wait_output("dap: idle over");
 	ok("pause idle world");
 
-	// nap(10) sleeps for a second while leaf() stops
 	let set = world.try_break_if(&[("leaf_1", "")]);
 	world.run("nap");
 	let stop = world.stop();
@@ -148,7 +131,6 @@ pub fn run() {
 	assert_eq!(world.evaluate_in(&frame, "napped = 11", "repl")["result"], "11");
 	ok("sleeping frame evaluation and assignment");
 
-	// A step later, each is the thread it was
 	let stop_again = world.step("next");
 	assert_eq!((stop_again.reason.as_str(), stop_again.thread), ("step", stop.thread));
 	assert!(stop_again.hit.is_empty(), "a step stopped for breakpoints {:?}", stop_again.hit);
@@ -157,13 +139,11 @@ pub fn run() {
 	assert_eq!(thread_in(&threads_again, "/main_loop"), thread_in(&threads, "/main_loop"));
 	ok("stable thread IDs");
 
-	// It wakes a second later, the same thread
 	world.request("next", json!({ "threadId": nap }));
 	let woke = world.stop();
 	assert_eq!((woke.reason.as_str(), woke.proc.as_str(), woke.line), ("step", "/nap", at.line("nap_3")));
 	assert_eq!(woke.thread, nap, "the proc that woke is another thread than when it slept");
 	assert_eq!(world.local("napped"), "11");
-	// Back in the block that called it, which is all there is
 	assert_eq!(world.step("next").proc, "/sc_nap");
 	world.request("next", json!({ "threadId": 0 }));
 	world.finish("nap");
@@ -197,7 +177,6 @@ pub fn run() {
 	world.resume_through("many");
 	ok("multiple sleeping threads");
 
-	// More than the list is given room for
 	world.eval_global("many = 150");
 	world.break_on(&["leaf_1"]);
 	world.run("many");
@@ -212,7 +191,6 @@ pub fn run() {
 		threads
 	);
 	world.threads();
-	// Fifty from before, a hundred and fifty now, and the world's loop
 	assert_eq!(
 		world.count("201 procs are asleep: the list of threads has the first 100 (\"sleepingThreads\" in the launch configuration sets how many)"),
 		1,
@@ -233,7 +211,6 @@ pub fn run() {
 	let threads = world.threads();
 	assert_eq!(threads_in(&threads, "/sc_many").len(), 150);
 	assert!(!world.output.contains("procs are asleep"), "the launcher said the list was cut short");
-	// The last of them is a thread like any other
 	let last = threads.last().unwrap().0;
 	assert_eq!(world.frames(last)[0]["line"], at.line("many_sleep"));
 	world.end();

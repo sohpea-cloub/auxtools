@@ -1,5 +1,3 @@
-//! Profile execution by proc, source line and instruction.
-
 use std::sync::atomic::Ordering;
 
 use crate::profile::{self, time, Listed};
@@ -28,12 +26,10 @@ pub fn profile(world: &mut World, args: &args::Profile) -> Result<()> {
 		if until.is_some_and(|until| Instant::now() >= until) {
 			break "time";
 		}
-		// Process other clients' pause and resume events.
 		let tick = Instant::now() + TICK;
 		world.next(Some(until.map_or(tick, |until| until.min(tick))))?;
 	};
 
-	// Include listings for named procs or the slowest N procs.
 	let listed = (!named).then_some(args.top as usize);
 	let report = profile::stop(ended, listed, |request| world.request(request))?;
 
@@ -89,7 +85,6 @@ pub fn profile(world: &mut World, args: &args::Profile) -> Result<()> {
 		}
 		return Ok(());
 	}
-	// Source lines require debug information.
 	let lines = report.lines();
 	if !lines.is_empty() {
 		say!("");
@@ -108,7 +103,6 @@ pub fn profile(world: &mut World, args: &args::Profile) -> Result<()> {
 	Ok(())
 }
 
-/// Group a proc's instructions by source line.
 fn instructions(listed: &Listed) {
 	let code = &listed.code;
 	say!("{}", spot(&code.proc, code.code.old != 0, code.file.as_deref(), None));

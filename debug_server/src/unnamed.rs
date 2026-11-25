@@ -1,9 +1,3 @@
-//! Display and lookup names for procs without paths: `(global init)`,
-//! `(in list)#N`, or `(var initializer)#N` when unclassified or tables are
-//! unavailable. DreamMaker emits these for global/static initializers,
-//! parameter `in` lists and type var initializers. BYOND later names the type
-//! initializers `/TYPE/proc/(init)`, which take precedence when available.
-
 use auxtools::{raw_types::procs::ProcId, runtime_tables, Proc};
 
 use crate::{
@@ -12,10 +6,8 @@ use crate::{
 };
 
 const IN_LIST: &str = "(in list)";
-/// Fallback name, indexed among auxtools' unnamed procs.
 const OTHER: &str = "(var initializer)";
 
-/// Construct a displayable, resolvable proc reference.
 pub fn proc_ref(proc: &Proc) -> ProcRef {
 	if !proc.path.is_empty() {
 		return ProcRef {
@@ -23,7 +15,6 @@ pub fn proc_ref(proc: &Proc) -> ProcRef {
 			override_id: proc.override_id()
 		};
 	}
-	// Prefer an init proc path assigned by BYOND after the initial scan.
 	if let Some(now) = Proc::from_id(proc.id).filter(|now| !now.path.is_empty()) {
 		return ProcRef {
 			path: now.path,
@@ -36,7 +27,6 @@ pub fn proc_ref(proc: &Proc) -> ProcRef {
 	})
 }
 
-/// Format a proc name, adding `#N` for definitions after the first.
 pub fn proc_name(proc: &Proc) -> String {
 	let proc = proc_ref(proc);
 	match proc.override_id {
@@ -45,7 +35,6 @@ pub fn proc_name(proc: &Proc) -> String {
 	}
 }
 
-/// Resolve a proc by path or one of the synthetic names in this module.
 pub fn find(path: &str, override_id: u32) -> Option<Proc> {
 	if !path.starts_with('(') {
 		return Proc::find_override(path, override_id);
@@ -62,7 +51,6 @@ pub fn find(path: &str, override_id: u32) -> Option<Proc> {
 	Proc::from_id(ProcId(id))
 }
 
-/// Classify unnamed procs using the runtime tables.
 struct Kinds {
 	in_lists: Vec<u32>,
 	global_init: Option<u32>
@@ -71,9 +59,6 @@ struct Kinds {
 impl Kinds {
 	fn read() -> Result<Self, String> {
 		let in_lists = runtime_tables::in_list_procs()?;
-		// The initial scan predates BYOND naming type init procs. DreamMaker
-		// emits global init after those and the `in` lists; later unnamed procs
-		// were added by hot reload.
 		let global_init = Proc::overrides("")
 			.iter()
 			.map(|proc| proc.id)

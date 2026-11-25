@@ -19,7 +19,6 @@ fn inc_counter() {
 	}))
 }
 
-// Not a hook, so a failure still gets reported when hooks are what broke
 byond_ffi_fn! { auxtest_out(msg) {
 	eprintln!("\n{}", msg);
 	Some(String::new())

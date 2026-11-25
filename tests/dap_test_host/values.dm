@@ -1,5 +1,3 @@
-// One of every kind of value, for the test to look at
-
 /proc/values(first, second)
 	var/whole = 42
 	var/fraction = 1.5
@@ -21,7 +19,6 @@
 	var/list/assoc = list("a" = 1, "b" = named, "c" = null)
 	var/list/nested = list(list(1, 2), list("x" = list(3)))
 	var/list/dupes = list("a", "a", 1, 1)
-	// Keys requiring escaping, positional lookup or object refs.
 	var/list/keyed = list("a\[b\]" = 1, "[]" = 2, "\improper x" = 3)
 	keyed[named] = 4
 	var/list/big = new(3000)
@@ -54,7 +51,6 @@
 	var/pix = pixloc(1, 1, 1)
 	var/callee/this_proc = callee
 #endif
-	// Two locals of one name, each in a block of its own
 	if (whole)
 		var/twin = 1
 		whole += twin - 1 // @twin_1
@@ -71,7 +67,6 @@
 /proc/sc_values()
 	values(1, "two", 3)
 
-// A stop inside a datum's proc, with src, a list and a caller to look at
 /datum/thing/proc/inside(by)
 	var/list/local_list = list(10, 20, 30)
 	n += by // @inside_stop
@@ -84,7 +79,6 @@
 	s.inside(4)
 	return in_caller
 
-// Pause beneath a caller's try block.
 /proc/sc_caught()
 	try
 		world.log << "dap: caught_inside gave [caught_inside()]"

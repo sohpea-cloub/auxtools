@@ -7,8 +7,6 @@
 /proc/auxtools_stack_trace(msg)
 	CRASH(msg)
 
-// Goes straight to the library instead of through a hook, so a failure still
-// gets reported when hooks are what broke
 /proc/auxtest_out(msg)
 	call_ext(auxtools_test_dll(), "auxtest_out")(msg)
 
@@ -18,7 +16,6 @@
 /proc/auxtest_fail_next_init()
 	CRASH()
 
-// A failed init has to stay failed, and leave none of its hooks behind
 /proc/auxtest_failed_init(auxtest_dll)
 	var/first = call_ext(auxtest_dll, "auxtools_init")()
 	ASSERT(findtext(first, "FAILED") == 1)
@@ -40,9 +37,6 @@
 /proc/del_value(v)
 	del v
 
-// We create a new datum after del'ing the one we passed into the test function.
-// This causes the new datum to take on the internal ID of the old one, and we can test if auxtools
-// can properly deal with this situation.
 var/datum/weak_test_datum
 /proc/create_datum_for_weak()
 	weak_test_datum = new
@@ -50,10 +44,6 @@ var/datum/weak_test_datum
 /mob/verb/auxtest_verb()
 	return
 
-// A spread of values for `List::is_list` to agree with `islist()` on: plain
-// lists, the special lists that hang off an object, and things that are not
-// lists at all. `M.filters[1]` is the mean one, since a single filter has the
-// same tag as the filters list it came out of.
 /proc/auxtest_islist_samples()
 	var/mob/M = new
 	M.filters += filter(type = "blur")
@@ -70,9 +60,7 @@ var/datum/weak_test_datum
 		F.dir, world.contents, world.vars, global.vars,
 	)
 
-// 516's alists. 515 has none.
 #if DM_VERSION >= 516
-// 7 is a key here and not a position, and "n" has a null value on purpose
 /proc/auxtest_alist_sample()
 	return alist("a" = 1, 7 = "seven", "n" = null)
 
@@ -89,14 +77,12 @@ var/datum/weak_test_datum
 /proc/auxtest_length(value)
 	return length(value)
 
-// New() is hooked and hands back a string that nothing here ever reads
 /datum/auxtest_discard/New()
 	CRASH()
 
 /proc/auxtest_new_discard()
 	new /datum/auxtest_discard
 
-// Both hooked, and then called from Rust by the same library that hooked them
 /proc/auxtest_hooked_global(x)
 	CRASH()
 
@@ -106,8 +92,6 @@ var/datum/weak_test_datum
 /proc/auxtest_new_hooked()
 	return new /datum/auxtest_hooked
 
-// `new` on a verb path with a name BYOND has not seen yet adds one entry to its
-// proc table, and the whole table moves when it grows
 /proc/auxtest_grow_proc_table()
 	var/mob/M = new
 	for (var/i in 1 to 4096)
@@ -116,9 +100,6 @@ var/datum/weak_test_datum
 /proc/auxtest_panics()
 	CRASH()
 
-// A panic in the library would abort DreamDaemon if it got out. A hook's is
-// a runtime error where the proc was called, and an exported function's an
-// empty string.
 /proc/auxtest_panic_is_caught(auxtest_dll)
 	var/raised
 	try
@@ -128,7 +109,6 @@ var/datum/weak_test_datum
 	ASSERT(findtext(raised, "panicked: auxtest asked for this panic"))
 	ASSERT(call_ext(auxtest_dll, "auxtest_ffi_panics")() == "")
 
-// Tests
 /proc/auxtest_hooks()
 	CRASH()
 
@@ -153,7 +133,6 @@ var/datum/weak_test_datum
 	world.log << "init_result = [init_result]"
 	ASSERT(init_result == "SUCCESS")
 
-	// Tests
 	ASSERT(auxtest_hooks() == TRUE)
 	auxtest_panic_is_caught(auxtest_dll)
 	ASSERT(auxtest_lists() == TRUE)
@@ -165,9 +144,7 @@ var/datum/weak_test_datum
 	ASSERT(auxtest_weak_values(weak_test) == TRUE)
 	ASSERT(weak_test == null)
 
-	// Stop testing after the 8th reboot
 	if (auxtest_inc_counter() == 8)
-		// last, because nothing can init again in this process afterwards
 		auxtest_fail_next_init()
 		call_ext(auxtest_dll, "auxtools_shutdown")()
 		auxtest_failed_init(auxtest_dll)

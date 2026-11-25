@@ -5,11 +5,6 @@
 jmp_buf *current_jmp;
 #endif
 
-//
-// BYOND likes to use C++ exceptions for some stuff (like runtimes) - Rust can't catch them and code will just unroll back to before our hooks
-// We use these wrappers to hackily handle that and let Rust know an exception happened instead of letting it propagate
-//
-
 #define DEFINE_byond(name, ret_type, params)     \
 	using Fn##name##_byond = ret_type(*) params; \
 	Fn##name##_byond name##_byond = nullptr;
@@ -52,23 +47,6 @@ struct RestoreJmpBuf
 
 #endif
 
-// The REGPARM markers are real on Linux and expand to nothing on Windows, so a
-// wrong one here is a Linux-only bug that no Windows test can catch. These were
-// read off libbyond.so's function prologues on 516.1669 and 516.1687.
-//
-// How to check one: does the function read `eax` or `edx` before writing it in
-// its first handful of instructions? If so it takes arguments in registers and
-// needs a marker. If it opens by reading `[esp+arg_N]` it is plain cdecl and must
-// not have one. The export table can't tell you, none of these are in it.
-//
-// Two things make this easy to get wrong:
-//
-//   * A Value-returning regparm function spends `eax` on the hidden return
-//     buffer, so its first real argument starts at `edx`. Count the buffer.
-//   * The convention is per-function and per-build. `remove_from_list` changed
-//     from registers to the stack at 1674 with no change to its signature,
-//     while its identically-shaped sibling `append_to_list` did not move. Don't
-//     infer one row from another.
 extern "C"
 {
 	DEFINE_byond(call_proc_by_id, Value, (Value, uint32_t, uint32_t, uint32_t, Value, const Value *, uint32_t, uint32_t, uint32_t));
@@ -76,7 +54,6 @@ extern "C"
 	DEFINE_byond(get_proc_array_entry, void *, (uint32_t));
 	DEFINE_byond_REGPARM3(get_string_id, uint32_t, (const char *, uint8_t, uint8_t, uint8_t));
 	DEFINE_byond(get_variable, Value, (Value, uint32_t));
-	// byondapi's own export, cdecl everywhere
 	DEFINE_byond(read_pointer, bool, (const Value *, Value *));
 	DEFINE_byond(set_variable, void, (Value, uint32_t, Value));
 	DEFINE_byond(get_string_table_entry, void *, (uint32_t));
@@ -86,41 +63,22 @@ extern "C"
 	DEFINE_byond(set_assoc_element, void, (Value, Value, Value));
 	DEFINE_byond(create_list, uint32_t, (uint32_t));
 	DEFINE_byond_REGPARM2(append_to_list, void, (Value, Value));
-	// The one function known to have changed convention mid-range, so it gets
-	// both declarations. Linux builds up to 516.1673 take the list in `eax:edx`,
-	// and 516.1674 on take everything on the stack. Rust sets the flag from the
-	// running build, and the `remove_from_list` wrapper below picks the matching
-	// pointer type.
 	DEFINE_byond(remove_from_list, bool, (Value, Value));
 	using Fnremove_from_list_regparm_byond = bool(LINUX_REGPARM2 *)(Value, Value);
 	bool remove_from_list_in_registers = false;
-	// Linux 515 before 515.1644 hands the count back in `eax`, as Windows does
 	using Fnget_length_count_byond = uint32_t (*)(Value);
 	bool get_length_returns_count = false;
-	// The one function here whose *return* differs by platform, not just its
-	// argument placement. Windows hands the count straight back in `eax`. Linux
-	// returns a DM Value through a caller-supplied buffer, so the count has to be
-	// unpacked out of it. See the `get_length` wrapper below.
 #ifdef _WIN32
 	DEFINE_byond(get_length, uint32_t, (Value));
 #else
 	DEFINE_byond(get_length, Value, (Value));
 #endif
-	// BYOND's own `islist()`. The last argument says whether a pointer to a list
-	// counts as a list.
 	DEFINE_byond(value_is_list, bool, (Value, uint8_t));
 	DEFINE_byond(get_misc_by_id, void *, (uint32_t));
 	DEFINE_byond(to_string, uint32_t, (Value));
 }
 
 #ifndef _WIN32
-// Unpack the DM Value Linux's `get_length` returns into the plain count every
-// caller here wants. Tag 0x2A is Number and its data half is an `f32`. Anything
-// else means the argument had no length, which BYOND itself reports as 0.
-//
-// The tag is masked to a byte on purpose: BYOND leaves the three padding bytes
-// above a tag indeterminate, so comparing the whole dword answers wrong at
-// random.
 static uint32_t length_value_to_count(Value length)
 {
 	if ((length.type & 0xFF) != 0x2A)
@@ -173,12 +131,6 @@ extern "C" uint8_t call_datum_proc_by_name(
 	uint32_t callback,
 	uint32_t callback_value)
 {
-	// Intercepts, unlike `call_proc_by_id` above. The errors this function raises
-	// itself (an unknown proc name, a null receiver) happen before any DM code
-	// runs, and with `false` BYOND's own exception flew straight past the catch and
-	// killed the process at the first Rust frame. The proc it ends up calling still
-	// reports its own errors normally: `call_proc_by_id_hook_trampoline` pushes
-	// `false` around every DM call.
 	RuntimeContext ctx(true);
 
 	BYOND_TRY
@@ -219,8 +171,6 @@ extern "C" uint8_t get_string_id(uint32_t *out, const char *data)
 
 	BYOND_TRY
 	{
-		// 2: the text is UTF-8, as every string auxtools makes is; with 0 BYOND takes
-		// it for Latin-1, and "é" comes out as "Ã©"
 		*out = get_string_id_byond(data, 2, 0, 1);
 		return 1;
 	}
@@ -246,9 +196,6 @@ extern "C" uint8_t get_variable(Value *out, Value datum, uint32_t string_id)
 	}
 }
 
-// What a pointer (`&x`) names. On some builds reading through a pointer to a
-// var of a deleted object is a runtime error rather than a refusal, which
-// would otherwise be the running proc's.
 extern "C" uint8_t read_pointer(Value *out, const Value *pointer)
 {
 	RuntimeContext ctx(true);
@@ -452,7 +399,6 @@ extern "C" uint8_t value_is_list(uint8_t *out, Value value)
 	BYOND_TRY
 	{
 		clean(value);
-		// 0 is what the `islist()` opcode passes, so a pointer to a list is not a list
 		*out = value_is_list_byond(value, 0);
 		return 1;
 	}

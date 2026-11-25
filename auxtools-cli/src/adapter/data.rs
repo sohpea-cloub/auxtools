@@ -1,18 +1,11 @@
-//! Handle DAP data breakpoints. `dataBreakpointInfo` resolves watch targets;
-//! `setDataBreakpoints` replaces the client's breakpoint list.
-
 use super::*;
 
-/// Where the records of the data breakpoints set in the world are kept
 pub(super) const DATA_BREAKPOINTS: &str = "<data>";
 
 #[derive(Default)]
 pub(super) struct DataBreakpoints {
-	/// Watch targets indexed by client-visible data ID. Frame and variable
-	/// references also record the pause in which they were resolved.
 	places: HashMap<String, (aux::WatchPlace, String, Option<u32>)>,
 	asked: u32,
-	/// Current client data breakpoints.
 	set: Vec<DataBreakpoint>
 }
 
@@ -20,13 +13,9 @@ struct DataBreakpoint {
 	data_id: String,
 	condition: Option<String>,
 	hit: Option<String>,
-	/// Client-visible ID.
 	id: i64,
-	/// Description of the watch target.
 	name: String,
-	/// Active server watch, if set.
 	watch: Option<u32>,
-	/// Reason the watch is not set.
 	message: Option<String>
 }
 
@@ -41,7 +30,6 @@ impl DataBreakpoint {
 	}
 }
 
-/// Arguments for `dataBreakpointInfo`, which dap-types does not define.
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct DataBreakpointInfoArguments {
@@ -64,8 +52,6 @@ struct DataBreakpointWanted {
 }
 
 impl Adapter {
-	/// Resolve a variable or expression to a watch target.
-	/// Frame and object references are valid only during the current pause.
 	pub(super) fn data_breakpoint_info(&mut self, args: DataBreakpointInfoArguments) -> Handled {
 		let unwatched = |why: &str| Ok(serde_json::json!({ "dataId": null, "description": why }));
 		if !self.debugging {
@@ -96,7 +82,6 @@ impl Adapter {
 				Ok(serde_json::json!({
 					"dataId": data_id,
 					"description": name,
-					// Only value changes are detected, not reads or writes of the same value.
 					"accessTypes": ["write"],
 					"canPersist": false
 				}))
@@ -106,8 +91,6 @@ impl Adapter {
 		}
 	}
 
-	/// Replace the client's data breakpoints. Preserve existing watches,
-	/// including frame targets that can no longer be resolved.
 	pub(super) fn set_data_breakpoints(&mut self, args: SetDataBreakpointsArguments) -> Handled {
 		let mut had = std::mem::take(&mut self.data.set);
 		let mut set = vec![];
@@ -174,7 +157,6 @@ impl Adapter {
 		json(SetDataBreakpointsResponse { breakpoints })
 	}
 
-	/// Translate server watch IDs to client breakpoint IDs.
 	fn record_data_breakpoints(&mut self) {
 		let records = self
 			.data
@@ -197,7 +179,6 @@ impl Adapter {
 		self.set.lock().unwrap().insert(DATA_BREAKPOINTS.to_owned(), records);
 	}
 
-	/// Invalidate a watch after its proc returns or object is deleted.
 	pub(super) fn watch_ended(&mut self, watch: u32, reason: &str) {
 		let Some(breakpoint) = self.data.set.iter_mut().find(|breakpoint| breakpoint.watch == Some(watch)) else {
 			return;
@@ -212,8 +193,6 @@ impl Adapter {
 		self.record_data_breakpoints();
 	}
 
-	/// Invalidate watches after reboot. Frame and object references cannot
-	/// be restored; `rewatch` restores targets that can be resolved globally.
 	pub(super) fn watches_lost(&mut self) {
 		self.data.places.retain(|_, (_, _, of_stop)| of_stop.is_none());
 		for breakpoint in &mut self.data.set {
@@ -227,7 +206,6 @@ impl Adapter {
 		}
 	}
 
-	/// Restore watches whose expressions can be evaluated without a frame.
 	pub(super) fn rewatch(&mut self) {
 		for at in 0..self.data.set.len() {
 			let breakpoint = &self.data.set[at];
@@ -259,7 +237,6 @@ impl Adapter {
 	}
 }
 
-/// Build a `setDataBreakpoints` response.
 #[derive(serde::Serialize)]
 struct SetDataBreakpointsResponse {
 	breakpoints: Vec<Breakpoint>

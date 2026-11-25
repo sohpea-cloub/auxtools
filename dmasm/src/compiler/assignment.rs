@@ -6,8 +6,6 @@ use crate::{
     Instruction,
 };
 
-// This is not meant to be recursive through all of the sub-expressions!
-// We only care if the LHS of an assignment would result in the RHS potentially be skipped!
 fn peek_is_conditional(expr: &Expression) -> bool {
     match expr {
         Expression::Base { term: _, follow } => {
@@ -25,7 +23,6 @@ fn peek_is_conditional(expr: &Expression) -> bool {
                         PropertyAccessKind::SafeDot | PropertyAccessKind::SafeColon => return true,
                     },
 
-                    // We can't assign to a call's result, but I'm adding this to make the function correct anyway.
                     Follow::Call(kind, _, _) => match kind {
                         PropertyAccessKind::Dot
                         | PropertyAccessKind::Colon
@@ -88,14 +85,12 @@ fn emit_conditional(
         | AssignOp::LShiftAssign
         | AssignOp::RShiftAssign
         | AssignOp::FloatModAssign => {
-            // Push holder - We'll need it later
             compiler.emit_ins(Instruction::PushCache);
             compiler.emit_ins(Instruction::PushCacheKey);
 
             let rhs = compiler.emit_expr(rhs)?;
             compiler.emit_move_to_stack(rhs)?;
 
-            // Pop holder
             compiler.emit_ins(Instruction::PopCacheKey);
             compiler.emit_ins(Instruction::PopCache);
 
@@ -166,14 +161,12 @@ fn emit_conditional(
             compiler.emit_ins(Instruction::GetVar(var.clone()));
             compiler.emit_ins(test_ins);
 
-            // Push holder - We'll need it later
             compiler.emit_ins(Instruction::PushCache);
             compiler.emit_ins(Instruction::PushCacheKey);
 
             let rhs = compiler.emit_expr(rhs)?;
             compiler.emit_move_to_stack(rhs)?;
 
-            // These ops require an l-value
             compiler.emit_ins(Instruction::PopCacheKey);
             compiler.emit_ins(Instruction::PopCache);
             compiler.emit_ins(Instruction::SetVarExpr(var));
@@ -191,7 +184,6 @@ pub(super) fn emit(
     lhs: Expression,
     rhs: Expression,
 ) -> Result<EvalKind, CompileError> {
-    // `(x) = y` assigns to x
     let mut lhs = lhs;
     while let Expression::Base { term, follow } = &lhs {
         match &term.elem {
@@ -199,7 +191,6 @@ pub(super) fn emit(
             _ => break,
         }
     }
-    // Conditional assignments (x?.y = z) take a different path
     if peek_is_conditional(&lhs) && !matches!(op, AssignOp::AndAssign | AssignOp::OrAssign) {
         use super::statements::SafeWrite;
         let to_field = move |var: Variable| {
@@ -267,7 +258,6 @@ pub(super) fn emit(
         | AssignOp::LShiftAssign
         | AssignOp::RShiftAssign
         | AssignOp::FloatModAssign => {
-            // RHS evalutes before LHS for these assignments
             let rhs = compiler.emit_expr(rhs)?;
             compiler.emit_move_to_stack(rhs)?;
 
@@ -343,7 +333,6 @@ pub(super) fn emit(
             let label = format!("LAB_{:0>4X}", compiler.label_count);
             compiler.label_count += 1;
 
-            // LHS first for this fucker
             let lhs = compiler.emit_place(op, lhs)?;
 
             enum CacheKind {
@@ -358,7 +347,6 @@ pub(super) fn emit(
                 _ => unreachable!(),
             };
 
-            // We need the l-value for later
             let assign_kind = match lhs {
                 EvalKind::Var(var) if is_writable(&var) => {
                     compiler.emit_ins(Instruction::GetVar(var.clone()));
@@ -422,8 +410,6 @@ pub(super) fn is_list_index(expr: &Expression) -> bool {
         if matches!(follow.last().map(|f| &f.elem), Some(Follow::Index(dreammaker::ast::ListAccessKind::Normal, _))))
 }
 
-/// Compile assignments used as values. List writes copy with PushTop before
-/// ListSet; logical assignments read and conditionally replace the target.
 fn emit_proc_assignment(
     compiler: &mut Compiler<'_>,
     op: AssignOp,
@@ -447,8 +433,6 @@ fn emit_proc_assignment(
             EvalKind::Field(builder, field) => builder.get_field(DMString(field.into())),
             _ => return Err(CompileError::ExpectedLValue),
         };
-        // Copy the RHS before resolving a computed field target or pointer,
-        // as for list-element assignment.
         let computed = matches!(var, Variable::PtrDeref(_))
             || compiler.nodes[start..].iter().any(|n| {
                 matches!(
@@ -474,8 +458,6 @@ fn emit_proc_assignment(
             compiler.emit_move_to_stack(kind?)?;
             store(compiler)?;
         }
-        // Resolve the target once and save its cached receiver across an RHS
-        // that uses the cache.
         AssignOp::AndAssign | AssignOp::OrAssign => {
             let end = compiler.new_label();
             let (var, cached) = match compiler.emit_place(op, lhs.clone())? {
@@ -496,15 +478,12 @@ fn emit_proc_assignment(
             } else {
                 Instruction::JmpAnd(Label::Named(end.clone()))
             });
-            // (a chain through fields the test loaded isn't reused by the
-            // value, and the assignment writes it out in full)
             compiler.end_assignment_statement();
             let start = compiler.nodes.len();
             compiler.implicit_type = compiler.static_type_name(lhs);
             let kind = compiler.emit_expr(rhs.clone())?;
             compiler.emit_move_to_stack(kind)?;
             compiler.implicit_type = None;
-            // (DreamMaker goes by the source, even what folding leaves out)
             let touches = |compiler: &Compiler<'_>, start: usize| {
                 compiler.nodes[start..]
                     .iter()
@@ -523,7 +502,6 @@ fn emit_proc_assignment(
             compiler.emit_ins(Instruction::SetVarExpr(var));
             compiler.emit_label(end);
         }
-        // `(x += y)` as a value: the result is fetched after
         AssignOp::AddAssign
         | AssignOp::SubAssign
         | AssignOp::MulAssign

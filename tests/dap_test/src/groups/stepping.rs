@@ -1,5 +1,3 @@
-//! Stepping: over, into and out of procs, across `sleep` and `spawn`
-
 use serde_json::json;
 
 use crate::{ok, world::World};
@@ -29,7 +27,6 @@ pub fn run() {
 	ok("Step Into a proc");
 
 	world.step_on("next", "/leaf", "leaf_2");
-	// Back in the caller, on the line of the call, which isn't over
 	world.step_on("next", "/middle", "middle_2");
 	world.step_on("next", "/middle", "middle_3");
 	assert_eq!(world.local("r"), "26");
@@ -60,8 +57,6 @@ pub fn run() {
 	world.resume_through("parent");
 	ok("nested Step Out");
 
-	// /datum/made has an (init) proc that sets its list, which isn't the
-	// user's code to step through
 	world.run_to("new", "/sc_new", "sc_new_1");
 	world.step_on("stepIn", "/datum/made/New", "made_new");
 	world.step_on("stepOut", "/sc_new", "sc_new_1");
@@ -80,12 +75,10 @@ pub fn run() {
 	world.step_on("next", "/sleeper", "sleeper_3");
 	assert_eq!(world.local("before"), "7");
 	world.step_on("next", "/sleeper", "sleeper_4");
-	// BYOND moves a proc's frames the first time it sleeps
 	assert_eq!(world.thread, thread, "the proc is another thread since it slept");
 	world.resume_through("sleeper");
 	ok("Step Over sleep preserves thread");
 
-	// The spawned block runs later, in a copy of the proc
 	world.run_to("spawner", "/spawner", "spawner_1");
 	world.step_on("next", "/spawner", "spawner_2");
 	world.step_on("next", "/spawner", "spawner_3");
@@ -110,12 +103,10 @@ pub fn run() {
 	world.resume_through("middle");
 	ok("breakpoint interrupts Step Over");
 
-	// recurse(3) calls recurse(2), ... to recurse(0)
 	world.break_if(&[("recurse_2", "depth == 2")]);
 	world.run("recurse");
 	world.stop_on("breakpoint", "/recurse", "recurse_2");
 	world.break_on(&[]);
-	// recurse(2), recurse(3), the scenario and the world's loop
 	assert_eq!(world.frames(0).len(), 4);
 	world.step_on("next", "/recurse", "recurse_3");
 	assert_eq!(world.argument("depth"), "2");
@@ -138,7 +129,6 @@ pub fn run() {
 		"flow_case",
 		"flow_try_start",
 		"flow_try",
-		// quiet_failure() fails, which nobody pauses for
 		"flow_catch",
 		"flow_return"
 	];
@@ -147,7 +137,6 @@ pub fn run() {
 	world.resume_through("flow");
 	ok("stepping through control flow");
 
-	// leaf(3) meets a breakpoint whose condition is false
 	world.run_to("middle", "/middle", "middle_1");
 	world.break_if(&[("leaf_1", "x == 999")]);
 	world.step_on("next", "/middle", "middle_2");
@@ -155,8 +144,6 @@ pub fn run() {
 	world.resume_through("middle");
 	ok("step skips false breakpoint condition");
 
-	// A scenario's proc is called from a block the world's loop spawned, and
-	// nothing called that
 	world.run_to("plain", "/sc_plain", "plain_3");
 	assert_eq!(world.step("stepOut").proc, "/main_loop");
 	world.request("stepOut", json!({ "threadId": 0 }));
@@ -164,16 +151,12 @@ pub fn run() {
 	assert!(!world.has_event("stopped"), "stepOut from the last proc stopped somewhere");
 	ok("Step Out without caller resumes");
 
-	// Off the end of that block, whatever runs next (the world's loop, the
-	// debugger's own) is no part of the step
 	for command in ["next", "stepIn"] {
 		world.run_to("plain", "/sc_plain", "plain_3");
 		assert_eq!(world.step(command).proc, "/main_loop");
-		// The block's last line says the scenario is over
 		assert_eq!(world.step(command).proc, "/main_loop");
 		world.request(command, json!({ "threadId": 0 }));
 		world.finish("plain");
-		// Something of the world's has run since
 		world.run_through("plain");
 	}
 	ok("step exhaustion resumes world");
@@ -190,27 +173,22 @@ pub fn run() {
 	world.resume_through("fail_null");
 	ok("runtime error interrupts Step Over");
 
-	// spawn(-1) runs immediately in a copied frame; Step Over must skip it.
 	world.run_to("spawn_now", "/spawns_now", "spawn_now_spawn");
 	world.step_on("next", "/spawns_now", "spawn_now_2");
 	world.resume_through("spawn_now");
 	world.run_to("spawn_now", "/spawns_now", "spawn_now_spawn");
 	world.step_on("stepIn", "/spawns_now", "spawn_now_body");
 	world.resume_through("spawn_now");
-	// Either step from the spawned code returns to the original proc.
 	for command in ["next", "stepOut"] {
 		world.run_to("spawn_now", "/spawns_now", "spawn_now_body");
 		world.step_on(command, "/spawns_now", "spawn_now_2");
 		world.resume_through("spawn_now");
 	}
-	// A sleeping copy must not retain the step after the original returns.
 	world.run_to("spawn_sleep", "/spawns_sleeping", "spawn_sleep_spawn");
 	world.step_on("next", "/sc_spawn_sleep", "spawn_sleep_call");
 	world.resume_through("spawn_sleep");
 	ok("Step Over a spawn (-1)");
 
-	// VS Code takes the response to a step to mean the world is running: the
-	// stop the step makes has to come after it
 	world.run_to("deep", "/recurse", "recurse_1");
 	for _ in 0..100 {
 		let thread = world.thread;

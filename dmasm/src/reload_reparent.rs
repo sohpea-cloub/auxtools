@@ -1,6 +1,3 @@
-//! Parent changes and the declarations retained by each reparented subtree.
-//! The running world takes inherited state from the new parent.
-
 use std::collections::HashSet;
 
 use dreammaker::objtree::TypeRef;
@@ -8,35 +5,25 @@ use dreammaker::FileId;
 
 use super::*;
 
-/// Parent change with each type's own declarations and defaults.
-/// The runtime preserves these while replacing inherited state.
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Reparented {
     pub type_path: String,
     pub parent: String,
-    /// The type and its subtypes, each after its parent
     pub types: Vec<ReparentedType>,
 }
 
-/// One type of a reparented subtree.
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ReparentedType {
     pub path: String,
-    /// Vars it declares
     pub declares: Vec<String>,
-    /// Vars declared above it that it sets
     pub sets: Vec<String>,
-    /// Built-in vars it sets itself
     pub builtins: Vec<String>,
-    /// `name` and `text`, including defaults derived from ancestry.
     pub name: ConstValue,
     pub text: ConstValue,
 }
 
-/// Nearest built-in ancestor, including the type itself.
-/// Determines the runtime kind of its instances.
 pub(super) fn builtin_base(t: TypeRef) -> Option<String> {
     static BUILTIN_TYPES: std::sync::LazyLock<HashSet<String>> = std::sync::LazyLock::new(|| {
         dreammaker::objtree::ObjectTree::with_builtins()
@@ -55,7 +42,6 @@ pub(super) fn builtin_base(t: TypeRef) -> Option<String> {
     None
 }
 
-/// Whether `t` is `ancestor` or descends from it, following actual parents.
 fn descends_from(t: TypeRef, ancestor: TypeRef) -> bool {
     let mut at = Some(t);
     while let Some(t) = at {
@@ -67,7 +53,6 @@ fn descends_from(t: TypeRef, ancestor: TypeRef) -> bool {
     false
 }
 
-/// A type's name and text in its record, as DreamMaker works them out.
 fn record_name(t: TypeRef) -> (ConstValue, ConstValue) {
     let set = |name: &str| {
         let mut at = Some(t);
@@ -101,8 +86,6 @@ fn record_name(t: TypeRef) -> (ConstValue, ConstValue) {
     (name, text)
 }
 
-/// Validate a parent change and collect the subtree's own declarations.
-/// Refuse invalid inheritance or changes unsupported by the running world.
 pub(super) fn reparent(
     old: &Snapshot,
     new: &Snapshot,
@@ -111,7 +94,6 @@ pub(super) fn reparent(
     changes: &mut Changes,
 ) {
     let path = n.get().path.clone();
-    // Use the explicit parent_type assignment when present, otherwise the type path.
     let at = n
         .get()
         .vars
@@ -130,11 +112,9 @@ pub(super) fn reparent(
         |why: String| Refusal::new(path.clone(), format!("parent type changed: {why}")).at(new, at);
     let new_parent = changes.new_types.iter().any(|t| t.path == parent_path);
     let mut refuse = |why: String| changes.refused.push(refusal(why));
-    // Built-in parents cannot change (`/client` can declare `/datum`).
     if builtin_base(n).as_deref() == Some(path.as_str()) {
         return refuse("built-in types cannot change parents".to_owned());
     }
-    // Existing instances must retain their built-in kind.
     if builtin_base(o) != builtin_base(n) {
         return refuse(format!(
             "its instances would be a {} instead of a {}",
@@ -149,7 +129,6 @@ pub(super) fn reparent(
         return refuse(format!("parent {parent_path} does not exist"));
     }
 
-    // The subtree, each type after its parent
     let mut subtree: Vec<TypeRef> = n
         .tree()
         .iter_types()
@@ -177,7 +156,6 @@ pub(super) fn reparent(
                 continue;
             }
             if var.declaration.is_some() {
-                // DreamMaker: "duplicate definition"
                 if let Some(above) = parent.get_var_declaration(name.as_str()) {
                     errors.push(format!(
                         "{} declares var {name}, which {} declares too",
@@ -236,9 +214,6 @@ pub(super) fn reparent(
     });
 }
 
-/// Find inherited declaration and default changes after reparenting.
-/// Declaration and const changes affect named references; other defaults
-/// affect only `type::var` references.
 fn inherited_changes(
     old: &Snapshot,
     new: &Snapshot,
@@ -285,8 +260,6 @@ fn inherited_changes(
     (declared, defaults)
 }
 
-/// Recompile procs whose code changes with inherited consts, declared
-/// var types or `type::var` defaults after a parent change.
 pub(super) fn reparented_users(
     old: &Snapshot,
     new: &Snapshot,
@@ -301,7 +274,6 @@ pub(super) fn reparented_users(
     if types.is_empty() {
         return;
     }
-    // Find references to changed declarations and embedded defaults.
     let (declared, defaults) = inherited_changes(old, new, &types);
     let named: Vec<String> = declared.iter().map(|name| format!("{name:?}")).collect();
     let fields: Vec<String> = defaults
@@ -323,7 +295,6 @@ pub(super) fn reparented_users(
             let Some((_, value)) = new.find(key) else {
                 continue;
             };
-            // Skip AST formatting when the source cannot reference a default.
             if named.is_empty() && !new.source_has(value, "::", &mut files) {
                 continue;
             }
@@ -348,7 +319,6 @@ pub(super) fn reparented_users(
         if before.nodes == after.nodes {
             continue;
         }
-        // Line remapping handles procs whose bytecode is otherwise unchanged.
         let code = |nodes: &[Node]| -> Vec<Node> {
             nodes
                 .iter()

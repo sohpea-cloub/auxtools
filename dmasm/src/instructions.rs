@@ -91,7 +91,6 @@ macro_rules! instructions {
                 self.opcode().name()
             }
 
-            /// The instruction's variable operands.
             pub fn variables(&self) -> Vec<&Variable> {
                 let mut out = vec![];
                 match self {
@@ -179,7 +178,6 @@ macro_rules! instructions {
                         },
                     )*
 
-                    // TODO: Real error
                     other => panic!("unknown instruction {}", other),
                 };
 
@@ -196,12 +194,10 @@ instructions! {
     0x03 = Output,
     0x04 = OutputFormat(pattern: DMString, arg_count: u32),
     0x05 = Stat,
-    // The slots left commented out below have a handler in BYOND, but no DM statement is known to make dm.exe 516 emit them.
-    // 0x06: old `target << sound(file, repeat)`
     0x07 = Link,
     0x08 = OutputFtp,
     0x09 = OutputRun,
-    0x0A = OutputKey, // target << key(file)
+    0x0A = OutputKey,
     0x0B = Missile,
     0x0C = Del,
     0x0D = Test,
@@ -220,8 +216,6 @@ instructions! {
     0x1A = NewList(arg_count: u32),
     0x1B = View,
     0x1C = OView,
-    // The Target forms are what the compiler emits when the list is the left side of `<<`,
-    // as in `view() << "hi"`. They push BYOND's shared scratch list with no copy.
     0x1D = ViewTarget,
     0x1E = OViewTarget,
     0x1F = Block,
@@ -231,7 +225,6 @@ instructions! {
     0x23 = RandRange,
     0x24 = Sleep,
     0x25 = Spawn(destination: Label),
-    // 0x26: old `spawn` that names a proc instead of having a body; takes arg_count
     0x27 = BrowseRsc,
     0x28 = IsIcon,
     0x29 = Call(proc: Variable, arg_count: u32),
@@ -272,7 +265,6 @@ instructions! {
     0x4C = AugXor(var: Variable),
     0x4D = AugLShift(var: Variable),
     0x4E = AugRShift(var: Variable),
-    // 0x4F: flips the test flag
     0x50 = PushInt(value: i32),
     0x51 = Pop,
     0x52 = IterLoad(unk0: u32, types: TypeFilter),
@@ -282,7 +274,7 @@ instructions! {
     0x56 = Num2TextSigFigs,
     0x57 = Roll,
     0x58 = NewListTarget(arg_count: u32),
-    0x59 = Range, // pushes the shared scratch list; CopyList follows unless it's the left side of `<<`
+    0x59 = Range,
     0x5A = LocatePos,
     0x5B = LocateRef,
     0x5C = Flick,
@@ -349,14 +341,12 @@ instructions! {
     0x99 = Text2File,
     0x9A = File2Text,
     0x9B = FCopy,
-    // 0x9C: does nothing
-    // 0x9D: a third entry into the input() code; same three operand words as Input
     0x9E = IsNull,
     0x9F = IsNum,
     0xA0 = IsText,
     0xA1 = StatPanel,
     0xA2 = StatPanelCheck,
-    0xA3 = WaitforBegin, // the old `waitfor` block statement
+    0xA3 = WaitforBegin,
     0xA4 = WaitforEnd,
     0xA5 = Min(arg_count: u32),
     0xA6 = Max(arg_count: u32),
@@ -366,8 +356,8 @@ instructions! {
     0xAA = Browse,
     0xAB = BrowseOpt,
     0xAC = FList,
-    0xAD = ORange, // same as Range
-    0xAE = CopyList, // replaces the list on top with a private copy
+    0xAD = ORange,
+    0xAE = CopyList,
     0xAF = Read,
     0xB0 = Index,
     0xB1 = PickProb(params: PickProbParams),
@@ -382,7 +372,6 @@ instructions! {
     0xBA = PromptCheck,
     0xBB = Rgb,
     0xBC = HasCall,
-    // 0xBD: replaces the value on top with null
     0xBE = HtmlEncode,
     0xBF = HtmlDecode,
     0xC0 = Time2Text,
@@ -397,22 +386,15 @@ instructions! {
     0xC9 = CallParentArgList,
     0xCA = CallSelfArgList,
     0xCB = CallPathArgList,
-    0xCC = CallNameArgList, // TODO: same as above but without a src?
+    0xCC = CallNameArgList,
     0xCD = CallGlobalArgList(proc: Proc),
-    // 0xCE: 0x26 for arglist()
     0xCF = NewArgList,
     0xD0 = MinList,
     0xD1 = MaxList,
     0xD2 = Pick,
     0xD3 = NewImageArgList,
     0xD4 = NewImageArgs(arg_count: u32),
-    // 0xD5: old `target << sound(...)` with 1 to 5 arguments; takes arg_count
-    // 0xD6: old `target << S` for a /sound datum
     0xD7 = FCopyRsc,
-
-    // This instruction must have been removed at some point
-    // It's identical to running an invalid opcode
-    // 0xD8 = BadInstruction,
 
     0xD9 = ShellAllowed,
     0xDA = RandSeed,
@@ -421,7 +403,7 @@ instructions! {
     0xDD = IconStates,
     0xDE = IconNew(arg_count: u32),
     0xDF = TurnOrFlipIcon(filter_mode: u32, var: Variable),
-    0xE0 = IconBlendSimple(var: Variable), // _dm_icon_blend(icon, other, function), no x and y
+    0xE0 = IconBlendSimple(var: Variable),
     0xE1 = IconIntensity(var: Variable),
     0xE2 = IconSwapColor(var: Variable),
     0xE3 = ShiftIcon(var: Variable),
@@ -446,7 +428,6 @@ instructions! {
     0xF6 = IsSubPath,
     0xF7 = FExists,
 
-    // These are the same as Jmp, Jnz, and Jz, except they try to detect infinite loops
     0xF8 = JmpLoop(destination: Label),
     0xF9 = JnzLoop(destination: Label),
     0xFA = JzLoop(destination: Label),
@@ -504,7 +485,6 @@ instructions! {
     0x12D = Throw,
     0x12E = Catch(unk0: Label),
 
-    // TODO: Why does this exist?
     0x12F = TryJmp(destination: Label),
 
     0x130 = ReplaceText,
@@ -520,25 +500,17 @@ instructions! {
     0x13A = RegexNew(arg_count: u32),
     0x13B = FilterNewArgList,
 
-    // Pushes the value at the top of the stack (it clones it)
     0x13C = PushTop,
 
-    // Pops the value _only_ if the jump is not performed
     0x13D = SetCacheJmpIfNull(destination: Label),
 
-    // Pops the value regardless of if the jump is performed
     0x13E = SetCachePopJmpIfNull(destination: Label),
 
-    // This one's a bit of a beast. It seems that instructions such as AugAdd cause the offset of their variable operand to be cached
-    // This instruction then uses the operand at that offset to find what the "last" var was and push it.
-    // I haven't confirmed if anything but Aug* instructions set this value yet.
     0x13F = PushEval,
 
     0x140 = TestEquiv,
     0x141 = TestNotEquiv,
 
-    // These instructions interact with a separate stack than the other ones (although both stacks share the same memory allocation.)
-    // They push and pop the contents of the cache register
     0x142 = PushCache,
     0x143 = PopCache,
 
@@ -571,9 +543,9 @@ instructions! {
     0x15E = MakeGenerator(unk0: u32),
     0x15F = SpliceText,
     0x160 = SpliceTextChar,
-    0x161 = RgbEx, // Used when the color space for rgb() cannot be found to be COLORSPACE_RGB at compile-time
-    0x162 = Rgb2Num, // This is technically a replacement for the original Rgb2Num which is somewhere else
-    0x163 = GradientIndex, // gradient(Gradient, index): the gradient is already one value, the index is pushed separately
+    0x161 = RgbEx,
+    0x162 = Rgb2Num,
+    0x163 = GradientIndex,
     0x164 = Gradient,
     0x165 = LoadResource(arg_count: u32),
     0x166 = IsPointer,
@@ -589,22 +561,21 @@ instructions! {
     0x170 = BlockXYZ,
     0x171 = BlockXYZTarget,
     0x172 = NoiseHash(arg_count: u32),
-    0x173 = PowSquare, // Optimization whenever x ** 2 or x ** x is used.
-    0x174 = PowNegativeOne, // Optimization whenever x ** -1 is used.
+    0x173 = PowSquare,
+    0x174 = PowNegativeOne,
     0x175 = GetStepsTo,
     0x176 = FloatMod,
     0x177 = AugFloatMod(var: Variable),
     0x178 = RefCount,
     0x179 = LoadExt,
-    0x17a = CallExtLoaded(arg_count: u32), // calls a load_ext handle: call_ext(handle)(args...)
-    0x17b = CallExtLoadedArgList, // call_ext(handle)(arglist(L))
+    0x17a = CallExtLoaded(arg_count: u32),
+    0x17b = CallExtLoadedArgList,
     0x17c = NewAlist(arg_count: u32),
-    0x17d = Spaceship, // <=> (less or greater) comparator. It looks like a spaceship, and thus will be called "Spaceship", because "Tlog" is a dumb instruction name, and we all need some whimsy in our lives.
-    0x17e = KeyValueIter(var: Variable), // for (k,v in list)
+    0x17d = Spaceship,
+    0x17e = KeyValueIter(var: Variable),
     0x17f = NewPixloc(arg_count: u32),
     0x180 = NewVector(arg_count: u32),
     0x181 = BoundPixloc,
-    // yes this is literally just sin/cos/tan 2: electric boogaloo. don't ask me why.
     0x182 = Sin2,
     0x183 = Cos2,
     0x184 = Tan2,

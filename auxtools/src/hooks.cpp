@@ -1,39 +1,20 @@
 #include <stdint.h>
 #include "hooks.h"
 
-// The type of the func defined in Byond
 using Runtime_Ptr = void(*)(char *pError);
-// Plain cdecl on both platforms. This carried regparm(3) on Linux, which was
-// never right: `call_proc_by_id` reads all twelve of its dwords off the stack, the
-// first being the hidden buffer the Value return is written through, and ends
-// `retn 4` to pop that dword itself. Declaring regparm(3) made GCC pass the buffer
-// in eax and `usr` in edx:ecx, which shifted every argument the trampoline read
-// (the proc id it looked up was really the output pointer, so no #[hook] ever
-// matched) and left nothing on the stack for `retn 4` to pop, so the stack drifted
-// until an SSE store faulted somewhere inside BYOND. Read byte-identical on
-// 516.1669 and 516.1687.
-//
-// The last two arguments are a completion callback and a value to hand it. BYOND
-// pushes the result's two dwords and then the value, which is the same thing as
-// passing a Value. Plain cdecl on both platforms.
 using CallProc_Callback = void(*)(Value, uint32_t);
 using CallProcById_Ptr = Value(*)(Value, uint32_t, uint32_t, uint32_t, Value, Value*, uint32_t, CallProc_Callback, uint32_t);
 
-// The type of the hook defined in hooks.rs
 using CallProcById_Hook_Ptr = Value(*)(Value, uint32_t, uint32_t, uint32_t, Value, Value*, uint32_t, uint32_t, uint32_t);
 
-// The bit of `proc_type` that says the caller is not going to look at the result
 static const uint32_t PROC_TYPE_DISCARD_RESULT = 0x04;
 
 extern "C" {
-	// The ptr everybody else sees
 	Runtime_Ptr runtime_byond = nullptr;
 
-	// The original function - set by rust after hooking
 	Runtime_Ptr runtime_original = nullptr;
 	CallProcById_Ptr call_proc_by_id_original = nullptr;
 
-	// Lives in funcs.cpp
 	extern void (*dec_ref_count_byond)(Value);
 }
 
@@ -42,15 +23,6 @@ extern "C" {
 }
 
 #if defined(__i386__) && !defined(_WIN32)
-// On Linux, BYOND's call_proc_by_id can corrupt callee-saved registers.
-// PushCacheKey is omitted from its stack-usage count, so expressions such as
-// L[k] ||= f(args.Copy(), ...) can overrun its ten-value inline buffer and
-// overwrite saved ebx/esi (and, with larger overruns, edi/ebp). BYOND's
-// callers generally tolerate this, but the C++ trampoline uses those registers.
-//
-// Preserve all four registers above the twelve forwarded argument dwords.
-// The first dword is the result buffer, which the original function pops.
-// Observed on 515.1637, 515.1647 and 516.1688.
 extern "C" void call_keeping_registers(void* function, const uint32_t* words);
 __asm__(
 	".text\n"
@@ -73,7 +45,6 @@ __asm__(
 	"	.cfi_rel_offset edi, 0\n"
 	"	movl 20(%esp), %eax\n"
 	"	movl 24(%esp), %edx\n"
-	// (twelve bytes more keep the stack aligned to sixteen at the call)
 	"	subl $12, %esp\n"
 	"	.cfi_adjust_cfa_offset 12\n"
 	"	pushl 44(%edx)\n"
@@ -90,7 +61,6 @@ __asm__(
 	"	pushl (%edx)\n"
 	"	.cfi_adjust_cfa_offset 48\n"
 	"	call *%eax\n"
-	// (the original popped the result's buffer)
 	"	.cfi_adjust_cfa_offset -4\n"
 	"	addl $56, %esp\n"
 	"	.cfi_adjust_cfa_offset -56\n"
@@ -112,7 +82,6 @@ __asm__(
 );
 #endif
 
-// BYOND's own `call_proc_by_id`
 static Value call_original(
 	Value usr,
 	uint32_t proc_type,
@@ -166,9 +135,6 @@ extern "C" uint8_t call_proc_by_id_hook(
 	CallProc_Callback callback,
 	uint32_t callback_value);
 
-// Stands in for `call_proc_by_id` itself, so its shape has to match that function
-// exactly (see the note on `CallProcById_Ptr` above). Passes through to our rust hook.
-// Used on Windows too
 extern "C" Value call_proc_by_id_hook_trampoline(
 	Value usr,
 	uint32_t proc_type,
@@ -182,11 +148,6 @@ extern "C" Value call_proc_by_id_hook_trampoline(
 ) {
 	Value ret;
 
-	// A shim running with `RuntimeContext(true)` wants the errors its own BYOND
-	// function raises, not the ones raised inside a DM proc that function calls.
-	// Those have to take BYOND's normal path so they get reported and reach the
-	// callee's own `try`. Every DM proc call passes through here, so this is the
-	// one place that can hand the called proc a clean context.
 	RuntimeContext runtime_scope(false);
 
 	if (!call_proc_by_id_hook(&ret, usr, proc_type, proc_id, override_depth, src, args, args_count, callback, callback_value)) {
@@ -194,12 +155,6 @@ extern "C" Value call_proc_by_id_hook_trampoline(
 	}
 	clean(ret);
 
-	// The hook ran instead of `exec_proc`, so it owes the caller what `exec_proc`
-	// does when a proc ends. A caller that passed a callback gets the result
-	// through it, and one that set the discard bit doesn't want it at all. Both of
-	// them get null back and never release anything, so the result's reference is
-	// ours to drop. Done here and not in rust so a callback that throws doesn't
-	// have to unwind through a rust frame.
 	if (callback != nullptr) {
 		callback(ret, callback_value);
 	}

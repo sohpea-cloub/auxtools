@@ -10,26 +10,6 @@ use fxhash::FxHashMap;
 
 use crate::*;
 
-// ### A note on Override IDs
-//
-// Procs in DM can be defined multiple times.
-//
-// ```
-// /proc/hello() // Override #0 or base proc
-// 		world << "Hello"
-//
-// 	/hello() // Override #1
-// 		..() // Calls override #0
-// 		world << "World"
-//
-// 	/hello() // Override #2
-// 		..() // Calls override #1
-// 		world << "!!!"
-// 	```
-//
-// 	To get the nth override, use [Proc::find_override]: `let hello = Proc::find_override("/proc/hello", n).unwrap()`
-// [Proc::find] retrieves the base proc.
-
 /// Used to hook and call procs.
 ///
 /// A `Proc` stays on the thread BYOND runs on. Calling one from anywhere else
@@ -43,7 +23,6 @@ use crate::*;
 pub struct Proc {
 	pub id: raw_types::procs::ProcId,
 	pub path: String,
-	// Keeps a Proc from being sent to another thread
 	phantom: PhantomData<*mut ()>
 }
 
@@ -59,7 +38,6 @@ impl Proc {
 	/// The override id of a proc set apart (see [`Proc::set_apart`])
 	pub const APART: u32 = u32::MAX;
 
-	/// The definitions of a path, by override id
 	pub fn overrides<S: Into<String>>(path: S) -> Vec<Self> {
 		let path = strip_path(path.into());
 		PROCS_BY_NAME.with(|h| h.borrow().get(&path).cloned().unwrap_or_default())
@@ -144,7 +122,6 @@ impl Proc {
 		crate::bytecode_manager::set_bytecode(self, bytecode);
 	}
 
-	/// Register proc table entries appended since `first` for name lookup.
 	pub fn add_to_table(first: raw_types::procs::ProcId) {
 		let mut id = first.0;
 		while let Some(proc) = Proc::from_id(raw_types::procs::ProcId(id)) {
@@ -153,7 +130,6 @@ impl Proc {
 		}
 	}
 
-	/// How many locals a new frame of this proc gets.
 	pub fn locals_count(&self) -> usize {
 		unsafe { raw_types::misc::get_locals((*self.entry()).metadata.locals).1 }
 	}
@@ -186,16 +162,12 @@ impl Proc {
 		};
 
 		unsafe {
-			// Increment ref-count of args permenently before passing them on
 			for v in args {
 				raw_types::funcs::inc_ref_count(v.raw);
 			}
 
 			let args: Vec<_> = args.iter().map(|e| e.raw).collect();
 
-			// 2 is the proc_type BYOND's own direct calls pass. It never passes
-			// 0, and a `..()` with no parent hands back garbage in
-			// a frame that has it.
 			if raw_types::funcs::call_proc_by_id(&mut ret, Value::NULL.raw, 2, self.id, 0, Value::NULL.raw, args.as_ptr(), args.len(), 0, 0) == 1 {
 				return Ok(Value::from_raw_owned(ret));
 			}
@@ -297,8 +269,6 @@ pub fn get_proc_override<S: Into<String>>(path: S, override_id: u32) -> Option<P
 	found
 }
 
-/// Index init procs that BYOND named after the initial proc scan.
-/// Return whether any unnamed procs now have `path`.
 fn adopt_named(path: &str) -> bool {
 	if PROCS_BY_NAME.with(|h| h.borrow().contains_key(path)) {
 		return false;
@@ -316,7 +286,6 @@ fn adopt_named(path: &str) -> bool {
 	any
 }
 
-/// Retrieves the 0th override of a proc.
 pub fn get_proc<S: Into<String>>(path: S) -> Option<Proc> {
 	get_proc_override(path, 0)
 }

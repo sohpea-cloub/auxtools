@@ -1,6 +1,3 @@
-//! Skin edits, reboot restoration and changed .dme includes, inspected with
-//! `#skin`.
-
 use std::{path::Path, process::Command};
 
 use serde_json::json;
@@ -11,7 +8,6 @@ const SKIN: &str = "macro \"default\"\n\telem \"k_f\"\n\t\tname = \"F\"\n\t\tcom
                     \"mainwindow\"\n\t\ttype = MAIN\n\t\tsize = 640x480\n\t\tis-default = true\n\t\ttitle = \"first\"\n\telem \"label\"\n\t\ttype = \
                     LABEL\n\t\tpos = 0,0\n\t\tsize = 100x20\n\t\timage = 'built.png'\n";
 
-/// The skin's resource and text, as `#skin` gives them
 fn skin(world: &mut World) -> (String, String) {
 	let shown = world.eval_global("#skin");
 	let (resource, text) = shown.split_once('\n').unwrap_or((&shown, ""));
@@ -41,8 +37,6 @@ pub fn run() {
 	assert_eq!(text, SKIN);
 	ok("built skin");
 
-	// The idle-world waker connects without logging in. Its client has no
-	// key and must not receive winset() calls.
 	let port: u16 = world.eval_global("world.port").parse().unwrap();
 	let _waker = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
 	let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
@@ -75,8 +69,6 @@ pub fn run() {
 	world.wait_output("The world restarted");
 	let (_, text) = skin(&mut world);
 	assert_eq!(text, text_of(&dir, "skin.dmf"));
-	// Skin changes must not enter resource reloads and defer code until
-	// world/New.
 	assert!(
 		!world.output.contains("reloaded skin.dmf") && !world.output.contains("doesn't have (skin.dmf)"),
 		"the skin was reloaded as a resource file:\n{}",

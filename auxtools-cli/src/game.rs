@@ -1,5 +1,3 @@
-//! Launch a BYOND world with the debug library and monitor its exit.
-
 use std::{
 	collections::HashMap,
 	io::{BufRead, BufReader, Read},
@@ -8,8 +6,6 @@ use std::{
 	sync::Arc
 };
 
-/// Debug library startup mode: `wait` delays world execution until a debugger
-/// is configured; `run` starts immediately.
 pub const DEBUG_VAR: &str = "AUXTOOLS_DEBUG";
 
 pub struct Launch<'a> {
@@ -17,12 +13,9 @@ pub struct Launch<'a> {
 	pub dmb: &'a Path,
 	pub args: &'a [String],
 	pub env: &'a HashMap<String, String>,
-	/// The debug library, and whether the world waits for a debugger to set its
-	/// breakpoints
 	pub debug: Option<(PathBuf, bool)>
 }
 
-/// A running world. It's killed if the launcher goes away first.
 pub struct Game {
 	pid: u32,
 	#[cfg(windows)]
@@ -30,8 +23,6 @@ pub struct Game {
 }
 
 impl Game {
-	/// Launch the world. Send lines to `output` with their stream category
-	/// and report the exit code through `exited`.
 	pub fn start(
 		launch: Launch,
 		output: impl Fn(&'static str, String) + Send + Sync + 'static,
@@ -49,8 +40,6 @@ impl Game {
 		if let Some(dir) = launch.dmb.parent().filter(|dir| !dir.as_os_str().is_empty()) {
 			command.current_dir(dir);
 		}
-		// Clear legacy initialization so the world does not load the library
-		// twice.
 		command.env_remove("AUXTOOLS_DEBUG_DLL");
 		if let Some((_, wait)) = &launch.debug {
 			command.env(DEBUG_VAR, if *wait { "wait" } else { "run" });
@@ -71,12 +60,9 @@ impl Game {
 			if let Some((library, _)) = &launch.debug {
 				command.env("LD_PRELOAD", library);
 			}
-			// SAFETY: prctl and setpgid are async-signal-safe
 			unsafe {
 				command.pre_exec(|| {
 					libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL);
-					// Use a separate process group so Ctrl-C reaches only the
-					// launcher, which requests graceful shutdown.
 					libc::setpgid(0, 0);
 					Ok(())
 				});
@@ -86,8 +72,6 @@ impl Game {
 		#[cfg(windows)]
 		{
 			use std::os::windows::process::CommandExt;
-			// A process group of its own ignores Ctrl-C in the console: the
-			// launcher hears it, and has the world end itself
 			command.creation_flags(winapi::um::winbase::CREATE_SUSPENDED | winapi::um::winbase::CREATE_NEW_PROCESS_GROUP);
 		}
 
@@ -155,7 +139,6 @@ impl Game {
 		#[cfg(windows)]
 		{
 			self.job.kill();
-			// In case it couldn't be put in the job
 			crate::local::kill(self.pid);
 		}
 	}
@@ -167,7 +150,6 @@ impl Game {
 
 type Output = Arc<dyn Fn(&'static str, String) + Send + Sync>;
 
-/// Passes each line `stream` has on
 fn relay(stream: impl Read + Send + 'static, output: Output, category: &'static str) {
 	let _ = std::thread::Builder::new().name(format!("{} relay", category)).spawn(move || {
 		let mut reader = BufReader::new(stream);
@@ -192,10 +174,8 @@ mod windows {
 		}
 	};
 
-	/// Windows job that terminates the child when the launcher exits.
 	pub struct Job(HANDLE);
 
-	// The handle is only used to kill the job
 	unsafe impl Send for Job {}
 
 	impl Job {
@@ -215,7 +195,6 @@ mod windows {
 					&mut limits as *mut _ as *mut _,
 					size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32
 				);
-				// Assign the process only if the kill-on-close limit was set.
 				if set != FALSE {
 					AssignProcessToJobObject(job.0, process);
 				}

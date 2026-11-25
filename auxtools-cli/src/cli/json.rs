@@ -1,16 +1,10 @@
-//! JSON result formatting for `--json`.
-
 use auxtools_cli::server_types::*;
 use serde_json::{json, Map, Value};
 
 use super::proc_name;
 
-/// How deep `--json` writes out lists and objects unless told
 pub const DEFAULT_DEPTH: u32 = 2;
 
-/// Serialize a DM value. Lists use arrays or keyed objects where possible.
-/// Objects include ref, type and name, with variables to the requested depth.
-/// Other values use tagged representations such as `{"path": ...}`.
 pub fn value(rendered: &Rendered) -> Value {
 	match rendered {
 		Rendered::Null => Value::Null,
@@ -30,13 +24,10 @@ pub fn value(rendered: &Rendered) -> Value {
 	}
 }
 
-/// Names and their values, as one object
 pub fn named(values: &[(String, Rendered)]) -> Value {
 	Value::Object(values.iter().map(|(name, rendered)| (name.clone(), value(rendered))).collect())
 }
 
-/// Format BYOND numbers without float conversion artifacts.
-/// Non-finite values use tagged objects, e.g. `{"number": "inf"}`.
 fn number(number: f32) -> Value {
 	if !number.is_finite() {
 		let text = if number.is_nan() {
@@ -54,7 +45,6 @@ fn number(number: f32) -> Value {
 	}
 }
 
-/// Serialize a list as an array, a text-keyed object, or key/value entries.
 fn list(entries: &[(Rendered, Option<Rendered>)]) -> Value {
 	if entries.iter().all(|(_, value)| value.is_none()) {
 		return Value::Array(entries.iter().map(|(key, _)| value(key)).collect());
@@ -79,7 +69,6 @@ fn list(entries: &[(Rendered, Option<Rendered>)]) -> Value {
 	)
 }
 
-/// A frame of a stack
 pub fn frame(frame: &StackFrame) -> Value {
 	json!({
 		"proc": proc_name(&frame.instruction.proc),
@@ -90,8 +79,6 @@ pub fn frame(frame: &StackFrame) -> Value {
 	})
 }
 
-/// Shared execution status: process, pause reason, stack and optional
-/// instruction. Unavailable fields are null or empty arrays.
 pub fn execution(pid: u32, paused: Option<(&BreakpointReason, &[StackFrame], Option<(u32, String)>)>) -> Map<String, Value> {
 	let mut document = json!({
 		"pid": pid,
@@ -186,7 +173,6 @@ mod tests {
 			entries: Some(vec![(text("a"), Some(Rendered::Number(1.0))), (text("b"), None)])
 		};
 		assert_eq!(value(&keyed), json!({ "a": 1, "b": null }));
-		// Keys JSON can't have, or one twice
 		for entries in [
 			vec![
 				(Rendered::Number(1.0), None),

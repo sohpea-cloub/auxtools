@@ -1,11 +1,5 @@
 name: CI
 
-# Test 64-bit and 32-bit Linux and 32-bit Windows. Cross-compile Windows
-# tests on Linux, then run them on Windows and Wine.
-#
-# Run automatically for repositories owned by willox or auxtools. Other forks
-# can start a run through Actions > CI > Run workflow.
-
 on:
   push:
     branches: [master]
@@ -130,10 +124,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Test on Server 2022 (Windows 10 generation).
           - name: Windows
             runner: windows-2022
-          # Use Wine 10.0.
           - name: Wine
             runner: ubuntu-26.04
             wine: wine

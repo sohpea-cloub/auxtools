@@ -1,27 +1,21 @@
-// Started by auxtools' launcher without debugging, then attached to
-
 var/rounds = 0
 
-// Macros for the command line's eval, and one that's gone by the end
 #define DOUBLE_IT(x) ((x) * 2)
 #define ANSWER 42
 #define GONE 1
 #undef GONE
 
-// An object for the command line's eval --src
 var/datum/held/held = new
 
 /datum/held
 	var/count = 3
 
-// A static initializer evaluated once at world startup.
 /datum/cached
 	var/static/list/cache = list()
 
 /datum/held/proc/double(n)
 	return n * 2
 
-// For the command line's eval --spawn: procs that sleep
 /proc/slow_double(n, wait = 2)
 	sleep(wait)
 	return n * 2
@@ -30,7 +24,6 @@ var/datum/held/held = new
 	sleep(1)
 	return fail_deeper(5)
 
-// The debugger answers a running world once a tick: 10 ms, not 100
 /world
 	fps = 100
 
@@ -40,15 +33,12 @@ var/datum/held/held = new
 		run_until_stopped()
 	doze()
 
-// Keep a world proc asleep for stack listings without waking during the test.
 /proc/doze()
 	set waitfor = FALSE
 	sleep(36000)
 
-// A world whose shutdown code doesn't shut it down, when the test asks for one
 /world/Del()
 	world.log << "attach test: world/Del"
-	// Sleeping shutdown ends the evaluation before world.Del() finishes.
 	if (fexists("slow_del"))
 		sleep(3)
 	if (fexists("refuse_del"))
@@ -58,7 +48,6 @@ var/datum/held/held = new
 	..()
 
 /world/Reboot()
-	// Sleeping reboot ends the evaluation before world.Reboot() finishes.
 	if (fexists("slow_reboot"))
 		sleep(3)
 	if (fexists("refuse_reboot"))
@@ -72,19 +61,14 @@ var/datum/held/held = new
 		tally()
 		rounds++
 		said++
-		// What the test asks for with a file, twice a second: a command the
-		// test starts next, to wait for it, has to connect first
 		if (rounds % 5 == 0)
-			// A runtime error
 			if (fexists("fail"))
 				fdel("fail")
 				spawn(0)
 					fail()
-			// A reboot
 			if (fexists("reboot"))
 				fdel("reboot")
 				world.Reboot()
-			// A call for the command line to step through
 			if (fexists("call"))
 				fdel("call")
 				spawn(0)
@@ -96,8 +80,6 @@ var/datum/held/held = new
 /proc/value()
 	return 1
 
-// Calls tick() from two places: every round, and every other round, for
-// counting hits by caller
 /proc/tally()
 	tick(1)
 	if (rounds % 2 == 0)
@@ -110,14 +92,11 @@ var/datum/held/held = new
 	var/list/L = null
 	return L[1]
 
-// Embedded text macro for debugger output checks.
 /obj/macro_named
 	name = "\improper AI Chamber"
 
-// BYOND assigns the var initializer path /datum/inits/proc/(init) after startup.
 /datum/inits
 	var/list/given = list(1)
-// Two loops with separate local slots named i.
 /proc/two_loops()
 	var/total = 0
 	for(var/i = 1, i <= 3, i++)
@@ -126,8 +105,6 @@ var/datum/held/held = new
 		total += i // second loop
 	return total
 
-// For the command line's eval: a runtime error two procs down from it, and
-// one a proc catches itself
 /proc/fail_in(n)
 	var/got = fail_deeper(n)
 	return got
@@ -142,11 +119,9 @@ var/datum/held/held = new
 	catch
 		return "caught"
 
-// /client as compiled code has it, for the command line's eval to match
 /proc/client_type()
 	return /client
 
-// A proc with two definitions, for the command line's proc and dis
 /datum/twice/proc/act()
 	return "first"
 
@@ -154,21 +129,16 @@ var/datum/held/held = new
 	. = ..()
 	return "second"
 
-// Inherited proc reference for DreamMaker-compatible `::` resolution.
 /datum/twice/more
 
 /proc/twice_ref()
 	return /datum/twice/more::act()
 
-// A same-named global proc must not satisfy /datum/twice/proc/act.
-// /obj also inherits a proc from /atom despite its path prefix.
 /proc/act()
 	return "global"
 
 /atom/proc/atom_act()
 	return "atom"
 
-// DreamMaker inserts a .dme location between this proc's source locations.
-// Keep this proc last to reproduce it.
 /proc/last_in_file()
 	return "last [rounds]"

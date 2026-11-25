@@ -1,8 +1,3 @@
-//! Prints the dmasm the debug server builds for an expression, before string
-//! and proc names become ids. Pass the names of the frame's args and locals
-//! after the expression, in the order the debug server would:
-//! `. usr src ARGS... LOCALS...`
-
 fn main() {
 	let args: Vec<String> = std::env::args().skip(1).collect();
 	let Some((expr, params)) = args.split_first() else {

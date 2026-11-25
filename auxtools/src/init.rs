@@ -17,8 +17,6 @@ pub fn set_init_level(level: InitLevel) {
 	unsafe { REQUIRED_INIT = level }
 }
 
-// Hooks that run on intiailization
-//
 pub type InitFunc = fn() -> Result<(), String>;
 
 #[doc(hidden)]
@@ -53,8 +51,6 @@ pub fn run_partial_init() -> Result<(), String> {
 
 	Ok(())
 }
-
-// A shutdown function that panics doesn't keep the others from running
 
 pub fn run_partial_shutdown() {
 	for func in inventory::iter::<PartialShutdownFunc> {

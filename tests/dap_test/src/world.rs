@@ -1,7 +1,3 @@
-//! The world the groups debug (`tests/dap_test_host`), launched by a launcher,
-//! and its scenarios: the test sets the world's `scenario` var through the
-//! debugger, and the world's loop runs `/proc/sc_NAME`.
-
 use std::{
 	collections::HashMap,
 	ops::{Deref, DerefMut},
@@ -16,16 +12,12 @@ pub fn host_file(name: &str) -> PathBuf {
 	std::env::current_dir().unwrap().join("tests/dap_test_host").join(name)
 }
 
-/// The world's code: where the lines the tests look for are. Each has a
-/// `// @name` comment, and no two files share a name.
 #[derive(Clone)]
 pub struct Marks {
-	/// The directory the code is in
 	pub dir: PathBuf
 }
 
 impl Marks {
-	/// The code's files, those in its directories after its own
 	fn files(&self) -> Vec<PathBuf> {
 		fn files_in(dir: &std::path::Path, files: &mut Vec<PathBuf>) {
 			let mut entries: Vec<PathBuf> = std::fs::read_dir(dir).unwrap().map(|entry| entry.unwrap().path()).collect();
@@ -45,7 +37,6 @@ impl Marks {
 		files
 	}
 
-	/// The file and line marked `// @name`
 	pub fn place(&self, name: &str) -> (PathBuf, u64) {
 		let marker = format!("// @{}", name);
 		for file in self.files() {
@@ -57,7 +48,6 @@ impl Marks {
 		panic!("no line marked {} in {}", marker, self.dir.display())
 	}
 
-	/// The line marked `// @name`
 	pub fn line(&self, name: &str) -> u64 {
 		self.place(name).1
 	}
@@ -68,7 +58,6 @@ impl Marks {
 		path
 	}
 
-	/// The line of `file` that starts with `text`
 	pub fn line_starting(&self, file: &str, text: &str) -> u64 {
 		let source = std::fs::read_to_string(self.file(file)).unwrap();
 		source
@@ -78,7 +67,6 @@ impl Marks {
 			+ 1
 	}
 
-	/// Writes `file` again with `old` replaced by `new`, once
 	pub fn edit(&self, file: &str, old: &str, new: &str) {
 		let path = self.file(file);
 		let source = std::fs::read_to_string(&path).unwrap();
@@ -90,9 +78,7 @@ impl Marks {
 pub struct World {
 	pub launcher: Launcher,
 	pub marks: Marks,
-	/// The files `break_on` last set breakpoints in
 	with_breakpoints: Vec<PathBuf>,
-	/// How many times each scenario had finished when it was last run
 	finished: HashMap<String, usize>
 }
 
@@ -111,13 +97,10 @@ impl DerefMut for World {
 }
 
 impl World {
-	/// Launches the world in `dir` (the host's own directory unless it's a
-	/// copy). It waits for `configure`, as a client's breakpoints go in first.
 	pub fn launch_in(dir: PathBuf, more: Value) -> Self {
 		Self::launch_as(json!({}), dir, more)
 	}
 
-	/// The same, for a client with `abilities` of its own
 	pub fn launch_as(abilities: Value, dir: PathBuf, more: Value) -> Self {
 		let mut launcher = Launcher::start();
 		launcher.initialize_as(abilities);
@@ -130,8 +113,6 @@ impl World {
 		}
 	}
 
-	/// Attaches another launcher to the world in process `pid`, whose code is
-	/// in `dir`
 	pub fn attach_in(dir: PathBuf, pid: u64) -> Self {
 		let mut launcher = Launcher::start();
 		launcher.initialize();
@@ -152,13 +133,11 @@ impl World {
 		Self::launch_in(host_file(""), more)
 	}
 
-	/// Lets the world run, and waits for its code to
 	pub fn configure(&mut self) {
 		self.request("configurationDone", json!({}));
 		self.wait_output("dap: world/New");
 	}
 
-	/// A world that's running, which doesn't pause on runtime errors
 	pub fn start() -> Self {
 		let mut world = Self::launch(json!({}));
 		world.catch_runtimes(false);
@@ -166,21 +145,14 @@ impl World {
 		world
 	}
 
-	/// Makes the marked lines the world's line breakpoints, all of them: the
-	/// ones set before go
 	pub fn break_on(&mut self, names: &[&str]) {
 		let marked: Vec<(&str, &str)> = names.iter().map(|name| (*name, "")).collect();
 		self.break_if(&marked);
 	}
 
-	/// The same, each with a condition (or `""` for none). They all have to
-	/// be taken.
 	pub fn break_if(&mut self, marked: &[(&str, &str)]) {
 		for (breakpoint, (name, _)) in self.try_break_if(marked).iter().zip(marked) {
 			let mut breakpoint = breakpoint.clone();
-			// One given in the moment a reload lands waits for the launcher to
-			// know the world has the file's change. A client is told when
-			// it's set, which is at once.
 			if breakpoint["message"] == "pending hot reload" {
 				let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
 				while breakpoint["verified"] != true && std::time::Instant::now() < deadline {
@@ -194,8 +166,6 @@ impl World {
 		}
 	}
 
-	/// The same, for the breakpoints as the launcher answered, in the order
-	/// given
 	pub fn try_break_if(&mut self, marked: &[(&str, &str)]) -> Vec<Value> {
 		let mut by_file: Vec<(PathBuf, Vec<(usize, Value)>)> = self.with_breakpoints.drain(..).map(|file| (file, vec![])).collect();
 		for (i, (name, condition)) in marked.iter().enumerate() {
@@ -224,20 +194,16 @@ impl World {
 		answered
 	}
 
-	/// Waits for the world to stop for `reason` in `proc`, on the marked line
 	pub fn stop_on(&mut self, reason: &str, proc: &str, name: &str) {
 		let line = self.marks.line(name);
 		self.launcher.stop_at(reason, proc, line);
 	}
 
-	/// A step that has to stop in `proc` on the marked line
 	pub fn step_on(&mut self, command: &str, proc: &str, name: &str) {
 		let line = self.marks.line(name);
 		self.launcher.step_to(command, proc, line);
 	}
 
-	/// Runs a scenario to its breakpoint on the marked line, the only one,
-	/// which is then taken away
 	pub fn run_to(&mut self, scenario: &str, proc: &str, name: &str) {
 		self.break_on(&[name]);
 		self.run(scenario);
@@ -245,12 +211,10 @@ impl World {
 		self.break_on(&[]);
 	}
 
-	/// An argument of the paused proc
 	pub fn argument(&mut self, name: &str) -> String {
 		self.launcher.variable("Arguments", name)["value"].as_str().unwrap().to_owned()
 	}
 
-	/// Has the world run a scenario
 	pub fn run(&mut self, scenario: &str) {
 		let finished = self.count(&format!("dap: finished {}\n", scenario));
 		self.finished.insert(scenario.to_owned(), finished);
@@ -258,21 +222,17 @@ impl World {
 		assert_eq!(set, format!("\"{}\"", scenario), "couldn't ask for the scenario");
 	}
 
-	/// Waits for the scenario last run to be over
 	pub fn finish(&mut self, scenario: &str) {
 		let finished = self.finished[scenario];
 		self.wait_count(&format!("dap: finished {}\n", scenario), finished + 1);
 	}
 
-	/// Runs a scenario that has to finish without the world stopping
 	pub fn run_through(&mut self, scenario: &str) {
 		self.run(scenario);
 		self.finish(scenario);
 		assert!(!self.has_event("stopped"), "the world stopped during {}", scenario);
 	}
 
-	/// Runs a scenario to its end, letting the world carry on from each stop
-	/// on the way, and returns what `at_stop` made of each
 	pub fn run_collecting<T>(&mut self, scenario: &str, mut at_stop: impl FnMut(&mut World) -> T) -> Vec<T> {
 		self.run(scenario);
 		let finished = self.finished[scenario];
@@ -280,8 +240,6 @@ impl World {
 		let deadline = std::time::Instant::now() + crate::client::TIMEOUT;
 		let mut seen = vec![];
 		loop {
-			// What the launcher has sent comes in order: a stop before the
-			// end is seen before it
 			if self.launcher.event_within("stopped", std::time::Duration::from_millis(20)).is_some() {
 				seen.push(at_stop(self));
 				self.resume();
@@ -292,14 +250,12 @@ impl World {
 		}
 	}
 
-	/// Lets the world carry on from a stop, to the end of the scenario
 	pub fn resume_through(&mut self, scenario: &str) {
 		self.resume();
 		self.finish(scenario);
 		assert!(!self.has_event("stopped"), "the world stopped again during {}", scenario);
 	}
 
-	/// Ends the world and the launcher
 	pub fn end(self) {
 		self.launcher.disconnect(json!({}));
 	}

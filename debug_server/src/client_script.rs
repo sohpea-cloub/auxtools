@@ -1,10 +1,3 @@
-//! Client login scripts from `client/script` and included `.dms` files.
-//!
-//! World data stores a text string ID (0xFFFF for none) and an ordered list
-//! of resource IDs: included `.dms` files, then the `client/script` file.
-//! At login, s2c 0x8D sends the file contents followed by the text. Reload
-//! changes only the text field; resource-file scripts remain as built.
-
 use std::sync::{Mutex, OnceLock};
 
 use auxtools::{
@@ -15,19 +8,12 @@ use auxtools::{
 
 use crate::server_types::{ScriptReloaded, ScriptRequest};
 
-/// Sentinel for no script text.
 const NO_TEXT: u32 = 0xFFFF;
 
-// Every pattern is the start of the function that sends the script to one
-// connection (u16 connection, cdecl), through its first reads of the world's
-// data: `mov r,[G]; mov r,[r+0xC]; cmp word [r+N],...`. G points to the world's
-// data at +0xC; N is the file count, 0x48 on 515 and 0x58 on 516. The list
-// is just before the count and the text just before the list.
 #[cfg(unix)]
 mod recipes {
 	use super::*;
 
-	// 515.1637 to 515.1643, built with frame pointers
 	const EARLY: &str = "55 89 E5 57 56 53 81 EC ?? ?? ?? ?? 0F B7 45 08 8D 95 ?? ?? ?? ?? 89 14 24 C7 44 24 04 8D 00 00 00 66 89 85 ?? ?? ?? ?? E8 \
 	                     ?? ?? ?? ?? 8B 15 ?? ?? ?? ?? 8B 42 0C 66 83 78 ?? 00 0F 84";
 	const LATER: &str = "55 89 E5 57 56 8D BD ?? ?? ?? ?? 53 81 EC ?? ?? ?? ?? 8B 45 08 68 8D 00 00 00 57 89 85 ?? ?? ?? ?? E8 ?? ?? ?? ?? A1 ?? ?? \
@@ -70,8 +56,6 @@ mod recipes {
 mod recipes {
 	use super::*;
 
-	// After frame and exception setup: push 0x8D, construct the message,
-	// then mov edx,[G] at byte 64.
 	const SIGNATURE: &str = "55 8B EC 6A FF 68 ?? ?? ?? ?? 64 A1 00 00 00 00 50 81 EC ?? ?? ?? ?? A1 ?? ?? ?? ?? 33 C5 89 45 F0 53 56 57 50 8D 45 \
 	                         F4 64 A3 00 00 00 00 68 8D 00 00 00 8D 8D ?? ?? ?? ?? E8 ?? ?? ?? ?? 8B 15 ?? ?? ?? ?? 33 C0 33 DB C7 45 FC 00 00 00 \
 	                         00 33 FF 8B 4A 0C 66 3B 41 ?? 0F 83";
@@ -98,8 +82,6 @@ mod recipes {
 	)];
 }
 
-/// Script-field location: global pointer, world-data offset and file-count
-/// offset.
 struct Place {
 	global: usize,
 	data: usize,
@@ -120,7 +102,6 @@ fn place() -> Result<&'static Place, String> {
 		.map_err(|e| format!("cannot locate the client script: {}", e))
 }
 
-/// The script's three fields in the world's data
 struct Fields {
 	text: *mut u32,
 	list: *const *const u32,
@@ -129,8 +110,6 @@ struct Fields {
 
 fn fields() -> Result<Fields, String> {
 	let place = place()?;
-	// SAFETY: the global and the offsets come from the code that reads the
-	// fields, on this build; the pointers are checked before they're followed.
 	unsafe {
 		let holder = *(place.global as *const *const u8);
 		if holder.is_null() {
@@ -150,7 +129,6 @@ fn fields() -> Result<Fields, String> {
 
 impl Fields {
 	fn files(&self) -> Vec<u32> {
-		// SAFETY: the list holds `count` resource ids
 		unsafe {
 			let count = *self.count as usize;
 			let list = *self.list;
@@ -162,35 +140,26 @@ impl Fields {
 	}
 
 	fn text(&self) -> Option<u32> {
-		// SAFETY: see `fields`
 		let id = unsafe { *self.text };
 		(id != NO_TEXT).then_some(id)
 	}
 }
 
-/// Text installed by this library: `Some(None)` means no text, `None`
-/// means unchanged since build. The field owns a string reference.
 static OUR_TEXT: Mutex<Option<Option<u32>>> = Mutex::new(None);
 
-/// Clear tracking at world shutdown; reboot restores the built script.
 #[shutdown]
 fn forget_world() {
 	*OUR_TEXT.lock().unwrap() = None;
 }
 
-/// Validate the text field against `built` before the first write
-/// (0xFFFF for none). Its offset is inferred from the file count, so
-/// reject an unexpected layout before modifying world data.
 fn check_built(fields: &Fields, built: Option<&str>) -> Result<(), String> {
 	if OUR_TEXT.lock().unwrap().is_some() {
 		return Ok(());
 	}
-	// Identical text has the same interned string ID.
 	let expected = match built {
 		Some(text) => Some(StringRef::new(text).map_err(|e| e.message)?),
 		None => None
 	};
-	// SAFETY: see `fields`
 	let found = unsafe { *fields.text };
 	if found == expected.as_ref().map_or(NO_TEXT, |string| string.get_id().0) {
 		return Ok(());
@@ -201,12 +170,9 @@ fn check_built(fields: &Fields, built: Option<&str>) -> Result<(), String> {
 	)
 }
 
-/// Replace script text, or clear it with `None`. Transfer the new string
-/// reference to the field and release the old one only if we installed it.
 fn write_text(fields: &Fields, text: Option<Value>) {
 	let id = match text {
 		Some(value) => {
-			// SAFETY: a string value's data is its string id
 			let id = unsafe { value.raw.data.id };
 			std::mem::forget(value);
 			Some(id)
@@ -214,10 +180,8 @@ fn write_text(fields: &Fields, text: Option<Value>) {
 		None => None
 	};
 	let old = OUR_TEXT.lock().unwrap().replace(id);
-	// SAFETY: see `fields`
 	unsafe { *fields.text = id.unwrap_or(NO_TEXT) };
 	if let Some(Some(old)) = old {
-		// SAFETY: the reference `write_text` kept for the string it put there
 		unsafe {
 			auxtools::raw_types::funcs::dec_ref_count(auxtools::raw_types::values::Value {
 				tag: ValueTag::String,
@@ -227,25 +191,21 @@ fn write_text(fields: &Fields, text: Option<Value>) {
 	}
 }
 
-/// Script sent at login: each file's content and a newline, then the text.
 fn full(fields: &Fields) -> Result<String, String> {
 	let mut script = String::new();
 	for id in fields.files() {
-		// SAFETY: a resource id from the server's list
 		let file = unsafe { Value::new(ValueTag::Resource, ValueData { id }) };
 		let text = crate::skin::run("file2text(file)", &[("file", &file)])?;
 		script += &text.as_string().map_err(|e| e.message)?;
 		script.push('\n');
 	}
 	if let Some(id) = fields.text() {
-		// SAFETY: a string id the field holds
 		let text = unsafe { Value::new(ValueTag::String, ValueData { id }) };
 		script += &text.as_string().map_err(|e| e.message)?;
 	}
 	Ok(script)
 }
 
-/// Apply the requested script text. Validate before changing world data.
 pub fn set(request: &ScriptRequest) -> Result<ScriptReloaded, String> {
 	let fields = fields()?;
 	check_built(&fields, request.built.as_deref())?;
@@ -261,8 +221,6 @@ pub fn set(request: &ScriptRequest) -> Result<ScriptReloaded, String> {
 	})
 }
 
-/// Inspect script string ID, file resource IDs and combined login script
-/// for `#script`.
 pub fn state() -> Result<String, String> {
 	let fields = fields()?;
 	let text = fields.text().map_or("none".to_owned(), |id| id.to_string());

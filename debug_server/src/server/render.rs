@@ -1,15 +1,8 @@
-//! Serialize values recursively for `Request::Render` and CLI JSON output.
-//! Unlike pause-local variable references, rendered values are self-contained
-//! and can be returned while the world is running.
-
 use super::*;
 
 impl Server {
-	/// What an expression gives, written out
 	pub(super) fn handle_render(&mut self, frame_id: Option<u32>, expression: &str, depth: u32) {
 		let rendered = match expression.strip_prefix('#') {
-			// Debugger commands return text and usually do not evaluate code.
-			// Do not attach warnings left over from another evaluation.
 			Some(command) => {
 				self.eval_warnings.clear();
 				self.eval_callee_errors.clear();
@@ -29,7 +22,6 @@ impl Server {
 		self.send_or_disconnect(Response::RenderVariables(rendered));
 	}
 
-	/// The values `vars` opens to, by name, as `Variables` lists them
 	fn values_in(&self, vars: VariablesRef) -> Result<Vec<(String, Value)>, String> {
 		let container = self
 			.state
@@ -88,7 +80,6 @@ impl Server {
 		}
 	}
 
-	/// Serialize object variables, excluding the recursive `vars` member.
 	fn object_values(object: &Value) -> Vec<(String, Value)> {
 		let names: Vec<String> = match Self::primitive_fields(object) {
 			Some(fields) => fields.iter().map(|&name| name.to_owned()).collect(),
@@ -113,7 +104,6 @@ impl Server {
 			.collect()
 	}
 
-	/// Serialize a value and its children to `depth`.
 	pub(super) fn render(value: &Value, depth: u32) -> Rendered {
 		match value.raw.tag {
 			ValueTag::Null => return Rendered::Null,
@@ -155,7 +145,6 @@ impl Server {
 		}
 	}
 
-	/// Serialize list entries and associated values to `depth`.
 	fn entries_of(list: &List, depth: u32) -> Vec<(Rendered, Option<Rendered>)> {
 		if list.is_alist() {
 			return list
@@ -180,7 +169,6 @@ impl Server {
 		entries
 	}
 
-	/// What `ref()` gives for a value: its kind and id, in hex
 	pub(super) fn reference(value: &Value) -> String {
 		let id = unsafe { value.raw.data.id };
 		format!("[0x{:x}]", (value.raw.tag as u32) << 24 | id)

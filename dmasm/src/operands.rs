@@ -14,11 +14,9 @@ pub trait Operand: Sized {
 
     fn serialize(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result;
 
-    /// Adds this operand to `out` if it's a variable.
     fn variables<'a>(&'a self, _out: &mut Vec<&'a Variable>) {}
 }
 
-// keeping the nom bullshit separate makes everything else easier to dig thru
 pub trait OperandDeserialize: Sized {
     fn deserialize<'a, E>(i: &'a str) -> nom::IResult<&'a str, Self, E>
     where
@@ -66,7 +64,6 @@ impl Operand for i32 {
     }
 }
 
-// f32 only appears inside serialized values, so bytecode assembly is unreachable.
 impl Operand for f32 {
     fn assemble<'a, E: AssembleEnv>(
         &'a self,
@@ -165,9 +162,6 @@ impl Operand for Proc {
     }
 }
 
-//
-// DMString
-//
 #[derive(PartialEq, Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct DMString(pub Vec<u8>);
@@ -202,10 +196,6 @@ impl Operand for DMString {
     fn disassemble<E: DisassembleEnv>(
         dism: &mut Disassembler<E>,
     ) -> Result<Self, DisassembleError> {
-        // A string id landing in the access-modifier range (0xFFCD..=0xFFEF)
-        // arrives with bit 0x1000_0000 set, so a reader deciding "modifier or
-        // string?" can tell. Masking is a no-op otherwise - no string table is
-        // 268M entries deep.
         let id = dism.read_u32()? & !0x1000_0000;
         let data = dism
             .env
@@ -218,7 +208,6 @@ impl Operand for DMString {
         Ok(DMString(data))
     }
 
-    // TODO: Formatting
     fn serialize(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut format = vec![];
         let mut iter = self.0.iter();
@@ -226,7 +215,6 @@ impl Operand for DMString {
         while let Some(byte_ref) = iter.next() {
             let byte = *byte_ref;
             if byte == 0xFF {
-                // NOTE: Doesn't hold state for formatting, so some strings relying on are a little off
                 format.extend_from_slice(match iter.next() {
                     None => break,
                     Some(1) | Some(2) | Some(3) | Some(4) => b"[]",
@@ -286,7 +274,6 @@ impl Operand for DMString {
                 continue;
             }
 
-            // Escape \[]"" chars
             if byte == b'\\' || byte == b'[' || byte == b']' || byte == b'"' {
                 format.push(b'\\');
             }
@@ -298,21 +285,13 @@ impl Operand for DMString {
     }
 }
 
-// Each form pops a different depth - 3, 2, 3, 7 with the tested value on top -
-// so a consumer that lumps them together gets the stack wrong.
 #[derive(PartialEq, Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum IsInParams {
     Range,
-    /// `x in a to b step c`. DreamMaker emits this, but DreamDaemon always
-    /// returns false and leaves an extra stack value.
     RangeStep,
     Value,
-    /// `x in block(a, b)`.
     BlockCorners,
-    /// `x in block(...)` by coordinate. Always six of them: DM takes 3 to 6 and
-    /// the compiler pads the rest with `PushVal null`, so there is no argument
-    /// count in the stream.
     BlockCoords,
 }
 
@@ -456,7 +435,6 @@ impl Operand for PickSwitchParams {
     }
 
     fn serialize(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // TODO: Could change our cases to the original DM prob() values
         write!(f, "default => ")?;
         self.default.serialize(f)?;
         write!(f, ", ")?;
@@ -609,23 +587,10 @@ pub enum Value {
         tag: u8,
         data: u32,
     },
-    /// Prefab instance with variable overrides. `vars` contains initializer
-    /// code such as `src.a = 1`; assembly orders it by variable-name string ID.
     Prefab {
         path: String,
         vars: Vec<(String, Vec<crate::Node>)>,
     },
-    /*/
-    DatumPath(DMString),
-    ClientPath,
-    ProcPath(DMString),
-    Resource(DMString),
-    TurfPath(DMString),
-    ObjPath(DMString),
-    File(DMString),
-    MobPath(DMString),
-    ImagePath(DMString),
-    */
 }
 
 impl Operand for Value {
@@ -638,7 +603,6 @@ impl Operand for Value {
             Self::Raw { tag, data } => (*tag, *data),
             Self::DMString(value) => (0x06, value.get_string_index(asm)?),
 
-            // Numbers are a special case. They use an extra operand.
             Self::Number(num) => {
                 let bits = num.to_bits();
                 asm.emit(0x2A);
@@ -667,7 +631,7 @@ impl Operand for Value {
                 }
                 parts.sort_by_key(|(id, _)| *id);
                 let mut code: Vec<u32> = parts.into_iter().flat_map(|(_, c)| c).collect();
-                code.push(0); // End
+                code.push(0);
                 match asm.env.get_instance(path, &code) {
                     Some(id) => (0x29, id),
                     None => return Err(AssembleError::InstanceNotFound(path.clone())),
@@ -675,7 +639,6 @@ impl Operand for Value {
             }
         };
 
-        // The top 8 bits of data live in tag
         asm.emit((tag as u32) | ((data & 0xFF0000) >> 8));
         asm.emit(data & 0xFFFF);
         Ok(())
@@ -690,11 +653,9 @@ impl Operand for Value {
         let data = ((tag & 0xFF00) << 8) | dism.read_u32()?;
         let tag = tag & 0xFF;
 
-        // Number is a special snowflake
         let value = match tag {
             0x00 if data == 0 => Self::Null,
 
-            // This one's a bit dodgy. We can't use DMString::disassemble because our bytes are split apart
             0x06 => Self::DMString(DMString(
                 dism.env
                     .get_string_data(data)
@@ -702,16 +663,11 @@ impl Operand for Value {
             )),
 
             0x2A => {
-                // Numbers store their data portion in the lower 16-bits of two operands
                 let upper_bits = data;
                 let lower_bits = dism.read_u32()?;
                 Self::Number(f32::from_bits((upper_bits << 16) | lower_bits))
             }
 
-            // Datum typepath: keep the raw tag+data so consumers (e.g. the dmeow
-            // JIT lowering `new /datum/...`) can rebuild the exact type reference.
-            // The Path arm below stringifies via value_to_string_data, which loses
-            // tag+data and also fails for typepaths whose env can't string them.
             0x20 => Self::Raw {
                 tag: tag as u8,
                 data,
@@ -750,7 +706,6 @@ impl Operand for Value {
         Ok(value)
     }
 
-    // TODO: Formatting
     fn serialize(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Null => write!(f, "null"),
@@ -768,23 +723,11 @@ impl Operand for Value {
     }
 }
 
-/// A global variable operand: the name BYOND records for it, plus the slot it
-/// actually lives in.
-///
-/// The slot is the part that identifies it. A `var/static` declared inside a
-/// proc gets its own slot but keeps only its *local* name, so two statics with
-/// the same name in one proc are two slots sharing one name - anything keying a
-/// global by name alone silently merges them.
 #[derive(PartialEq, Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct GlobalVar {
     pub name: DMString,
-    /// Index into BYOND's `global_values`, read straight off the bytecode.
-    /// `None` when built from source, where the assembler resolves the name.
     pub id: Option<u32>,
-    /// Declaration scope for global lookup: `Some("")` for globals, a type path
-    /// for type statics, `proc:PATH` for proc statics, or `None` if unknown.
-    /// Same-named statics can occupy different slots.
     pub scope: Option<String>,
 }
 
@@ -819,19 +762,15 @@ pub enum Variable {
     Initial(Box<Variable>),
     IsSaved(Box<Variable>),
     Field(DMString),
-    //Initial(Box<Variable>, Vec<DMString>),
     StaticVerb(Proc),
     DynamicVerb(DMString),
     StaticProc(Proc),
     DynamicProc(DMString),
     PtrRef(Box<Variable>),
     PtrDeref(Box<Variable>),
-    //RuntimeProcField(Box<Variable>, Vec<DMString>, DMString),
 }
 
 impl Variable {
-    /// The global vars this reads or writes, including any inside it (the
-    /// base of a cached chain, an `initial()`).
     pub fn globals(&self) -> Vec<&GlobalVar> {
         match self {
             Self::Global(global) => vec![global],
@@ -859,8 +798,6 @@ impl Operand for Variable {
     ) -> Result<(), AssembleError> {
         use crate::access_modifiers;
 
-        // Preserve stored names. The compiler normalizes identifiers;
-        // explicit verb display names retain underscores.
         fn write_dynamic_name<E: AssembleEnv>(
             asm: &mut Assembler<E>,
             name: &DMString,
@@ -886,9 +823,6 @@ impl Operand for Variable {
             Variable::Caller => asm.emit(access_modifiers::Caller),
             Variable::Callee => asm.emit(access_modifiers::Callee),
             Variable::Field(name) => {
-                // The field's string id sits where an access modifier could be,
-                // so one that lands in the modifier range needs bit 0x1000_0000
-                // or BYOND reads it as that modifier. The disassembler strips it.
                 let id = name.get_string_index(asm)?;
                 if access_modifiers::is_access_modifier(id) {
                     asm.emit(id | 0x1000_0000);
@@ -985,7 +919,6 @@ impl Operand for Variable {
             })
         }
 
-        // This is either a string-ref or an AccessModifier
         let param = dism.peek_u32().ok_or(DisassembleError::UnexpectedEnd)?;
 
         if !access_modifiers::is_access_modifier(param) {

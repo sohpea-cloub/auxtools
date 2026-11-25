@@ -1,14 +1,6 @@
-//! Runs a tiny world with the debug server loaded into it, as the launcher
-//! does, and pokes it the way the launcher would, to make sure the debugger
-//! can't take the game down.
-
-// Shared with hot_reload_test, which uses the parts this doesn't
 #[allow(dead_code)]
 mod client;
 
-// test_runner already knows how to find BYOND, and the debug server's message
-// types aren't exported from its cdylib. Both are pulled in as source, and
-// each has bits this test never touches.
 #[allow(dead_code)]
 #[path = "../../test_runner/src/paths.rs"]
 mod paths;
@@ -29,7 +21,6 @@ use server_types::{
 	Response, VariablesRef, ENDING_CONTEXT
 };
 
-// The debug server names global procs without the /proc part
 const BREAKPOINT_TARGET: &str = "/breakpoint_target";
 const TICK_MARKER: &str = "/tick_marker";
 
@@ -81,7 +72,6 @@ fn eval(client: &mut Client, frame_id: Option<u32>, command: &str) -> String {
 	}
 }
 
-/// The proc the world is paused in.
 fn paused_in(client: &mut Client) -> String {
 	match client.request(Request::Stacks { sleeping: None }) {
 		Response::Stacks { stacks, .. } => stacks.into_iter().next().expect("paused with no stacks").name,
@@ -89,8 +79,6 @@ fn paused_in(client: &mut Client) -> String {
 	}
 }
 
-/// Evals `command` in `frame_id` and returns its one-line text and its expanded
-/// fields as "name = value" strings.
 fn eval_fields(client: &mut Client, frame_id: u32, command: &str) -> (String, Vec<String>) {
 	let response = client.request(Request::Eval {
 		frame_id: Some(frame_id),
@@ -124,9 +112,7 @@ fn pause(client: &mut Client) {
 	assert_eq!(client.expect_pause(), BreakpointReason::Pause);
 }
 
-/// How the values 516 brought show
 fn values_516(client: &mut Client) {
-	// numbers are keys in an alist, so walking it by position shows nonsense
 	let response = client.request(Request::Eval {
 		frame_id: Some(0),
 		command: "alist_sample()".to_owned(),
@@ -149,7 +135,6 @@ fn values_516(client: &mut Client) {
 	assert_eq!(shown, ["\"a\" = 1", "\"n\" = null", "7 = \"seven\""]);
 	println!("ok: an alist shows its key/value pairs");
 
-	// size is a float, so only its start is checked
 	let (text, fields) = eval_fields(client, 0, "vector_sample()");
 	assert_eq!(text, "vector(1,2,3)");
 	assert_eq!(fields[..4], ["x = 1", "y = 2", "z = 3", "len = 3"]);
@@ -165,7 +150,6 @@ fn values_516(client: &mut Client) {
 	assert!(fields[5].starts_with("loc = "), "unexpected loc: {}", fields[5]);
 	println!("ok: a pixloc shows its position");
 
-	// frame 1 is main_loop, which holds a callee of itself
 	let (text, fields) = eval_fields(client, 1, "this_proc");
 	assert!(text.contains("/proc/main_loop"), "unexpected callee text: {}", text);
 	assert_eq!(fields[..2], ["proc = /proc/main_loop", "file = \"debug_test_host.dm\""]);
@@ -175,7 +159,6 @@ fn values_516(client: &mut Client) {
 	println!("ok: a callee shows its proc");
 }
 
-/// The line of the host's code that starts with `text`
 fn host_line(text: &str) -> u32 {
 	let source = std::fs::read_to_string(host_file("debug_test_host.dm")).unwrap();
 	source.lines().position(|line| line.starts_with(text)).expect("no such line") as u32 + 1
@@ -195,13 +178,10 @@ fn locate(client: &mut Client, file: &str, line: u32) -> Vec<InstructionRef> {
 	}
 }
 
-/// The requests the launcher makes that the checks above don't. It starts and
-/// ends with the world paused in breakpoint_target, with no breakpoints.
 fn protocol(world: &World, mut client: Client) -> Client {
 	assert_eq!(status(&mut client), Some(BreakpointReason::Breakpoint));
 	println!("ok: a paused world says why it's paused");
 
-	// breakpoint_target, called by main_loop, which world/New spawned
 	let response = client.request(Request::StackFrames {
 		stack_id: 0,
 		start_frame: Some(1),
@@ -217,7 +197,6 @@ fn protocol(world: &World, mut client: Client) -> Client {
 	assert_eq!(frames[0].line, Some(host_line("\t\tbreakpoint_target()")));
 	println!("ok: a page of the stack's frames, each with its file and line");
 
-	// As many as there are, however many are asked for
 	let response = client.request(Request::StackFrames {
 		stack_id: 0,
 		start_frame: Some(1),
@@ -249,7 +228,6 @@ fn protocol(world: &World, mut client: Client) -> Client {
 	);
 	println!("ok: where a proc's line is in its code");
 
-	// However the client spells the file
 	let expected = vec![InstructionRef {
 		proc: start_of(BREAKPOINT_TARGET).proc,
 		offset
@@ -262,7 +240,6 @@ fn protocol(world: &World, mut client: Client) -> Client {
 	] {
 		assert_eq!(locate(&mut client, file, returns), expected, "{}", file);
 	}
-	// The proc's declaration has no code: its first line with code is the next
 	assert_eq!(locate(&mut client, "debug_test_host.dm", returns - 1), expected);
 	assert_eq!(locate(&mut client, "another_file.dm", returns), vec![]);
 	assert_eq!(locate(&mut client, "debug_test_host.dm", 100_000), vec![]);
@@ -319,7 +296,6 @@ fn protocol(world: &World, mut client: Client) -> Client {
 	);
 	println!("ok: a running world has no scopes, variables or frames to give, and says so");
 
-	// What can't be evaluated, or set, says why
 	let response = client.request(Request::Eval {
 		frame_id: None,
 		command: "1 +".to_owned(),
@@ -343,9 +319,6 @@ fn protocol(world: &World, mut client: Client) -> Client {
 	);
 	println!("ok: an expression and a condition that don't compile are refused, with why");
 
-	// The world puts a breakpoint in the words of an instruction. One in
-	// the middle of another's, `return 2`'s value, would make instructions
-	// of the rest, with one there already or not.
 	pause(&mut client);
 	let set = |client: &mut Client, instruction: &InstructionRef| {
 		client.request(Request::BreakpointSet {
@@ -393,10 +366,6 @@ fn protocol(world: &World, mut client: Client) -> Client {
 	client.resume();
 	println!("ok: a breakpoint in the middle of an instruction isn't set, with a breakpoint at its start or not");
 
-	// A breakpoint set on the instruction the world is paused at: the
-	// instruction still runs, and the breakpoint stops the next pass. Step
-	// out to main_loop first, so the pause is in a proc that only a bad
-	// instruction would end.
 	set_breakpoint(&mut client, BREAKPOINT_TARGET, None);
 	expect_breakpoint_in(&mut client, BREAKPOINT_TARGET);
 	let response = client.request(Request::BreakpointUnset {
@@ -446,7 +415,6 @@ fn protocol(world: &World, mut client: Client) -> Client {
 	assert_eq!(eval(&mut client, None, "1 + 1"), "2");
 	println!("ok: a breakpoint set on the paused instruction");
 
-	// Two clients want one breakpoint: it's there until both have let go
 	let mut second = world.connect();
 	pause(&mut client);
 	assert_eq!(second.expect_pause(), BreakpointReason::Pause);
@@ -469,7 +437,6 @@ fn protocol(world: &World, mut client: Client) -> Client {
 	assert_eq!(second.expect_pause(), BreakpointReason::Breakpoint);
 	assert_eq!(client.expect_pause(), BreakpointReason::Breakpoint);
 	assert_eq!(paused_in(&mut second), BREAKPOINT_TARGET);
-	// tick_marker is called right after: the next stop is there
 	unset(&mut second, BREAKPOINT_TARGET);
 	set_breakpoint(&mut second, TICK_MARKER, None);
 	second.resume();
@@ -482,15 +449,12 @@ fn protocol(world: &World, mut client: Client) -> Client {
 	assert_eq!(paused_in(&mut second), TICK_MARKER);
 	println!("ok: a breakpoint two clients set stays until both have unset it");
 
-	// A client that leaves takes its breakpoints, and the world carries on
-	// when the last has gone
 	second.leave();
 	client.leave();
 	let mut client = world.connect();
 	assert_eq!(status(&mut client), None);
 	println!("ok: the last client leaves a paused world, which carries on");
 
-	// A client that's there for something else doesn't keep a pause going
 	let watcher = world.connect_watcher();
 	pause(&mut client);
 	client.leave();
@@ -499,7 +463,6 @@ fn protocol(world: &World, mut client: Client) -> Client {
 	watcher.leave();
 	println!("ok: a pause doesn't wait for a client that says it isn't debugging");
 
-	// A pause that's held outlasts its clients
 	pause(&mut client);
 	let response = client.request(Request::HoldPause);
 	assert!(matches!(response, Response::Ack), "expected Ack for HoldPause, got {:?}", response);
@@ -510,7 +473,6 @@ fn protocol(world: &World, mut client: Client) -> Client {
 	assert_eq!(status(&mut client), None);
 	println!("ok: a held pause is still there for the next client, until one lets the world carry on");
 
-	// Asked for by a client that goes before there's a pause, it's forgotten
 	let response = client.request(Request::HoldPause);
 	assert!(matches!(response, Response::Ack), "expected Ack for HoldPause, got {:?}", response);
 	client.leave();
@@ -521,8 +483,6 @@ fn protocol(world: &World, mut client: Client) -> Client {
 	assert_eq!(status(&mut client), None);
 	println!("ok: a hold asked for by a client that left before the pause is forgotten");
 
-	// Whatever arrives that isn't a request: that client is hung up on, and
-	// nothing else notices
 	let mut rubbish = world.connect_silent();
 	rubbish.send_bytes(&[0xff, 0xff, 0xff, 0xff, 1, 2, 3]);
 	rubbish.wait_closed();
@@ -533,11 +493,6 @@ fn protocol(world: &World, mut client: Client) -> Client {
 	assert_eq!(status(&mut client), None);
 	assert_eq!(eval(&mut client, None, "1 + 1"), "2");
 
-	// A proc BYOND loses its caller's registers in. (It was a release build's
-	// trampoline that faulted on it, and this world alone crashes DreamDaemon
-	// without us: the test is that it runs through here.) Not on Windows,
-	// where BYOND checks its stack after the proc and ends the world itself
-	// (exception c0000409), with or without a debugger.
 	if cfg!(unix) {
 		assert_eq!(eval(&mut client, None, "overrun()"), "7");
 		println!("ok: a proc that overruns BYOND's buffer for its stack leaves the world running");
@@ -565,12 +520,10 @@ fn profile_totals(client: &mut Client, request: ProfileRequest) -> ProfileTotals
 	}
 }
 
-/// Find profile measurements by proc path.
 fn profiled<'a>(totals: &'a ProfileTotals, path: &str) -> &'a ProfiledCode {
 	(totals.codes.iter().find(|code| code.proc.path == path)).unwrap_or_else(|| panic!("{} isn't in {:?}", path, totals))
 }
 
-/// Check profiling counts, timing and exclusions. Leave the world paused.
 fn profile(world: &World, mut client: Client) -> Client {
 	let proc = |path: &str| ProcRef {
 		path: path.to_owned(),
@@ -594,8 +547,6 @@ fn profile(world: &World, mut client: Client) -> Client {
 	);
 	println!("ok: profile validation");
 
-	// The world's loop sleeps a tick after each turn. Were sleeps timed,
-	// the profile's time would be about the time it ran.
 	assert_eq!(eval(&mut client, None, "profiled_call()"), "500500");
 	client.resume();
 	std::thread::sleep(Duration::from_secs(1));
@@ -610,7 +561,6 @@ fn profile(world: &World, mut client: Client) -> Client {
 	assert!(totals.codes.iter().all(|code| !code.proc.path.contains("auxtools_")), "{:?}", totals);
 	println!("ok: sleep and debugger helper exclusions");
 
-	// The loop's instructions ran once a turn, the rest once a call
 	let looped = profiled(&totals, "/profiled_loop");
 	assert_eq!(looped.total.calls, 1);
 	assert_eq!(looped.file.as_deref(), Some("debug_test_host.dm"));
@@ -642,14 +592,12 @@ fn profile(world: &World, mut client: Client) -> Client {
 	assert!(looped.total.own_ns > 0, "{:?}", looped);
 	println!("ok: instruction hit counts");
 
-	// Allow for differences in overhead correction between caller and callee.
 	let calling = profiled(&totals, "/profiled_call");
 	assert_eq!(calling.total.calls, 1);
 	let near = |a: u64, b: u64| a.abs_diff(b) <= b / 4 + 2_000;
 	assert!(near(calling.total.callee_ns, looped.total.own_ns), "{:?} called {:?}", calling, looped);
 	println!("ok: callee timing");
 
-	// Kept after it stops, until the next
 	assert_eq!(profile_totals(&mut client, ProfileRequest::Totals), totals);
 	let code = match client.request(Request::ProcInfo { proc: proc("/overrun") }) {
 		Response::ProcInfo(Ok(info)) => info.code,
@@ -658,7 +606,6 @@ fn profile(world: &World, mut client: Client) -> Client {
 	let unprofiled = profile_request(&mut client, ProfileRequest::Code { code });
 	assert_eq!(unprofiled, Err("/overrun wasn't profiled".to_owned()));
 
-	// Of the procs asked for alone
 	pause(&mut client);
 	let only = ProfileRequest::Start {
 		procs: vec![proc("/profiled_loop")]
@@ -670,7 +617,6 @@ fn profile(world: &World, mut client: Client) -> Client {
 	assert_eq!(profiled(&totals, "/profiled_loop").total.calls, 1);
 	println!("ok: proc filters");
 
-	// It goes with the client that started it
 	let mut second = world.connect();
 	assert_eq!(
 		profile_request(&mut second, ProfileRequest::Start { procs: vec![] }),
@@ -682,7 +628,6 @@ fn profile(world: &World, mut client: Client) -> Client {
 	assert_eq!(profile_request(&mut client, ProfileRequest::Code { code: looped.code }), theirs);
 	assert!(profile_totals(&mut second, ProfileRequest::Totals).running);
 	second.leave();
-	// (the world sees it gone when it next looks)
 	let none = Err("no profile has been started".to_owned());
 	let mut gone = profile_request(&mut client, ProfileRequest::Totals);
 	for _ in 0..50 {
@@ -697,9 +642,6 @@ fn profile(world: &World, mut client: Client) -> Client {
 	client
 }
 
-/// A world still waiting for its debugger is ended by an evaluation, as
-/// `auxtools stop` ends it. The evaluation leaves the debug library by
-/// unwinding, which aborted DreamDaemon when nothing caught it.
 fn waiting_world_ends() {
 	let world = World::start(&host_file("debug_test_host.dmb"), &[]);
 	let mut client = world.connect_silent();
@@ -715,8 +657,6 @@ fn waiting_world_ends() {
 	println!("ok: an evaluation ends a world that waits for its debugger");
 }
 
-/// Requests that panic in the debug library (`#panic`, which debug builds
-/// have): the client is dropped, and the world and its debugger carry on.
 #[cfg(debug_assertions)]
 fn panics() {
 	let panic = || Request::Eval {
@@ -766,13 +706,9 @@ fn main() {
 	expect_breakpoint_in(&mut client, BREAKPOINT_TARGET);
 	println!("ok: breakpoint hit");
 
-	// Not before the stop: the world answers while it's still setting its
-	// globals, and the helper is one of them
 	assert_eq!(eval(&mut client, None, "helper.greet(\"you\")"), "\"hi you\"");
 	println!("ok: evaluating a verb call");
 
-	// VS Code re-runs every watch expression on every stop, so this is the
-	// easy one to hit by accident
 	assert_eq!(eval(&mut client, Some(0), "breakpoint_target()"), "2");
 	println!("ok: evaluating a proc that has a breakpoint in it");
 
@@ -799,9 +735,6 @@ fn main() {
 	);
 	println!("ok: unsetting a breakpoint on a missing proc");
 
-	// The condition is false, and working that out means calling a proc that
-	// has its own breakpoint. The second stop in tick_marker is the one that
-	// shows breakpoint_target got skipped.
 	set_breakpoint(&mut client, TICK_MARKER, None);
 	set_breakpoint(&mut client, BREAKPOINT_TARGET, Some("tick_marker() == 0"));
 	client.resume();
@@ -810,8 +743,6 @@ fn main() {
 	expect_breakpoint_in(&mut client, TICK_MARKER);
 	println!("ok: conditional breakpoint that calls a proc with a breakpoint");
 
-	// A debugger can re-send a breakpoint without unsetting it first, so
-	// this is how a condition gets removed
 	set_breakpoint(&mut client, BREAKPOINT_TARGET, None);
 	client.resume();
 	expect_breakpoint_in(&mut client, BREAKPOINT_TARGET);
@@ -830,14 +761,12 @@ fn main() {
 	let client = protocol(&world, client);
 	let mut client = profile(&world, client);
 
-	// Runtime errors don't pause it when the launcher says not to
 	client.send(Request::CatchRuntimes {
 		uncaught: None,
 		caught: None
 	});
 	eval(&mut client, None, "start_runtimes()");
 	client.resume();
-	// start_runtimes() gives twenty runtime errors, wait them out
 	let start = Instant::now();
 	while eval(&mut client, None, "runtimes_left") != "0" {
 		assert!(start.elapsed() < Duration::from_secs(10), "the world's runtime errors never ended");

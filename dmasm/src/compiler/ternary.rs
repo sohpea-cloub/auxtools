@@ -12,7 +12,6 @@ pub(super) fn emit(
     lhs: Expression,
     rhs: Expression,
 ) -> Result<EvalKind, CompileError> {
-    // Resource discovery visits the condition and its selected operand.
     if compiler.live_only {
         if let Some(c) = super::fold::choice(compiler, &condition) {
             let kind = compiler.emit_expr(condition)?;
@@ -21,12 +20,9 @@ pub(super) fn emit(
             return compiler.emit_move_to_stack(kind);
         }
     }
-    // Bring condition to stack
     let logic = super::fold::is_logic(&condition);
     let condition = compiler.emit_expr(condition)?;
     compiler.emit_move_to_stack(condition)?;
-    // `==`, `in` and is*() leave their result in the test flag (but not as
-    // what a `&&` or `||` folded to: see `fold::is_logic`)
     if compiler.proc.is_some() && !logic {
         if let Some(crate::Node::Instruction(Instruction::GetFlag, _)) = compiler.nodes.last() {
             compiler.nodes.pop();
@@ -62,18 +58,15 @@ fn emit_branches_after_test(
 ) -> Result<EvalKind, CompileError> {
     compiler.emit_ins(Instruction::Jz(Label::Named(label_rhs.clone())));
 
-    // LHS
     let lhs = compiler.emit_expr(lhs)?;
     compiler.emit_move_to_stack(lhs)?;
     compiler.emit_ins(Instruction::Jmp(Label::Named(label_end.clone())));
 
-    // RHS (DreamMaker doesn't know what the cache holds there)
     compiler.emit_label(label_rhs);
     compiler.cache = None;
     let rhs = compiler.emit_expr(rhs)?;
     compiler.emit_move_to_stack(rhs)?;
 
-    // End
     compiler.emit_label(label_end);
     Ok(EvalKind::Stack)
 }

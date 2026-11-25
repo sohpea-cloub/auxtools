@@ -26,9 +26,7 @@ fn emit_single(
 ) -> Result<EvalKind, CompileError> {
     let mut return_kind = EvalKind::Stack;
     match op {
-        // Simple unary ops
         UnaryOp::Neg | UnaryOp::Not | UnaryOp::BitNot => {
-            // These ops need the value on the stack
             compiler.emit_move_to_stack(kind)?;
 
             match op {
@@ -39,16 +37,13 @@ fn emit_single(
             }
         }
 
-        // l-value mutating unary ops
         UnaryOp::PreIncr
         | UnaryOp::PostIncr
         | UnaryOp::PreDecr
         | UnaryOp::PostDecr
         | UnaryOp::Reference
         | UnaryOp::Dereference => {
-            // These ops require an l-value
             let var = match kind {
-                // a computed pointer (`*(&x)`) is kept in cache_key
                 EvalKind::Stack if op == UnaryOp::Dereference => {
                     compiler.emit_ins(Instruction::SetVar(Variable::CacheKey));
                     Variable::CacheKey
@@ -56,8 +51,6 @@ fn emit_single(
 
                 EvalKind::Var(var) if is_writable(&var) => var,
 
-                // so is one read from a var that can't be written, as `&x` is
-                // (`*(&x)`, where a proc's code has it on the stack already)
                 EvalKind::Var(var) if op == UnaryOp::Dereference => {
                     compiler.emit_ins(Instruction::GetVar(var));
                     compiler.emit_ins(Instruction::SetVar(Variable::CacheKey));
@@ -67,7 +60,6 @@ fn emit_single(
                 EvalKind::Field(builder, field) => builder.get_field(DMString(field.into())),
 
                 EvalKind::ListRef => {
-                    // `*p[i]` read: DreamMaker leaves the index out, as in a write
                     if op == UnaryOp::Dereference
                         && compiler
                             .byond
@@ -103,8 +95,6 @@ fn emit_single(
     Ok(return_kind)
 }
 
-/// `&x`: a pointer to x. For a field (`&t.v`) DreamMaker finds the holder
-/// as usual and takes the field's address: `cache = t; &cache["v"]`.
 fn reference(var: Variable) -> Variable {
     match var {
         Variable::SetCache(holder, field) => {

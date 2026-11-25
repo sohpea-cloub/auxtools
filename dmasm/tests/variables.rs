@@ -1,5 +1,3 @@
-//! Finding the global vars a proc's code uses.
-
 use dmasm::compiler::{compile_proc, ProcSource};
 use dmasm::{Node, Variable};
 

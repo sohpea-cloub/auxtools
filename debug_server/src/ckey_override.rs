@@ -7,8 +7,6 @@ use region::Protection;
 
 static mut STRING_PTR: *mut *const c_char = std::ptr::null_mut();
 
-// The `push` of the "Guest-%u" format string. We want the address of its 4-byte
-// immediate, one byte past the opcode, so we can swap the string pointer out.
 #[cfg(windows)]
 const GUEST_NAME_FORMAT: Recipe = Recipe {
 	name: "guest_name_format",
@@ -23,7 +21,6 @@ const GUEST_NAME_FORMAT: Recipe = Recipe {
 
 #[init(full)]
 fn ckey_override_init() -> Result<(), String> {
-	// This feature soft-fails
 	#[cfg(windows)]
 	if let Ok(address) = find_recipe(&GUEST_NAME_FORMAT) {
 		unsafe {
@@ -54,7 +51,6 @@ pub fn override_guest_ckey(name: &str) -> Result<(), Error> {
 	unsafe {
 		region::protect(STRING_PTR as *const u8, 4, Protection::READ_WRITE_EXECUTE).unwrap();
 
-		// Leak is fine
 		*STRING_PTR = new_ptr;
 	}
 

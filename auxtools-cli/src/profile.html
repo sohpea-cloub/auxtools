@@ -169,7 +169,6 @@ td.time { width: 30%; min-width: 96px; }
 #tip .stroke.own { background: var(--own); }
 #tip .stroke.calls { background: var(--calls); }
 #tip .stroke.none { background: transparent; }
-/* Keep hit counts and timing visible in narrow panes. */
 @container (max-width: 1000px) {
 	td.operands { max-width: 180px; }
 	td.time { min-width: 64px; }
@@ -221,14 +220,12 @@ td.time { width: 30%; min-width: 96px; }
 <script type="application/json" id="data">/*DATA*/</script>
 <script>
 "use strict";
-// Match the editor theme.
 if (document.body.classList.contains("vscode-dark") || document.body.classList.contains("vscode-high-contrast")) {
 	document.documentElement.dataset.theme = "dark";
 } else if (document.body.classList.contains("vscode-light")) {
 	document.documentElement.dataset.theme = "light";
 }
 
-// Enable source links in editor panels.
 const editor = typeof acquireVsCodeApi === "function" ? acquireVsCodeApi() : null;
 
 const data = JSON.parse(document.getElementById("data").textContent);
@@ -246,7 +243,6 @@ const time = (ns) => {
 	return (ns / 1e9).toFixed(2) + "s";
 };
 const count = (n) => n.toLocaleString("en-US");
-// Offsets in hex, as jump labels such as LAB_0012 name them
 const hex = (offset) => offset.toString(16).toUpperCase().padStart(4, "0");
 const percent = (part, whole) => (whole ? (part * 100 / whole).toFixed(1) : "0.0");
 const procName = (proc) => proc.proc + (proc.override ? "#" + proc.override : "") + (proc.old_code ? " (old code)" : "");
@@ -254,13 +250,11 @@ const procName = (proc) => proc.proc + (proc.override ? "#" + proc.override : ""
 let selected = data.procs.findIndex((proc) => proc.listing);
 const MOST_PROCS = 300;
 
-// A bar of one or two segments, each `[class, width in percent]`
 const bar = (segments) => {
 	const node = el("div", "bar");
 	const shown = segments.filter(([, width]) => width > 0);
 	shown.forEach(([cls, width], at) => {
 		const segment = el("i", cls + (at === shown.length - 1 ? " end" : ""));
-		// Subtract the gap from the second segment.
 		segment.style.width = "calc(" + width.toFixed(3) + "% - " + (at ? 2 : 0) + "px)";
 		node.append(segment);
 	});
@@ -295,7 +289,6 @@ function procs() {
 	const find = $("find").value.trim().toLowerCase();
 	const most = Math.max(1, ...data.procs.map((proc) => proc.ns));
 	body.replaceChildren();
-	// Limit visible rows; filtering searches all procs.
 	let shown = 0;
 	let more = 0;
 	data.procs.forEach((proc, at) => {
@@ -331,14 +324,10 @@ function procs() {
 	}
 }
 
-// Instruction rows of the shown listing by offset, and the offsets of the
-// jumps followed to reach the current target
 let rows = new Map();
 const returns = [];
 let target = null;
 
-// Scroll to the instruction at `offset` and mark it, showing unexecuted
-// instructions if it is one.
 function jumpTo(offset) {
 	if (!rows.has(offset) && !$("cold").checked) {
 		$("cold").checked = true;
@@ -353,8 +342,6 @@ function jumpTo(offset) {
 	return true;
 }
 
-// Operand text with each jump label (LAB_0012, a hex offset) as a link to
-// its instruction
 function operandNodes(operands, from) {
 	const nodes = [];
 	let last = 0;

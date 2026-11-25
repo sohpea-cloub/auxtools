@@ -1,5 +1,3 @@
-//! Check project source for known BYOND bugs.
-
 use std::path::{Path, PathBuf};
 
 use dmasm::{
@@ -11,10 +9,8 @@ use serde_json::json;
 use super::{args, Failure, Result};
 use crate::code::parse_define;
 
-/// Exit code for known BYOND bug findings.
 pub const FOUND: i32 = 5;
 
-/// Format proc overrides with the standard `#N` suffix.
 fn proc_name(proc: &ProcKey) -> String {
 	match proc.override_id {
 		0 => proc.path.clone(),
@@ -22,7 +18,6 @@ fn proc_name(proc: &ProcKey) -> String {
 	}
 }
 
-/// Find the only `.dme` in the current directory.
 fn only_dme() -> Result<PathBuf> {
 	let mut found: Vec<PathBuf> = std::fs::read_dir(".")
 		.map_err(|e| format!("cannot read the current directory: {}.", e))?
@@ -52,7 +47,6 @@ pub fn check(args: &args::Check) -> Result<()> {
 	if !dme.is_file() {
 		return Err(format!("{} does not exist.", dme.display()).into());
 	}
-	// Match DreamMaker's working directory and report relative paths.
 	let dir = dme.parent().unwrap_or(Path::new("."));
 	std::env::set_current_dir(dir).map_err(|e| format!("cannot enter {}: {}.", dir.display(), e))?;
 	let name = PathBuf::from(dme.file_name().unwrap_or_default());
@@ -63,7 +57,6 @@ pub fn check(args: &args::Check) -> Result<()> {
 		defines: args.defines.iter().map(|define| parse_define(define)).collect(),
 		byond: Some((major, build))
 	};
-	// Compilation panics are reported as unchecked procs.
 	std::panic::set_hook(Box::new(|_| {}));
 	let mut snapshot = Snapshot::parse(&name, &options).map_err(|e| format!("{}.", e))?;
 	snapshot.set_byond(ByondVersion::new(major, build));

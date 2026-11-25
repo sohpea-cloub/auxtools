@@ -31,21 +31,15 @@ mod profile;
 mod render;
 mod watches;
 
-/// Next spawned evaluation ID; monotonic across reboots.
 static NEXT_SPAWN: AtomicU64 = AtomicU64::new(1);
 
-/// Compiled spawned evaluation waiting for the keepalive loop.
 struct Spawn {
 	number: u64,
 	bytecode: Vec<u32>,
-	/// The vars a proc's body declares
 	locals: Vec<String>,
-	/// Its code's arguments
 	args: Vec<Value>
 }
 
-/// Expandable variable container. Retain its access expression so child
-/// variables can build expressions such as `a.b[2]`.
 #[derive(Clone, Hash, PartialEq, Eq)]
 enum Variables {
 	Arguments {
@@ -54,53 +48,35 @@ enum Variables {
 	Locals {
 		frame: u32
 	},
-	/// The world's own global vars, and a row for BYOND's
 	Globals,
-	/// The constants BYOND itself declares (`NORTH`, `MOB_LAYER`, ...)
 	Builtins,
 	ObjectVars(Value, Option<String>),
 	ListContents(Value, Option<String>),
-	/// Associative list entry, accessed through expression `entry` in list
-	/// `of`.
 	ListPair {
 		key: Value,
 		value: Value,
 		of: Value,
 		entry: Option<String>
 	},
-	/// What a pointer names, and the expression the pointer is reached by
 	Pointee(Value, Option<String>)
 }
 
-/// Pause-local inspection state. Read stacks lazily: most conditional
-/// breakpoint hits need only the running stack, and worlds may have
-/// thousands of sleeping procs.
 struct State {
 	active: OnceCell<Vec<debug::StackFrame>>,
 	suspended: OnceCell<Vec<Vec<debug::StackFrame>>>,
-	/// Number of sleeping stacks requested so far.
 	sleeping: usize,
 	variables: RefCell<Vec<Variables>>,
 	variables_to_refs: RefCell<HashMap<Variables, VariablesRef>>,
-	/// The sleeping stacks' frames a client has been given ids for, by id
-	/// (less `SLEEPING_FRAMES`)
 	sleeping_frames: RefCell<Vec<SleepingFrame>>,
 	sleeping_frame_ids: RefCell<HashMap<SleepingFrame, u32>>
 }
 
-/// Frame IDs at or above this value identify sleeping frames. Lower IDs
-/// are depths in the running stack, innermost first.
 const SLEEPING_FRAMES: u32 = 1 << 30;
 
-/// Maximum time a shutdown or reboot suppresses pauses.
 const ENDING_LIMIT: Duration = Duration::from_secs(60);
 
-/// Error prefix for evaluations that slept or continued in the background.
 const EVAL_ABORTED: &str = "evaluation aborted";
 
-/// Stable sleeping-frame reference: stack ID, depth and proc instance.
-/// Evaluations can end or create sleeping procs, changing queue positions.
-/// The reference must still resolve to the same frame or become invalid.
 #[derive(Clone, Copy, Hash, PartialEq, Eq)]
 struct SleepingFrame {
 	thread: u32,
@@ -121,7 +97,6 @@ impl State {
 		}
 	}
 
-	/// The id of a sleeping stack's frame, which it keeps for the pause
 	fn sleeping_frame_id(&self, frame: SleepingFrame) -> u32 {
 		let mut frames = self.sleeping_frames.borrow_mut();
 		*self.sleeping_frame_ids.borrow_mut().entry(frame).or_insert_with(|| {
@@ -134,24 +109,19 @@ impl State {
 		self.sleeping_frames.borrow().get(id.checked_sub(SLEEPING_FRAMES)? as usize).copied()
 	}
 
-	/// Invalidate stack snapshots after evaluating code.
 	fn invalidate_stacks(&mut self) {
 		self.active = OnceCell::new();
 		self.suspended = OnceCell::new();
 	}
 
-	/// The running proc's stack
 	fn active(&self) -> &Vec<debug::StackFrame> {
 		self.active.get_or_init(debug::CallStacks::active)
 	}
 
-	/// The sleeping procs' stacks, the first `sleeping` of them
 	fn suspended(&self) -> &Vec<Vec<debug::StackFrame>> {
 		self.suspended.get_or_init(|| debug::CallStacks::suspended_first(self.sleeping))
 	}
 
-	/// Read at least `sleeping` suspended stacks without changing existing
-	/// frame IDs.
 	fn read_sleeping(&mut self, sleeping: usize) {
 		if sleeping > self.sleeping {
 			self.sleeping = sleeping;
@@ -172,22 +142,13 @@ impl State {
 
 	fn get_variables(&self, reference: VariablesRef) -> Option<Variables> {
 		let variables = self.variables.borrow();
-		// References start at 1: 0 is what a client has for "nothing to open"
 		let index = usize::try_from(reference.0).ok()?.checked_sub(1)?;
 		variables.get(index).cloned()
 	}
 }
 
-// Server runs on the BYOND thread; ServerThread handles network input.
-// A shared event channel preserves event order.
-//
-// Clients have independent breakpoints and error filters. A pause stops
-// the whole world and any debugging client can resume it. When the last
-// debugging client disconnects, execution resumes unless a pause is held.
-
 type ClientId = u32;
 
-/// Source markers used by [`Server::place_in`].
 enum Mark {
 	File(String),
 	Line(u32),
@@ -195,60 +156,38 @@ enum Mark {
 }
 
 enum Event {
-	// A debug-client arrived. The Connection is for the Server to answer on.
 	Connected(ClientId, Connection),
 
-	// A request from a debug-client for the Server to handle
 	Request(ClientId, Request),
 
-	// The debug-client left, or its connection broke
 	Disconnected(ClientId)
 }
 
 struct Client {
-	// Runtime error filters for uncaught and caught errors.
 	uncaught: Option<RuntimeFilter>,
 	caught: Option<RuntimeFilter>,
-	// Whether this is a debugging client rather than a watcher.
 	debugs: bool,
-	/// Journal event kinds to stream to this client.
 	follow: Option<Vec<JournalKind>>,
-	/// Outbound messages for the client writer (see `deliver`).
 	outbox: mpsc::SyncSender<Vec<u8>>,
-	/// Writer thread; drains queued messages before exiting.
 	writer: Option<thread::JoinHandle<()>>,
-	/// Maximum held-pause duration without a debugging client.
 	hold_max: Option<Duration>
 }
 
-/// Disconnect slow clients when their outgoing queue reaches this limit.
 const OUTBOX: usize = 1024;
 
-/// How many procs of a runtime error's stack the record keeps
 const JOURNAL_FRAMES: usize = 64;
 
-/// What a client wants of a breakpoint it set
 pub struct Claim {
-	/// It only counts as hit when this holds: `None` for every time
 	condition: Option<String>,
-	/// Which of its hits to stop at: `None` for all of them
 	hit: Option<HitCondition>,
-	/// How many times it's been hit since it was set
 	hits: u32,
-	/// A message for the client at the hits it wants, in place of a stop
 	log: Option<Vec<LogPart>>,
-	/// How many hits were skipped because the condition failed with an error
 	skipped: u32,
-	/// The client has been told the condition fails, which it's told once
 	told: bool
 }
 
-/// Breakpoint claims indexed by location and client. A client can claim
-/// the same instruction independently as a line, function and instruction
-/// breakpoint. Conditions and removal apply to each claim separately.
 pub type Breakpoints = HashMap<(raw_types::procs::ProcId, u16), BTreeMap<(ClientId, Placed), Claim>>;
 
-/// What a client set a breakpoint on
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub enum Placed {
 	Line,
@@ -257,7 +196,6 @@ pub enum Placed {
 }
 
 impl Placed {
-	/// Classify the requested offset as an instruction or source breakpoint.
 	fn of(offset: u32, exactly: bool) -> Self {
 		match offset {
 			_ if exactly => Self::Instruction,
@@ -267,124 +205,72 @@ impl Placed {
 	}
 }
 
-/// Synthetic parameter containing `global.vars`. Its name cannot be written
-/// in DM expressions, so it cannot shadow user names.
 const GLOBALS: &str = "global vars";
 
-/// How long to wait for a request
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Wait {
 	No,
-	/// While there's a client that debugs to send one
 	WhileClients,
-	/// For as long as it takes, clients coming and going
 	Forever,
-	/// Until then (if ever), or a client comes or goes
 	Until(Option<Instant>)
 }
 
-/// Process-lifetime listener. Clients connecting between servers during
-/// reboot wait for the next server.
 struct Acceptor {
-	/// Where the listener's thread sends what it hears
 	events: mpsc::Sender<Event>,
-	/// The other end, for the next Server to take
 	waiting: Option<mpsc::Receiver<Event>>
 }
 
 static ACCEPTOR: Mutex<Option<Acceptor>> = Mutex::new(None);
 
-// Bound message lengths before allocating buffers. Full reloads after
-// a macro change can legitimately produce large requests.
 const MAX_REQUEST_LEN: u32 = 256 * 1024 * 1024;
 
-/// Maximum number of cached compiled evaluations.
 const EVAL_CODE_KEPT: usize = 256;
 
-/// Inputs that determine compiled evaluation code.
 #[derive(PartialEq, Eq, Hash)]
 struct EvalCodeKey {
-	/// Code and macro generation at compilation.
 	generation: u32,
-	/// Code after macro expansion.
 	command: String,
-	/// Available names, including frame variables.
 	names: Vec<String>,
-	/// Type of src, used to resolve bare var and proc names.
 	src_type: Option<String>
 }
 
 pub struct Server {
 	events: mpsc::Receiver<Event>,
 	clients: BTreeMap<ClientId, Client>,
-	// The client whose request is being answered
 	current: Option<ClientId>,
 	state: Option<State>,
 	in_eval: bool,
 	eval_error: Option<String>,
-	/// Non-fatal callee runtime errors and the number omitted from full
-	/// reporting.
 	eval_callee_errors: Vec<String>,
 	eval_callee_more: usize,
-	/// Hot reload owner and its client description (see `Request::Reloader`).
 	reloader: Option<(ClientId, String)>,
-	/// Profile owner (see `Request::Profile`).
 	profiling: Option<ClientId>,
-	/// Last executing evaluation frame; identifies the frame if it sleeps.
 	eval_ran: *mut raw_types::procs::ExecutionContext,
 	breakpoints: Breakpoints,
-	/// Why and where the world is paused, while it is
 	paused: Option<Stop>,
-	/// The places clients watch for a change
 	watches: Vec<watches::Watched>,
 	next_watch: u32,
-	/// Extra names available to the next evaluation.
 	eval_given: Vec<(String, Value)>,
-	/// Cache bytecode, local names and warnings by compilation inputs.
-	/// Breakpoint conditions and logpoints reuse this code on every hit.
 	eval_code: HashMap<EvalCodeKey, Result<(Vec<u32>, Vec<String>, Vec<String>), String>>,
-	/// Compatibility warnings from the last evaluation.
 	eval_warnings: Vec<String>,
-	/// World is loaded and waiting for launcher configuration.
 	waiting_to_start: bool,
-	/// Skin deferred until world data loads at `world/New`.
 	pending_skin: Option<SkinRequest>,
-	/// Client script deferred until world data loads.
 	pending_script: Option<ScriptRequest>,
-	/// Current resource IDs per reloaded file, used by later reloads.
 	resource_ids: HashMap<String, Vec<u32>>,
-	/// Resource IDs before each file's first reload. Restoring its original
-	/// content may safely restore these IDs without affecting other files.
 	resource_origins: HashMap<String, Vec<u32>>,
-	/// Object used as `src` for the next frameless evaluation.
 	eval_src: Option<Value>,
-	/// The number of the expression being compiled to be spawned, which is
-	/// queued rather than run
 	spawning: Option<u64>,
-	/// Spawned expressions waiting for the world's loop
 	spawns: VecDeque<Spawn>,
-	/// The list the world's loop looks at to know there are some
 	spawn_inbox: Option<Value>,
-	/// Original spawn-stub locals table, restored after evaluating a body.
 	spawn_stub_locals: Option<u32>,
-	/// Active spawned evaluations, with source text and first runtime error.
 	spawned: HashMap<u64, (String, Option<String>)>,
-	/// Suppress pauses while a client-requested shutdown or reboot is
-	/// pending, for at most `ENDING_LIMIT`.
 	ending: Option<Instant>,
-	/// Client retaining a pause after all clients disconnect.
 	hold: Option<ClientId>,
-	/// How long that pause lasts with no client that debugs connected
 	hold_max: Option<Duration>,
-	/// Stepping client to notify if its step ends without pausing.
 	stepper: Option<ClientId>,
-	/// Proc IDs indexed by debug source name, with the indexed proc count.
 	procs_by_file: Option<(u32, HashMap<String, Vec<u32>>)>,
 	moved_breakpoints: hot_reload::MovedBreakpoints<(ClientId, Placed)>,
-	/// Previously observed bytecode buffers, indexed by `CodeRef::old - 1`.
 	old_codes: RefCell<Vec<usize>>,
-	/// Reloads deferred until resources load at `world/New`, including all
-	/// subsequent reloads to preserve ordering.
 	waiting_reloads: Vec<HotReloadRequest>,
 	app: Command
 }
@@ -394,7 +280,6 @@ struct ServerThread {
 }
 
 impl Server {
-	/// Maximum completion suggestions.
 	const MOST_COMPLETIONS: usize = 200;
 
 	pub fn setup_app() -> Command {
@@ -414,9 +299,7 @@ impl Server {
 					.arg(Arg::new("proc").help("Path of the proc to disassemble (e.g. /proc/do_stuff)"))
 					.arg(Arg::new("id").help("Id of the proc to disassemble (for when multiple procs are defined with the same path)"))
 			)
-			// Test-only inspection command, omitted from help and completion.
 			.subcommand(Command::new("skin").about("Show login skin resource ID and text").hide(true))
-			// Test-only inspection command, omitted from help and completion.
 			.subcommand(
 				Command::new("script")
 					.about("Show login script string ID, resource IDs and text")
@@ -439,7 +322,6 @@ impl Server {
 			)
 	}
 
-	/// Create or reuse the process listener and accept its queued clients.
 	pub fn listen() -> std::io::Result<Server> {
 		let events = Self::take_events()?;
 		Ok(Server {
@@ -484,7 +366,6 @@ impl Server {
 		})
 	}
 
-	/// What the listener hears, for one Server at a time
 	fn take_events() -> std::io::Result<mpsc::Receiver<Event>> {
 		let mut acceptor = ACCEPTOR.lock().unwrap();
 		if acceptor.is_none() {
@@ -505,7 +386,6 @@ impl Server {
 			.ok_or_else(|| std::io::Error::other("there's a debug server already"))
 	}
 
-	/// The listener's thread
 	fn accept(listener: &connection::Listener) {
 		let mut next_id = 0;
 		loop {
@@ -514,8 +394,6 @@ impl Server {
 			};
 			next_id += 1;
 
-			// Lock to route events to the current server or the next one after
-			// reboot.
 			let events = {
 				let acceptor = ACCEPTOR.lock().unwrap();
 				let Some(acceptor) = acceptor.as_ref() else {
@@ -526,24 +404,18 @@ impl Server {
 				acceptor.events.clone()
 			};
 
-			// The reader exits when the client closes its connection; do not
-			// join it here.
 			let server_thread = ServerThread { events };
 			let id = next_id;
 			thread::spawn(move || server_thread.run(id, connection));
 		}
 	}
 
-	/// Tells whoever connects that there's no debugger, and why
 	pub fn refuse(reason: String) {
 		if let Ok(events) = Self::take_events() {
 			Self::refuse_on(events, reason);
 		}
 	}
 
-	/// Stop for good, for a server a panic left unfit to carry on: drop the
-	/// clients without their bookkeeping, end any pause, and tell clients
-	/// that connect from now on `reason`.
 	pub fn give_up(&mut self, reason: String) {
 		self.clients.clear();
 		self.hold = None;
@@ -570,14 +442,10 @@ impl Server {
 		self.in_eval
 	}
 
-	/// Record the current evaluation frame.
 	pub fn eval_runs(&mut self, ctx: *mut raw_types::procs::ExecutionContext) {
 		self.eval_ran = ctx;
 	}
 
-	/// Record a runtime error and stack. Only an error in the expression frame
-	/// fails evaluation; callee errors end that proc and let evaluation
-	/// continue.
 	pub fn set_eval_error(&mut self, message: &str, ctx: *mut raw_types::procs::ExecutionContext) {
 		if !Self::called_by_expression(ctx) {
 			self.eval_error = Some(Self::error_with_stack(message, ctx));
@@ -589,7 +457,6 @@ impl Server {
 		}
 	}
 
-	/// Whether `ctx` is a callee of the current debugger evaluation.
 	fn called_by_expression(ctx: *mut raw_types::procs::ExecutionContext) -> bool {
 		if ctx.is_null() || is_expression_frame(ctx) {
 			return false;
@@ -604,7 +471,6 @@ impl Server {
 		false
 	}
 
-	/// Send compiler warnings and non-fatal callee errors to the client.
 	fn send_callee_errors(&mut self) {
 		for warning in std::mem::take(&mut self.eval_warnings) {
 			self.send_or_disconnect(Response::Notification {
@@ -625,7 +491,6 @@ impl Server {
 		}
 	}
 
-	/// Format an evaluation runtime error with its call stack.
 	fn error_with_stack(message: &str, ctx: *mut raw_types::procs::ExecutionContext) -> String {
 		let mut error = message.to_owned();
 		let mut frames = vec![];
@@ -634,8 +499,6 @@ impl Server {
 			frames.push(Self::context_place(at));
 			at = unsafe { *(*at).parent_context() };
 		}
-		// Only include frames ending at the expression stub. Other stacks
-		// belong to the world or reload machinery.
 		if !at.is_null() {
 			for (i, place) in frames.iter().enumerate() {
 				error += &format!("\n  {} {}", if i == 0 { "in" } else { "called by" }, place);
@@ -647,9 +510,6 @@ impl Server {
 		error
 	}
 
-	/// Record the first uncaught runtime error in a spawned evaluation's own
-	/// code. One in a proc it called ends only that proc, as in DM; the world
-	/// reports it as any other.
 	pub fn spawn_runtime(&mut self, message: &str, ctx: *mut raw_types::procs::ExecutionContext) {
 		if self.spawned.is_empty() {
 			return;
@@ -663,7 +523,6 @@ impl Server {
 		while !at.is_null() {
 			let id = proc_of(at);
 			if id == stub.id {
-				// The spawned code's own `try` catches it
 				if unsafe { *(*at).throw_handler() } != 0 {
 					return;
 				}
@@ -672,28 +531,24 @@ impl Server {
 				}
 				in_stub = true;
 			} else if in_stub && id == spawned.id {
-				// Its number is its first argument
 				let number = unsafe { Value::from_raw(*(**(*at).proc_instance()).args()) }.as_number().ok();
 				if let Some((_, error @ None)) = number.and_then(|number| self.spawned.get_mut(&(number as u64))) {
 					*error = Some(format!("runtime error: {}", Self::error_with_stack(message, ctx)));
 				}
 				return;
 			} else if !in_stub && unsafe { *(*at).throw_handler() } != 0 {
-				// Caught by the code it called
 				return;
 			}
 			at = unsafe { *(*at).parent_context() };
 		}
 	}
 
-	/// A running frame's proc, and its file and line: `/mob/proc/x  code.dm:12`
 	fn context_place(ctx: *mut raw_types::procs::ExecutionContext) -> String {
 		let proc = Proc::from_id(unsafe { (**(*ctx).proc_instance()).proc });
 		let mut place = match &proc {
 			Some(proc) => unnamed::proc_name(proc),
 			None => "a proc the world doesn't have".to_owned()
 		};
-		// The world keeps the line it's on when it has its code's lines
 		let line = unsafe { (*ctx).filename().valid().then(|| *(*ctx).line()) };
 		match (proc.as_ref().and_then(Self::file_of), line) {
 			(Some(file), Some(line)) => place += &format!("  {}:{}", file, line),
@@ -703,11 +558,6 @@ impl Server {
 		place
 	}
 
-	/// Resolve duplicate local names using each slot's first and last bytecode
-	/// use; BYOND stores no lexical scopes. Prefer an active slot, then the
-	/// latest first use (the inner slot in nested blocks). If none is active,
-	/// use the most recently started slot; before any use, expose none. Unique
-	/// names remain visible throughout. Return `None` for hidden slots.
 	pub(crate) fn visible_locals(frame: &debug::StackFrame) -> Vec<Option<String>> {
 		let names: Vec<String> = frame.locals.iter().map(|(name, _)| String::from(name)).collect();
 		let shared = |name: &String| names.iter().filter(|other| *other == name).count() > 1;
@@ -717,7 +567,6 @@ impl Server {
 		let code = Self::old_code_of(frame).unwrap_or_else(|| original_bytecode(&frame.proc));
 		let used = local_uses(&code);
 		let at = frame.offset as u32;
-		// Rank started slots by active use, then latest first use.
 		let rank = |slot: usize| {
 			used.get(&(slot as u32))
 				.filter(|(first, _)| *first <= at)
@@ -742,13 +591,10 @@ impl Server {
 			.collect()
 	}
 
-	/// Find a frame's pre-reload bytecode. Return `None` if it matches current
-	/// code or differs only in line numbers, which can use current mappings.
 	fn old_code_of(frame: &debug::StackFrame) -> Option<Vec<u32>> {
 		Self::old_code_running(&frame.proc, frame.context)
 	}
 
-	/// Find old bytecode directly from a proc and execution context.
 	fn old_code_running(proc: &Proc, context: *mut raw_types::procs::ExecutionContext) -> Option<Vec<u32>> {
 		let running = unsafe { *(*context).bytecode() };
 		let (current, _) = unsafe { proc.bytecode_mut_ptr() };
@@ -776,8 +622,6 @@ impl Server {
 		Some(old)
 	}
 
-	/// Identify a frame's bytecode, assigning a reference to old code on first
-	/// use.
 	fn code_of(&self, frame: &debug::StackFrame, old: bool) -> CodeRef {
 		let mut code = CodeRef {
 			proc: frame.proc.id.0,
@@ -789,7 +633,6 @@ impl Server {
 		code
 	}
 
-	/// Assign a stable reference to old bytecode on first use.
 	fn old_code_number(&self, running: usize) -> u16 {
 		let mut old_codes = self.old_codes.borrow_mut();
 		let number = match old_codes.iter().position(|&old| old == running) {
@@ -802,7 +645,6 @@ impl Server {
 		u16::try_from(number).unwrap_or(u16::MAX)
 	}
 
-	/// The instructions of some code, as `Request::Disassemble` gives them
 	fn disassemble(&self, code: CodeRef) -> Result<Disassembly, String> {
 		let proc = Proc::from_id(raw_types::procs::ProcId(code.proc)).ok_or_else(|| format!("the world has no proc {:#x}", code.proc))?;
 		let bytecode = if code.old == 0 {
@@ -818,7 +660,6 @@ impl Server {
 
 		let mut env = disassemble_env::DisassembleEnv;
 		let (nodes, error) = dmasm::disassembler::disassemble(&bytecode, &mut env);
-		// Before its first line, an instruction is on that line, as a frame is
 		let first_line = nodes.iter().find_map(|node| match node {
 			dmasm::Node::Instruction(dmasm::Instruction::DbgLine(line), _) => Some(*line),
 			_ => None
@@ -841,7 +682,6 @@ impl Server {
 			});
 			read = debug.offset as usize + debug.bytecode.len();
 		}
-		// What couldn't be read is there all the same
 		for (at, word) in bytecode.iter().enumerate().skip(read) {
 			instructions.push(BytecodeInstruction {
 				offset: at as u16,
@@ -859,8 +699,6 @@ impl Server {
 		})
 	}
 
-	/// Where a proc is, how many definitions its path has, and what hot
-	/// reloads did to it (`Request::ProcInfo`)
 	fn proc_info(wanted: &ProcRef) -> Result<ProcInfo, String> {
 		let definitions = (0..).take_while(|&n| unnamed::find(&wanted.path, n).is_some()).count() as u32;
 		let proc = match unnamed::find(&wanted.path, wanted.override_id) {
@@ -887,14 +725,10 @@ impl Server {
 		})
 	}
 
-	/// Resolve a frame's source position. A sleeping frame points after the
-	/// sleep instruction; if that is the next DbgLine, report the preceding
-	/// line.
 	fn frame_place(&self, frame: &debug::StackFrame, asleep: bool) -> (Option<String>, Option<u32>) {
 		Self::place_running(&frame.proc, frame.context, frame.offset, asleep)
 	}
 
-	/// Resolve a frame's source location without collecting its values.
 	fn place_running(proc: &Proc, context: *mut raw_types::procs::ExecutionContext, offset: u16, asleep: bool) -> (Option<String>, Option<u32>) {
 		let offset = if asleep { (offset as u32).saturating_sub(1) } else { offset as u32 };
 
@@ -907,7 +741,6 @@ impl Server {
 		Self::place_of(proc, offset)
 	}
 
-	/// A frame as a client is shown it, known to it by `id`
 	fn frame_info(&self, frame: &debug::StackFrame, id: u32, asleep: bool) -> StackFrame {
 		let old_code = Self::old_code_of(frame).is_some();
 		let (file, line) = self.frame_place(frame, asleep);
@@ -924,13 +757,11 @@ impl Server {
 		}
 	}
 
-	/// The file a proc is in, if its code starts with DbgFile
 	fn file_of(proc: &Proc) -> Option<String> {
 		let dbg_file = dmasm::Opcode::DbgFile.word();
 		let bytecode = unsafe { proc.bytecode() };
 		let id = match bytecode {
 			[op, id, ..] if *op == dbg_file => *id,
-			// A breakpoint at its start hides it
 			[_, ..] => match crate::instruction_hooking::original_bytecode(proc).as_slice() {
 				[op, id, ..] if *op == dbg_file => *id,
 				_ => return None
@@ -941,10 +772,7 @@ impl Server {
 		Some(String::from_utf8_lossy(name.data()).into_owned())
 	}
 
-	/// Index every source file named by each proc's DbgFile instructions.
-	/// Initializer procs may refer to several files.
 	fn file_index(&mut self) -> &HashMap<String, Vec<u32>> {
-		// Counted again when procs were added
 		let count = auxtools::runtime_tables::proc_count();
 		if self.procs_by_file.as_ref().is_none_or(|(counted, _)| *counted != count) {
 			let dbg_file = dmasm::Opcode::DbgFile.word();
@@ -954,8 +782,6 @@ impl Server {
 					continue;
 				};
 				let Some(file) = Self::file_of(&proc) else { continue };
-				// Avoid full disassembly unless the bytecode contains a
-				// possible DbgFile opcode.
 				if unsafe { proc.bytecode() }.iter().skip(2).any(|&word| word == dbg_file) {
 					for other in Self::files_of(&proc) {
 						if other != file {
@@ -970,7 +796,6 @@ impl Server {
 		&self.procs_by_file.as_ref().unwrap().1
 	}
 
-	/// The files a proc's code names (its DbgFiles), each once
 	fn files_of(proc: &Proc) -> Vec<String> {
 		let bytecode = crate::instruction_hooking::original_bytecode(proc);
 		let mut env = disassemble_env::DisassembleEnv;
@@ -987,18 +812,13 @@ impl Server {
 		files
 	}
 
-	/// A file's name as two of them are compared
 	fn normalized(path: &str) -> String {
 		path.replace('\\', "/").to_ascii_lowercase()
 	}
 
-	/// Locate procs and executable lines for `file`, and return matching
-	/// normalized debug names.
 	fn procs_in(&mut self, file: &str) -> (Vec<String>, Vec<(ProcRef, Vec<u32>)>) {
 		let normalize = Self::normalized;
 		let wanted = normalize(file);
-		// Prefer an exact debug name. Only fall back to suffix matching if
-		// none exists: `map.dm` and `code/map.dm` can be distinct files.
 		let same = |file: &str| file == wanted;
 		let alike = |file: &str| file.ends_with(&format!("/{}", wanted)) || wanted.ends_with(&format!("/{}", file));
 
@@ -1026,7 +846,6 @@ impl Server {
 		(files, procs)
 	}
 
-	/// The lines from `start` to `end` of `file` that some proc has code on
 	fn lines_with_code(&mut self, file: &str, start: u32, end: u32) -> Vec<u32> {
 		let mut lines: Vec<u32> = self
 			.procs_in(file)
@@ -1040,9 +859,7 @@ impl Server {
 		lines
 	}
 
-	/// Where each proc with code on `line` of `file` has it
 	fn locate(&mut self, file: &str, line: u32) -> Vec<InstructionRef> {
-		// Move non-executable line breakpoints to the next executable line.
 		let (files, procs) = self.procs_in(file);
 		let Some(line) = procs.iter().flat_map(|(_, lines)| lines.iter().copied()).filter(|&l| l >= line).min() else {
 			return vec![];
@@ -1060,8 +877,6 @@ impl Server {
 		found
 	}
 
-	/// The lines of `files` (`normalized`) a proc has code on: its DbgLines
-	/// while its code is of one of them
 	fn lines_in(proc: &Proc, files: &[String]) -> Vec<u32> {
 		let bytecode = crate::instruction_hooking::original_bytecode(proc);
 		let mut env = disassemble_env::DisassembleEnv;
@@ -1080,7 +895,6 @@ impl Server {
 		lines
 	}
 
-	/// The lines a proc has code on (its DbgLines)
 	fn lines_of(proc: &Proc) -> Vec<u32> {
 		let bytecode = crate::instruction_hooking::original_bytecode(proc);
 		let mut env = disassemble_env::DisassembleEnv;
@@ -1094,14 +908,6 @@ impl Server {
 			.collect()
 	}
 
-	/// Resolve source file and line at a bytecode offset. A proc can switch
-	/// files through DbgFile, especially in initializers and `::` defaults.
-	///
-	/// If `before` is set and the offset points to DbgLine, report the
-	/// preceding line. Non-executable line breakpoints can stop there.
-	/// A DbgFile at this offset has not run yet; keep the preceding line's
-	/// file. DreamMaker can insert the .dme's location between repeated source
-	/// locations at the start of an included file's last proc.
 	fn place_in(bytecode: &[u32], offset: u32, before: bool) -> Option<(Option<String>, u32)> {
 		let mut current_line_number = None;
 		let mut current_file = None;
@@ -1122,7 +928,6 @@ impl Server {
 				Mark::Line(_) if before && *at == offset => {}
 				Mark::Line(line) => {
 					current_line_number = Some(*line);
-					// Before its first line, a proc is at its first line
 					if reached_offset {
 						break;
 					}
@@ -1145,13 +950,10 @@ impl Server {
 		}
 	}
 
-	/// Cache instruction offsets and source markers by bytecode content.
-	/// Runtime stack traces would otherwise disassemble each frame's proc.
 	fn marks(bytecode: &[u32]) -> std::sync::Arc<[(u32, Mark)]> {
 		use std::hash::{Hash, Hasher};
 		type Marks = std::sync::Arc<[(u32, Mark)]>;
 		static MARKS: std::sync::LazyLock<Mutex<HashMap<(u64, usize), Marks>>> = std::sync::LazyLock::new(Default::default);
-		// Bound cache memory during long sessions.
 		const KEEP: usize = 8192;
 
 		let key = {
@@ -1185,19 +987,13 @@ impl Server {
 		marks
 	}
 
-	/// The file and line of the code at `offset` of a proc. The file is the
-	/// one the proc starts in when its code doesn't say there.
 	fn place_of(proc: &Proc, offset: u32) -> (Option<String>, Option<u32>) {
-		// Read unpatched bytecode. Only a breakpoint at this offset requires
-		// the preceding line position.
 		let original = original_bytecode(proc);
 		let here = offset as usize;
 		let breakpoint_here = unsafe { proc.bytecode() }.get(here) != original.get(here);
 		Self::place_at(proc, &original, offset, breakpoint_here)
 	}
 
-	/// The file and line a breakpoint at `offset` of a proc is on: where the
-	/// world is when it stops there
 	fn breakpoint_place(proc: &Proc, offset: u32) -> (Option<String>, Option<u32>) {
 		Self::place_at(proc, &original_bytecode(proc), offset, true)
 	}
@@ -1213,9 +1009,6 @@ impl Server {
 		self.offset_of(proc, line, None)
 	}
 
-	/// Where a proc's code for `line` starts: the line of one of `files`
-	/// (`normalized`) when they're given, as a proc can have code of several
-	/// (see `place_in`)
 	fn offset_of(&self, proc: ProcRef, line: u32, files: Option<&[String]>) -> Option<u32> {
 		let proc = unnamed::find(&proc.path, proc.override_id)?;
 		let mut offset = None;
@@ -1223,8 +1016,6 @@ impl Server {
 		let mut other_file = false;
 		let mut inside = files.is_none();
 
-		// Without the breakpoints in it: a line's breakpoint can be where the
-		// next line's DbgLine was
 		let bytecode = original_bytecode(&proc);
 
 		let mut env = disassemble_env::DisassembleEnv;
@@ -1232,8 +1023,6 @@ impl Server {
 
 		for node in nodes {
 			if let dmasm::Node::Instruction(ins, debug) = node {
-				// Skip intervening file markers before placing the breakpoint
-				// (see `place_in`).
 				if at_offset {
 					match ins {
 						dmasm::Instruction::DbgFile(_) => {
@@ -1261,10 +1050,6 @@ impl Server {
 		offset
 	}
 
-	// 516 primitives have no `vars` list; enumerate their fields explicitly.
-	// Callee fields are readable only while the proc runs. Do not retain
-	// a savefile's `vars` list: BYOND does not count its references and
-	// reports "Bad ref" when released.
 	const fn primitive_fields(value: &Value) -> Option<&'static [&'static str]> {
 		match value.raw.tag {
 			ValueTag::Vector => Some(&["x", "y", "z", "len", "size"]),
@@ -1276,12 +1061,10 @@ impl Server {
 	}
 
 	fn is_object(value: &Value) -> bool {
-		// Hack for globals
 		if value.raw.tag == ValueTag::World && unsafe { value.raw.data.id == 1 } {
 			return true;
 		}
 
-		// A typepath answers for `vars` too, with something that isn't a list
 		Self::primitive_fields(value).is_some() || value.get(byond_string!("vars")).is_ok_and(|vars| List::is_list(&vars))
 	}
 
@@ -1293,10 +1076,8 @@ impl Server {
 			}
 		} else {
 			match value.to_string() {
-				// What BYOND has no text for
 				Ok(v) if v.is_empty() => match value.raw.tag {
 					ValueTag::World => "world".to_owned(),
-					// Of a proc that has ended
 					ValueTag::Pointer => "a pointer to a var that's gone".to_owned(),
 					ValueTag::Image => "/image".to_owned(),
 					ValueTag::Appearance => "appearance".to_owned(),
@@ -1310,7 +1091,6 @@ impl Server {
 		}
 	}
 
-	/// Return an object typepath or a primitive kind label.
 	fn kind(value: &Value) -> Option<String> {
 		use ValueTag as Tag;
 		if List::is_list(value) {
@@ -1350,8 +1130,6 @@ impl Server {
 		Some(word.to_owned())
 	}
 
-	/// A value written as DM code, if it's one that code can write: a key
-	/// to read a list's entry by
 	fn literal(value: &Value) -> Option<String> {
 		use ValueTag as Tag;
 		match value.raw.tag {
@@ -1363,8 +1141,6 @@ impl Server {
 		}
 	}
 
-	/// Encode text as an exact DM string literal. Macros and control characters
-	/// cannot be represented this way.
 	fn text_literal(bytes: &[u8]) -> Option<String> {
 		let mut literal = String::with_capacity(bytes.len() + 2);
 		literal.push('"');
@@ -1384,8 +1160,6 @@ impl Server {
 		Some(literal)
 	}
 
-	/// Build a list-entry expression using a literal key, object ref, or
-	/// one-based position. Positional lookup is unavailable for alists.
 	fn entry_expr(list: &str, key: &Value, position: Option<u32>) -> Option<String> {
 		use ValueTag as Tag;
 		if let Some(key) = Self::literal(key) {
@@ -1401,7 +1175,6 @@ impl Server {
 		position.map(|i| format!("{}[{}[{}]]", list, list, i))
 	}
 
-	/// Build a variable descriptor with an optional access expression.
 	fn value_to_variable(&self, name: String, value: &Value, expr: Option<String>) -> Variable {
 		Variable {
 			name,
@@ -1413,7 +1186,6 @@ impl Server {
 		}
 	}
 
-	/// How many entries a list has
 	fn entries(value: &Value) -> Option<u32> {
 		if !List::is_list(value) {
 			return None;
@@ -1427,7 +1199,6 @@ impl Server {
 
 			Some(state) if Self::is_object(value) => Some(state.get_ref(Variables::ObjectVars(value.clone(), expr))),
 
-			// A pointer opens to what it names
 			Some(state) if value.raw.tag == ValueTag::Pointer && auxtools::pointer::read_raw(value).is_some() => {
 				Some(state.get_ref(Variables::Pointee(value.clone(), expr)))
 			}
@@ -1436,8 +1207,6 @@ impl Server {
 		}
 	}
 
-	/// List entries starting at zero-based `start`, optionally limited to
-	/// `count`.
 	fn list_to_variables(&mut self, value: &Value, expr: Option<&str>, start: Option<u32>, count: Option<u32>) -> Result<Vec<Variable>, Runtime> {
 		let state = self.state.as_ref().unwrap();
 		let list = List::from_value(value)?;
@@ -1445,9 +1214,6 @@ impl Server {
 		let first = start.unwrap_or(0).min(len);
 		let last = count.map_or(len, |count| first.saturating_add(count).min(len));
 
-		// Expose `key = value` as an expandable pair accessed through
-		// `list[key]`. Alist numbers are keys, so entries cannot be accessed by
-		// position.
 		let alist = list.is_alist();
 		let pair = |i: u32, key: Value, value: Value| {
 			let entry = expr.and_then(|list| Self::entry_expr(list, &key, (!alist).then_some(i)));
@@ -1466,8 +1232,6 @@ impl Server {
 			}
 		};
 
-		// numbers are keys in an alist, so the position walk below would read
-		// the wrong entries
 		if alist {
 			return Ok(list
 				.alist_pairs()?
@@ -1484,7 +1248,6 @@ impl Server {
 		for i in first + 1..=last {
 			let key = list.get(i)?;
 
-			// assoc entry
 			if key.raw.tag != raw_types::values::ValueTag::Number {
 				if let Ok(value) = list.get(&key) {
 					if value.raw.tag != raw_types::values::ValueTag::Null {
@@ -1494,7 +1257,6 @@ impl Server {
 				}
 			}
 
-			// non-assoc entry
 			variables.push(self.value_to_variable(format!("[{}]", i), &key, expr.map(|list| format!("{}[{}]", list, i))));
 		}
 
@@ -1514,8 +1276,7 @@ impl Server {
 		let vars = List::from_value(&value.get(byond_string!("vars"))?)?;
 
 		let mut variables = vec![];
-		let mut top_variables = vec![]; // These fields get displayed on top of
-										// all others
+		let mut top_variables = vec![];
 
 		for i in 1..=vars.len() {
 			let name = vars.get(i)?.as_string()?;
@@ -1535,8 +1296,6 @@ impl Server {
 		Ok(top_variables)
 	}
 
-	/// The names of the constants BYOND declares itself, from its stddef.dm:
-	/// the lines under each `var/const`
 	fn builtin_constants() -> std::collections::HashSet<String> {
 		let mut names = std::collections::HashSet::new();
 		let mut in_consts = false;
@@ -1554,7 +1313,6 @@ impl Server {
 		names
 	}
 
-	/// List world globals separately from built-in constants.
 	fn globals_to_variables(&mut self, builtin: bool) -> Result<Vec<Variable>, Runtime> {
 		let names = List::from_value(&unsafe { Value::new(ValueTag::GlobalVars, ValueData { id: 0 }) })?;
 		let builtins = Self::builtin_constants();
@@ -1586,9 +1344,6 @@ impl Server {
 		Ok(variables)
 	}
 
-	/// Hide outer debugger helper frames, preserving frame positions and IDs.
-	/// Keep stacks containing only helpers visible, so a pause in the keepalive
-	/// loop still has a location.
 	fn shown(stack: &[debug::StackFrame]) -> &[debug::StackFrame] {
 		match stack.iter().rposition(|frame| !crate::launched::runs_spawns(&frame.proc)) {
 			Some(last) => &stack[..=last],
@@ -1596,9 +1351,7 @@ impl Server {
 		}
 	}
 
-	/// Whether a sleeping stack contains only debugger helpers.
 	fn only_runs_spawns(instance: *mut raw_types::procs::ProcInstance) -> bool {
-		// From the outermost frame to the innermost
 		let mut ctx = unsafe { (*instance).context };
 		while !ctx.is_null() {
 			let proc = Proc::from_id(unsafe { (**(*ctx).proc_instance()).proc });
@@ -1610,20 +1363,12 @@ impl Server {
 		true
 	}
 
-	/// Use the outermost proc instance's BYOND ID as a stable stack ID.
-	/// The instance address changes on first sleep; spawned copies receive
-	/// distinct IDs. IDs may be reused after a proc ends. For spawned code,
-	/// use the outermost visible frame so its ID survives sleeping.
 	fn thread_of(&self, stack: &[debug::StackFrame]) -> u32 {
-		// 0 is "the running proc's" in a request
 		Self::shown(stack)
 			.last()
 			.map_or(0, |frame| unsafe { (*frame.instance).argslist_idx.id }.wrapping_add(1))
 	}
 
-	/// Where the stack a client calls `thread` is: 0 for the running proc's
-	/// (which a client can call 0 too), then the sleeping ones as BYOND has
-	/// them
 	fn stack_position(&self, thread: u32) -> Option<usize> {
 		let state = self.state.as_ref()?;
 		if thread == 0 {
@@ -1646,7 +1391,6 @@ impl Server {
 		state.suspended().get(position - 1)
 	}
 
-	/// The frame a client knows by `frame_index`, if it's still there
 	fn get_stack_frame(&self, frame_index: u32) -> Option<&debug::StackFrame> {
 		let state = self.state.as_ref()?;
 		if frame_index < SLEEPING_FRAMES {
@@ -1671,7 +1415,6 @@ impl Server {
 
 		let mut unnamed_count = 0;
 		for (i, (name, value)) in frame.args.iter().enumerate() {
-			// One more than the proc declares is only in its args
 			let (name, expr) = match name {
 				Some(name) => (String::from(name), String::from(name)),
 				None => {
@@ -1691,8 +1434,6 @@ impl Server {
 		};
 		let mut vars = vec![self.value_to_variable(".".to_owned(), &frame.dot, Some(".".to_owned()))];
 
-		// Only expose the local selected by the bytecode-use heuristic for each
-		// name.
 		for (name, (_, local)) in Self::visible_locals(&frame).into_iter().zip(&frame.locals) {
 			if let Some(name) = name {
 				vars.push(self.value_to_variable(name.clone(), local, Some(name)));
@@ -1702,9 +1443,6 @@ impl Server {
 		vars
 	}
 
-	/// Resolve function breakpoints after initial file/line records so the
-	/// first step advances to the next line. Use offset 0 if records are
-	/// absent.
 	fn entry_offset(proc: &Proc) -> u32 {
 		let bytecode = original_bytecode(proc);
 		let mut env = disassemble_env::DisassembleEnv;
@@ -1723,7 +1461,6 @@ impl Server {
 		0
 	}
 
-	/// The offset a client means: 0 is the proc itself (see `entry_offset`)
 	fn breakpoint_offset(proc: &Proc, offset: u32) -> u32 {
 		if offset == 0 {
 			Self::entry_offset(proc)
@@ -1732,8 +1469,6 @@ impl Server {
 		}
 	}
 
-	/// Sets a breakpoint: `exactly` at the instruction asked for, or else
-	/// where a client means (`breakpoint_offset`)
 	fn handle_breakpoint_set(
 		&mut self,
 		mut instruction: InstructionRef,
@@ -1754,8 +1489,6 @@ impl Server {
 		}
 		let (file, line) = Self::breakpoint_place(&proc, instruction.offset);
 
-		// Compile conditions and interpolated messages when setting the
-		// breakpoint, so syntax errors are reported once before any hit.
 		let log_error = || {
 			log.iter().flatten().find_map(|part| match part {
 				LogPart::Expr(expression) => {
@@ -1777,9 +1510,6 @@ impl Server {
 
 		match hook_instruction(&proc, instruction.offset) {
 			Ok(()) => {
-				// Re-setting replaces the condition and resets hit counts.
-				// Preserve error-report suppression only when the condition is
-				// unchanged.
 				let key = (proc.id, instruction.offset as u16);
 				let claims = self.breakpoints.entry(key).or_default();
 				let told = claims.get(&(client, placed)).is_some_and(|old| old.told && old.condition == condition);
@@ -1792,13 +1522,10 @@ impl Server {
 					told
 				});
 
-				// The client now knows the remapped offset; discard its old
-				// alias.
 				let offset = instruction.offset;
 				self.moved_breakpoints
 					.retain(|&(id, from, who), &mut at| id != proc.id || who != (client, placed) || (at != offset && from != offset));
 
-				// As the proc itself names it, whatever the client called it
 				instruction.proc = unnamed::proc_ref(&proc);
 				self.send_or_disconnect(Response::BreakpointSet {
 					result: BreakpointSetResult::Success { line, at: instruction, file }
@@ -1813,8 +1540,6 @@ impl Server {
 		}
 	}
 
-	/// Compile breakpoint conditions and message expressions to detect syntax
-	/// errors. Resolve names later in the frame that hits the breakpoint.
 	fn expression_error(proc: &Proc, condition: &str) -> Option<String> {
 		let mut names = vec![".".to_owned(), "usr".to_owned(), "src".to_owned()];
 		names.extend(proc.parameter_names().iter().map(String::from));
@@ -1829,8 +1554,6 @@ impl Server {
 			.map(|e| e.to_string())
 	}
 
-	/// Interpolate a logpoint message in the hit frame. Text values are
-	/// unquoted.
 	fn log_message(&mut self, parts: &[LogPart]) -> String {
 		let mut message = String::new();
 		for part in parts {
@@ -1854,7 +1577,6 @@ impl Server {
 			return;
 		};
 
-		// It might be one a reload moved, known to the client by where it was
 		let placed = Placed::of(instruction.offset, exactly);
 		let asked = if exactly {
 			instruction.offset
@@ -1864,7 +1586,6 @@ impl Server {
 		let who = (client, placed);
 		let offset = self.moved_breakpoints.get(&(proc.id, asked, who)).copied().unwrap_or(asked);
 
-		// The client doesn't know it by any other place now
 		self.moved_breakpoints
 			.retain(|(id, _, other), at| *id != proc.id || *at != offset || *other != who);
 
@@ -1873,7 +1594,6 @@ impl Server {
 		let had = claims.remove(&who);
 		let skipped = had.as_ref().map_or(0, |claim| claim.skipped);
 		let success = if claims.is_empty() {
-			// Nobody else wants it
 			self.breakpoints.remove(&key);
 			unhook_instruction(&proc, offset).is_ok()
 		} else {
@@ -1885,13 +1605,11 @@ impl Server {
 	fn handle_stacks(&mut self, sleeping: Option<u32>) {
 		let sleeping = sleeping.unwrap_or(DEFAULT_SLEEPING_STACKS) as usize;
 		if let Some(state) = &mut self.state {
-			// Allow for the hidden keepalive stack.
 			state.read_sleeping(sleeping.saturating_add(1));
 		}
 		let mut asleep = 0;
 		let stacks = match &self.state {
 			Some(state) => {
-				// Exclude sleeping helper stacks from the count and results.
 				let instances = debug::CallStacks::suspended_instances();
 				asleep = instances.len() - instances.into_iter().filter(|&instance| Self::only_runs_spawns(instance)).count();
 				let suspended = state
@@ -1904,7 +1622,6 @@ impl Server {
 					.enumerate()
 					.filter(|(_, stack)| !stack.is_empty())
 					.map(|(position, stack)| {
-						// A sleeping stack's innermost frame is the one asleep
 						let (file, line) = self.frame_place(&stack[0], position != 0);
 						Stack {
 							id: self.thread_of(stack),
@@ -1954,7 +1671,6 @@ impl Server {
 						}),
 						_ => i as u32
 					};
-					// A sleeping stack's innermost frame is the one asleep
 					frames.push(self.frame_info(&stack[i], id, stack_id != 0 && i == 0));
 				}
 
@@ -1995,7 +1711,6 @@ impl Server {
 		self.send_or_disconnect(response);
 	}
 
-	/// Expand a previously issued variable reference.
 	fn list_variables(&mut self, container: Variables, start: Option<u32>, count: Option<u32>) -> Result<Vec<Variable>, Runtime> {
 		match container {
 			Variables::Arguments { frame } => Ok(self.get_args(frame)),
@@ -2015,7 +1730,6 @@ impl Server {
 		}
 	}
 
-	/// Stale or unknown variable references have no children.
 	fn handle_variables(&mut self, vars: VariablesRef, start: Option<u32>, count: Option<u32>) {
 		let listed = match self.state.as_ref().and_then(|state| state.get_variables(vars)) {
 			Some(container) => self.list_variables(container, start, count),
@@ -2029,12 +1743,9 @@ impl Server {
 		self.send_or_disconnect(Response::Variables { vars });
 	}
 
-	/// The types an object is of, its own first: `/mob/player`, `/mob`,
-	/// `/atom/movable`, `/atom`, `/datum`
 	fn types_of(value: &Value) -> Vec<String> {
 		let mut types = vec![];
 		let mut path = value.get(byond_string!("type")).ok();
-		// (a type's parent isn't always the path without its last part)
 		while let Some(this) = path.filter(|path| path.raw.tag != ValueTag::Null) {
 			let name = Self::stringify(&this);
 			if !name.starts_with('/') || types.contains(&name) || types.len() > 64 {
@@ -2046,7 +1757,6 @@ impl Server {
 		types
 	}
 
-	/// Collect value members as (name, is_proc) entries.
 	fn members_of(value: &Value, found: &mut BTreeMap<String, bool>) {
 		if let Some(fields) = Self::primitive_fields(value) {
 			found.extend(fields.iter().map(|&name| (name.to_owned(), false)));
@@ -2069,13 +1779,11 @@ impl Server {
 		});
 	}
 
-	/// Calls `each` with every proc's type (`""` for a global proc) and name
 	fn each_proc(mut each: impl FnMut(&str, &str)) {
 		for id in 0..auxtools::runtime_tables::proc_count() {
 			let Some(proc) = Proc::from_id(raw_types::procs::ProcId(id)) else {
 				continue;
 			};
-			// The debugger's own, and a type's init code, aren't for calling
 			let Some((owner, name)) = proc.path.rsplit_once('/') else {
 				continue;
 			};
@@ -2086,12 +1794,10 @@ impl Server {
 		}
 	}
 
-	/// The names that could follow what's typed (see `Request::Complete`)
 	fn complete(&mut self, frame_id: Option<u32>, base: Option<&str>, prefix: &str) -> Vec<Completion> {
 		let mut found: BTreeMap<String, bool> = BTreeMap::new();
 		match base {
 			Some(base) => {
-				// Its code ran, whether it gave a value or not
 				let value = self.eval_expr(frame_id, base);
 				if let Some(state) = self.state.as_mut() {
 					state.invalidate_stacks();
@@ -2103,7 +1809,6 @@ impl Server {
 			}
 
 			None => {
-				// What the frame has, then its src's, then the world's
 				let mut src = None;
 				if let Some(frame) = frame_id.and_then(|frame_id| self.get_stack_frame(frame_id)) {
 					for name in [".", "src", "usr", "args"] {
@@ -2153,17 +1858,12 @@ impl Server {
 			.collect()
 	}
 
-	/// The entry of a list that a client knows as `[n]`: its place, from 1
 	fn entry_number(name: &str) -> Option<u32> {
 		name.strip_prefix('[')?.strip_suffix(']')?.parse().ok().filter(|&n| n > 0)
 	}
 
-	/// Assign a value to a variable. Report BYOND's write failures as runtime
-	/// errors.
 	fn write_variable(&mut self, container: &Variables, name: &str, value: &Value) -> Result<(), String> {
 		let runtime = |e: Runtime| format!("runtime error: {}", e.message);
-		// A frame's slot takes a reference of its own, and lets go of what
-		// it had
 		unsafe fn put(slot: *mut raw_types::values::Value, value: &Value) {
 			unsafe {
 				let _ = Value::from_raw_owned(*slot);
@@ -2198,8 +1898,6 @@ impl Server {
 					"src" => unsafe { put(&raw mut (*frame.instance).src, value) },
 					"usr" => unsafe { put(&raw mut (*frame.instance).usr, value) },
 					_ => {
-						// One the proc doesn't declare is known by its number
-						// among those
 						let unnamed: Option<usize> = name.strip_prefix("undefined argument #").and_then(|n| n.parse().ok());
 						let mut without_names = 0;
 						let index = frame.args.iter().position(|(arg, _)| match arg {
@@ -2225,7 +1923,6 @@ impl Server {
 				let number = Self::entry_number(name)
 					.filter(|&n| n <= list.len())
 					.ok_or_else(|| format!("the list has no entry {}", name))?;
-				// An entry with a value for its key is given another value
 				if list.is_alist() {
 					let (key, _) = list
 						.alist_pairs()
@@ -2253,7 +1950,6 @@ impl Server {
 		}
 	}
 
-	/// Evaluate an assignment and return the variable's resulting value.
 	fn set_variable(&mut self, vars: VariablesRef, name: &str, value: &str) -> Result<Variable, String> {
 		let container = self
 			.state
@@ -2264,12 +1960,10 @@ impl Server {
 			Variables::Arguments { frame } | Variables::Locals { frame } => *frame,
 			_ => 0
 		};
-		// Its code ran, whether it gave a value or not
 		let value = self.eval_expr(Some(frame), value);
 		self.state.as_mut().unwrap().invalidate_stacks();
 		let value = value?;
 
-		// Report assignment runtime errors to the requester without pausing.
 		self.in_eval = true;
 		auxtools::instruction_hook::hear_all();
 		self.eval_error = None;
@@ -2282,12 +1976,10 @@ impl Server {
 		}
 		written?;
 
-		// Refresh the cached entry value after assignment.
 		if let Variables::ListPair { entry, .. } = &container {
 			return Ok(self.value_to_variable(name.to_owned(), &value, entry.clone()));
 		}
 
-		// As the world has it now, which isn't always what it was given
 		let (start, count) = match &container {
 			Variables::ListContents(..) => (Self::entry_number(name).map(|n| n - 1), Some(1)),
 			_ => (None, None)
@@ -2300,91 +1992,79 @@ impl Server {
 	}
 
 	fn handle_command(&mut self, frame_id: Option<u32>, command: &str) -> String {
-		// How many matches variables can you spot? It could be better...
 		let response = match self.app.try_get_matches_from_mut(command.split_ascii_whitespace()) {
-			Ok(matches) => {
-				match matches.subcommand() {
-					Some(("disassemble", matches)) => {
-						if let Some(proc) = matches.get_one::<String>("proc").map(String::as_str) {
-							// Default id to 0 in the worst way possible
-							let id = matches
-								.get_one::<String>("id")
-								.map(String::as_str)
-								.and_then(|x| x.parse::<u32>().ok())
-								.unwrap_or(0);
+			Ok(matches) => match matches.subcommand() {
+				Some(("disassemble", matches)) => {
+					if let Some(proc) = matches.get_one::<String>("proc").map(String::as_str) {
+						let id = matches
+							.get_one::<String>("id")
+							.map(String::as_str)
+							.and_then(|x| x.parse::<u32>().ok())
+							.unwrap_or(0);
 
-							self.handle_disassemble(proc, id)
-						} else if let Some(frame_id) = frame_id {
-							if let Some(frame) = self.get_stack_frame(frame_id) {
-								let proc = unnamed::proc_ref(&frame.proc);
-								self.handle_disassemble(&proc.path, proc.override_id)
-							} else {
-								"couldn't find stack frame (is execution not paused?)".to_owned()
-							}
+						self.handle_disassemble(proc, id)
+					} else if let Some(frame_id) = frame_id {
+						if let Some(frame) = self.get_stack_frame(frame_id) {
+							let proc = unnamed::proc_ref(&frame.proc);
+							self.handle_disassemble(&proc.path, proc.override_id)
 						} else {
-							"no execution frame selected".to_owned()
+							"couldn't find stack frame (is execution not paused?)".to_owned()
 						}
+					} else {
+						"no execution frame selected".to_owned()
+					}
+				}
+
+				Some(("skin", _)) => match self.evaluating(crate::skin::state) {
+					Ok(None) => "no skin".to_owned(),
+					Ok(Some((resource, text))) => format!("resource {}\n{}", resource, text),
+					Err(e) => format!("Failed: {}", e)
+				},
+
+				Some(("script", _)) => self.evaluating(crate::client_script::state).unwrap_or_else(|e| format!("Failed: {}", e)),
+
+				Some(("guest_override", matches)) => match matches.get_one::<String>("ckey").map(String::as_str) {
+					Some(ckey) => match crate::ckey_override::override_guest_ckey(ckey) {
+						Ok(()) => "Success".to_owned(),
+
+						Err(e) => {
+							format!("Failed: {:?}", e)
+						}
+					},
+
+					None => "no ckey provided".to_owned()
+				},
+
+				Some(("mem_profiler", matches)) => match matches.subcommand() {
+					Some(("begin", matches)) => match matches.get_one::<String>("path").map(String::as_str) {
+						Some(path) => mem_profiler::begin(path)
+							.map(|_| "Memory profiler enabled".to_owned())
+							.unwrap_or_else(|e| format!("Failed: {}", e)),
+
+						None => "no path provided".to_owned()
+					},
+
+					Some(("end", _)) => {
+						mem_profiler::end();
+						"Memory profiler disabled".to_owned()
 					}
 
-					Some(("skin", _)) => match self.evaluating(crate::skin::state) {
-						Ok(None) => "no skin".to_owned(),
-						Ok(Some((resource, text))) => format!("resource {}\n{}", resource, text),
-						Err(e) => format!("Failed: {}", e)
-					},
+					_ => "unknown memory profiler sub-command".to_owned()
+				},
 
-					Some(("script", _)) => self.evaluating(crate::client_script::state).unwrap_or_else(|e| format!("Failed: {}", e)),
-
-					Some(("guest_override", matches)) => match matches.get_one::<String>("ckey").map(String::as_str) {
-						Some(ckey) => match crate::ckey_override::override_guest_ckey(ckey) {
-							Ok(()) => "Success".to_owned(),
-
-							Err(e) => {
-								format!("Failed: {:?}", e)
-							}
-						},
-
-						None => "no ckey provided".to_owned()
-					},
-
-					Some(("mem_profiler", matches)) => match matches.subcommand() {
-						Some(("begin", matches)) => match matches.get_one::<String>("path").map(String::as_str) {
-							Some(path) => mem_profiler::begin(path)
-								.map(|_| "Memory profiler enabled".to_owned())
-								.unwrap_or_else(|e| format!("Failed: {}", e)),
-
-							None => "no path provided".to_owned()
-						},
-
-						Some(("end", _)) => {
-							mem_profiler::end();
-							"Memory profiler disabled".to_owned()
-						}
-
-						_ => "unknown memory profiler sub-command".to_owned()
-					},
-
-					_ => "unknown command".to_owned()
-				}
-			}
+				_ => "unknown command".to_owned()
+			},
 			Err(e) => e.to_string()
 		};
 
 		response
 	}
 
-	/// Evaluate in the selected frame or global scope, returning a value or
-	/// error.
 	fn eval_expr(&mut self, frame_id: Option<u32>, command: &str) -> Result<Value, String> {
 		self.eval_expr_plain(frame_id, command).map_err(Self::unknown_name)
 	}
 
-	/// Evaluate a logpoint expression without the missing-macros hint,
-	/// which would otherwise be repeated within every log message.
 	fn eval_expr_plain(&mut self, frame_id: Option<u32>, command: &str) -> Result<Value, String> {
-		// Assembling the expression runs DM code of its own to look up
-		// typepaths and resources, so it counts as eval code too. Otherwise the
-		// instruction hook would handle the client's next request in the middle
-		// of this one, and a runtime would pause inside the pause we're in.
 		self.in_eval = true;
 		auxtools::instruction_hook::hear_all();
 		self.eval_error = None;
@@ -2396,27 +2076,22 @@ impl Server {
 		let result = self.compile_and_run_expr(frame_id, command);
 		self.eval_given.clear();
 		self.eval_src = None;
-		// Whatever it changed isn't the world's doing
 		self.refresh_watches();
 
 		self.in_eval = false;
 
-		// Its code failed: whatever it returned isn't the expression's value
 		match self.eval_error.take() {
 			Some(error) => Err(format!("runtime error: {}", error)),
 			None => result
 		}
 	}
 
-	/// Suggest unavailable source macros for unresolved uppercase names.
 	fn unknown_name(error: String) -> String {
 		let name = match (error.strip_prefix("undefined var: "), error.strip_prefix("proc not found: ")) {
 			(Some(name), _) => name,
 			(_, Some(path)) => path.rsplit('/').next().unwrap_or(path),
 			_ => return error
 		};
-		// Uppercase unresolved names are likely macros; avoid the hint
-		// for ordinary misspellings.
 		let capitals = name.chars().any(|c| c.is_ascii_uppercase()) && !name.chars().any(|c| c.is_ascii_lowercase());
 		if !capitals || crate::macros::given() {
 			return error;
@@ -2427,7 +2102,6 @@ impl Server {
 		)
 	}
 
-	/// Format an assembly error for the user.
 	fn assemble_error(error: dmasm::assembler::AssembleError) -> String {
 		use dmasm::assembler::AssembleError;
 		let text = |bytes: &[u8]| String::from_utf8_lossy(bytes).into_owned();
@@ -2448,13 +2122,9 @@ impl Server {
 			Src,
 			Arg(u32),
 			Local(u32),
-			/// The evaluation owns these references; do not restore them to the
-			/// frame.
 			Given
 		}
 
-		// Expand source macros and expose globals through the synthetic
-		// parameter.
 		let command = &*crate::macros::expand(command)?;
 
 		let globals = unsafe { Value::new(ValueTag::GlobalVars, ValueData { id: 0 }) };
@@ -2462,7 +2132,6 @@ impl Server {
 		let given_src = self.eval_src.take();
 
 		let (ctx, instance, mut args) = match frame_id {
-			// Global context, or an object's (`Request::EvalOn`)
 			None => {
 				let mut args = vec![];
 				if let Some(object) = given_src {
@@ -2477,8 +2146,6 @@ impl Server {
 					return Err(format!("there's no frame {} (the world isn't paused, or has carried on since)", frame_id));
 				};
 
-				// Pass the frame's `args` so evaluation sees the paused proc's
-				// arguments.
 				let frame_args = List::new();
 				for (_, value) in &frame.args {
 					frame_args.append(value);
@@ -2500,7 +2167,6 @@ impl Server {
 					}
 				}
 
-				// Exclude hidden duplicate locals from evaluation names.
 				for (idx, (local, name)) in frame.locals.iter().zip(Self::visible_locals(&frame)).enumerate() {
 					if let Some(name) = name {
 						args.push((name, local.1.clone(), ArgType::Local(idx as u32)));
@@ -2512,22 +2178,16 @@ impl Server {
 		};
 
 		args.push((GLOBALS.to_owned(), globals, ArgType::Given));
-		// Bind supplied names (value, old, __watched, __key) before frame
-		// names.
 		for (name, value) in std::mem::take(&mut self.eval_given).into_iter().rev() {
 			args.insert(0, (name, value, ArgType::Given));
 		}
 		let arg_names: Vec<&str> = args.iter().map(|(name, ..)| name.as_str()).collect();
 		let arg_values: Vec<&Value> = args.iter().map(|(_, value, _)| value).collect();
 
-		// Resolve names as in the proc: frame variables, then src members,
-		// then globals. Bare calls use src procs when available.
 		let has_var = |object: &Value, name: &str| StringRef::new(name).is_ok_and(|name| object.get(name).is_ok());
 		let scope = dmasm::compiler::ExprScope {
 			has_src_var: &|name| src.as_ref().is_some_and(|src| has_var(src, name)),
 			has_src_proc: &|name| src.as_ref().is_some_and(|src| crate::assemble_env::AssembleEnv::has_proc(src, name)),
-			// New globals can be absent from global.vars when its table is
-			// unavailable.
 			global: &|name| {
 				if has_var(&Value::GLOBAL, name) {
 					Some(dmasm::compiler::ExprGlobal::Listed)
@@ -2539,8 +2199,6 @@ impl Server {
 			proc_ref: &crate::assemble_env::type_proc,
 			proc_path: &crate::assemble_env::proc_path
 		};
-		// Include src's type in the cache key because it affects bare-name
-		// resolution.
 		let key = EvalCodeKey {
 			generation: hot_reload::code_generation(),
 			command: command.to_owned(),
@@ -2563,7 +2221,6 @@ impl Server {
 		};
 		let (assembly, locals, warnings) = compiled?;
 		self.eval_warnings = warnings;
-		// To be run by the world's loop, as its own code (see `launched`)
 		if let Some(number) = self.spawning.take() {
 			self.spawns.push_back(Spawn {
 				number,
@@ -2583,8 +2240,6 @@ impl Server {
 		let ends = crate::WORLD_ENDS.load(std::sync::atomic::Ordering::Relaxed);
 		let result = Self::call_with_locals(&proc, &locals, &arg_values)?;
 		if crate::WORLD_ENDS.load(std::sync::atomic::Ordering::Relaxed) != ends {
-			// Evaluation rebooted or ended the world. Do not access its old
-			// server, frames or values.
 			std::mem::forget(result);
 			std::mem::forget(args);
 			std::panic::resume_unwind(Box::new(crate::WorldEnded));
@@ -2593,16 +2248,10 @@ impl Server {
 		match result {
 			Ok(res) => {
 				if let Ok(list) = res.as_list() {
-					// Evaluation may end a sleeping frame by deleting its src.
-					// Do not restore variables into a frame that no longer
-					// exists.
 					if frame_id.is_some() && !Self::frame_is_live(ctx) {
 						return Err("evaluation ended the selected frame".to_owned());
 					}
 
-					// The rest are the potentially mutated parameters. We need
-					// to commit them to the function that
-					// called us. TODO: This sucks, obviously.
 					let len = list.len();
 					for i in 2..=len {
 						let value = list.get(i).unwrap();
@@ -2644,9 +2293,6 @@ impl Server {
 
 					Ok(list.get(1).unwrap())
 				} else if !self.eval_ran.is_null() && background_known() && unsafe { *(*self.eval_ran).background() } != 0 {
-					// Background procs sleep periodically, including those
-					// moved there by world.loop_checks after about a million
-					// iterations.
 					Err(
 						"evaluation aborted: BYOND moved the code to the background, so its result is unavailable. This can happen after about a \
 						 million loop iterations (world.loop_checks), or with `set background = 1`. The code is still running. Use `eval --spawn \
@@ -2661,19 +2307,14 @@ impl Server {
 							.to_owned()
 					)
 				} else {
-					// The stub returns a list unless it's cut short, and a
-					// runtime error is told apart above
 					Err("evaluation aborted because the code slept".to_owned())
 				}
 			}
 
-			// A runtime error, which the world's runtime hook has the text of
 			Err(Runtime { message }) => Err(format!("runtime error: {}", message))
 		}
 	}
 
-	/// Compile an expression or proc body and return its local names and
-	/// compatibility warnings.
 	fn compile_eval(
 		command: &str,
 		arg_names: &[&str],
@@ -2686,7 +2327,6 @@ impl Server {
 		}
 		match dmasm::compiler::compile_expr_warned(command, arg_names, Some(scope), byond) {
 			Ok((expr, warnings)) => Ok((expr, vec![], warnings)),
-			// For body-shaped input, retain the body parser's line diagnostics.
 			Err(_) if command.trim().contains(['\n', ';']) => {
 				let error = dmasm::compiler::compile_body_in(command, arg_names, Some(scope), byond).err();
 				Err(error.map_or_else(|| "invalid expression or proc body".to_owned(), |e| e.to_string()))
@@ -2695,8 +2335,6 @@ impl Server {
 		}
 	}
 
-	/// Temporarily size the stub's locals table for this call. Sleeping
-	/// frames retain the locals allocated when they started.
 	pub(crate) fn call_with_locals(proc: &Proc, locals: &[String], args: &[&Value]) -> Result<Result<Value, Runtime>, String> {
 		use auxtools::runtime_tables::{self, ProcEntryWords};
 		let ends = crate::WORLD_ENDS.load(std::sync::atomic::Ordering::Relaxed);
@@ -2711,7 +2349,6 @@ impl Server {
 		};
 		let tries = Self::hide_tries();
 		let result = proc.call(args);
-		// (a world the code ended has procs of its own by now)
 		if crate::WORLD_ENDS.load(std::sync::atomic::Ordering::Relaxed) == ends {
 			Self::show_tries(tries);
 			if let Some(none) = none {
@@ -2721,9 +2358,6 @@ impl Server {
 		Ok(result)
 	}
 
-	/// Temporarily hide the running stack's try blocks during debugger
-	/// evaluation. Otherwise BYOND delivers evaluation errors to a paused
-	/// caller's catch when execution resumes. Return frame state to restore.
 	pub(crate) fn hide_tries() -> Vec<(*mut raw_types::procs::ExecutionContext, u32)> {
 		let mut hidden = vec![];
 		let mut at = unsafe { *raw_types::funcs::CURRENT_EXECUTION_CONTEXT };
@@ -2738,15 +2372,12 @@ impl Server {
 		hidden
 	}
 
-	/// Restore the try blocks hidden by `hide_tries`.
 	pub(crate) fn show_tries(tries: Vec<(*mut raw_types::procs::ExecutionContext, u32)>) {
 		for (ctx, handler) in tries {
 			unsafe { *(*ctx).throw_handler_mut() = handler };
 		}
 	}
 
-	/// Whether a frame is still on one of the world's stacks, running or
-	/// asleep
 	fn frame_is_live(ctx: *mut raw_types::procs::ExecutionContext) -> bool {
 		let on = |mut at: *mut raw_types::procs::ExecutionContext| {
 			while !at.is_null() {
@@ -2763,7 +2394,6 @@ impl Server {
 				.any(|instance| on(unsafe { (*instance).context }))
 	}
 
-	/// Suppress pauses during shutdown and reboot evaluations.
 	fn handle_eval_request(&mut self, frame_id: Option<u32>, command: &str, context: Option<&str>) {
 		let ending = context == Some(ENDING_CONTEXT);
 		if ending {
@@ -2775,10 +2405,7 @@ impl Server {
 		}
 	}
 
-	/// Evaluate and send the response. Return true if execution continues
-	/// after sleeping or moving to the background.
 	fn handle_eval(&mut self, frame_id: Option<u32>, command: &str) -> bool {
-		// What the tests of the panic guard ask for
 		#[cfg(debug_assertions)]
 		if command == "#panic" {
 			panic!("asked for with #panic");
@@ -2794,8 +2421,6 @@ impl Server {
 			return false;
 		}
 
-		// Retain access expressions only for single expressions. Expanding
-		// a body's result must not run the body again.
 		let reached = (!dmasm::compiler::is_body(command)).then(|| format!("({})", command));
 		let response = self.eval_expr(frame_id, command).map(|result| EvalResponse {
 			value: Self::stringify(&result),
@@ -2809,7 +2434,6 @@ impl Server {
 		still_running
 	}
 
-	/// What `Request::EvalOn` asks for: an expression with `src` an object
 	fn handle_eval_on(&mut self, object: &str, expression: &str, depth: Option<u32>) {
 		let value = self.object_of(object).and_then(|object| {
 			self.eval_src = Some(object);
@@ -2817,8 +2441,6 @@ impl Server {
 		});
 		let response = match depth {
 			Some(depth) => Response::Render(value.map(|value| Self::render(&value, depth))),
-			// What's inside is opened by itself: the expression means
-			// nothing without its object
 			None => Response::Eval(value.map(|result| EvalResponse {
 				value: Self::stringify(&result),
 				variables: self.value_to_variables_ref(&result, None),
@@ -2830,7 +2452,6 @@ impl Server {
 		self.send_or_disconnect(response);
 	}
 
-	/// Compile now and queue execution for the next world tick.
 	fn handle_spawn(&mut self, expression: &str, object: Option<&str>) {
 		let result = self.spawn(expression, object);
 		self.send_or_disconnect(Response::Spawned(result));
@@ -2849,17 +2470,12 @@ impl Server {
 		Ok(number)
 	}
 
-	/// The list the world's loop looks at, which has an entry when there's
-	/// spawned code to run
 	pub fn spawn_inbox(&mut self) -> Value {
 		let inbox = Value::from(List::new());
 		self.spawn_inbox = Some(inbox.clone());
 		inbox
 	}
 
-	/// Install the next spawned expression in the stub and return
-	/// `list(number, list(arguments))`, or null if none is queued.
-	/// Active calls retain their own bytecode.
 	pub fn next_spawn(&mut self) -> DMResult {
 		let Some(spawn) = self.spawns.pop_front() else {
 			return Ok(Value::NULL);
@@ -2868,8 +2484,6 @@ impl Server {
 			self.spawn_failed(spawn.number, "the world has no /proc/auxtools_spawn_stub to run it in".to_owned());
 			return Ok(Value::NULL);
 		};
-		// A body's own vars: the stub has room for them from this call on.
-		// Code that's asleep has its own already.
 		if let Err(error) = self.set_stub_locals(&stub, &spawn.locals) {
 			self.spawn_failed(spawn.number, error);
 			return self.next_spawn();
@@ -2885,11 +2499,9 @@ impl Server {
 		Ok(Value::from(next))
 	}
 
-	/// Gives the spawn stub the locals its next code declares, or none
 	fn set_stub_locals(&mut self, stub: &Proc, locals: &[String]) -> Result<(), String> {
 		use auxtools::runtime_tables::{self, ProcEntryWords};
 		let now = runtime_tables::proc_entry(stub.id).ok_or("couldn't read the spawn stub's proc entry")?.0[ProcEntryWords::LOCALS];
-		// What this world's stub was compiled with, which is no locals at all
 		let none = *self.spawn_stub_locals.get_or_insert(now);
 		let table = hot_reload::locals_table(locals, none)?;
 		if table != now {
@@ -2898,8 +2510,6 @@ impl Server {
 		Ok(())
 	}
 
-	/// Complete spawned code with its result list (value first), or null on
-	/// failure.
 	pub fn spawn_done(&mut self, number: u64, returned: &Value) {
 		let Some((expression, error)) = self.spawned.remove(&number) else {
 			return;
@@ -2925,7 +2535,6 @@ impl Server {
 		);
 	}
 
-	/// Journal a spawned evaluation that could not start.
 	fn spawn_failed(&mut self, number: u64, why: String) {
 		let expression = self.spawned.remove(&number).map(|(expression, _)| expression).unwrap_or_default();
 		self.journal(
@@ -2938,8 +2547,6 @@ impl Server {
 		);
 	}
 
-	/// Resolve a live object reference such as `[0x2000001]`, with optional
-	/// brackets.
 	fn object_of(&mut self, reference: &str) -> Result<Value, String> {
 		let text = reference.trim();
 		let inner = text.strip_prefix('[').and_then(|text| text.strip_suffix(']')).unwrap_or(text);
@@ -2949,8 +2556,6 @@ impl Server {
 			.and_then(|hex| u32::from_str_radix(hex, 16).ok())
 			.ok_or_else(|| format!("invalid object reference {}; expected a ref() value such as [0x2000001]", reference))?;
 		let reference = format!("[0x{:x}]", id);
-		// The world's own lookup knows what's still there. (A `[` in a text
-		// starts an expression in it.)
 		let found = self.eval_expr(None, &format!("locate(\"\\{}\")", reference))?;
 		if found == Value::NULL {
 			return Err(format!("object not found: {}", reference));
@@ -2958,7 +2563,6 @@ impl Server {
 		Ok(found)
 	}
 
-	/// Claim hot reload ownership unless another connected client holds it.
 	fn claim_reloads(&mut self, who: String) -> Result<(), String> {
 		let id = self.current.ok_or("no client")?;
 		match &self.reloader {
@@ -2973,13 +2577,11 @@ impl Server {
 		}
 	}
 
-	/// Refuse reloads while another connected client owns them.
 	fn reloads_refused(&self) -> Option<String> {
 		let (holder, who) = self.reloader.as_ref()?;
 		(Some(*holder) != self.current && self.clients.contains_key(holder)).then(|| format!("{} already owns hot reload for this world", who))
 	}
 
-	/// Apply the skin deferred until world data loaded.
 	fn apply_pending_skin(&mut self) {
 		let Some(request) = self.pending_skin.take() else {
 			return;
@@ -2989,7 +2591,6 @@ impl Server {
 		}
 	}
 
-	/// Apply the client script deferred until world data loaded.
 	fn apply_pending_script(&mut self) {
 		let Some(request) = self.pending_script.take() else {
 			return;
@@ -2999,7 +2600,6 @@ impl Server {
 		}
 	}
 
-	/// Mark DM run by `work` as a debugger evaluation.
 	fn evaluating<T>(&mut self, work: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
 		self.in_eval = true;
 		auxtools::instruction_hook::hear_all();
@@ -3010,7 +2610,6 @@ impl Server {
 	}
 
 	fn handle_hot_reload(&mut self, request: &HotReloadRequest) {
-		// Reject reloads from clients other than the connected owner.
 		if let Some(why) = self.reloads_refused() {
 			let refused = HotReloadResult {
 				applied: false,
@@ -3028,8 +2627,6 @@ impl Server {
 
 	fn hot_reload(&mut self, request: &HotReloadRequest) -> HotReloadResult {
 		resource_reload::use_dirs(&request.resource_dirs);
-		// Before resources load, defer reloads that introduce resource files
-		// or edit their content. Defer later reloads too to preserve order.
 		if !crate::world_resources::is_loaded() {
 			let mut files = crate::world_resources::not_built(request);
 			for resource in &request.resources {
@@ -3038,9 +2635,6 @@ impl Server {
 				}
 			}
 			if !files.is_empty() || !self.waiting_reloads.is_empty() {
-				// Replace global initialization before it runs, including new
-				// globals. Defer new statics until the rest allocates their
-				// slots.
 				let mut waiting = request.clone();
 				let mut early = vec![];
 				if let Some(init) = &request.global_init {
@@ -3087,11 +2681,7 @@ impl Server {
 		self.apply_hot_reload(request)
 	}
 
-	/// Applies a hot reload now
 	fn apply_hot_reload(&mut self, request: &HotReloadRequest) -> HotReloadResult {
-		// Replace only each file's current resource ID, from the last reload
-		// or the client's built IDs. Held values retain older IDs; do not
-		// replace IDs shared with other files.
 		let mut id_warnings = vec![];
 		let mut with_ids;
 		let request = if request.resources.is_empty() {
@@ -3130,15 +2720,12 @@ impl Server {
 			}
 			&with_ids
 		};
-		// Assembly may evaluate DM to resolve paths and resources; treat
-		// it as debugger evaluation.
 		self.in_eval = true;
 		auxtools::instruction_hook::hear_all();
 		self.eval_error = None;
 
 		let mut warnings = id_warnings;
 		let mut skipped = vec![];
-		// New types come first, so the rest can be prepared against them
 		let prepared = hot_reload::add_types(&request.new_types).and_then(|added| {
 			hot_reload::prepare(request, &mut warnings, &mut skipped)
 				.and_then(|prepared| Ok((prepared, resource_reload::prepare(&request.resources)?)))
@@ -3149,7 +2736,6 @@ impl Server {
 					errors
 				})
 		});
-		// Update appearances first: this can still fail.
 		let prepared = prepared.and_then(|(prepared, resources)| Ok((prepared, resource_reload::apply(&resources).map_err(|e| vec![e])?)));
 		let result = match prepared {
 			Ok((prepared, applied)) => {
@@ -3183,8 +2769,6 @@ impl Server {
 			self.notify(format!("runtime error during hot reload: {}", err));
 		}
 
-		// Notify other clients that code changed. The reloading launcher
-		// reports details; the journal informs other launchers.
 		if result.applied && !request.is_empty() {
 			self.broadcast(Response::CodeChanged, self.current);
 		}
@@ -3192,9 +2776,6 @@ impl Server {
 		result
 	}
 
-	/// Track resource IDs for later reloads, including newly referenced files
-	/// the launcher has no IDs for. Do not replace IDs already used by another
-	/// built or reloaded file: identical content shares cache entries.
 	fn record_named_files(&mut self, request: &HotReloadRequest) {
 		use dmasm::assembler::AssembleEnv as _;
 		for name in crate::world_resources::not_built(request) {
@@ -3202,7 +2783,6 @@ impl Server {
 				continue;
 			};
 			let path = file.to_string_lossy().replace('\\', "/");
-			// The launcher supplies replacement IDs for edited built resources.
 			if self.resource_ids.contains_key(&path) || crate::world_resources::built_file(&file) {
 				continue;
 			}
@@ -3236,7 +2816,6 @@ impl Server {
 		}
 	}
 
-	/// Apply deferred reloads once `world/New` starts and resources are loaded.
 	pub fn world_data_loaded(&mut self) {
 		self.apply_pending_script();
 		for request in std::mem::take(&mut self.waiting_reloads) {
@@ -3254,8 +2833,6 @@ impl Server {
 	fn handle_disassemble(&mut self, path: &str, id: u32) -> String {
 		match unnamed::find(path, id) {
 			Some(proc) => {
-				// The live bytecode has our breakpoints patched into it, which
-				// nobody wants to read
 				let bytecode = original_bytecode(&proc);
 
 				let mut env = crate::DisassembleEnv;
@@ -3277,9 +2854,7 @@ impl Server {
 		}
 	}
 
-	// returns true if we need to break
 	fn handle_request(&mut self, request: Request) -> bool {
-		// Requests may start work requiring every instruction callback.
 		auxtools::instruction_hook::hear_all();
 		match request {
 			Request::Disconnect => unreachable!(),
@@ -3340,8 +2915,6 @@ impl Server {
 			Request::Skin(request) => {
 				let result = match self.reloads_refused() {
 					Some(why) => Err(why),
-					// The world must load its resources before allocating IDs
-					// for new files (see `world_resources`).
 					None if !crate::world_resources::is_loaded() => {
 						self.pending_skin = Some(request);
 						Ok(SkinReloaded { clients: 0, hosted: false })
@@ -3353,7 +2926,6 @@ impl Server {
 			Request::Script(request) => {
 				let result = match self.reloads_refused() {
 					Some(why) => Err(why),
-					// As for the skin
 					None if !crate::world_resources::is_loaded() => {
 						self.pending_script = Some(request);
 						Ok(ScriptReloaded { clients: 0, hosted: false })
@@ -3480,8 +3052,6 @@ impl Server {
 			}
 			Request::Spawn { expression, object } => self.handle_spawn(&expression, object.as_deref()),
 
-			// The following requests are special cases and handled outside of
-			// this function
 			Request::Configured | Request::Continue { .. } => {
 				self.send_or_disconnect(Response::Ack);
 			}
@@ -3490,9 +3060,6 @@ impl Server {
 		false
 	}
 
-	/// Process network events and return the next request, setting `current`
-	/// to its sender. `None` means the wait expired or, with `WhileClients`,
-	/// the last debugging client disconnected.
 	fn recv_request(&mut self, wait: Wait) -> Option<Request> {
 		loop {
 			let event = match wait {
@@ -3526,7 +3093,6 @@ impl Server {
 					}
 				}
 
-				// Sent by a client we've since given up on
 				Event::Request(id, _) if !self.clients.contains_key(&id) => waker::request_taken(),
 
 				Event::Request(id, request) => {
@@ -3538,12 +3104,10 @@ impl Server {
 		}
 	}
 
-	/// Whether a client that debugs is connected
 	fn has_debuggers(&self) -> bool {
 		self.clients.values().any(|client| client.debugs)
 	}
 
-	/// Send to connected clients, or to world output if none are connected.
 	pub fn notify<T: Into<String>>(&mut self, message: T) {
 		let message = message.into();
 		if self.clients.is_empty() {
@@ -3553,14 +3117,10 @@ impl Server {
 		self.broadcast(Response::Notification { message }, None);
 	}
 
-	/// Something in here panicked. We don't know what state that left the
-	/// session in, so the debug-client gets dropped and can connect again.
 	pub fn recover_from_panic(&mut self) {
 		eprintln!("Debug server panicked, dropping the debug clients");
 		self.in_eval = false;
 		self.waiting_to_start = false;
-		// A panic mid-pause skips the cleanup at the end of handle_breakpoint.
-		// The frames in here point at procs that are about to carry on running.
 		self.state = None;
 		self.paused = None;
 		self.disconnect_all();
@@ -3568,9 +3128,6 @@ impl Server {
 		crate::profiler::discard();
 	}
 
-	/// Evaluate every client's claim at this breakpoint. Count hits only
-	/// when its condition holds, apply its hit filter, and emit log messages.
-	/// Return whether any claim requests a pause.
 	fn breakpoint_hit(&mut self, key: (raw_types::procs::ProcId, u16)) -> bool {
 		let (proc, offset) = key;
 		let clients: Vec<(ClientId, Placed)> = self
@@ -3579,7 +3136,6 @@ impl Server {
 			.map(|claims| claims.keys().copied().collect())
 			.unwrap_or_default();
 
-		// One nobody is known to have set stops, as it always has
 		let mut pause = clients.is_empty();
 		for client in clients {
 			let Some(condition) = self
@@ -3591,11 +3147,8 @@ impl Server {
 				continue;
 			};
 			if let Some(condition) = condition {
-				// Condition errors skip the hit and notify the owner once.
 				let passed = self.eval_expr(Some(0), &condition).map(|result| result.is_truthy());
 
-				// We might have just executed some code so invalidate the
-				// stacks we already fetched
 				self.state.as_mut().unwrap().invalidate_stacks();
 				match passed {
 					Ok(true) => {}
@@ -3607,7 +3160,6 @@ impl Server {
 				}
 			}
 
-			// The condition's code could have taken the breakpoint away
 			let Some(claim) = self.breakpoints.get_mut(&key).and_then(|claims| claims.get_mut(&client)) else {
 				continue;
 			};
@@ -3616,8 +3168,6 @@ impl Server {
 				continue;
 			}
 
-			// A breakpoint with a message says it to its client, and the
-			// world carries on
 			let Some(log) = claim.log.clone() else {
 				pause = true;
 				continue;
@@ -3648,7 +3198,6 @@ impl Server {
 		pause
 	}
 
-	/// Report the first condition error and skip this hit.
 	fn condition_failed(&mut self, key: (raw_types::procs::ProcId, u16), client: (ClientId, Placed), condition: &str, error: &str) {
 		let Some(claim) = self.breakpoints.get_mut(&key).and_then(|claims| claims.get_mut(&client)) else {
 			return;
@@ -3671,7 +3220,6 @@ impl Server {
 		self.tell(client.0, Response::ConditionFailed { message });
 	}
 
-	/// Sends one client something, at any moment
 	fn tell(&mut self, client: ClientId, response: Response) {
 		if let Some(to) = self.clients.get_mut(&client) {
 			if !Self::deliver(to, &response) {
@@ -3680,10 +3228,7 @@ impl Server {
 		}
 	}
 
-	/// Pause if requested by a client and return its resume action.
-	/// `None` leaves current execution, including a pending step, unchanged.
 	pub fn handle_breakpoint(&mut self, _ctx: *mut raw_types::procs::ExecutionContext, reason: BreakpointReason) -> Option<ContinueKind> {
-		// Every runtime error goes in the record, whoever pauses for it
 		if let BreakpointReason::Runtime { message, caught } = &reason {
 			let stack = self.journal_stack();
 			self.journal(
@@ -3696,8 +3241,6 @@ impl Server {
 			);
 		}
 
-		// Ignore all breakpoints unless someone's connected, and runtime errors
-		// unless someone wants them
 		let wanted = match &reason {
 			BreakpointReason::Runtime { message, caught } => self.clients.values().any(|client| {
 				let filter = if *caught { &client.caught } else { &client.uncaught };
@@ -3721,8 +3264,6 @@ impl Server {
 				}
 			}
 
-			// A coincident step or pause still counts the breakpoint hit
-			// and emits its log message. Report one stop for the step.
 			BreakpointReason::Step | BreakpointReason::Pause if crate::instruction_hooking::is_breakpoint(_ctx) => {
 				self.breakpoint_hit((proc, offset));
 			}
@@ -3748,17 +3289,12 @@ impl Server {
 		self.paused = Some(stop.clone());
 		self.broadcast(Response::BreakpointHit(stop), None);
 
-		// Start the hold timer when the last debugging client leaves.
-		// Transient status requests do not reset it. An attached client
-		// can retain the pause past the deadline until it disconnects.
 		let mut unattended: Option<Instant> = None;
 		loop {
-			// Held, it waits for clients to come back
 			let mut wait = if self.hold.is_some() { Wait::Forever } else { Wait::WhileClients };
 			if wait == Wait::WhileClients && !self.has_debuggers() {
 				break;
 			}
-			// For so long, if the client that held it said
 			if let (Wait::Forever, Some(max)) = (wait, self.hold_max) {
 				if self.has_debuggers() {
 					wait = Wait::Until(None);
@@ -3773,16 +3309,12 @@ impl Server {
 						self.let_hold_go();
 						return Some(ContinueKind::Continue);
 					}
-					// A client came or went
 					Wait::Until(_) => continue,
 					_ => break
 				}
 			};
 
-			// Hijack and handle any Continue requests. The other clients are
-			// told the world carries on.
 			if let Request::Continue { kind } = request {
-				// A step is in a stack, which the client names by its id
 				let position = |thread: u32| self.stack_position(thread).unwrap_or(0) as u32;
 				let kind = match kind {
 					ContinueKind::Continue => ContinueKind::Continue,
@@ -3808,15 +3340,12 @@ impl Server {
 				self.paused = None;
 				self.hold = None;
 				self.hold_max = None;
-				// Whoever steps hears if the step ends with nothing to pause in
 				self.stepper = if kind == ContinueKind::Continue { None } else { self.current };
 				return Some(kind);
 			}
 
-			// Hijack eval too so that we can refresh our state after it
 			if let Request::Eval { frame_id, command, context } = request {
 				self.handle_eval_request(frame_id, &command, context.as_deref());
-				// Resume so sleeping shutdown or reboot code can finish.
 				if self.ending() {
 					self.broadcast(Response::Resumed, None);
 					self.state = None;
@@ -3840,18 +3369,15 @@ impl Server {
 				continue;
 			}
 
-			// if we get a pause request here we can ignore it
 			self.handle_request(request);
 		}
 
-		// Every client that debugs left. The others hear the world carries on.
 		self.broadcast(Response::Resumed, None);
 		self.state = None;
 		self.paused = None;
 		Some(ContinueKind::Continue)
 	}
 
-	/// Release an expired held pause and journal the reason.
 	fn let_hold_go(&mut self) {
 		let seconds = self.hold_max.map_or(0.0, |max| max.as_secs_f64());
 		eprintln!("Debug Server: resumed after {} seconds without a debugger", seconds);
@@ -3863,7 +3389,6 @@ impl Server {
 		self.broadcast(Response::Resumed, None);
 	}
 
-	/// Notify the stepping client when its stack ends without pausing.
 	pub fn step_ended(&mut self) {
 		let Some(id) = self.stepper.take() else {
 			return;
@@ -3875,7 +3400,6 @@ impl Server {
 		}
 	}
 
-	// returns true if we need to pause
 	pub fn process(&mut self) -> bool {
 		let mut should_pause = false;
 
@@ -3884,10 +3408,8 @@ impl Server {
 			self.notify("Waking world...");
 		}
 
-		// Avoid polling an empty channel on every DM instruction.
 		if waker::events_pending() {
 			while let Some(request) = self.recv_request(Wait::No) {
-				// Not `||`, that would skip every request after a Pause
 				should_pause |= self.handle_request(request);
 			}
 		}
@@ -3895,10 +3417,8 @@ impl Server {
 		should_pause
 	}
 
-	/// Process requests until a debugging client finishes configuration.
 	pub fn process_until_configured(&mut self) {
 		self.waiting_to_start = true;
-		// A new world: its cache holds what it was built with
 		self.resource_ids.clear();
 		self.resource_origins.clear();
 		while let Some(request) = self.recv_request(Wait::Forever) {
@@ -3912,9 +3432,7 @@ impl Server {
 		self.waiting_to_start = false;
 	}
 
-	/// Answers the client whose request this is
 	fn send_or_disconnect(&mut self, response: Response) {
-		// Nobody to tell: the client left while we were busy
 		let Some(id) = self.current else {
 			return;
 		};
@@ -3928,7 +3446,6 @@ impl Server {
 		}
 	}
 
-	/// Tells every client but `except`
 	fn broadcast(&mut self, response: Response, except: Option<ClientId>) {
 		let mut gone = vec![];
 		for (&id, client) in &mut self.clients {
@@ -3941,17 +3458,14 @@ impl Server {
 		}
 	}
 
-	/// Disconnect a client and remove its breakpoint claims.
 	fn remove_client(&mut self, id: ClientId) {
 		let Some(client) = self.clients.remove(&id) else {
 			return;
 		};
-		// The writer drains queued messages before sending Disconnect.
 		drop(client);
 		if self.current == Some(id) {
 			self.current = None;
 		}
-		// Discard a pending pause hold if its owner leaves before the pause.
 		if self.hold == Some(id) && self.paused.is_none() {
 			self.hold = None;
 			self.hold_max = None;
@@ -3978,8 +3492,6 @@ impl Server {
 			}
 		}
 
-		// Whoever connects next sets up their own breakpoints. Until then the
-		// old ones would only slow down the procs they sit in.
 		if self.clients.is_empty() {
 			self.breakpoints.clear();
 			self.moved_breakpoints.clear();
@@ -4000,7 +3512,6 @@ impl Server {
 		Ok(())
 	}
 
-	/// Frame a bincode message with its length prefix.
 	fn encode(response: &Response) -> Result<Vec<u8>, Box<dyn Error>> {
 		let data = bincode::serialize(response)?;
 		let mut bytes = Vec::with_capacity(data.len() + 4);
@@ -4009,14 +3520,10 @@ impl Server {
 		Ok(bytes)
 	}
 
-	/// Deliver a message; return false if the client must be disconnected.
-	/// Queue writes off the world thread: Windows flushes block until the
-	/// client reads the data. Disconnect clients whose queues fill.
 	fn deliver(client: &mut Client, response: &Response) -> bool {
 		Self::encode(response).is_ok_and(|bytes| client.outbox.try_send(bytes).is_ok())
 	}
 
-	/// Start a per-client writer. Drain queued messages before disconnecting.
 	fn writer(mut connection: Connection) -> (mpsc::SyncSender<Vec<u8>>, thread::JoinHandle<()>) {
 		let (outbox, sent) = mpsc::sync_channel::<Vec<u8>>(OUTBOX);
 		let writer = thread::spawn(move || {
@@ -4030,20 +3537,14 @@ impl Server {
 		(outbox, writer)
 	}
 
-	/// Re-enable pauses after a sleeping world/Del() fails, or world/Reboot()
-	/// returns without rebooting.
 	pub fn world_carries_on(&mut self) {
 		self.ending = None;
 	}
 
-	/// Return whether a shutdown or reboot suppresses pauses. The time limit
-	/// covers worlds without launcher helpers to report declined reboots.
 	fn ending(&self) -> bool {
 		self.ending.is_some_and(|since| since.elapsed() < ENDING_LIMIT)
 	}
 
-	/// Notify clients of shutdown, disconnect them, and briefly wait for
-	/// writers to drain before the process exits. This does not run for reboot.
 	pub fn world_shutting_down(&mut self) {
 		self.broadcast(
 			Response::Notification {
@@ -4059,7 +3560,6 @@ impl Server {
 		}
 	}
 
-	/// Append a journal entry and notify matching subscribers except `from`.
 	fn journal(&mut self, event: JournalEvent, from: Option<ClientId>) {
 		let entry = journal::add(event);
 		let mut gone = vec![];
@@ -4074,17 +3574,11 @@ impl Server {
 		}
 	}
 
-	/// Collect journal frames without arguments or locals. Cache proc names
-	/// and locations until bytecode changes to reduce runtime-error overhead.
 	fn journal_stack(&self) -> Vec<JournalFrame> {
-		/// A frame by its proc, offset, and the code it runs
 		type Known = HashMap<(raw_types::procs::ProcId, u16, usize), JournalFrame>;
 		static KNOWN: Mutex<(u64, Option<Known>)> = Mutex::new((0, None));
-		// Bound memory during long sessions.
 		const KEEP: usize = 16384;
 
-		// The crash handler journals from the faulting thread, which may be
-		// in here already: do without the cache rather than wait on itself.
 		let mut uncached: (u64, Option<Known>) = (0, None);
 		let mut guard = match KNOWN.try_lock() {
 			Ok(guard) => Some(guard),
@@ -4102,7 +3596,6 @@ impl Server {
 		}
 		let known = known.get_or_insert_with(HashMap::new);
 
-		// Innermost first, with a flag for debugger helper frames.
 		let mut frames: Vec<(JournalFrame, bool)> = vec![];
 		let mut ctx = unsafe { *raw_types::funcs::CURRENT_EXECUTION_CONTEXT };
 		while !ctx.is_null() {
@@ -4112,7 +3605,6 @@ impl Server {
 			};
 			let helper = crate::launched::runs_spawns(&proc);
 			let (current, length) = unsafe { proc.bytecode_mut_ptr() };
-			// Cache only current bytecode without a breakpoint at this offset.
 			let breakpoint =
 				(offset as u32) < length as u32 && crate::instruction_hooking::is_breakpoint_word(unsafe { *current.add(offset as usize) });
 			let plain = std::ptr::eq(running, current) && !breakpoint;
@@ -4126,8 +3618,6 @@ impl Server {
 						file,
 						line
 					};
-					// BYOND names type initializers after load; keep a
-					// placeholder name out of the cache.
 					if plain && !frame.proc.starts_with('(') {
 						known.insert(key, frame.clone());
 					}
@@ -4138,7 +3628,6 @@ impl Server {
 			ctx = unsafe { *(*ctx).parent_context() };
 		}
 
-		// Omit outer debugger helper frames, as `shown` does.
 		let shown = match frames.iter().rposition(|(_, helper)| !helper) {
 			Some(last) => last + 1,
 			None => frames.len()
@@ -4147,7 +3636,6 @@ impl Server {
 		frames.into_iter().map(|(frame, _)| frame).collect()
 	}
 
-	/// What `Request::Journal` asks for
 	fn handle_journal(&mut self, after: u64, kinds: Vec<JournalKind>, limit: Option<u32>, follow: bool) {
 		let (entries, first, last) = journal::read(after, &kinds, limit);
 		if let Some(client) = self.current.and_then(|id| self.clients.get_mut(&id)) {
@@ -4157,9 +3645,6 @@ impl Server {
 	}
 }
 
-/// Whether a frame's background flag can be read. Its place in the
-/// execution context was found on BYOND 516; older builds lay it out
-/// differently.
 fn background_known() -> bool {
 	auxtools::version::get().0 >= 516
 }
@@ -4168,15 +3653,12 @@ impl Drop for Server {
 	fn drop(&mut self) {
 		self.disconnect_all();
 
-		// Clients from now on wait for the next Server
 		if let Some(acceptor) = ACCEPTOR.lock().unwrap().as_mut() {
 			let (events, waiting) = mpsc::channel();
 			acceptor.events = events;
 			acceptor.waiting = Some(waiting);
 		}
 
-		// Clients that connected before that, which we never got told about,
-		// are told to go
 		while let Ok(event) = self.events.try_recv() {
 			if let Event::Connected(_, mut connection) = event {
 				thread::spawn(move || Self::send(&mut connection, &Response::Disconnect).is_ok());
@@ -4185,10 +3667,8 @@ impl Drop for Server {
 	}
 }
 
-/// Maximum callee runtime errors reported in full per evaluation.
 const MAX_CALLEE_ERRORS: usize = 5;
 
-/// Whether the frame runs debugger evaluation or spawned code.
 pub(crate) fn is_expression_frame(ctx: *mut raw_types::procs::ExecutionContext) -> bool {
 	let id = unsafe { (**(*ctx).proc_instance()).proc };
 	["/proc/auxtools_expr_stub", "/proc/auxtools_spawn_stub"]
@@ -4196,8 +3676,6 @@ pub(crate) fn is_expression_frame(ctx: *mut raw_types::procs::ExecutionContext) 
 		.any(|path| Proc::find(path).is_some_and(|stub| stub.id == id))
 }
 
-/// Reads one request off a connection: a u32 length, then the request in
-/// bincode.
 fn read_request(stream: &mut impl Read, buf: &mut Vec<u8>) -> Result<Request, Box<dyn Error>> {
 	let mut len_bytes = [0u8; 4];
 	stream.read_exact(&mut len_bytes)?;
@@ -4217,7 +3695,6 @@ impl ServerThread {
 		let mut buf = vec![];
 		waker::client_connected();
 
-		// Normal disconnects and EOF do not need world log entries.
 		while let Ok(request) = read_request(&mut stream, &mut buf) {
 			if let Request::Disconnect = request {
 				break;
@@ -4237,8 +3714,6 @@ impl ServerThread {
 	}
 }
 
-/// Cache each local slot's first and last bytecode uses by code content.
-/// Breakpoint conditions need this lookup on every hit.
 fn local_uses(code: &[u32]) -> std::sync::Arc<HashMap<u32, (u32, u32)>> {
 	use std::hash::{Hash, Hasher};
 	type Uses = std::sync::Arc<HashMap<u32, (u32, u32)>>;
@@ -4302,7 +3777,6 @@ mod tests {
 			let first = Connection::connect(&connection::world_name()).unwrap();
 			let second = Connection::connect(&connection::world_name()).unwrap();
 			thread::sleep(Duration::from_millis(200));
-			// Both are taken in
 			assert!(server.recv_request(super::Wait::No).is_none());
 			assert_eq!(server.clients.len(), 2);
 
@@ -4313,14 +3787,11 @@ mod tests {
 		let (mut first, mut second) = dropped
 			.recv_timeout(Duration::from_secs(5))
 			.expect("server drop blocked on client connections");
-		// Each was told to go: a Disconnect, then the end of the connection
 		for client in [&mut first, &mut second] {
 			let mut len = [0u8; 4];
 			client.read_exact(&mut len).expect("no Disconnect");
 		}
 
-		// A client that connects while the world reboots waits for the next
-		// server
 		let _third = Connection::connect(&connection::world_name()).expect("listener unavailable between server instances");
 		thread::sleep(Duration::from_millis(200));
 		let mut server = Server::listen().expect("the next server couldn't listen");

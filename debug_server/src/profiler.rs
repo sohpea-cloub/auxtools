@@ -1,14 +1,3 @@
-//! Count and time interpreter instructions, attributing each interval to the
-//! preceding instruction and its callers.
-//!
-//! Subtract the cheapest instruction's average as estimated hook overhead.
-//! Sample all running code so filtering procs does not change the baseline.
-//!
-//! Exclude time outside the interpreter. Running frames live on the native
-//! stack; BYOND moves them to a new heap block on suspension. A frame unrelated
-//! to the previous frame's call chain therefore marks an interval of engine
-//! work.
-
 use std::{collections::HashMap, time::Instant};
 
 use auxtools::{
@@ -18,56 +7,41 @@ use auxtools::{
 
 use crate::server_types::{ProfiledInstruction, ProfiledTotal};
 
-/// Maximum tracked call depth. Deeper calls add nothing to callee time.
 const MOST_CALLS: usize = 1024;
 
-/// Slots of the code cache
 const CACHED: usize = 256;
 
-/// Minimum timed hits for an overhead sample.
 const FLOOR_HITS: u64 = 256;
 
-/// Capacity of the overhead sample cache.
 const SAMPLED: usize = 4096;
 
-/// Cache collisions before replacing a sample. Repeated hits retain the slot.
 const SAMPLE_PATIENCE: u8 = 16;
 
-/// Timing sample, including code outside the profile filter.
 #[derive(Clone, Copy)]
 struct Sample {
-	/// The address of the instruction's first word, 0 for none
 	instruction: usize,
 	timed: u64,
 	ticks: u64,
-	/// Hits of other instructions since its last
 	passed: u8
 }
 
 #[derive(Clone, Copy, Default)]
 struct Counter {
-	/// Times the instruction started
 	hits: u64,
-	/// Timed hits and elapsed ticks until the next instruction.
 	timed: u64,
 	ticks: u64,
-	/// Elapsed ticks and timed instruction count in callees.
 	callee_ticks: u64,
 	callee_timed: u64
 }
 
-/// The measurements of one bytecode buffer
 struct Code {
 	proc: u32,
 	bytecode: usize,
-	/// Counter index + 1 per word offset; zero until the instruction runs.
 	index: Box<[u32]>,
 	counters: Vec<Counter>,
-	/// Word offset for each counter.
 	offsets: Vec<u16>
 }
 
-/// An instruction's counter: its code and an index into `Code::counters`.
 #[derive(Clone, Copy)]
 struct At(*mut Code, u32);
 
@@ -79,8 +53,6 @@ impl At {
 	}
 }
 
-/// Frame and proc-instance identity. Suspension moves the frame but preserves
-/// the instance; later calls may reuse a freed frame address.
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct Frame {
 	ctx: usize,
@@ -101,49 +73,35 @@ impl Frame {
 	}
 }
 
-/// A call in progress
 struct Call {
 	caller: Frame,
-	/// The instruction that called, if its code is measured
 	counter: At,
-	/// `Profiler::ran` and `Profiler::timed` when the callee started
 	ran: u64,
 	timed: u64
 }
 
 pub struct Profiler {
-	/// Procs measured; all when `None`
 	only: Option<Vec<u32>>,
-	/// By bytecode address. `None` for code that isn't measured
 	codes: HashMap<usize, Option<Box<Code>>>,
-	/// Recently run codes, by a hash of their address
 	cache: [(usize, *mut Code); CACHED],
 	last: Frame,
 	last_parent: Frame,
 	last_counter: At,
 	last_opcode: u32,
 	sleep: u32,
-	/// Whether the last instruction ran in an evaluation nested inside the
-	/// hook.
 	evaluating: bool,
-	/// The address of the last instruction, for `samples`
 	last_instruction: usize,
-	/// By a hash of the instruction's address
 	samples: Box<[Sample]>,
 	calls: Vec<Call>,
-	/// Ticks of every timed interval, and how many there were
 	ran: u64,
 	timed: u64,
 	started: (Instant, u64),
-	/// Stop time, timestamp counter and estimated hook overhead.
 	stopped: Option<(Instant, u64, f64)>
 }
 
 static mut PROFILER: Option<Box<Profiler>> = None;
-/// Whether instructions are being measured. Read on every instruction
 static mut RUNNING: bool = false;
 
-/// Start a profile, replacing the last. `only` limits it to those procs.
 pub fn start(only: Option<Vec<u32>>) {
 	unsafe {
 		PROFILER = Some(Box::new(Profiler {
@@ -178,7 +136,6 @@ pub fn start(only: Option<Vec<u32>>) {
 	time_instructions(true);
 }
 
-/// Stop measuring. The measurements stay until `discard`.
 pub fn stop() {
 	unsafe {
 		if RUNNING {
@@ -206,14 +163,11 @@ pub fn running() -> bool {
 	unsafe { RUNNING }
 }
 
-// The world's code is gone
 #[shutdown]
 fn profiler_shutdown() {
 	discard();
 }
 
-/// Record instruction entry, excluding debugger work and pauses inside the
-/// hook. `evaluating` includes debugger expressions and their callees.
 #[inline]
 pub fn enter(ctx: *mut raw_types::procs::ExecutionContext, evaluating: bool) {
 	unsafe {
@@ -225,8 +179,6 @@ pub fn enter(ctx: *mut raw_types::procs::ExecutionContext, evaluating: bool) {
 	}
 }
 
-/// Whether an instruction can move execution elsewhere in its proc, such as
-/// back to offset 0. An instruction that ends a call cannot.
 pub(crate) fn can_jump(opcode: u32) -> bool {
 	use dmasm::Opcode::*;
 	[
@@ -256,7 +208,6 @@ pub(crate) fn can_jump(opcode: u32) -> bool {
 
 impl Profiler {
 	unsafe fn enter(&mut self, ctx: *mut raw_types::procs::ExecutionContext, evaluating: bool) {
-		// Nested evaluation breaks the instruction timing interval.
 		if evaluating != self.evaluating {
 			self.evaluating = evaluating;
 			self.last = Frame::NONE;
@@ -273,11 +224,8 @@ impl Profiler {
 			)
 		};
 
-		// Detect calls and returns from frame identity.
 		let mut returned = None;
 		let followed = if frame == self.last {
-			// A new call of a proc can get the frame the last call had. At
-			// offset 0, only the proc's own jump continues the same call.
 			offset != 0 || can_jump(self.last_opcode)
 		} else if parent == self.last && self.last != Frame::NONE {
 			true
@@ -285,10 +233,8 @@ impl Profiler {
 			returned = Some(depth);
 			true
 		} else {
-			// Its caller, when the call wasn't seen
 			frame == self.last_parent
 		};
-		// Exclude sleeps even when execution resumes immediately.
 		if let Some(spent) = spent.filter(|_| followed && self.last_opcode != self.sleep) {
 			self.ran += spent;
 			self.timed += 1;
@@ -302,7 +248,6 @@ impl Profiler {
 		if !followed {
 			self.calls.clear();
 		} else if let Some(depth) = returned {
-			// Frames above ended without returning (a runtime, a throw)
 			self.calls.truncate(depth + 1);
 			if let Some(call) = self.calls.pop() {
 				if let Some(counter) = unsafe { call.counter.counter() } {
@@ -330,7 +275,6 @@ impl Profiler {
 		self.last_instruction = bytecode as usize + offset * std::mem::size_of::<u32>();
 	}
 
-	/// Add the previous instruction interval to its overhead sample.
 	fn sample(&mut self, spent: u64) {
 		let sample = &mut self.samples[(self.last_instruction >> 2) % SAMPLED];
 		if sample.instruction == self.last_instruction {
@@ -350,7 +294,6 @@ impl Profiler {
 		sample.ticks += spent;
 	}
 
-	/// The measurements of the code at `bytecode`, null if it isn't measured
 	fn code(&mut self, bytecode: *mut u32, proc: raw_types::procs::ProcId) -> *mut Code {
 		let address = bytecode as usize;
 		let slot = (address >> 3 ^ address >> 11) % CACHED;
@@ -367,7 +310,6 @@ impl Profiler {
 		code
 	}
 
-	/// Allocate counters for new code, excluding helpers and filtered procs.
 	fn measured(only: Option<&[u32]>, bytecode: *mut u32, proc: raw_types::procs::ProcId) -> Option<Box<Code>> {
 		if only.is_some_and(|only| !only.contains(&proc.0)) {
 			return None;
@@ -380,7 +322,6 @@ impl Profiler {
 		let len = if current == bytecode {
 			len as usize
 		} else {
-			// Code a hot reload replaced, still running
 			auxtools::bytecode_at(bytecode)?.len()
 		};
 		Some(Box::new(Code {
@@ -392,7 +333,6 @@ impl Profiler {
 		}))
 	}
 
-	/// Nanoseconds a tick, and seconds measured
 	fn clock(&self) -> (f64, f64) {
 		let (ended, ticks) = self
 			.stopped
@@ -402,8 +342,6 @@ impl Profiler {
 		(elapsed.as_nanos() as f64 / ticks as f64, elapsed.as_secs_f64())
 	}
 
-	/// Estimate hook overhead from the cheapest sample with enough timed hits.
-	/// Return zero if no sample qualifies.
 	fn floor(&self) -> f64 {
 		if let Some((.., floor)) = self.stopped {
 			return floor;
@@ -421,7 +359,6 @@ impl Profiler {
 }
 
 impl Code {
-	/// Count a hit and return its counter index.
 	fn hit(&mut self, offset: usize) -> Option<u32> {
 		let index = self.index.get_mut(offset)?;
 		if *index == 0 {
@@ -436,8 +373,6 @@ impl Code {
 }
 
 impl Counter {
-	/// Self and callee time in nanoseconds. Estimate untimed hits from timed
-	/// hits.
 	fn took(&self, floor: f64, ns: f64) -> (u64, u64) {
 		let own = match self.timed {
 			0 => 0.0,
@@ -448,13 +383,10 @@ impl Counter {
 	}
 }
 
-/// Aggregate profile measurements.
 pub struct Totals {
 	pub seconds: f64,
 	pub running: bool,
-	/// Nanoseconds taken off each instruction for the profiler itself
 	pub overhead: f64,
-	/// Proc ID, bytecode address and totals for each executed buffer.
 	pub codes: Vec<(u32, usize, ProfiledTotal)>
 }
 
@@ -489,7 +421,6 @@ pub fn totals() -> Option<Totals> {
 	})
 }
 
-/// Return executed instructions for a bytecode buffer.
 pub fn instructions(bytecode: usize) -> Option<Vec<ProfiledInstruction>> {
 	let profiler = unsafe { PROFILER.as_ref() }?;
 	let code = profiler.codes.get(&bytecode)?.as_ref()?;

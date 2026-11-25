@@ -1,6 +1,3 @@
-//! Read DM pointers through the exported byondapi function.
-//! This avoids signature scanning and dependence on internal pointer layouts.
-
 use std::sync::OnceLock;
 
 use byond_scan::{Anchor, Extract, Recipe, VersionRange};
@@ -21,8 +18,6 @@ const READ_POINTER: Recipe = Recipe {
 	extract: Extract::Entry
 };
 
-/// Resolve `Byond_ReadPointer` for the C++ wrapper, which catches runtime
-/// errors raised by some builds when the target object has been deleted.
 fn found() -> bool {
 	static FOUND: OnceLock<bool> = OnceLock::new();
 	*FOUND.get_or_init(|| match crate::find_recipe(&READ_POINTER) {
@@ -56,7 +51,6 @@ pub fn read_raw(pointer: &Value) -> Option<RawValue> {
 	(unsafe { funcs::read_pointer(&mut result, &pointer.raw) } == 1).then_some(result)
 }
 
-/// What a pointer names now
 pub fn read(pointer: &Value) -> Option<Value> {
 	read_raw(pointer).map(|raw| unsafe { Value::from_raw(raw) })
 }

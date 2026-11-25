@@ -1,5 +1,3 @@
-//! Breakpoints on procs by name
-
 use serde_json::json;
 
 use crate::{ok, world::World};
@@ -8,8 +6,6 @@ pub fn run() {
 	let mut world = World::start();
 	let at = world.marks.clone();
 
-	// Each way of writing a proc's path. A proc's own line is its first with
-	// code.
 	let names = [
 		("/proc/leaf", "leaf_1"),
 		("/leaf", "leaf_1"),
@@ -52,7 +48,6 @@ pub fn run() {
 	world.finish("middle");
 	ok("function breakpoint entry position");
 
-	// A breakpoint on that line as well: two in one place, each its own
 	let id = |breakpoint: &serde_json::Value| breakpoint["id"].as_u64().expect("a breakpoint with no id");
 	let on_procs = world.function_breakpoints(&["/proc/middle", "/proc/leaf"]);
 	let on_line = world.try_break_if(&[("leaf_1", "x == 999")]);
@@ -65,12 +60,10 @@ pub fn run() {
 	assert_eq!((stop.proc.as_str(), &stop.hit), ("/leaf", &vec![id(&on_procs[1]), id(&on_line[0])]));
 	ok("function and line breakpoint hit IDs");
 
-	// The line's goes, with its condition that never held; the proc's stays
 	world.break_on(&[]);
 	world.resume();
 	world.stop_on("breakpoint", "/leaf", "leaf_1");
 	world.resume_through("middle");
-	// And the other way round
 	world.break_on(&["leaf_1"]);
 	world.function_breakpoints(&[]);
 	world.run("middle");
@@ -94,7 +87,6 @@ pub fn run() {
 
 	world.function_breakpoints(&["/datum/thing/twice/bump#1", "/datum/thing/twice/bump"]);
 	world.run("twice");
-	// The last definition runs first, and calls the one before with ..()
 	let stop = world.stop();
 	assert_eq!((stop.proc.as_str(), stop.line), ("/datum/thing/twice/bump", at.line("twice_second")));
 	world.resume();
@@ -113,7 +105,6 @@ pub fn run() {
 	world.run_through("middle");
 	ok("clearing function breakpoints");
 
-	// leaf(3), then leaf(8)
 	let set = world.request(
 		"setFunctionBreakpoints",
 		json!({ "breakpoints": [{ "name": "/proc/leaf", "condition": "x == 8" }] })

@@ -2,25 +2,19 @@ use crate::{Label, Node};
 use std::collections::HashMap;
 
 pub trait AssembleEnv {
-    /// Converts a rust string into the correct string identifier for the destination context
     fn get_string_index(&mut self, string: &[u8]) -> Option<u32>;
     fn get_variable_name_index(&mut self, name: &[u8]) -> Option<u32>;
     fn get_proc_index(&mut self, path: &str) -> Option<u32>;
     fn get_type(&mut self, path: &str) -> Option<(u8, u32)>;
 
-    /// Resolve a global or static variable ID by name and optional scope.
-    /// Use `""` for globals, a declaring type path for type statics, and
-    /// `"proc:/path/of/proc"` for proc statics resolved from existing bytecode.
     fn get_global_index(&mut self, name: &[u8], _scope: Option<&str>) -> Option<u32> {
         self.get_variable_name_index(name)
     }
 
-    /// Finds the id of a resource (a single-quoted file like `'icon.dmi'`) in the destination context
     fn get_resource_index(&mut self, _path: &str) -> Option<u32> {
         None
     }
 
-    /// Find a prefab instance of `path` initialized by assembled `init` code.
     fn get_instance(&mut self, _path: &str, _init: &[u32]) -> Option<u32> {
         None
     }
@@ -217,8 +211,6 @@ mod tests {
         );
     }
 
-    // With an env that knows no strings: read as a field name, either word
-    // would fail the lookup instead of decoding.
     #[test]
     fn caller_and_callee_round_trip() {
         use crate::Variable;
@@ -249,8 +241,6 @@ mod tests {
         );
     }
 
-    // Big worlds have more than 0xFFCD strings, so some field names get ids
-    // that look like access modifiers
     struct ModifierRangeStringEnv;
 
     impl AssembleEnv for ModifierRangeStringEnv {
@@ -337,7 +327,6 @@ mod tests {
         assert_eq!(disassembled, nodes);
     }
 
-    // Knows one string, one resource and one type, both ways round
     struct OperandEnv;
 
     impl AssembleEnv for OperandEnv {
@@ -400,7 +389,6 @@ mod tests {
     fn switch_operands_round_trip() {
         use crate::Opcode;
 
-        // switch on 1, "case" and /obj, then default
         let switch = [
             Opcode::Switch.word(),
             3,
@@ -423,7 +411,6 @@ mod tests {
             Node::Instruction(Instruction::Switch(params), ()) if params.cases.len() == 3
         ));
 
-        // pick(50; a, 50; b)
         let pick_switch = [
             Opcode::PickSwitch.word(),
             2,
@@ -436,7 +423,6 @@ mod tests {
         ];
         assert_round_trips(&pick_switch);
 
-        // if(1 to 2), if("case"), else
         let switch_range = [
             Opcode::SwitchRange.word(),
             1,
@@ -459,7 +445,6 @@ mod tests {
 
     #[test]
     fn is_in_with_a_step_round_trips() {
-        // x in 1 to 10 step 2: the bounds, the step and x, then IsIn 0x0C
         let bytecode = [
             crate::Opcode::PushInt.word(),
             1,
@@ -509,7 +494,6 @@ mod tests {
             ]
         );
 
-        // An env that can't find resources says which one
         let missing = [Node::Instruction(
             Instruction::PushVal(Value::Resource("missing.dmi".into())),
             (),

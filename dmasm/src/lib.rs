@@ -23,9 +23,6 @@ pub use operands::{
 };
 use std::fmt::Write;
 
-/// Target BYOND version and build. Instruction selection, folding and parsing
-/// follow that build's DreamMaker. Build numbers increase across supported
-/// major versions (515.1647, then 516.1648), allowing build-only thresholds.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ByondVersion {
@@ -34,20 +31,16 @@ pub struct ByondVersion {
 }
 
 impl ByondVersion {
-    /// The newest build the compiler was checked against.
     pub const LATEST: ByondVersion = ByondVersion::new(516, 1689);
 
     pub const fn new(major: u32, build: u32) -> Self {
         ByondVersion { major, build }
     }
 
-    /// Whether this is `build` or a later one.
     pub const fn at_least(self, build: u32) -> bool {
         self.build >= build
     }
 
-    /// Configure version-specific parsing before compiling for this build.
-    /// Before 515.1644, clamp overflowing integer literals to 2147483647.
     pub fn read_as(self, ctx: &dreammaker::Context) {
         ctx.set_clamp_integer_literals(!self.at_least(1644));
     }
@@ -102,7 +95,6 @@ fn write_raw_words(buf: &mut String, words: &[u32]) {
     }
 }
 
-/// Formats disassembly with offsets and raw bytecode.
 pub fn format_disassembly(nodes: &[Node<DebugData>], cursor: Option<u32>) -> String {
     let mut buf = String::new();
 

@@ -1,10 +1,3 @@
-//! Launch a world through `adapter::serve` using no-debug requests.
-//! The adapter handles BYOND discovery, reloads, reconnection and shutdown.
-//! Other clients can attach and debug independently.
-//!
-//! `--detach` starts the launcher in the background, redirects output to a log
-//! and returns when the world is ready.
-
 use std::{
 	fs::{File, OpenOptions},
 	io::{self, BufRead, BufReader, Read, Write},
@@ -26,32 +19,22 @@ use crate::{
 	dap::{Note, Output}
 };
 
-/// Exit code for a launched world that failed or was killed.
 pub const WORLD_FAILED: i32 = 4;
-/// How long `--detach` waits for the world to be up
 const COMING_UP: Duration = Duration::from_secs(120);
-/// Readiness protocol for the detached launcher: `ready PID`, `unavailable PID
-/// WHY` (it runs without the debugger) or `failed WHY` on stdout; all other
-/// output goes to the log.
 const DETACHED: &str = "--detached";
 
-/// What `launch` was asked for
 struct Options {
 	dmb: PathBuf,
 	dme: Option<PathBuf>,
-	/// As given, which `Server` reads
 	server: Option<String>,
 	port: Option<u16>,
 	hot_reload: bool,
 	defines: Vec<String>,
 	byond: Option<PathBuf>,
-	/// What follows `--`, in place of the program's default arguments
 	args: Option<Vec<String>>,
 	log: Option<PathBuf>
 }
 
-/// Launch a world. If `replaces_args` is set, arguments after `--`
-/// replace all default server arguments.
 pub fn launch(args: &args::Launch, replaces_args: bool) -> Result<()> {
 	let dmb = absolute(&args.dmb)?;
 	if !dmb.is_file() {
@@ -99,7 +82,6 @@ fn absolute(path: &Path) -> Result<PathBuf> {
 	std::path::absolute(path).map_err(|e| format!("invalid path {}: {}.", path.display(), e).into())
 }
 
-/// Where what's printed goes
 enum Printer {
 	Terminal,
 	File(Mutex<File>)
@@ -107,8 +89,6 @@ enum Printer {
 
 impl Printer {
 	fn print(&self, category: &str, text: &str) {
-		// Ignore write failures; a closed terminal also triggers world
-		// shutdown.
 		match self {
 			Self::Terminal if category == "stderr" => {
 				let _ = io::stderr().write_all(text.as_bytes());
@@ -129,17 +109,14 @@ impl Printer {
 	}
 }
 
-/// What became of the world, as the adapter tells it
 #[derive(Default)]
 struct Outcome {
 	pid: Option<u32>,
-	/// Why it couldn't be launched
 	failed: Option<String>,
 	exit_code: Option<i64>,
 	ready: bool
 }
 
-/// A request, as a client would send it
 fn request(seq: i64, command: &str, arguments: Value) -> Input {
 	Input::Message(
 		json!({
@@ -152,11 +129,8 @@ fn request(seq: i64, command: &str, arguments: Value) -> Input {
 	)
 }
 
-/// Run until the world exits. A detached child reports readiness on stdout.
 fn run(options: &Options, detached: bool) -> Result<()> {
 	let printer = Arc::new(match &options.log {
-		// The background launcher's log was made for it, and has what went
-		// wrong on its way already
 		Some(log) => {
 			let file = if detached {
 				OpenOptions::new().append(true).create(true).open(log)
@@ -206,7 +180,6 @@ fn run(options: &Options, detached: bool) -> Result<()> {
 	let server = options.server.as_deref().map_or(Server::default_for_platform(), |name| {
 		serde_json::from_value(json!(name)).unwrap_or(Server::default_for_platform())
 	});
-	// Arguments after `--` replace the host's defaults.
 	let args = options.args.clone().unwrap_or_else(|| adapter::default_args(server));
 	let mut launch = json!({
 		"noDebug": true,
@@ -241,26 +214,20 @@ fn run(options: &Options, detached: bool) -> Result<()> {
 	match outcome.exit_code {
 		Some(0) => Ok(()),
 		Some(code) if code >= 0 => Err(Failure(WORLD_FAILED, format!("the world exited with code {}.", code))),
-		// Killed, or ended by a second interrupt
 		_ => Err(Failure(WORLD_FAILED, "the world was terminated.".to_owned()))
 	}
 }
 
-/// Report readiness to the parent `launch --detach` process.
-/// This is the child launcher's only stdout output.
 fn say_to_starter(line: &str) {
 	let mut stdout = io::stdout().lock();
 	let _ = writeln!(stdout, "{}", line);
 	let _ = stdout.flush();
 }
 
-/// Default detached launcher log path, beside the `.dmb`.
 fn default_log(dmb: &Path) -> PathBuf {
 	dmb.with_extension("auxtools.log")
 }
 
-/// Starts this launcher again in the background, without `--detach`, and
-/// returns once the world it starts is up
 fn detach(options: &Options, as_json: bool) -> Result<()> {
 	let log = options.log.clone().unwrap_or_else(|| default_log(&options.dmb));
 	let stderr = File::create(&log)
@@ -297,20 +264,17 @@ fn detach(options: &Options, as_json: bool) -> Result<()> {
 	let mut launcher = background::spawn(&mut command).map_err(|e| format!("cannot start the launcher in the background: {}.", e))?;
 	let launcher_pid = launcher.id();
 
-	// The first line reports readiness; EOF indicates launcher exit.
 	let mut stdout = launcher.stdout.take().expect("piped");
 	let (sender, said) = mpsc::channel();
 	std::thread::spawn(move || {
 		let mut line = String::new();
 		let read = BufReader::new(&mut stdout).read_line(&mut line);
 		let _ = sender.send(read.ok().filter(|n| *n > 0).map(|_| line.trim_end().to_owned()));
-		// Drain the pipe so the child cannot block on a full buffer.
 		let _ = io::copy(&mut stdout, &mut io::sink());
 	});
 	let line = match said.recv_timeout(COMING_UP) {
 		Ok(line) => line,
 		Err(_) => {
-			// It ends the world as it goes
 			let _ = launcher.kill();
 			let _ = launcher.wait();
 			return Err(Failure(
@@ -359,7 +323,6 @@ fn detach(options: &Options, as_json: bool) -> Result<()> {
 	}
 }
 
-/// The last `n` lines of a file
 fn last_lines(path: &Path, n: usize) -> String {
 	let mut text = String::new();
 	let _ = File::open(path).and_then(|mut file| file.read_to_string(&mut text));
@@ -367,17 +330,13 @@ fn last_lines(path: &Path, n: usize) -> String {
 	lines[lines.len().saturating_sub(n)..].join("\n")
 }
 
-/// Starting a process that outlives this one and the terminal it was started
-/// from
 mod background {
 	use std::process::{Child, Command};
 
-	/// In a session of its own, with no terminal
 	#[cfg(unix)]
 	pub fn spawn(command: &mut Command) -> std::io::Result<Child> {
 		use std::os::unix::process::CommandExt;
 
-		// SAFETY: setsid is async-signal-safe
 		unsafe {
 			command.pre_exec(|| {
 				libc::setsid();
@@ -387,9 +346,6 @@ mod background {
 		command.spawn()
 	}
 
-	/// Create a hidden console for the world, a separate process group and,
-	/// if permitted, a separate job. The group and job isolate the detached
-	/// launcher from termination with its parent.
 	#[cfg(windows)]
 	pub fn spawn(command: &mut Command) -> std::io::Result<Child> {
 		use std::os::windows::{io::AsRawHandle, process::CommandExt};
@@ -399,8 +355,6 @@ mod background {
 			winbase::{CREATE_BREAKAWAY_FROM_JOB, CREATE_NEW_PROCESS_GROUP, CREATE_NO_WINDOW, HANDLE_FLAG_INHERIT}
 		};
 
-		// Prevent the child from inheriting these handles: keeping the parent's
-		// stdout pipe open would stop its readers from reaching EOF.
 		for handle in [
 			std::io::stdin().as_raw_handle(),
 			std::io::stdout().as_raw_handle(),
@@ -421,13 +375,10 @@ mod background {
 	}
 }
 
-/// Handle termination signals: request graceful shutdown on the first,
-/// then terminate immediately on the second.
 mod interrupts {
 	use super::*;
 
 	static INTERRUPTS: AtomicU32 = AtomicU32::new(0);
-	/// The launcher is done, and can be let go
 	static DONE: AtomicBool = AtomicBool::new(false);
 
 	pub fn listen(inputs: mpsc::Sender<Input>, printer: Arc<Printer>) {
@@ -468,20 +419,14 @@ mod interrupts {
 			for signal in [libc::SIGINT, libc::SIGTERM, libc::SIGHUP] {
 				libc::signal(signal, interrupted as extern "C" fn(libc::c_int) as libc::sighandler_t);
 			}
-			// A reader that went away isn't a reason to leave the world
-			// running without its launcher
 			libc::signal(libc::SIGPIPE, libc::SIG_IGN);
 		}
 	}
 
 	#[cfg(windows)]
 	fn catch() {
-		/// Ctrl-C, Ctrl-Break, the console closing, logging off, shutting down
 		unsafe extern "system" fn interrupted(event: u32) -> i32 {
 			INTERRUPTS.fetch_add(1, Ordering::SeqCst);
-			// Console shutdown terminates the launcher after this handler
-			// returns or its deadline expires. Allow the world that time to
-			// shut down.
 			const CTRL_CLOSE_EVENT: u32 = 2;
 			if event >= CTRL_CLOSE_EVENT {
 				for _ in 0..100 {

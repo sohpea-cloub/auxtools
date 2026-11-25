@@ -2,8 +2,6 @@ use crate::{byond_string, raw_types, DMResult, Value};
 use std::sync::atomic::{AtomicU32, Ordering::Relaxed};
 
 fn get_next_id() -> f32 {
-	// This can (should) be only called from the main thread but we need to shut
-	// Rust up.
 	static NEXT_WEAKREF_ID: AtomicU32 = AtomicU32::new(1);
 	let id = NEXT_WEAKREF_ID.fetch_add(1, Relaxed);
 	id as f32
@@ -54,7 +52,6 @@ pub struct WeakValue {
 }
 
 impl WeakValue {
-	/// Creates a weak reference to the given datum.
 	pub(crate) fn new(val: &Value) -> DMResult<Self> {
 		if let Ok(id) = val.get_number(byond_string!("__auxtools_weakref_id")) {
 			return Ok(Self { inner: val.raw, id });
@@ -78,8 +75,6 @@ impl WeakValue {
 		Some(real_val)
 	}
 
-	/// Same as [`WeakValue::upgrade`] but returns a null if the datum was
-	/// deleted, so you can pass it straight into DM.
 	pub fn upgrade_or_null(&self) -> Value {
 		match self.upgrade() {
 			Some(v) => v,
@@ -89,7 +84,6 @@ impl WeakValue {
 }
 
 impl Value {
-	/// Creates a [`WeakValue`] referencing this datum.
 	pub fn as_weak(&self) -> DMResult<WeakValue> {
 		WeakValue::new(self)
 	}

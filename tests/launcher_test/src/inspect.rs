@@ -1,7 +1,3 @@
-//! The command line's commands for looking at a world: what `eval` says when
-//! it fails, expressions from files, JSON, where `wait`'s breakpoints bound,
-//! a proc's bytecode and whereabouts, and steps of one instruction
-
 use std::{
 	io::Write,
 	path::Path,
@@ -12,15 +8,12 @@ use serde_json::{json, Value};
 
 use super::{client::launcher_path, line_of};
 
-/// What a command did: its exit code, and what it printed on stdout and on
-/// stderr, apart
 struct Ran {
 	code: i32,
 	out: String,
 	err: String
 }
 
-/// `auxtools --pid PID ARGS...`, with `input` on its stdin
 fn auxtools(pid: &str, args: &[&str], input: Option<&str>) -> Ran {
 	let mut child = Command::new(launcher_path())
 		.args(["--pid", pid])
@@ -41,7 +34,6 @@ fn auxtools(pid: &str, args: &[&str], input: Option<&str>) -> Ran {
 	}
 }
 
-/// Runs it, and checks it exited with `code`
 fn run(pid: &str, args: &[&str], code: i32) -> Ran {
 	let ran = auxtools(pid, args, None);
 	assert_eq!(
@@ -57,8 +49,6 @@ fn run(pid: &str, args: &[&str], code: i32) -> Ran {
 	ran
 }
 
-/// Run a failing command. Require exit code 1 and empty stdout;
-/// return stderr without its `error: ` prefix.
 fn fails(pid: &str, args: &[&str]) -> String {
 	let ran = run(pid, args, 1);
 	assert!(
@@ -74,8 +64,6 @@ fn fails(pid: &str, args: &[&str]) -> String {
 	said.trim_end().to_owned()
 }
 
-/// Schedule fail_in() after the next breakpoint is installed.
-/// The world consumes the trigger file, possibly before installation.
 fn call_soon(dir: &Path) {
 	let call = dir.join("call");
 	std::thread::spawn(move || {
@@ -109,8 +97,6 @@ pub fn spawned_and_steps(pid: u64, dir: &Path, code: &Path) {
 	steps_that_end_elsewhere(pid, dir);
 }
 
-/// Evaluation failures use stderr and exit code 1. Callee runtime errors are
-/// reported with locations but let the expression continue, as in DM.
 fn eval_failures(pid: &str, code: &Path) {
 	let ran = run(pid, &["eval", "fail_in(3)"], 0);
 	assert_eq!(ran.out, "null\n", "unexpected eval output: {}", ran.out);
@@ -127,47 +113,36 @@ fn eval_failures(pid: &str, code: &Path) {
 		format!("  called by /fail_in  attach_host.dm:{}", line_of(code, "\tvar/got = fail_deeper(n)"))
 	);
 	assert_eq!(lines[3], "  called by the expression");
-	// In the expression itself, there's nowhere else to say
 	assert_eq!(fails(pid, &["eval", "1/0"]), "runtime error: Division by zero");
-	// One the proc catches is no failure
 	assert_eq!(run(pid, &["eval", "caught_inside()"], 0).out.trim(), "\"caught\"");
-	// A try block in the evaluation itself may catch the error, including when
-	// spawned.
 	let caught = "try\n\tvar/list/L = null\n\tL.len = 1\ncatch(var/exception/e)\n\treturn \"caught: [e.name]\"";
 	assert_eq!(run(pid, &["eval", caught], 0).out.trim(), "\"caught: Cannot modify null.len.\"");
 	assert_eq!(
 		run(pid, &["eval", "--spawn", "--wait", caught], 0).out.trim(),
 		"\"caught: Cannot modify null.len.\""
 	);
-	// Match DreamMaker's /client value and proc references: /proc/ selects the
-	// declaration; a path without it selects the last definition.
 	assert_eq!(run(pid, &["eval", "/client == client_type()"], 0).out.trim(), "1");
 	assert_eq!(run(pid, &["eval", "/datum/twice/proc/act"], 0).out, "/datum/twice/proc/act\n");
 	assert_eq!(run(pid, &["eval", "/datum/twice/act"], 0).out, "/datum/twice/act\n");
 	println!("ok: eval runtime error call stack");
 	println!("ok: eval carries on after a runtime error in a called proc");
 
-	// Resolve type proc references through actual type ancestry.
 	assert_eq!(run(pid, &["eval", "/datum/twice/more::act() == twice_ref()"], 0).out, "1\n");
 	assert_eq!(
 		run(pid, &["eval", "call(new /datum/twice/more, /datum/twice/more::act())()"], 0).out,
 		"\"second\"\n"
 	);
-	// Follow builtin parent types, not path prefixes: /obj inherits from /atom.
 	assert_eq!(run(pid, &["eval", "call(new /obj, /obj::atom_act())()"], 0).out, "\"atom\"\n");
-	// A same-named global proc cannot satisfy a type proc reference.
 	assert_eq!(
 		run(pid, &["eval", "call(new /datum/twice, /datum/twice/proc/act)()"], 0).out,
 		"\"first\"\n"
 	);
 	let said = fails(pid, &["eval", "/datum/twice::nope()"]);
 	assert!(said.contains("/datum/twice has no proc called nope"), "unexpected eval output: {}", said);
-	// Reject modified types that would persist in runtime tables.
 	let said = fails(pid, &["eval", "new /datum/twice{tag = \"x\"}()"]);
 	assert!(said.contains("use new and assign the vars"), "unexpected eval output: {}", said);
 	println!("ok: eval's type proc references");
 
-	// Long loops yield in the background, so synchronous eval loses the result.
 	let looped = "var/x = 0; for(var/i in 1 to 2000000) x++; return x";
 	let said = fails(pid, &["eval", looped]);
 	assert!(
@@ -175,17 +150,14 @@ fn eval_failures(pid: &str, code: &Path) {
 		"unexpected eval output: {}",
 		said
 	);
-	// Spawned eval can wait for the result.
 	assert_eq!(run(pid, &["eval", "--spawn", "--wait", looped], 0).out, "2000000\n");
 	println!("ok: background loop evaluation");
 
-	// Match the text BYOND prints, without embedded macros.
 	assert_eq!(run(pid, &["eval", "\"\\improper AI \\bold Chamber\""], 0).out, "\"AI Chamber\"\n");
 	let named = json_of(pid, &["eval", "--json", "new /obj/macro_named"]);
 	assert!(named["name"] == "AI Chamber" && named["vars"]["name"] == "AI Chamber", "{}", named);
 	println!("ok: text macro removal");
 
-	// Paused, the same
 	run(pid, &["pause"], 0);
 	let ran = run(pid, &["eval", "fail_in(3)"], 0);
 	assert!(
@@ -207,8 +179,6 @@ fn eval_failures(pid: &str, code: &Path) {
 	println!("ok: consistent eval failure output");
 }
 
-/// Expressions and messages from files and stdin, which no shell gets to
-/// change on the way
 fn from_files(pid: &str, dir: &Path) {
 	let file = |name: &str, text: &str| {
 		let path = dir.join(name);
@@ -255,7 +225,6 @@ fn from_files(pid: &str, dir: &Path) {
 		ran.out
 	);
 	run(pid, &["continue"], 0);
-	// Two @s are one, and no file
 	let said = fails(pid, &["wait", "pause", "--break", "/proc/value", "--if", &format!("@@{}", never)]);
 	assert!(
 		said.starts_with("cannot set a breakpoint at /proc/value: the condition doesn't compile"),
@@ -267,9 +236,7 @@ fn from_files(pid: &str, dir: &Path) {
 	println!("ok: file-backed wait arguments and @ escaping");
 }
 
-/// Where a proc is, and its bytecode
 fn procs(pid: &str, code: &Path) {
-	// Resolve init procs named by BYOND after startup.
 	run(pid, &["eval", "new /datum/inits"], 0);
 	let printed = run(pid, &["proc", "/datum/inits/(init)"], 0).out;
 	assert!(
@@ -278,11 +245,9 @@ fn procs(pid: &str, code: &Path) {
 		printed
 	);
 	println!("ok: procs named after startup");
-	// Keep a value for the next evaluation.
 	run(pid, &["eval", "auxtools_kept()[\"kept\"] = new /datum/twice"], 0);
 	assert_eq!(run(pid, &["eval", "auxtools_kept()[\"kept\"]:type"], 0).out, "/datum/twice\n");
 	println!("ok: values kept between evaluations");
-	// Expose only the active slot for duplicate local names in separate loops.
 	for (marker, value) in [("\t\ttotal += i // first loop", "1"), ("\t\ttotal += i // second loop", "10")] {
 		let place = format!("attach_host.dm:{}", line_of(code, marker));
 		let waiting = crate::journal::Background::start(pid.parse().unwrap(), &["wait", "pause", "--break", &place, "--timeout", "60"]);
@@ -297,7 +262,6 @@ fn procs(pid: &str, code: &Path) {
 		run(pid, &["continue"], 0);
 	}
 	println!("ok: a local's name means the one in use");
-	// value() was hot reloaded before this
 	let printed = run(pid, &["proc", "/proc/value"], 0).out;
 	assert_eq!(
 		printed,
@@ -360,8 +324,6 @@ fn procs(pid: &str, code: &Path) {
 	println!("ok: bytecode offsets and source lines");
 }
 
-/// wait says where each of its breakpoints went, and fails before waiting
-/// on a place the world doesn't have
 fn where_breakpoints_bound(pid: &str, code: &Path) {
 	let declared = line_of(code, "/proc/value()");
 	let ran = run(
@@ -409,7 +371,6 @@ fn where_breakpoints_bound(pid: &str, code: &Path) {
 	);
 	println!("ok: resolved wait breakpoint locations");
 
-	// Global init has no path and runs before clients can attach.
 	let info = run(pid, &["proc", "(global init)"], 0).out;
 	assert!(
 		info.starts_with("(global init)  attach_host.dm:") && info.ends_with("\ndefinitions: 1\nreloaded: no\n"),
@@ -454,7 +415,6 @@ fn where_breakpoints_bound(pid: &str, code: &Path) {
 			"cannot set a breakpoint at /value#2: /value has one definition, #0: there's no #2".to_owned()
 		)
 	];
-	// With no time limit: it would wait for ever if it didn't fail first
 	for (place, said) in &nowhere {
 		assert_eq!(&fails(pid, &["wait", "pause", "--break", place]), said);
 	}
@@ -466,8 +426,6 @@ fn where_breakpoints_bound(pid: &str, code: &Path) {
 	println!("ok: invalid wait target diagnostics");
 }
 
-/// The instruction a pause after a step of one is on: its offset and text,
-/// as `dis` has them for the frame's proc
 fn instruction_at(printed: &str, proc: &str, pid: &str) -> u32 {
 	let mut lines = printed.lines();
 	assert_eq!(
@@ -495,14 +453,11 @@ fn instruction_at(printed: &str, proc: &str, pid: &str) -> u32 {
 	offset
 }
 
-/// Steps of one instruction, over and into
 fn instruction_steps(pid: &str, dir: &Path) {
 	call_soon(dir);
 	run(pid, &["wait", "pause", "--break", "/proc/fail_in", "--timeout", "60"], 0);
 	let printed = run(pid, &["step-over", "--instruction"], 0).out;
 	let mut last = instruction_at(&printed, "/fail_in", pid);
-	// A breakpoint on a proc is on the instruction after its first DbgLine,
-	// and this is the one after that
 	let offsets: Vec<u32> = run(pid, &["disassemble", "/fail_in"], 0)
 		.out
 		.lines()
@@ -516,7 +471,6 @@ fn instruction_steps(pid: &str, dir: &Path) {
 		.collect();
 	assert_eq!(last, offsets[2], "step-over --instruction went to {} of {:?}", last, offsets);
 	println!("ok: instruction Step Over");
-	// One at a time, into fail_deeper() when its call comes
 	let mut printed = run(pid, &["step-in", "--instruction"], 0).out;
 	for _ in 0..10 {
 		if printed.lines().nth(1).is_some_and(|line| line.starts_with("#0 /fail_deeper  ")) {
@@ -528,7 +482,6 @@ fn instruction_steps(pid: &str, dir: &Path) {
 		printed = run(pid, &["step-in", "--instruction"], 0).out;
 	}
 	instruction_at(&printed, "/fail_deeper", pid);
-	// A step of a line still says nothing of instructions
 	let printed = run(pid, &["step-over"], 0).out;
 	assert!(
 		printed.starts_with(&format!("pid {}: paused after a step\n#0 /fail_deeper  ", pid)) && !printed.contains("instruction"),
@@ -539,14 +492,12 @@ fn instruction_steps(pid: &str, dir: &Path) {
 	println!("ok: instruction Step Into");
 }
 
-/// One JSON document on stdout, and nothing on stderr
 fn json_of(pid: &str, args: &[&str]) -> Value {
 	let ran = run(pid, args, 0);
 	assert!(ran.err.is_empty(), "unexpected stderr from `{}`: {}", args.join(" "), ran.err);
 	serde_json::from_str(&ran.out).unwrap_or_else(|e| panic!("`{}` printed {}: {}", args.join(" "), ran.out, e))
 }
 
-/// --json, on a running world and a paused one
 fn as_json(pid: &str, dir: &Path) {
 	let eval = |expression: &str, more: &[&str]| {
 		let args: Vec<&str> = ["eval", "--json", expression].iter().chain(more).copied().collect();
@@ -615,7 +566,6 @@ fn as_json(pid: &str, dir: &Path) {
 	println!("ok: recursive JSON rendering");
 
 	call_soon(dir);
-	// (where the breakpoint went is on stderr as well as in the JSON)
 	let ran = run(pid, &["wait", "pause", "--json", "--break", "/proc/fail_in", "--timeout", "60"], 0);
 	assert!(
 		ran.err.starts_with("breakpoint set at /fail_in  attach_host.dm:") && ran.err.lines().count() == 1,
@@ -672,7 +622,6 @@ fn as_json(pid: &str, dir: &Path) {
 	println!("ok: JSON results while paused");
 }
 
-/// eval --src: an object's vars and procs by their bare names, with no frame
 fn on_an_object(pid: &str) {
 	let reference = run(pid, &["eval", "ref(held)"], 0).out.trim().trim_matches('"').to_owned();
 	assert!(reference.starts_with("[0x") && reference.ends_with(']'), "ref(held) gave {}", reference);
@@ -684,13 +633,11 @@ fn on_an_object(pid: &str) {
 		json_of(pid, &["eval", "--src", &reference, "--json", "list(count, type)"]),
 		json!([3, { "path": "/datum/held" }])
 	);
-	// Paused, the same, and not in the paused frame
 	run(pid, &["pause"], 0);
 	assert_eq!(run(pid, &["eval", "--src", &bare, "double(count)"], 0).out, "6\n");
 	run(pid, &["continue"], 0);
 	println!("ok: object-scoped evaluation");
 
-	// One that's gone: the datum is deleted once nothing holds it
 	let gone = run(pid, &["eval", "ref(new /datum/held)"], 0).out.trim().trim_matches('"').to_owned();
 	assert_eq!(fails(pid, &["eval", "--src", &gone, "count"]), format!("object not found: {}", gone));
 	assert_eq!(
@@ -705,8 +652,6 @@ fn on_an_object(pid: &str) {
 	println!("ok: invalid object reference diagnostics");
 }
 
-/// What `eval` gives, once it gives `wanted`: the world is given the code's
-/// macros a moment after a reload
 fn eval_becomes(pid: &str, expression: &str, wanted: &str) {
 	let mut got = String::new();
 	for _ in 0..100 {
@@ -719,7 +664,6 @@ fn eval_becomes(pid: &str, expression: &str, wanted: &str) {
 	panic!("eval {} gave {}, not {}", expression, got, wanted);
 }
 
-/// The code's #defines, in every kind of expression
 fn macros(pid: &str, code: &Path) {
 	assert_eq!(run(pid, &["eval", "DOUBLE_IT(ANSWER) + 1"], 0).out, "85\n");
 	assert_eq!(run(pid, &["eval", "\"[ANSWER]!\""], 0).out, "\"42!\"\n");
@@ -728,7 +672,6 @@ fn macros(pid: &str, code: &Path) {
 	assert_eq!(run(pid, &["eval", "--src", &reference, "DOUBLE_IT(count)"], 0).out, "6\n");
 	println!("ok: source macro expansion and undefinition");
 
-	// In a breakpoint's condition and its message, and in a paused frame
 	let ran = run(
 		pid,
 		&[
@@ -767,7 +710,6 @@ fn macros(pid: &str, code: &Path) {
 	assert!(ran.out.contains("doubled: 2\n"), "unexpected trace output: {}", ran.out);
 	println!("ok: macros in conditions, logpoints and frame evaluation");
 
-	// A reload that changes them gives the world the new ones
 	let source = std::fs::read_to_string(code).unwrap();
 	std::fs::write(code, source.replace("#define ANSWER 42", "#define ANSWER 43\n#define GONE 2")).unwrap();
 	eval_becomes(pid, "ANSWER + GONE", "45");
@@ -777,7 +719,6 @@ fn macros(pid: &str, code: &Path) {
 	println!("ok: macro updates after reload");
 }
 
-/// eval --spawn: the world's own code, on its next tick
 fn spawned(pid: &str, code: &Path) {
 	let number = run(pid, &["eval", "--spawn", "slow_double(4)"], 0).out;
 	let number: u64 = number
@@ -831,14 +772,11 @@ fn spawned(pid: &str, code: &Path) {
 	);
 	println!("ok: wait for spawned evaluation result");
 
-	// A proc's body, with vars of its own, which can sleep here
 	let body = "var/n = slow_double(2)\nsleep(1)\nvar/list/both = list(n, n + 1)\nboth[2]";
 	assert_eq!(run(pid, &["eval", "--spawn", "--wait", body], 0).out, "5\n");
 	assert_eq!(run(pid, &["eval", "--spawn", "--wait", "slow_double(5)"], 0).out, "10\n");
 	println!("ok: spawned body variables survive sleep");
 
-	// Evaluations report compiler warnings. The pick() bug was fixed in
-	// 516.1689.
 	let build: u32 = run(pid, &["eval", "world.byond_build"], 0).out.trim().parse().unwrap();
 	let ran = run(pid, &["eval", "var/a = 1\nreturn pick(1; a, 0; a)"], 0);
 	assert_eq!(ran.out, "1\n", "unexpected eval output: {}", ran.out);
@@ -853,8 +791,6 @@ fn spawned(pid: &str, code: &Path) {
 	}
 	println!("ok: evaluation compiler warnings");
 
-	// Spawned evaluation continues after callee errors on either side of a
-	// sleep.
 	let ran = run(pid, &["eval", "--spawn", "--wait", "fail_in(3)"], 0);
 	assert_eq!(ran.out, "null\n", "unexpected eval output: {}", ran.out);
 	assert!(
@@ -880,7 +816,6 @@ fn spawned(pid: &str, code: &Path) {
 	);
 	let printed = run(pid, &["log", "--spawned", "--last", "1"], 0).out;
 	assert!(printed.contains(": slow_fail() returned null"), "log said {}", printed);
-	// Runtime journal stacks exclude the debugger's outer helper frames.
 	let printed = run(pid, &["log", "--runtimes", "--last", "1"], 0).out;
 	let frames: Vec<&str> = printed.lines().skip(1).collect();
 	assert!(
@@ -891,14 +826,12 @@ fn spawned(pid: &str, code: &Path) {
 		"log said {}",
 		printed
 	);
-	// An error in the spawned expression itself fails the result.
 	assert_eq!(
 		fails(pid, &["eval", "--spawn", "--wait", "sleep(1)\nvar/n = 0\nreturn 1/n"]),
 		"runtime error: Division by zero"
 	);
 	println!("ok: spawned runtime error stacks");
 
-	// A breakpoint in what it calls stops the world
 	let waiting = crate::journal::Background::start(pid.parse().unwrap(), &[
 		"wait",
 		"pause",
@@ -907,8 +840,6 @@ fn spawned(pid: &str, code: &Path) {
 		"--timeout",
 		"60"
 	]);
-	// (it says where the breakpoint went on stderr, which is read once it's
-	// done)
 	std::thread::sleep(std::time::Duration::from_secs(2));
 	run(pid, &["eval", "--spawn", "slow_double(6)"], 0);
 	let (exit, printed) = waiting.finish();
@@ -924,7 +855,6 @@ fn spawned(pid: &str, code: &Path) {
 		"stack said {}",
 		stack
 	);
-	// Sleeping helper stacks are hidden too.
 	let stacks = run(pid, &["stack", "--all"], 0).out;
 	assert!(
 		!stacks.contains("auxtools_keepalive") && !stacks.contains("auxtools_spawned"),
@@ -932,7 +862,6 @@ fn spawned(pid: &str, code: &Path) {
 		stacks
 	);
 	assert_eq!(run(pid, &["eval", "n"], 0).out, "6\n");
-	// Stepping out of the expression completes without stopping in a helper.
 	let stepped = run(pid, &["step-out", "--timeout", "10"], 0).out;
 	assert!(stepped.contains("#0 /auxtools_spawn_stub  "), "step-out said {}", stepped);
 	let stepped = run(pid, &["step-out", "--timeout", "10"], 0);
@@ -944,7 +873,6 @@ fn spawned(pid: &str, code: &Path) {
 	);
 	println!("ok: breakpoints in spawned calls");
 
-	// Breakpoints and steps must skip the intervening .dme debug markers.
 	let line = line_of(code, "\treturn \"last [rounds]\"");
 	let printed = run(pid, &["disassemble", "/proc/last_in_file"], 0).out;
 	assert!(printed.contains("attach_host.dme\""), "missing .dme debug marker: {}", printed);
@@ -998,12 +926,8 @@ fn spawned(pid: &str, code: &Path) {
 	println!("ok: spawn timeout and rejection diagnostics");
 }
 
-/// A step that ends with nothing to pause in is done, with the world running;
-/// one that isn't done by its --timeout says so, and what the world is doing
 fn steps_that_end_elsewhere(pid: &str, dir: &Path) {
 	let number: u64 = pid.parse().unwrap();
-	// fail_in() is called from a spawn() with nothing after it: a step from
-	// there leaves the code that was running
 	call_soon(dir);
 	run(pid, &["wait", "pause", "--break", "/proc/fail_in", "--timeout", "60"], 0);
 	let out = run(pid, &["step-out", "--timeout", "30"], 0).out;
@@ -1023,7 +947,6 @@ fn steps_that_end_elsewhere(pid: &str, dir: &Path) {
 	assert_eq!(json_of(pid, &["status", "--json"])["paused"], false);
 	println!("ok: step exhaustion succeeds with world running");
 
-	// Report a runtime error that ends the stepped proc.
 	call_soon(dir);
 	run(pid, &["wait", "pause", "--break", "/proc/fail_deeper", "--timeout", "60"], 0);
 	let ran = run(pid, &["step-over", "--timeout", "30"], 0);
@@ -1038,13 +961,11 @@ fn steps_that_end_elsewhere(pid: &str, dir: &Path) {
 	run(pid, &["continue"], 0);
 	println!("ok: a step reports the runtime error that ended its proc");
 
-	// A step over a sleep isn't over until the proc wakes
 	let waiting = crate::journal::Background::start(number, &["wait", "pause", "--break", "/proc/slow_double", "--timeout", "60"]);
 	std::thread::sleep(std::time::Duration::from_secs(2));
 	run(pid, &["eval", "--spawn", "slow_double(6, 40)"], 0);
 	let (exit, printed) = waiting.finish();
 	assert_eq!(exit, 0, "unexpected wait output: {}", printed);
-	// (the breakpoint is before the line that sleeps: a step gets there)
 	let on_sleep = run(pid, &["step-over", "--timeout", "30", "--json"], 0).out;
 	assert!(
 		on_sleep.contains("\"reason\":\"step\"") && on_sleep.contains("\"proc\":\"/slow_double\""),
@@ -1065,7 +986,6 @@ fn steps_that_end_elsewhere(pid: &str, dir: &Path) {
 		"step-over said {}",
 		ran.err
 	);
-	// In text, the same
 	let waiting = crate::journal::Background::start(number, &["wait", "pause", "--break", "/proc/slow_double", "--timeout", "60"]);
 	std::thread::sleep(std::time::Duration::from_secs(2));
 	run(pid, &["eval", "--spawn", "slow_double(7, 40)"], 0);
@@ -1080,7 +1000,6 @@ fn steps_that_end_elsewhere(pid: &str, dir: &Path) {
 		"step-over said {}",
 		ran.err
 	);
-	// The steps left behind don't pause the world when their procs wake
 	std::thread::sleep(std::time::Duration::from_secs(5));
 	assert_eq!(json_of(pid, &["status", "--json"])["paused"], false);
 	println!("ok: step timeout preserves execution state");

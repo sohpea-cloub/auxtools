@@ -1,13 +1,7 @@
-//! Client events for reload state, refused changes and potentially unapplied
-//! edits.
-
 use dmasm::reload::{Refusal, Until};
 
 use super::*;
 
-/// Reload state: `reading`, `active`, `reloading`, `reloaded`, `refused`,
-/// `failed` or `off`. `summary` describes a reload; `problems` lists held
-/// changes.
 #[derive(serde::Serialize)]
 struct ReloadEvent {
 	state: &'static str,
@@ -19,18 +13,14 @@ impl Event for ReloadEvent {
 	const EVENT: &'static str = "auxtoolsReload";
 }
 
-/// Held change with its source location.
 #[derive(serde::Serialize)]
 struct Problem {
-	/// Absolute path; fall back to the `.dme` when no source file is known.
 	file: Option<String>,
 	line: Option<u32>,
 	message: String,
-	/// Required action: `reboot` or `rebuild`.
 	until: &'static str
 }
 
-/// Files newer than the build whose edits may be missing from the world.
 #[derive(serde::Serialize)]
 struct OutdatedEvent {
 	files: Vec<String>
@@ -40,8 +30,6 @@ impl Event for OutdatedEvent {
 	const EVENT: &'static str = "auxtoolsOutdated";
 }
 
-/// Current reload state, the last state before `reloading`, and refused
-/// changes still missing from the world.
 #[derive(Default)]
 pub(super) struct ReloadStatus {
 	reloading: bool,
@@ -50,9 +38,6 @@ pub(super) struct ReloadStatus {
 }
 
 impl Adapter {
-	/// Report reload state to the client, with the outstanding refusals as
-	/// problems. Report `refused` instead of `active` or `reloaded` while any
-	/// remain.
 	pub(super) fn reload_state(&mut self, state: &'static str, summary: Option<String>) {
 		self.reload_status.reloading = state == "reloading";
 		if state != "reloading" {
@@ -86,8 +71,6 @@ impl Adapter {
 		});
 	}
 
-	/// Replace the outstanding refusals and report the settled state again.
-	/// A reload in progress reports when it ends.
 	pub(super) fn outstanding(&mut self, refusals: Vec<Refusal>) {
 		self.reload_status.refusals = refusals;
 		if !self.reload_status.reloading {
@@ -97,18 +80,15 @@ impl Adapter {
 		}
 	}
 
-	/// Forget refusals from a replaced source worker.
 	pub(super) fn forget_refusals(&mut self) {
 		self.reload_status.refusals.clear();
 	}
 
-	/// Begin reload progress.
 	pub(super) fn reloading(&mut self) {
 		self.progress_start(RELOADING, "Reloading changes".to_owned());
 		self.reload_state("reloading", None);
 	}
 
-	/// Finish reload progress. Restore the previous state if nothing changed.
 	pub(super) fn looked(&mut self) {
 		self.progress_end(RELOADING);
 		if self.reload_status.reloading {
@@ -118,8 +98,6 @@ impl Adapter {
 		}
 	}
 
-	/// Group held changes by subject and reason for the console. The client
-	/// gets them with the outstanding set (`outstanding`).
 	pub(super) fn refused(&mut self, refused: Vec<Refusal>, warnings: Vec<String>) {
 		let reboot = refused.iter().all(|refusal| refusal.until == Until::Reboot);
 		self.out.console(if reboot {
@@ -142,7 +120,6 @@ impl Adapter {
 		);
 	}
 
-	/// Report files edited after the build.
 	pub(super) fn outdated(&mut self, files: Vec<String>) {
 		let mut named = files.iter().take(5).cloned().collect::<Vec<_>>().join(", ");
 		if files.len() > 5 {
@@ -154,8 +131,6 @@ impl Adapter {
 	}
 }
 
-/// Merge refusals sharing a subject and reason, combining var names
-/// and retaining the first location (`/area: layer, icon: why`).
 fn grouped(refused: &[Refusal]) -> Vec<Refusal> {
 	let mut groups: Vec<Refusal> = vec![];
 	for refusal in refused {

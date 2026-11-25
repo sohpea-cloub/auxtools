@@ -1,6 +1,3 @@
-//! Trace execution using logpoints. Print each hit or count hits by expression
-//! value or caller, then summarize. Tracing does not pause the world.
-
 use std::{
 	collections::HashMap,
 	io::Write,
@@ -11,26 +8,19 @@ use serde_json::{json, Value};
 
 use super::*;
 
-/// How often it looks to see whether it's been interrupted
 pub(super) const TICK: Duration = Duration::from_millis(100);
 
-/// What hits are counted by
 enum By {
-	/// The value of an expression at each hit
 	Value(String),
-	/// The proc and line that called the one hit
 	Caller
 }
 
-/// Why it stopped
 #[derive(Clone, Copy)]
 enum Ended {
 	Time,
 	Count,
 	Interrupted,
-	/// What it prints to was closed (`| head`)
 	Closed,
-	/// The world went away
 	HungUp
 }
 
@@ -47,7 +37,6 @@ impl Ended {
 }
 
 pub fn trace(world: &mut World, args: &args::Trace) -> Result<()> {
-	// (an expression or a message can be given as @FILE, as elsewhere)
 	let by = match args.by.as_deref() {
 		Some("caller") => Some(By::Caller),
 		Some(expression) => Some(By::Value(super::given_text(expression)?)),
@@ -57,8 +46,6 @@ pub fn trace(world: &mut World, args: &args::Trace) -> Result<()> {
 	let condition = args.condition.as_deref().map(super::given_text).transpose()?;
 	let (count, json) = (args.count, args.json);
 
-	// Group by the evaluated log message when counting expression values.
-	// Every hit also includes its location and caller.
 	let message = match (&by, &log) {
 		(Some(By::Value(expression)), _) => vec![LogPart::Expr(expression.clone())],
 		(_, Some(message)) => LogPart::parse(message),
@@ -66,8 +53,6 @@ pub fn trace(world: &mut World, args: &args::Trace) -> Result<()> {
 	};
 	let printed_message = log.is_some();
 
-	// Validate targets while installing. Disconnecting removes any
-	// breakpoints installed before a failure.
 	let mut out = Out::new();
 	let mut bound = vec![];
 	for place in &args.locations {
@@ -173,7 +158,6 @@ pub fn trace(world: &mut World, args: &args::Trace) -> Result<()> {
 		}
 	};
 
-	// Remove explicitly to collect condition-error counts before disconnecting.
 	let mut skipped = None;
 	if !matches!(ended, Ended::HungUp) {
 		let mut sum = 0;
@@ -189,7 +173,6 @@ pub fn trace(world: &mut World, args: &args::Trace) -> Result<()> {
 		return Ok(());
 	}
 
-	// Sort by descending count, then by value.
 	let mut table: Vec<(String, u64, Value)> = counted.into_iter().map(|(value, (n, described))| (value, n, described)).collect();
 	table.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
 	if json {
@@ -231,10 +214,8 @@ pub fn trace(world: &mut World, args: &args::Trace) -> Result<()> {
 	}
 }
 
-/// Label for hits without a caller.
 const NO_CALLER: &str = "nothing (spawned, or called by the world)";
 
-/// Lines to stdout, until it's closed
 struct Out {
 	open: bool
 }
@@ -244,8 +225,6 @@ impl Out {
 		Self { open: true }
 	}
 
-	/// Write a line; return false if the output pipe is closed.
-	/// Unix handles this through SIGPIPE; Windows needs an explicit check.
 	fn line(&mut self, text: &str) -> bool {
 		if self.open {
 			let mut stdout = io::stdout().lock();
@@ -255,7 +234,6 @@ impl Out {
 	}
 }
 
-/// Record interruption so tracing can print its summary before exiting.
 pub(super) static INTERRUPTED: AtomicBool = AtomicBool::new(false);
 
 #[cfg(unix)]
@@ -272,12 +250,10 @@ pub(super) fn interruptible() {
 
 #[cfg(windows)]
 pub(super) fn interruptible() {
-	// Not in the parts of winapi the launcher has
 	#[link(name = "kernel32")]
 	extern "system" {
 		fn SetConsoleCtrlHandler(handler: Option<unsafe extern "system" fn(u32) -> i32>, add: i32) -> i32;
 	}
-	// Ctrl-C and Ctrl-Break; a closed console ends the process anyway
 	unsafe extern "system" fn interrupted(_: u32) -> i32 {
 		INTERRUPTED.store(true, Ordering::SeqCst);
 		1

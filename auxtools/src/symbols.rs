@@ -1,9 +1,3 @@
-//! Finds the BYOND functions and globals auxtools needs, through `byond-scan`.
-//!
-//! Every miss is an error that names the lookup. Nothing here hands back a null
-//! pointer, because the C++ shim calls these functions without checking and
-//! `debug.rs` reads the globals the same way.
-
 #[cfg(unix)]
 mod linux;
 #[cfg(windows)]
@@ -19,15 +13,10 @@ use windows::RECIPES;
 
 use crate::raw_types::{funcs, lists, procs};
 
-/// Supported BYOND major versions and their earliest checked builds.
-/// Build numbers from different major versions do not identify the same binary.
 const SUPPORTED_VERSIONS: &[(u32, u32)] = &[(515, 1637), (516, 1648)];
 
-/// First Linux build with reversed global-pair layout: queue back before
-/// front, and variable-name count before pointer.
 const LINUX_FLIPPED_BUILD: u32 = 1644;
 
-/// The first build with alists. Before it there's no alist table to find.
 pub(crate) const ALIST_BUILD: u32 = 1648;
 
 fn module_and_build() -> Result<(Module, (u32, u32)), String> {
@@ -36,12 +25,10 @@ fn module_and_build() -> Result<(Module, (u32, u32)), String> {
 	Ok((module, build))
 }
 
-/// Select the newest pattern for `name` at or before `build`.
 fn recipe(name: &str, build: u32) -> Result<&'static Recipe, String> {
 	pick(RECIPES.iter().filter(|recipe| recipe.name == name), build).ok_or_else(|| format!("Couldn't find {name} (no such pattern)"))
 }
 
-/// Of one name's patterns, the one for `build` (see `recipe`)
 fn pick<'a>(patterns: impl Iterator<Item = &'a Recipe>, build: u32) -> Option<&'a Recipe> {
 	let patterns: Vec<&Recipe> = patterns.collect();
 	if let Some(recipe) = patterns.iter().find(|recipe| recipe.versions.contains(build)) {
@@ -62,8 +49,6 @@ fn resolve(module: &Module, build: (u32, u32), name: &str) -> Result<usize, Stri
 fn resolve_checked(module: &Module, (version, build): (u32, u32), recipe: &Recipe) -> Result<usize, String> {
 	let name = recipe.name;
 
-	// Older than anything checked is a hard stop. A newer build is still tried,
-	// and a pattern that has stopped matching fails with its own error.
 	let supported = SUPPORTED_VERSIONS.iter().any(|&(major, first)| major == version && build >= first);
 	if !supported || recipe.versions.applicability(version, build, version).is_none() {
 		return Err(format!(
@@ -75,27 +60,21 @@ fn resolve_checked(module: &Module, (version, build): (u32, u32), recipe: &Recip
 	resolve_recipe(module, recipe, |_| None).map_err(|err| format!("Couldn't find {name} ({err})"))
 }
 
-/// Resolves a recipe of your own with the same rules auxtools applies to its
-/// own: builds older than the recipe's range are refused, newer ones are tried.
 pub fn find_recipe(recipe: &Recipe) -> Result<usize, String> {
 	let (module, build) = module_and_build()?;
 	resolve_checked(&module, build, recipe)
 }
 
-/// Resolve a symbol using the newest applicable recipe for the running build.
 pub fn find_recipe_of(recipes: &[Recipe]) -> Result<usize, String> {
 	let (module, build) = module_and_build()?;
 	let recipe = pick(recipes.iter(), build.1).ok_or("Couldn't find a pattern (none given)")?;
 	resolve_checked(&module, build, recipe)
 }
 
-/// The running BYOND build's number
 pub fn byond_build() -> Result<u32, String> {
 	Ok(module_and_build()?.1 .1)
 }
 
-/// Looks up every function and global except `variable_names`, and hands them
-/// to the C++ shim and `raw_types::funcs`.
 pub(crate) fn resolve_full() -> Result<(), String> {
 	let (module, build) = module_and_build()?;
 	let address = |name| resolve(&module, build, name);
@@ -103,9 +82,6 @@ pub(crate) fn resolve_full() -> Result<(), String> {
 
 	unsafe {
 		funcs::CURRENT_EXECUTION_CONTEXT = address("current_execution_context")? as *mut *mut procs::ExecutionContext;
-		// Windows keeps the queue's front index first, then the back. So does
-		// Linux before 515.1644; later Linux builds the other way round, and
-		// there the pattern finds the back.
 		let queue = address("suspended_procs")?;
 		let (front, back) = if cfg!(unix) && build.1 >= LINUX_FLIPPED_BUILD {
 			(queue + 4, queue)
@@ -119,7 +95,6 @@ pub(crate) fn resolve_full() -> Result<(), String> {
 			funcs::ALIST_TABLE = address("alist_table_ptr")? as *const *const *const lists::Alist;
 			funcs::ALIST_TABLE_COUNT = address("alist_table_count")? as *const u32;
 		} else {
-			// No alists: an empty table
 			static NO_ALISTS: u32 = 0;
 			funcs::ALIST_TABLE = std::ptr::null();
 			funcs::ALIST_TABLE_COUNT = &NO_ALISTS;
@@ -153,13 +128,8 @@ pub(crate) fn resolve_full() -> Result<(), String> {
 	Ok(())
 }
 
-/// Looks up `variable_names`. BYOND reallocates it for every world, so this
-/// runs on every partial init and not only the first.
 pub(crate) fn resolve_partial() -> Result<(), String> {
 	let (module, build) = module_and_build()?;
-	// The recipe finds the name array. Its count is the word after it on
-	// Windows and on Linux before 515.1644, the word before it on later Linux
-	// builds.
 	let names = resolve(&module, build, "variable_names")?;
 	let count = if cfg!(unix) && build.1 >= LINUX_FLIPPED_BUILD {
 		names - 4

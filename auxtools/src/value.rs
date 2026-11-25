@@ -46,7 +46,6 @@ impl Value {
 		},
 		phantom: PhantomData {}
 	};
-	/// Equivalent to DM's null.
 	pub const NULL: Self = Self {
 		raw: raw_types::values::Value {
 			tag: raw_types::values::ValueTag::Null,
@@ -54,7 +53,6 @@ impl Value {
 		},
 		phantom: PhantomData {}
 	};
-	/// Equivalent to DM's `world`.
 	pub const WORLD: Self = Self {
 		raw: raw_types::values::Value {
 			tag: raw_types::values::ValueTag::World,
@@ -63,8 +61,6 @@ impl Value {
 		phantom: PhantomData {}
 	};
 
-	/// Creates a new value from raw tag and data.
-	/// Use if you know what you are doing.
 	pub unsafe fn new(tag: raw_types::values::ValueTag, data: raw_types::values::ValueData) -> Value {
 		let raw = raw_types::values::Value { tag, data };
 		raw_types::funcs::inc_ref_count(raw);
@@ -75,26 +71,21 @@ impl Value {
 		}
 	}
 
-	/// Equivalent to DM's `global.vars`.
 	#[deprecated(note = "please use the `GLOBAL` const instead")]
 	pub const fn globals() -> Value {
 		Self::GLOBAL
 	}
 
-	/// Equivalent to DM's `world`.
 	#[deprecated(note = "please use the `WORLD` const instead")]
 	pub const fn world() -> Value {
 		Self::WORLD
 	}
 
-	/// Equivalent to DM's `null`.
 	#[deprecated(note = "please use the `NULL` const instead")]
 	pub const fn null() -> Value {
 		Self::NULL
 	}
 
-	/// Gets a turf by ID, without bounds checking. Use turf_by_id if you're not
-	/// sure about how to check the bounds.
 	pub const unsafe fn turf_by_id_unchecked(id: u32) -> Value {
 		Value {
 			raw: raw_types::values::Value {
@@ -105,7 +96,6 @@ impl Value {
 		}
 	}
 
-	/// Gets a turf by ID, with bounds checking.
 	pub fn turf_by_id(id: u32) -> DMResult {
 		let world = Self::WORLD;
 		let max_x = world.get_number(crate::byond_string!("maxx"))? as u32;
@@ -124,7 +114,7 @@ impl Value {
 		let max_x = world.get_number(crate::byond_string!("maxx"))? as u32;
 		let max_y = world.get_number(crate::byond_string!("maxy"))? as u32;
 		let max_z = world.get_number(crate::byond_string!("maxz"))? as u32;
-		let x = x - 1; // thanks byond
+		let x = x - 1;
 		let y = y - 1;
 		let z = z - 1;
 		if (0..max_x).contains(&x) && (0..max_y).contains(&y) && (0..max_z).contains(&z) {
@@ -160,29 +150,24 @@ impl Value {
 		Ok(())
 	}
 
-	/// Gets a variable by name.
 	pub fn get<S: Into<string::StringRef>>(&self, name: S) -> DMResult {
 		let name = name.into();
 		self.get_by_id(name.get_id())
 	}
 
-	/// Gets a variable by name and safely casts it to a float.
 	pub fn get_number<S: Into<string::StringRef>>(&self, name: S) -> DMResult<f32> {
 		self.get(name)?.as_number()
 	}
 
-	/// Gets a variable by name and safely casts it to a string.
 	pub fn get_string<S: Into<string::StringRef>>(&self, name: S) -> DMResult<String> {
 		self.get(name)?.as_string()
 	}
 
-	/// Gets a variable by name and safely casts it to a [list::List].
 	pub fn get_list<S: Into<string::StringRef>>(&self, name: S) -> DMResult<list::List> {
 		let var = self.get(name)?;
 		var.as_list()
 	}
 
-	/// Sets a variable by name to a given value.
 	pub fn set<S: Into<string::StringRef>, V: Into<Value>>(&self, name: S, value: V) -> DMResult<()> {
 		let value = value.into();
 
@@ -190,7 +175,6 @@ impl Value {
 		Ok(())
 	}
 
-	/// Check if the current value is a number and casts it.
 	pub fn as_number(&self) -> DMResult<f32> {
 		match self.raw.tag {
 			raw_types::values::ValueTag::Number => unsafe { Ok(self.raw.data.number) },
@@ -198,7 +182,6 @@ impl Value {
 		}
 	}
 
-	/// Check if the current value is a string and casts it.
 	pub fn as_string(&self) -> DMResult<String> {
 		match self.raw.tag {
 			raw_types::values::ValueTag::String => unsafe { Ok(string::StringRef::from_id(self.raw.data.string).into()) },
@@ -206,19 +189,10 @@ impl Value {
 		}
 	}
 
-	/// Check if the current value is a list and casts it.
 	pub fn as_list(&self) -> DMResult<list::List> {
 		list::List::from_value(self)
 	}
 
-	/// Calls a method of the value with the given arguments.
-	///
-	/// # Examples:
-	///
-	/// This example is equivalent to `src.explode(3)` in DM.
-	/// ```ignore
-	/// src.call("explode", &[&Value::from(3.0)]);
-	/// ```
 	pub fn call<S: AsRef<str>>(&self, procname: S, args: &[&Value]) -> DMResult {
 		let mut ret = raw_types::values::Value {
 			tag: raw_types::values::ValueTag::Null,
@@ -226,7 +200,6 @@ impl Value {
 		};
 
 		unsafe {
-			// Increment ref-count of args permenently before passing them on
 			for v in args {
 				raw_types::funcs::inc_ref_count(v.raw);
 			}
@@ -254,7 +227,6 @@ impl Value {
 		Err(runtime!("External proc call failed"))
 	}
 
-	// ugh
 	pub fn to_dmstring(&self) -> DMResult<string::StringRef> {
 		match self.raw.tag {
 			raw_types::values::ValueTag::Null | raw_types::values::ValueTag::Number | raw_types::values::ValueTag::String => {
@@ -293,12 +265,10 @@ impl Value {
 		}
 	}
 
-	/// Gets the type of the Value as a string
 	pub fn get_type(&self) -> Result<String, runtime::Runtime> {
 		self.get(crate::byond_string!("type"))?.to_string()
 	}
 
-	/// Checks whether this Value's type is equal to `typepath`.
 	pub fn is_exact_type<S: AsRef<str>>(&self, typepath: S) -> bool {
 		match self.get_type() {
 			Err(_) => false,
@@ -315,13 +285,6 @@ impl Value {
 		}
 	}
 
-	/// Creates a Value that references a byond string.
-	/// Returns an error if the given string contains null bytes
-	///
-	/// # Examples:
-	/// ```ignore
-	/// let my_string = Value::from_string("Testing!");
-	/// ```
 	pub fn from_string<S: AsRef<str>>(data: S) -> DMResult {
 		let string = CString::new(data.as_ref()).map_err(|_| runtime!("tried to create string containing NUL"))?;
 

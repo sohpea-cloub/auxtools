@@ -1,5 +1,3 @@
-//! Stack frames
-
 use std::path::Path;
 
 use serde_json::{json, Value};
@@ -33,8 +31,6 @@ pub fn run() {
 	ok("frame source paths");
 
 	let reference = frames[0]["instructionPointerReference"].as_str().unwrap();
-	// Its proc, which of its codes and the offset, in one hex number (see
-	// the bytecode group)
 	let hex = reference
 		.strip_prefix("0x")
 		.unwrap_or_else(|| panic!("the top frame's instruction is {}", reference));
@@ -63,7 +59,6 @@ pub fn run() {
 	assert_eq!(past["stackFrames"].as_array().unwrap().len(), 0);
 	ok("stack pagination");
 
-	// Its own locals, not the top frame's
 	let caller = frames[1]["id"].clone();
 	let locals = world.scope(&caller, "Locals");
 	let locals = crate::client::named(&world.variables(&locals));
@@ -72,7 +67,6 @@ pub fn run() {
 	assert_eq!(crate::client::value_of(&crate::client::named(&world.variables(&arguments)), "a"), "3");
 	ok("caller variables");
 
-	// What a client still holds once the world carries on
 	let stale_frame = frames[0]["id"].clone();
 	let stale_scope = world.scope(&stale_frame, "Locals");
 	world.resume_through("middle");
@@ -84,7 +78,6 @@ pub fn run() {
 
 	world.run_to("deep", "/leaf", "leaf_1");
 	let trace = world.request("stackTrace", json!({ "threadId": 0 }));
-	// leaf, recurse(0) to recurse(120), the scenario and the world's loop
 	assert_eq!(trace["totalFrames"], 124);
 	assert_eq!(trace["stackFrames"].as_array().unwrap().len(), 124);
 	let page = world.request("stackTrace", json!({ "threadId": 0, "startFrame": 120, "levels": 20 }));
@@ -104,10 +97,6 @@ pub fn run() {
 	world.resume_through("deep");
 	ok("deep stack pagination");
 
-	// Three procs asleep, each with its own src. Deleting one's src from an
-	// expression in its frame doesn't end it (BYOND ends it when it wakes,
-	// if at all) but it moves the sleeping procs about: the frames are still
-	// the ones they were.
 	world.run_to("dozers", "/leaf", "leaf_1");
 	let threads = world.threads();
 	let mut dozing: Vec<(Value, String)> = vec![];

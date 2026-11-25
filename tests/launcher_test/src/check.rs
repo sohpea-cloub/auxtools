@@ -1,5 +1,3 @@
-//! Check diagnostics, JSON output and exit codes.
-
 use std::{path::PathBuf, process::Command};
 
 use serde_json::{json, Value};
@@ -21,7 +19,6 @@ const CODE: &str = "\
 \treturn &5
 ";
 
-/// Create a project containing only the test `.dme`.
 fn project() -> PathBuf {
 	let dir = std::env::temp_dir().join(format!("launcher_test_check-{}", std::process::id()));
 	let _ = std::fs::remove_dir_all(&dir);
@@ -30,7 +27,6 @@ fn project() -> PathBuf {
 	dir
 }
 
-/// Run check and return its exit code, stdout and stderr.
 fn check(dir: &PathBuf, args: &[&str]) -> (i32, String, String) {
 	let ran = Command::new(launcher_path()).arg("check").args(args).current_dir(dir).output().unwrap();
 	let text = |bytes: &[u8]| String::from_utf8_lossy(bytes).into_owned();
@@ -40,7 +36,6 @@ fn check(dir: &PathBuf, args: &[&str]) -> (i32, String, String) {
 pub fn checks() {
 	let dir = project();
 
-	// 516.1689 fixes the discarded operator~= result.
 	let (code, out, err) = check(&dir, &["--byond-version", "516.1689"]);
 	assert_eq!(
 		(code, out.as_str(), err.as_str()),
@@ -92,7 +87,6 @@ pub fn checks() {
 	);
 	println!("ok: check --json");
 
-	// Absolute path spelling may differ from the supplied path.
 	let (code, out, err) = check(&dir, &["other.dme"]);
 	assert_eq!((code, out.as_str()), (1, ""), "{}", err);
 	assert!(err.starts_with("error: ") && err.ends_with("other.dme does not exist.\n"), "{}", err);

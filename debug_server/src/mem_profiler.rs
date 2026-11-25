@@ -44,7 +44,6 @@ fn setup_hooks() {
 			let new = libloaderapi::GetProcAddress(module, NEW_SYMBOL.as_ptr() as *const c_char);
 			let delete = libloaderapi::GetProcAddress(module, DELETE_SYMBOL.as_ptr() as *const c_char);
 
-			// ¯\_(ツ)_/¯
 			if malloc.is_null() || realloc.is_null() || free.is_null() || new.is_null() || delete.is_null() {
 				return;
 			}
@@ -263,7 +262,6 @@ pub fn end() {
 #[shutdown]
 fn shutdown() {
 	unsafe {
-		// Force recording to stop if the DM state is being destroyed
 		STATE.get_mut().take();
 	}
 }

@@ -1,5 +1,3 @@
-//! Breakpoints on lines
-
 use serde_json::json;
 
 use crate::{ok, world::World};
@@ -11,17 +9,12 @@ pub fn run() {
 	hitting();
 }
 
-/// The world waits for the client's breakpoints, so ones in the code that
-/// runs as it loads are hit
 fn before_the_world_runs() {
 	let mut world = World::launch(json!({}));
 	world.catch_runtimes(false);
 	world.break_on(&["early_value", "tooled", "sub_tool", "world_new"]);
 	world.request("configurationDone", json!({}));
 
-	// One proc sets all the world's global vars, in an order of DreamMaker's
-	// own: its code starts in one file that has one, and goes on in each of
-	// the others
 	let tool = world.marks.file("sub/tool.dm");
 	let (tooled, early_value, sub_tool) = (world.marks.line("tooled"), world.marks.line("early_value"), world.marks.line("sub_tool"));
 	let path = |frame: &serde_json::Value| std::path::PathBuf::from(frame["source"]["path"].as_str().unwrap_or_default());
@@ -70,8 +63,6 @@ fn placing() {
 	assert!(set[0]["id"].is_number(), "a breakpoint with no id: {}", set[0]);
 	ok("executable line verification");
 
-	// The proc's declaration, the blank line before it and the comment that
-	// starts the file have no code: the next line that has is leaf's first
 	let declaration = at.line_starting("stepping.dm", "/proc/leaf(x)");
 	let set = world.set_breakpoints(&stepping, json!([declaration, declaration - 1, 1]));
 	for breakpoint in &set {
@@ -110,8 +101,6 @@ fn placing() {
 	world.set_breakpoints(&stepping, json!([]));
 	world.set_breakpoints(&at.file("errors.dm"), json!([]));
 
-	// A `var` with no value is a line of the world's code with nothing on
-	// it: its breakpoint is where the next line starts
 	let tool = at.file("sub/tool.dm");
 	let (var, first, second) = (at.line("declares_var"), at.line("declares_first"), at.line("declares_second"));
 	let set = world.set_breakpoints(&tool, json!([var]));
@@ -142,7 +131,6 @@ fn placing() {
 	world.end();
 }
 
-/// The lines `breakpointLocations` gives for a range of a file
 fn locations_in(world: &mut World, file: &std::path::Path, line: u64, end_line: Option<u64>) -> Vec<u64> {
 	let mut arguments = json!({ "source": { "path": file }, "line": line });
 	if let Some(end_line) = end_line {
@@ -165,7 +153,6 @@ fn locations() {
 	let at = world.marks.clone();
 	let stepping = at.file("stepping.dm");
 
-	// The comment that starts the file, blank lines and declarations have none
 	let lines = locations_in(&mut world, &stepping, 1, Some(at.line("sc_middle_2")));
 	let marked: Vec<u64> = ["leaf_1", "leaf_2", "middle_1", "middle_2", "middle_3", "sc_middle_1", "sc_middle_2"]
 		.iter()
@@ -191,7 +178,6 @@ fn locations() {
 fn hitting() {
 	let mut world = World::start();
 
-	// middle() calls leaf() twice, then returns
 	world.break_on(&["leaf_1", "middle_3"]);
 	world.run("middle");
 	world.stop_on("breakpoint", "/leaf", "leaf_1");
@@ -207,7 +193,6 @@ fn hitting() {
 	world.stop_on("breakpoint", "/middle", "middle_3");
 	ok("replacement removes omitted breakpoints");
 
-	// Paused: one more, further on
 	world.break_on(&["middle_3", "sc_middle_2"]);
 	world.resume();
 	world.stop_on("breakpoint", "/sc_middle", "sc_middle_2");
@@ -239,7 +224,6 @@ fn hitting() {
 	world.resume_through("parent");
 	ok("breakpoints across override calls");
 
-	// The same line, once for each call deeper
 	world.break_on(&["recurse_1"]);
 	world.run("recurse");
 	for depth in ["3", "2", "1", "0"] {

@@ -1,10 +1,3 @@
-//! Resource files watched for hot reload.
-//!
-//! The `.dmb` resource table maps IDs to CRCs; the `.rsc` maps CRCs to the
-//! names used in source. Resolve names in the `.dme` directory, then in
-//! `FILE_DIR` order. Multiple spellings can give a file several IDs, while
-//! files with identical content share an ID.
-
 use std::{
 	collections::{BTreeMap, HashMap},
 	path::{Path, PathBuf}
@@ -12,38 +5,28 @@ use std::{
 
 use auxtools_cli::dmb_tables::{self, byond_crc};
 
-/// A resource file, by its path relative to the `.dme`'s directory
 #[derive(Debug, Clone, Default)]
 pub struct File {
-	/// Source spellings, used to match resource literals.
 	pub names: Vec<String>,
-	/// Resource IDs used for this file, starting with its built ID.
 	pub ids: Vec<u32>,
-	/// Current resource IDs. Values retained from earlier reloads still use
-	/// the old IDs.
 	pub current: Vec<u32>,
-	/// CRC of the file currently shown by the world.
 	pub crc: u32,
-	/// CRC of the file as built.
 	pub built: u32
 }
 
 #[derive(Debug, Default)]
 pub struct Resources {
 	pub files: BTreeMap<PathBuf, File>,
-	/// `FILE_DIR`, in order, relative to the `.dme`'s directory
 	pub dirs: Vec<String>
 }
 
 impl Resources {
-	/// Read resources for `dmb`, built from `sources` under `root`.
 	pub fn read(root: &Path, dmb: &Path, sources: &[PathBuf]) -> Result<Resources, String> {
 		let dirs = file_dirs(root, sources);
 		let rsc = dmb.with_extension("rsc");
 		let dmb_data = std::fs::read(dmb).map_err(|e| format!("couldn't read {}: {}", dmb.display(), e))?;
 		let rsc_data = match std::fs::read(&rsc) {
 			Ok(data) => data,
-			// A world without resources has no .rsc
 			Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Resources { dirs, ..Default::default() }),
 			Err(e) => return Err(format!("couldn't read {}: {}", rsc.display(), e))
 		};
@@ -56,7 +39,6 @@ impl Resources {
 				continue;
 			}
 			for name in spellings {
-				// Skins are resources too, but use their own whole-file reload.
 				if name.to_ascii_lowercase().ends_with(".dmf") {
 					continue;
 				}
@@ -82,8 +64,6 @@ impl Resources {
 		Ok(Resources { files, dirs })
 	}
 
-	/// Watched files with content differing from the world's, and their new
-	/// CRCs.
 	pub fn changed<'a>(&self, root: &Path, files: impl IntoIterator<Item = &'a PathBuf>) -> Vec<(PathBuf, u32)> {
 		files
 			.into_iter()
@@ -95,7 +75,6 @@ impl Resources {
 			.collect()
 	}
 
-	/// The files that differ from what the world was built with
 	pub fn edited_since_built(&self, root: &Path) -> Vec<(PathBuf, u32)> {
 		self.files
 			.iter()
@@ -106,7 +85,6 @@ impl Resources {
 			.collect()
 	}
 
-	/// Record `path` cached with content `crc` and resource `id`.
 	pub fn reloaded(&mut self, path: &Path, id: u32, crc: u32) {
 		if let Some(file) = self.files.get_mut(path) {
 			if !file.ids.contains(&id) {
@@ -117,8 +95,6 @@ impl Resources {
 		}
 	}
 
-	/// Current IDs to replace when reloading `path`, excluding IDs shared
-	/// with another file now or previously. Also return the sharing files.
 	pub fn replaced(&self, path: &Path) -> (Vec<u32>, Vec<PathBuf>) {
 		let Some(file) = self.files.get(path) else {
 			return (vec![], vec![]);
@@ -144,15 +120,12 @@ impl Resources {
 		(ids, sharing)
 	}
 
-	/// Record `path`'s current content when the world tracks its resource ID.
 	pub fn shown(&mut self, path: &Path, crc: u32) {
 		if let Some(file) = self.files.get_mut(path) {
 			file.crc = crc;
 		}
 	}
 
-	/// Reset to the build's resources after reboot. Files introduced by
-	/// reloads have no resource IDs in the new world yet.
 	pub fn restarted(&mut self, built: &Resources) {
 		for (path, file) in &mut self.files {
 			match built.files.get(path) {
@@ -169,8 +142,6 @@ impl Resources {
 		}
 	}
 
-	/// Register a newly referenced resource and return its file to watch.
-	/// The world tracks its resource ID until the launcher knows it.
 	pub fn named(&mut self, root: &Path, name: &str) -> Option<PathBuf> {
 		let path = resolve(root, &self.dirs, name)?;
 		if let Some(file) = self.files.get_mut(&path) {
@@ -189,7 +160,6 @@ impl Resources {
 	}
 }
 
-/// The `FILE_DIR` directories the sources define, in order
 fn file_dirs(root: &Path, sources: &[PathBuf]) -> Vec<String> {
 	let mut dirs = vec![];
 	for source in sources {
@@ -214,7 +184,6 @@ fn file_dirs(root: &Path, sources: &[PathBuf]) -> Vec<String> {
 	dirs
 }
 
-/// Where DreamMaker finds `name`: under `root`, then under each of `dirs`
 fn resolve(root: &Path, dirs: &[String], name: &str) -> Option<PathBuf> {
 	let name = name.replace('\\', "/");
 	std::iter::once(".")
@@ -223,7 +192,6 @@ fn resolve(root: &Path, dirs: &[String], name: &str) -> Option<PathBuf> {
 		.find_map(|candidate| existing(root, &candidate))
 }
 
-/// Find `path` under `root` with DreamMaker's case-insensitive lookup on Linux.
 fn existing(root: &Path, path: &Path) -> Option<PathBuf> {
 	use std::path::Component;
 	let mut found = PathBuf::new();
@@ -248,9 +216,6 @@ fn existing(root: &Path, path: &Path) -> Option<PathBuf> {
 	root.join(&found).is_file().then_some(found)
 }
 
-/// Read file names by CRC from `.rsc` records:
-/// `u32 length, u8 in use, u8 type, u32 crc, u32 time, u32 time, u32 data
-/// length, name, data`.
 fn rsc_names(data: &[u8]) -> HashMap<u32, Vec<String>> {
 	let mut names: HashMap<u32, Vec<String>> = HashMap::new();
 	let mut at = 0;
@@ -305,18 +270,14 @@ mod tests {
 			..Default::default()
 		};
 		let mut resources = Resources::default();
-		// Identical built content gives a.dmi and b.dmi the same resource ID.
 		resources.files.insert("a.dmi".into(), file(&[3]));
 		resources.files.insert("b.dmi".into(), file(&[3]));
 		resources.files.insert("c.dmi".into(), file(&[4]));
 		assert_eq!(resources.replaced(Path::new("a.dmi")), (vec![], vec![PathBuf::from("b.dmi")]));
 		assert_eq!(resources.replaced(Path::new("c.dmi")), (vec![4], vec![]));
 
-		// After a save, replace only the current ID; held values retain ID 4.
 		resources.reloaded(Path::new("c.dmi"), 9, 0xC);
 		assert_eq!(resources.replaced(Path::new("c.dmi")), (vec![9], vec![]));
-		// Saving c.dmi with a.dmi's content gives it the shared ID 3.
-		// A later save must not replace that ID for the other files.
 		resources.reloaded(Path::new("c.dmi"), 3, 0xA);
 		assert_eq!(
 			resources.replaced(Path::new("c.dmi")),

@@ -25,7 +25,6 @@ bitflags! {
         const SOUND = 0x400;
         const MESSAGE = 0x800;
         const ANYTHING = 0x1000;
-        // TODO: Something is missing
         const DATUM_INSTANCES = 0x4000;
         const PASSWORD = 0x8000;
         const COMMAND_TEXT = 0x10000;
@@ -33,7 +32,6 @@ bitflags! {
     }
 }
 
-// As its bits, which keeps flags no name covers (see the TODO above)
 #[cfg(feature = "serde")]
 impl serde::Serialize for TypeFilter {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {

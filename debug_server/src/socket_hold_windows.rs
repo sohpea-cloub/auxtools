@@ -1,10 +1,3 @@
-//! Delay socket-handle reuse in DreamDaemon on Windows.
-//!
-//! Stale links register callbacks for closed handles. Reuse during client
-//! reconnects can route hub traffic to a client link or let the hub timeout
-//! close another client's socket. Shut down immediately, then hold handles
-//! past the hub's 60-second timeout before closing them.
-
 use std::{
 	collections::VecDeque,
 	ffi::CStr,
@@ -20,10 +13,8 @@ use winapi::um::{
 	winnt::{IMAGE_DIRECTORY_ENTRY_IMPORT, IMAGE_DOS_HEADER, IMAGE_IMPORT_DESCRIPTOR, IMAGE_NT_HEADERS32}
 };
 
-/// Set to `0` to disable delayed socket closure.
 pub const HOLD_VAR: &str = "AUXTOOLS_HOLD_SOCKETS";
 
-/// Longer than the hub client's 60 second connect timeout.
 const HOLD: Duration = Duration::from_secs(90);
 
 type Close = unsafe extern "system" fn(usize) -> i32;
@@ -31,10 +22,8 @@ type Shutdown = unsafe extern "system" fn(usize, i32) -> i32;
 
 static CLOSE: AtomicUsize = AtomicUsize::new(0);
 static SHUTDOWN: AtomicUsize = AtomicUsize::new(0);
-/// Shutdown times and held handles, oldest first.
 static HELD: Mutex<VecDeque<(Instant, usize)>> = Mutex::new(VecDeque::new());
 
-/// Replace `byondcore.dll`'s `closesocket` imports and return the count.
 pub fn install() -> Result<usize, String> {
 	unsafe {
 		let wsock = GetModuleHandleA(c"wsock32.dll".as_ptr());
@@ -62,7 +51,6 @@ pub fn install() -> Result<usize, String> {
 		while (*descriptor).Name != 0 {
 			let name = CStr::from_ptr((base + (*descriptor).Name as usize) as *const i8);
 			if name.to_bytes().eq_ignore_ascii_case(b"wsock32.dll") {
-				// Import addresses are terminated by a null entry.
 				let mut slot = (base + (*descriptor).FirstThunk as usize) as *mut usize;
 				while *slot != 0 {
 					if *slot == close {
@@ -83,8 +71,6 @@ pub fn install() -> Result<usize, String> {
 	}
 }
 
-/// Shut down immediately and release expired handles on subsequent closes.
-/// Ignore duplicate closes while a handle is held.
 unsafe extern "system" fn held_close(socket: usize) -> i32 {
 	let close: Close = std::mem::transmute(CLOSE.load(Ordering::Relaxed));
 	let shutdown: Shutdown = std::mem::transmute(SHUTDOWN.load(Ordering::Relaxed));
@@ -93,7 +79,6 @@ unsafe extern "system" fn held_close(socket: usize) -> i32 {
 	if held.iter().any(|&(_, at)| at == socket) {
 		return 0;
 	}
-	// SD_BOTH ends the connection without releasing the handle.
 	shutdown(socket, 2);
 	held.push_back((now, socket));
 	while let Some(&(since, old)) = held.front() {

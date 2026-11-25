@@ -1,28 +1,16 @@
-//! Help pages assembled from prose and clap option definitions.
-//! Each page includes usage, options, behavior, output, exit codes and examples
-//! where applicable.
-
 use clap::error::{ContextKind, ContextValue, ErrorKind};
 
 use super::{args::Unparsed, Failure, Result};
 
-/// A command's page
 pub struct Page {
-	/// The command, and its subcommand if it's one's: `["wait", "pause"]`
 	pub path: &'static [&'static str],
-	/// What it does, in the list of commands
 	pub brief: &'static str,
-	/// What it does, in a sentence
 	pub summary: &'static str,
-	/// Each form of its usage, a line each
 	pub usage: &'static str,
-	/// The `Arguments` section's lines, if it has arguments
 	pub arguments: &'static str,
-	/// The sections after the options, as they're printed
 	pub sections: &'static str
 }
 
-/// The commands in the order and the groups the first page lists them in
 const GROUPS: &[(&str, &[&str])] = &[
 	("World management", &["launch", "list", "status", "stop", "reboot", "reconnect", "log"]),
 	("Inspection", &["stack", "vars", "eval", "proc", "disassemble"]),
@@ -599,10 +587,8 @@ Aliases: --version, -V"
 	}
 ];
 
-/// Extra option rows for values that need their own explanation.
 const MORE_ROWS: &[(&str, &str, &str, &str)] = &[("trace", "by", "--by caller", "Group hits by the calling proc and source line.")];
 
-/// The first page: every command, a line each
 pub fn overview() -> String {
 	let mut text = String::from(
 		"auxtools - Launch, inspect, and debug BYOND worlds
@@ -665,17 +651,14 @@ Commands that follow lifecycle events can reconnect across reboots.
 	text
 }
 
-/// The page of the command at `path`
 pub fn page(path: &[&str]) -> Option<&'static Page> {
 	PAGES.iter().find(|page| page.path == path)
 }
 
-/// Lines, each two spaces in
 fn indented(lines: &str) -> String {
 	lines.lines().map(|line| format!("  {}\n", line)).collect()
 }
 
-/// An option as its row names it: `-f, --file FILE`
 fn spec(arg: &clap::Arg) -> String {
 	let mut names: Vec<String> = arg.get_short().iter().map(|short| format!("-{}", short)).collect();
 	names.extend(arg.get_long().iter().map(|long| format!("--{}", long)));
@@ -688,8 +671,6 @@ fn spec(arg: &clap::Arg) -> String {
 	text
 }
 
-/// List command-specific options, then shared options.
-/// Keep `--json` among command options when it has a custom description.
 fn option_rows(command: &clap::Command, path: &[&str]) -> Vec<(String, String)> {
 	const COMMON_JSON: &str = "Emit one JSON value on stdout.";
 	let mut rows = vec![];
@@ -713,7 +694,6 @@ fn option_rows(command: &clap::Command, path: &[&str]) -> Vec<(String, String)> 
 	if selects_world {
 		rows.push(("--pid PID".to_owned(), "Select the world process.".to_owned()));
 	}
-	// `stop` waits for process exit rather than responses.
 	if selects_world && path.first() != Some(&"stop") {
 		rows.push(("--response-timeout SECONDS".to_owned(), super::args::RESPONSE_TIMEOUT.to_owned()));
 	}
@@ -724,13 +704,11 @@ fn option_rows(command: &clap::Command, path: &[&str]) -> Vec<(String, String)> 
 	rows
 }
 
-/// A command's page, around the options clap has for it
 pub fn render(page: &Page, command: &clap::Command) -> String {
 	let mut text = format!("{}\n\nUsage:\n{}", page.summary, indented(page.usage));
 	if !page.arguments.is_empty() {
 		text += &format!("\nArguments:\n{}", indented(page.arguments));
 	}
-	// A command that only has commands of its own says what they are
 	if !command.has_subcommands() {
 		let rows = option_rows(command, page.path);
 		let width = rows.iter().map(|(spec, _)| spec.len()).max().unwrap_or(0);
@@ -749,7 +727,6 @@ pub fn render(page: &Page, command: &clap::Command) -> String {
 	text
 }
 
-/// Gives clap each command's page, for `--help` to show
 pub fn attach(command: clap::Command) -> clap::Command {
 	fn attached(mut command: clap::Command, path: &[&'static str]) -> clap::Command {
 		let names: Vec<&'static str> = command
@@ -776,13 +753,11 @@ pub fn attach(command: clap::Command) -> clap::Command {
 			None => command
 		}
 	}
-	// Build first so inherited options are available to subcommands.
 	let mut command = command;
 	command.build();
 	attached(command, &[])
 }
 
-/// `auxtools help [COMMAND [SUBCOMMAND]]`
 pub fn show(path: &[String]) -> Result<()> {
 	if path.is_empty() {
 		say_part!("{}", overview());
@@ -815,7 +790,6 @@ fn unknown_command(parents: &[&str], name: &str) -> String {
 	}
 }
 
-/// Resolve the command path to select the relevant help page for an error.
 fn command_path(args: &[String]) -> Vec<&'static str> {
 	let mut path: Vec<&'static str> = vec![];
 	let mut args = args.iter();
@@ -833,7 +807,6 @@ fn command_path(args: &[String]) -> Vec<&'static str> {
 			Some(page) => path = page.path.to_vec(),
 			None => break
 		}
-		// (only `wait` has commands of its own)
 		if PAGES.iter().all(|page| page.path.len() <= path.len() || !page.path.starts_with(&path)) {
 			break;
 		}
@@ -841,7 +814,6 @@ fn command_path(args: &[String]) -> Vec<&'static str> {
 	path
 }
 
-/// Convert clap output to requested help or a single-line argument error.
 pub fn unparsed(error: &clap::Error, args: &[String]) -> Unparsed {
 	if matches!(error.kind(), ErrorKind::DisplayHelp | ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand) {
 		return Unparsed::Help(error.render().to_string());
@@ -853,9 +825,7 @@ pub fn unparsed(error: &clap::Error, args: &[String]) -> Unparsed {
 		Some(other) => Some(other.to_string()),
 		None => None
 	};
-	// An option as it's typed, without the name of its value
 	let option = |spec: String| spec.split([' ', '=']).next().unwrap_or_default().to_owned();
-	// The name of its value alone
 	let value_name = |spec: &str| spec.split_once(' ').map(|(_, value)| value.trim_matches(['<', '>', '.']).to_owned());
 	let usage = match path.as_slice() {
 		[] => "Run 'auxtools --help' for usage.".to_owned(),
@@ -897,7 +867,6 @@ pub fn unparsed(error: &clap::Error, args: &[String]) -> Unparsed {
 				_ => format!("{} cannot be used more than once.", first)
 			}
 		}
-		// Whatever else clap says, in its first line
 		_ => {
 			let rendered = error.render().to_string();
 			let line = rendered.lines().next().unwrap_or_default();
@@ -911,7 +880,6 @@ pub fn unparsed(error: &clap::Error, args: &[String]) -> Unparsed {
 mod tests {
 	use super::{command_path, overview, page, render, GROUPS, PAGES};
 
-	/// Every command clap has, and those under it, by its path
 	fn commands() -> Vec<(Vec<String>, clap::Command)> {
 		fn under(command: &clap::Command, path: &[String], found: &mut Vec<(Vec<String>, clap::Command)>) {
 			for sub in command.get_subcommands() {
@@ -992,7 +960,6 @@ mod tests {
 			assert!(page.summary.ends_with('.'), "{}", page.summary);
 			for usage in page.usage.lines() {
 				assert!(usage.contains(&format!(" {}", path.join(" "))), "{}", usage);
-				// Only a command to a world is given one
 				let selects = !matches!(names[0], "launch" | "list" | "check" | "dap" | "help" | "version");
 				assert_eq!(usage.starts_with("auxtools [--pid PID] "), selects, "{}", usage);
 			}
@@ -1032,8 +999,6 @@ mod tests {
 					name
 				);
 				let help = arg.get_help().map(ToString::to_string).unwrap_or_default();
-				// It starts with a verb, and ends as a sentence does (or with
-				// its default)
 				assert!(
 					help.chars().next().is_some_and(char::is_uppercase),
 					"{} {}: {:?}",

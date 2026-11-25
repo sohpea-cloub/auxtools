@@ -1,5 +1,3 @@
-//! CLI profile reports and lifecycle.
-
 use std::{
 	path::Path,
 	time::{Duration, Instant}
@@ -14,7 +12,6 @@ pub fn profile(pid: u64, dir: &Path, code: &Path) {
 	let tally = line_of(code, "\ttick(1)");
 	let tick = line_of(code, "/proc/tick(n)") + 1;
 
-	// tally() calls tick() every round and again every other round.
 	let started = Instant::now();
 	let printed = run(pid, &["profile", "/proc/tick", "/proc/tally", "--for", "3"], 0);
 	assert!(started.elapsed() >= Duration::from_secs(3), "profile --for 3 ended early");
@@ -41,7 +38,6 @@ pub fn profile(pid: u64, dir: &Path, code: &Path) {
 		"instructions",
 		"proc"
 	]);
-	// (a time is a number and its unit)
 	let of_tick = row(&format!("  /tick  attach_host.dm:{}", tick));
 	let of_tally = row(&format!("  /tally  attach_host.dm:{}", tally));
 	let (ticks, tallies) = (number(of_tick[5]), number(of_tally[5]));
@@ -60,7 +56,6 @@ pub fn profile(pid: u64, dir: &Path, code: &Path) {
 		"unexpected profile output: {}",
 		printed
 	);
-	// Count returns and attribute callee time to the calling instruction.
 	let returned = row("  Ret");
 	assert_eq!(number(returned[1]), ticks, "{}", printed);
 	let called = lines.iter().find(|line| line.ends_with("  CallGlob 1 /tick")).unwrap();
@@ -76,7 +71,6 @@ pub fn profile(pid: u64, dir: &Path, code: &Path) {
 	);
 	println!("ok: named proc listings");
 
-	// Rank procs and source lines by self time.
 	let printed = run(pid, &["profile", "--for", "2", "--top", "3"], 0);
 	let lines: Vec<&str> = printed.lines().collect();
 	let tables: Vec<usize> = (0..lines.len()).filter(|at| lines[*at].trim_start().starts_with("time ")).collect();
@@ -127,9 +121,7 @@ pub fn profile(pid: u64, dir: &Path, code: &Path) {
 	);
 	println!("ok: JSON and HTML profiles");
 
-	// Reject concurrent profiles and discard profiles on client exit.
 	let busy = "error: cannot start a profile: another profile is running.\n";
-	// Retry if the competing profile starts first.
 	let left_running = |args: &[&str]| {
 		for wait in 1..=10 {
 			let running = Background::start(pid, args);

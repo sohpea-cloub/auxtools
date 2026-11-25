@@ -1,8 +1,5 @@
-//! Skin reloads and client reconnects.
-
 use super::*;
 
-/// Notify editors that connected clients need to reconnect for the new skin.
 #[derive(serde::Serialize)]
 struct SkinEvent {
 	file: String,
@@ -15,8 +12,6 @@ impl Event for SkinEvent {
 }
 
 impl Adapter {
-	/// Apply the skin at `file`, including after a reboot, and report its
-	/// effect on connected clients. Return whether the world accepted it.
 	pub(super) fn reload_skin(&mut self, request: aux::SkinRequest, file: &Path, images: &[String], restored: bool) -> bool {
 		let file = file.display().to_string();
 		let result = match self.request(&AuxRequest::Skin(request)) {
@@ -60,10 +55,7 @@ impl Adapter {
 		true
 	}
 
-	/// Reconnect instructions for clients retaining the old skin or script.
-	/// Return none when no clients are connected.
 	pub(super) fn waiting_clients(&self, clients: u32, hosted: bool, what: &str) -> Option<String> {
-		// VS Code offers the action; CLI callers need the command.
 		let how = if self.out.to_client() { "" } else { " Run auxtools reconnect." };
 		match (clients, hosted) {
 			(0, _) => None,
@@ -73,7 +65,6 @@ impl Adapter {
 		}
 	}
 
-	/// Reconnect clients to load the skin. Reboot DreamSeeker-hosted worlds.
 	pub(super) fn reconnect_clients(&mut self) -> Handled {
 		match self.request(&AuxRequest::Reconnect)? {
 			AuxResponse::Reconnect(Ok(aux::Reconnected::Clients(clients))) => Ok(serde_json::json!({ "reconnected": clients })),

@@ -33,10 +33,6 @@ impl From<f32> for DefaultValue {
     }
 }
 
-// These are built-in procs where a fixed amount of values are pushed to the stack
-// followed by a bare instruction (with no operands)
-// The parameters can have default values. If any params are missing, it'll error.
-// Note: Many of the defaults are null because that's how BYOND's compiler does it.
 macro_rules! simple_stack_procs {
     (
         $(
@@ -287,7 +283,7 @@ simple_vararg_procs! {
     /proc/max(2) => Instruction::Max,
     /proc/min(2) => Instruction::Min,
     /proc/obounds(..=5) => Instruction::OBounds,
-    /proc/regex() => Instruction::RegexNew, // TODO: Byond doesn't error on arg count for regex(), but we could
+    /proc/regex() => Instruction::RegexNew,
     /proc/sorttext(2) => Instruction::SortText,
     /proc/sortText(2) => Instruction::SortTextEx,
     /proc/sorttextEx(2) => Instruction::SortTextEx,
@@ -317,16 +313,13 @@ macro_rules! unsupported_procs {
 }
 
 unsupported_procs! {
-    // Should be unreachable asthe parser turns these into their own terms
     /proc/list,
     /proc/locate,
     /proc/pick,
     /proc/input,
 
-    // Overloaded Procs
     /proc/shutdown,
 
-    // Not actually procs
     /proc/browse,
     /proc/browse_rsc,
     /proc/ftp,
@@ -343,12 +336,9 @@ pub(super) fn emit(
     name: &str,
     args: &Vec<Expression>,
 ) -> Result<Option<EvalKind>, CompileError> {
-    // A builtin this build doesn't have is a call to a proc of that name
     if !super::versions::has_builtin(compiler.byond, name) {
         return Ok(None);
     }
-    // Outside `<<`, browse(), browse_rsc(), output() and load_resource() are
-    // their first argument (the others are worked out and dropped)
     if matches!(name, "browse" | "browse_rsc" | "output" | "load_resource") && !args.is_empty() {
         push_args(compiler, &args[..1])?;
         for arg in &args[1..] {
@@ -357,7 +347,6 @@ pub(super) fn emit(
         }
         return Ok(Some(EvalKind::Stack));
     }
-    // shutdown(Addr, Natural) as a value
     if name == "shutdown" && matches!(args.len(), 1 | 2) {
         push_args(compiler, args)?;
         for _ in args.len()..2 {
@@ -366,7 +355,6 @@ pub(super) fn emit(
         compiler.emit_ins(Instruction::ShutdownArgs);
         return Ok(Some(EvalKind::Stack));
     }
-    // animate() as a value: as on its own line, with what it gives kept
     if name == "animate" && !args.is_empty() {
         if emit_statement_builtin(compiler, name, args)? {
             let dropped = compiler.nodes.pop();
@@ -377,7 +365,6 @@ pub(super) fn emit(
             return Ok(Some(EvalKind::Stack));
         }
     }
-    // statpanel(Panel) as a value: whether the panel is the one shown
     if name == "statpanel" && args.len() == 1 {
         push_args(compiler, args)?;
         compiler.emit_ins(Instruction::StatPanelCheck);
@@ -390,7 +377,6 @@ pub(super) fn emit(
         });
     }
 
-    // block(x1, y1, z1), and with an x2 and a y2: what's left out is null
     if name == "block" && (3..=5).contains(&args.len()) {
         push_args(compiler, args)?;
         for _ in args.len()..6 {
@@ -399,7 +385,6 @@ pub(super) fn emit(
         compiler.emit_ins(Instruction::BlockXYZ);
         return Ok(Some(EvalKind::Stack));
     }
-    // time2text() and round() with nothing: of null
     if (name == "time2text" || name == "round") && args.is_empty() {
         push_null(compiler);
         if name == "time2text" {
@@ -413,7 +398,6 @@ pub(super) fn emit(
         return Ok(Some(EvalKind::Stack));
     }
 
-    // rgb2num() of a constant colour is worked out when compiling
     if name == "rgb2num" {
         if let Some(channels) = rgb2num_const(compiler, args) {
             for c in &channels {
@@ -425,7 +409,6 @@ pub(super) fn emit(
     }
 
     if let Some(res) = eval_simple_stack_procs(compiler, name, args)? {
-        // Range and ORange push BYOND's shared scratch list, which the next range() overwrites
         if matches!(name, "range" | "orange") {
             compiler.emit_ins(Instruction::CopyList);
         }
@@ -433,7 +416,6 @@ pub(super) fn emit(
         return Ok(Some(res));
     }
 
-    // With one argument these take a list (which `arglist(L)` is too)
     if matches!(name, "min" | "max") && args.len() == 1 {
         let list = arglist_inner(&args[0]).unwrap_or(&args[0]).clone();
         args::emit_normal(compiler, args::ArgsContext::Proc, vec![list])?;
@@ -470,13 +452,10 @@ pub(super) fn emit(
                 return Err(CompileError::IncorrectArgCount(name.to_owned()));
             }
 
-            // initial(x::v) is x's initial v, as `x::v` is
             if let Some(var) = initial_static_field(compiler, &args[0])? {
                 compiler.emit_ins(Instruction::GetVar(var));
                 return Ok(Some(EvalKind::Stack));
             }
-            // initial(a?.b) reads a.b, null check or not: each `?.` starts a
-            // new chain from the cache
             if let Some(var) = initial_safe(compiler, &args[0])? {
                 compiler.emit_ins(Instruction::GetVar(var));
                 return Ok(Some(EvalKind::Stack));
@@ -487,10 +466,8 @@ pub(super) fn emit(
                     builder.get_initial_field(DMString(field.into()))
                 }
 
-                // a static or const var read through a field (`initial(a.s)`)
                 EvalKind::Var(global @ Variable::Global(_)) => Variable::Initial(Box::new(global)),
 
-                // initial(x) of a local, an argument, src, usr or `.`
                 EvalKind::Var(
                     var @ (Variable::Local(_)
                     | Variable::Arg(_)
@@ -499,7 +476,6 @@ pub(super) fn emit(
                     | Variable::Dot),
                 ) => Variable::Initial(Box::new(var)),
 
-                // initial(L[k]), as in initial(D.vars[name])
                 EvalKind::ListRef => {
                     compiler.emit_ins(Instruction::SetVar(Variable::CacheKey));
                     compiler.emit_ins(Instruction::SetVar(Variable::Cache));
@@ -509,7 +485,6 @@ pub(super) fn emit(
                 _ => return Err(CompileError::ExpectedFieldReference),
             };
 
-            // The chain builder can't handle the kind of var we have, so move the reuslt to the stack
             compiler.emit_ins(Instruction::GetVar(var));
             Ok(Some(EvalKind::Stack))
         }
@@ -518,8 +493,6 @@ pub(super) fn emit(
     }
 }
 
-/// Resolve rgb arguments to (r/h, g/s, b/v/l/y, alpha, space), accepting
-/// positionals and named channels. Return `None` for invalid forms.
 fn rgb_slots(args: &[Expression]) -> Option<([Option<Expression>; 5], Option<f32>)> {
     let mut slots: [Option<Expression>; 5] = Default::default();
     let mut names = Vec::new();
@@ -564,8 +537,6 @@ fn rgb_slots(args: &[Expression]) -> Option<([Option<Expression>; 5], Option<f32
     Some((slots, space))
 }
 
-/// Fold constant rgb calls to #rrggbb or #rrggbbaa in any color space.
-/// A constant nonnumeric alpha converts to zero.
 pub(super) fn rgb_constant(compiler: &Compiler<'_>, args: &[Expression]) -> Option<String> {
     let ([r, g, b, a, sp], named_space) = rgb_slots(args)?;
     let space = match (named_space, &sp) {
@@ -595,8 +566,6 @@ pub(super) fn rgb_constant(compiler: &Compiler<'_>, args: &[Expression]) -> Opti
     Some(text)
 }
 
-/// rgb(r, g, b, a, space), positional or named. Rgb and Rgba are the plain RGB
-/// forms; any other color space needs RgbEx with all five.
 fn emit_rgb(
     compiler: &mut Compiler<'_>,
     args: &[Expression],
@@ -604,7 +573,6 @@ fn emit_rgb(
     let Some((slots, space)) = rgb_slots(args) else {
         return Ok(None);
     };
-    // A colour of constants is stored as its text
     if let Some(text) = rgb_constant(compiler, args) {
         compiler.emit_ins(Instruction::PushVal(operands::Value::DMString(DMString(
             text.into_bytes(),
@@ -625,8 +593,6 @@ fn emit_rgb(
         }
         return Ok(Some(EvalKind::Stack));
     }
-    // Preserve folded alpha 0 for nonnumeric constants when deferring a colour
-    // to runtime to match 515.1637 rounding. Runtime rgb() would omit that alpha.
     let folds_to_zero = |compiler: &Compiler<'_>, a: &Expression| {
         let number =
             |e: &Option<Expression>| e.as_ref().and_then(|e| super::fold::number(compiler, e));
@@ -651,7 +617,6 @@ fn emit_rgb(
     Ok(Some(EvalKind::Stack))
 }
 
-/// Whether `expr` is a `list(...)` written out
 fn is_list_literal(expr: &Expression) -> bool {
     matches!(expr, Expression::Base { term, follow } if follow.is_empty() && matches!(term.elem, Term::List(_)))
 }
@@ -674,8 +639,6 @@ fn push_null(compiler: &mut Compiler<'_>) {
     compiler.emit_ins(Instruction::PushVal(operands::Value::Null));
 }
 
-/// Builtins whose instruction depends on how many arguments they get, or
-/// that aren't a plain push-and-call.
 fn emit_overloaded(
     compiler: &mut Compiler<'_>,
     name: &str,
@@ -740,7 +703,6 @@ fn emit_overloaded(
                 _ => compiler.emit_ins(Instruction::RandRange),
             }
         }
-        // is*(a, b, ...) is true when every argument is
         "isturf" | "ismob" | "isarea" | "isobj" | "ismovable" | "isloc" | "isnan" | "isinf"
             if n >= 1 =>
         {
@@ -754,13 +716,11 @@ fn emit_overloaded(
                 "isnan" => Instruction::IsNaN,
                 _ => Instruction::IsInf,
             };
-            // 516.1659 folds the test of a number but still reads the flag
             if n == 1 && super::versions::folds(compiler.byond, name) {
                 let known = super::fold::number(compiler, &args[0])
                     .and_then(|x| super::versions::nan_test(name, x));
                 if let Some(result) = known {
                     compiler.emit_ins(Instruction::PushInt(result as i32));
-                    // Only affected builds read the previous test flag after folding.
                     if !super::versions::clean_nan_fold(compiler.byond) {
                         compiler.warn_bug(
                             &format!(
@@ -786,7 +746,6 @@ fn emit_overloaded(
             }
             compiler.emit_ins(Instruction::GetFlag);
         }
-        // text("[x]") is just the string
         "text"
             if n == 1
                 && !matches!(&args[0], Expression::Base { term, .. } if matches!(&term.elem, Term::String(_))) =>
@@ -794,11 +753,8 @@ fn emit_overloaded(
             let kind = compiler.emit_expr(args[0].clone())?;
             compiler.emit_move_to_stack(kind)?;
         }
-        // text("format []", args...) is an embedded string with the args in its []s
         "text" if n >= 1 => {
             let mut text = super::strings::TextBuilder::new();
-            // the values for the embeds in order: an argument for each `[]`,
-            // and what's written in the others
             let mut values: Vec<Expression> = vec![];
             let mut rest = args[1..].iter();
             match &args[0] {
@@ -833,7 +789,6 @@ fn emit_overloaded(
             push_args(compiler, &values)?;
             compiler.emit_ins(Instruction::Format(DMString(text.buf), embeds as u32));
         }
-        // regex(x, 1) and regex(x, 2): escape x for a pattern or a replacement
         "REGEX_QUOTE" | "REGEX_QUOTE_REPLACEMENT" if n == 1 => {
             push_args(compiler, args)?;
             compiler.emit_ins(Instruction::PushInt(if name == "REGEX_QUOTE" {
@@ -844,21 +799,18 @@ fn emit_overloaded(
             compiler.emit_ins(Instruction::RegexNew(2));
         }
         "rgb" => return emit_rgb(compiler, args),
-        // astype(x) is x as the type of what it's assigned to
         "astype" if n == 1 && compiler.implicit_type.is_some() => {
             let path = compiler.implicit_type.take().unwrap();
             push_args(compiler, args)?;
             compiler.emit_ins(Instruction::PushVal(operands::Value::Path(path)));
             compiler.emit_ins(Instruction::AsType);
         }
-        // Without a type to go by, astype(x) uses x's own
         "astype" if n == 1 && compiler.static_type_name(&args[0]).is_some() => {
             let path = compiler.static_type_name(&args[0]).unwrap();
             push_args(compiler, args)?;
             compiler.emit_ins(Instruction::PushVal(operands::Value::Path(path)));
             compiler.emit_ins(Instruction::AsType);
         }
-        // Resolve the declared world type during assembly; the parse has only builtins.
         "astype" if n == 1 && compiler.expr_scope.is_some() => {
             let path = declared_world_type(compiler, &args[0]).ok_or(
                 CompileError::UnsupportedBuiltin {
@@ -870,7 +822,6 @@ fn emit_overloaded(
             compiler.emit_ins(Instruction::AsType);
         }
         "shell" if n == 0 => compiler.emit_ins(Instruction::ShellAllowed),
-        // issaved(a.b) asks about a var, not its value
         "issaved" if n == 1 => {
             let var = match compiler.emit_inner_expr(args[0].clone())? {
                 EvalKind::ListRef => {
@@ -904,8 +855,6 @@ fn emit_overloaded(
             compiler.emit_ins(ins);
             compiler.emit_ins(Instruction::GetFlag);
         }
-        // cmptext(a, b, ...) is true when every argument after the first is
-        // the first's text: cmptextEx's case and all
         "cmptext" | "cmptextEx" if n >= 2 => {
             let compare = if name == "cmptext" {
                 Instruction::CmpText
@@ -927,7 +876,6 @@ fn emit_overloaded(
             compiler.emit_ins(Instruction::Pop);
             compiler.emit_ins(Instruction::GetFlag);
         }
-        // Constructors of builtin types, named by a string
         "icon" | "sound" | "generator" => {
             compiler.emit_ins(Instruction::PushVal(operands::Value::DMString(DMString(
                 format!("/{}", name).into_bytes(),
@@ -970,8 +918,6 @@ fn emit_overloaded(
             }
             compiler.emit_ins(Instruction::FilterNewArgList);
         }
-        // The arguments go in a list; with named ones (index, space) it's an
-        // associative list with the others keyed by position
         "gradient" => {
             let named = args.iter().any(|a| {
                 matches!(
@@ -1005,11 +951,8 @@ fn emit_overloaded(
                 }
                 compiler.emit_ins(Instruction::NewAssocList(n as u32));
             } else if let Some(list) = (n == 1).then(|| arglist_inner(&args[0])).flatten() {
-                // gradient(arglist(L)): L is the list
                 push_args(compiler, std::slice::from_ref(list))?;
             } else if n == 2 && is_list_literal(&args[0]) {
-                // gradient(list(...), index): a gradient written out, and
-                // where to read it
                 push_args(compiler, args)?;
                 compiler.emit_ins(Instruction::GradientIndex);
                 return Ok(Some(EvalKind::Stack));
@@ -1028,7 +971,6 @@ fn emit_overloaded(
         }
         "nameof" if n == 1 => {
             let mut name = last_identifier(&args[0]).ok_or(CompileError::ExpectedFieldReference)?;
-            // nameof(__PROC__) is the proc's own name
             if name == "__PROC__" {
                 if !compiler.proc_macros_known() {
                     return Err(CompileError::UnsupportedCompilerMacro {
@@ -1051,7 +993,6 @@ fn emit_overloaded(
             ))));
         }
         "istype" if n == 1 => {
-            // Resolve declared world types during assembly, beyond the builtin-only parse.
             let path = compiler
                 .static_type_name(&args[0])
                 .or_else(|| declared_world_type(compiler, &args[0]))
@@ -1067,8 +1008,6 @@ fn emit_overloaded(
     Ok(Some(EvalKind::Stack))
 }
 
-/// Resolve the declared type for one-argument `istype()` and `astype()` in debugger code.
-/// Use `/list` for list vars; assembly resolves other paths against the world.
 fn declared_world_type(compiler: &Compiler, arg: &Expression) -> Option<String> {
     compiler.expr_scope?;
     let path = super::procs::declared_type_path(compiler, arg).filter(|path| !path.is_empty())?;
@@ -1104,8 +1043,6 @@ pub(super) fn last_identifier(expr: &Expression) -> Option<String> {
     }
 }
 
-/// Resolve step/walk variants to argument count and opcode. Missing
-/// arguments are null; speed variants use their corresponding instructions.
 fn movement(name: &str, n: usize) -> Option<(usize, Instruction)> {
     use Instruction::*;
     let (min, base, plain, speed) = match name {
@@ -1182,8 +1119,6 @@ pub(super) fn emit_statement_builtin(
             compiler.emit_ins(Instruction::Shell);
             compiler.emit_ins(Instruction::Pop);
         }
-        // An unnamed argument after the object stops animation and is not
-        // evaluated. A named argument instead creates an animation step.
         "animate"
             if n >= 2
                 && args.iter().all(|a| {
@@ -1194,7 +1129,6 @@ pub(super) fn emit_statement_builtin(
             compiler.emit_ins(Instruction::NullAnimate);
             compiler.emit_ins(Instruction::Pop);
         }
-        // Stops the animation (with one named argument it's a step instead)
         "animate" if n == 1 && !matches!(args[0], Expression::AssignOp { .. }) => {
             push_args(compiler, args)?;
             compiler.emit_ins(Instruction::NullAnimate);
@@ -1225,7 +1159,6 @@ pub(super) fn emit_statement_builtin(
             push_args(compiler, args)?;
             compiler.emit_ins(Instruction::Stat);
         }
-        // stat(x) is stat(null, x)
         "stat" if n == 1 => {
             compiler.emit_ins(Instruction::PushVal(operands::Value::Null));
             push_args(compiler, args)?;
@@ -1235,7 +1168,6 @@ pub(super) fn emit_statement_builtin(
             push_args(compiler, args)?;
             compiler.emit_ins(Instruction::StatPanelCheck);
         }
-        // statpanel(Panel, Name, Value); statpanel(Panel, Value) has no name
         "statpanel" if n == 2 || n == 3 => {
             push_args(compiler, &args[..1])?;
             if n == 2 {
@@ -1244,8 +1176,6 @@ pub(super) fn emit_statement_builtin(
             push_args(compiler, &args[1..])?;
             compiler.emit_ins(Instruction::StatPanel);
         }
-        // browse(), browse_rsc() and output() outside `<<`: each argument is
-        // worked out and dropped
         "browse" | "browse_rsc" | "output" | "load_resource" if n >= 1 => {
             for arg in args {
                 push_args(compiler, std::slice::from_ref(arg))?;
@@ -1257,7 +1187,6 @@ pub(super) fn emit_statement_builtin(
     Ok(true)
 }
 
-/// `x` in `arglist(x)`.
 pub(super) fn arglist_inner(expr: &Expression) -> Option<&Expression> {
     match expr {
         Expression::Base { term, follow } if follow.is_empty() => match &term.elem {
@@ -1270,9 +1199,6 @@ pub(super) fn arglist_inner(expr: &Expression) -> Option<&Expression> {
     }
 }
 
-/// Resolve `initial(x::v)` as runtime `initial(x.v)`, evaluating x into
-/// the cache. Do not fold it even when `x::v` alone would fold.
-/// Return `None` unless the expression ends in `::v`.
 fn initial_static_field(
     compiler: &mut Compiler<'_>,
     expr: &Expression,
@@ -1291,7 +1217,6 @@ fn initial_static_field(
         term: term.clone(),
         follow: rest.to_vec().into_boxed_slice(),
     };
-    // (the type x is, for a static var, which is its global)
     let ty = match &term.elem {
         Term::Prefab(prefab) if rest.is_empty() && prefab.vars.is_empty() => compiler
             .proc
@@ -1316,8 +1241,6 @@ fn initial_static_field(
     }))
 }
 
-/// The variable for `initial(a?.b.c?.d)`, after putting what comes before the
-/// last `?.` in the cache. None if there's no `?.` or it isn't all fields.
 fn initial_safe(
     compiler: &mut Compiler<'_>,
     expr: &Expression,
@@ -1353,8 +1276,6 @@ fn initial_safe(
         segments.last_mut().unwrap().push(name.to_string());
     }
     let last = segments.pop().unwrap();
-    // (DreamMaker saves the cache around each later `?.`, so the var is
-    // read from what the first one found)
     let saved = segments.len();
     let chain = |fields: &[String]| {
         let mut builder = super::chain_builder::ChainBuilder::begin(Variable::Cache);
@@ -1373,7 +1294,6 @@ fn initial_safe(
     for _ in 0..saved {
         compiler.emit_ins(Instruction::PopCache);
     }
-    // (a static or const var's is its global's)
     if let Some(global) = super::statements::static_place(compiler, expr, false) {
         return Ok(Some(Variable::Initial(Box::new(global))));
     }
@@ -1381,7 +1301,6 @@ fn initial_safe(
     Ok(Some(chain(&last).get_initial_field(field)))
 }
 
-/// The colours `rgb2num()` knows by name, whatever their case.
 const NAMED_COLOURS: &[(&str, &[u8])] = &[
     ("aqua", &[0, 255, 255]),
     ("black", &[0, 0, 0]),
@@ -1407,8 +1326,6 @@ const NAMED_COLOURS: &[(&str, &[u8])] = &[
     ("none", &[0, 0, 0, 0]),
 ];
 
-/// The red, green, blue (and alpha) of a constant colour: `"#rrggbb"`,
-/// `"#rgb"`, either with an alpha, a colour's name, or null (white).
 fn colour_const(compiler: &Compiler, expr: &Expression) -> Option<Vec<u8>> {
     let text = match super::fold::value(compiler, expr)? {
         super::fold::Constant::Text(t) => t,
@@ -1426,7 +1343,6 @@ fn colour_const(compiler: &Compiler, expr: &Expression) -> Option<Vec<u8>> {
         return None;
     }
     match hex.len() {
-        // (a digit for a channel is that digit twice)
         3 | 4 => hex
             .chars()
             .map(|c| Some(c.to_digit(16)? as u8 * 17))
@@ -1439,13 +1355,9 @@ fn colour_const(compiler: &Compiler, expr: &Expression) -> Option<Vec<u8>> {
     }
 }
 
-/// The colour space `rgb2num(colour, space)` is asked for, if it's constant
-/// and there is one (0 RGB, 1 HSV, 2 HSL, 3 HCY).
 fn rgb2num_space(compiler: &Compiler, args: &[Expression]) -> Option<u32> {
     match args {
         [_] => Some(0),
-        // (cut to a whole number; anything but 1, 2 and 3 is RGB, null and
-        // text too)
         [_, space] => match super::fold::value(compiler, space)? {
             super::fold::Constant::Number(n) if (1.0..4.0).contains(&n) => Some(n as u32),
             super::fold::Constant::Number(_)
@@ -1457,8 +1369,6 @@ fn rgb2num_space(compiler: &Compiler, args: &[Expression]) -> Option<u32> {
     }
 }
 
-/// Fold rgb2num to an integer list only in RGB space. Other spaces
-/// remain runtime expressions because platform/build rounding differs.
 fn rgb2num_const(compiler: &Compiler, args: &[Expression]) -> Option<Vec<u8>> {
     if rgb2num_space(compiler, args)? != 0 {
         return None;
@@ -1466,8 +1376,6 @@ fn rgb2num_const(compiler: &Compiler, args: &[Expression]) -> Option<Vec<u8>> {
     colour_const(compiler, &args[0])
 }
 
-/// Whether `rgb2num(...)` is a list DreamMaker knows when compiling, which
-/// is true where it's tested: the test is left out, list and all.
 pub(super) fn rgb2num_is_constant(compiler: &Compiler, args: &[Expression]) -> bool {
     rgb2num_space(compiler, args).is_some() && colour_const(compiler, &args[0]).is_some()
 }

@@ -1,49 +1,28 @@
-//! Detect data breakpoint changes between instructions.
-//!
-//! Polling covers assignments, list operations, pointers, engine updates and
-//! byondapi writes without separate hooks. Stop after the instruction that
-//! changed the value; writing the same value does not count.
-//!
-//! Object fields, list entries and globals use BYOND pointers. Frame locals
-//! and arguments use slots in a specific proc instance and are checked when
-//! that frame runs. Writes through exported local pointers are detected when
-//! the owning frame next executes.
-
 use auxtools::raw_types::values::Value as RawValue;
 
 use super::*;
 
-/// Active data breakpoint.
 pub(super) struct Watched {
 	id: u32,
 	client: ClientId,
-	/// What the client knows it as
 	name: String,
 	place: Place,
-	/// Last observed value.
 	last: Value,
 	condition: Option<String>,
 	hit: Option<HitCondition>,
 	hits: u32,
-	/// Whether a condition error has already been reported.
 	told: bool
 }
 
 enum Place {
-	/// An object's var, a list's entry, a global: BYOND's pointer to it
 	Pointer(Value),
-	/// A proc's own var, in one frame
 	Slot {
-		/// Stable BYOND proc instance ID. Addresses change on first sleep;
-		/// spawned copies must not share the watch.
 		instance: u32,
-		/// Proc ID used to detect instance ID reuse after return.
 		proc: raw_types::procs::ProcId,
 		slot: Slot
 	}
 }
 
-/// A proc instance's id
 unsafe fn instance_id(instance: *mut raw_types::procs::ProcInstance) -> u32 {
 	unsafe { (*instance).argslist_idx.id }
 }
@@ -55,7 +34,6 @@ enum Slot {
 	Dot
 }
 
-/// Condition bindings for the current and previous values.
 const CONDITION_NEW: &str = "value";
 const CONDITION_OLD: &str = "old";
 
@@ -63,7 +41,6 @@ fn same(a: RawValue, b: RawValue) -> bool {
 	a.tag == b.tag && unsafe { a.data.id == b.data.id }
 }
 
-/// What's in a frame's slot, if it has one. `ctx` is the frame's own.
 unsafe fn read_slot(ctx: *mut raw_types::procs::ExecutionContext, slot: Slot) -> Option<RawValue> {
 	unsafe {
 		match slot {
@@ -82,15 +59,11 @@ impl Server {
 		!self.watches.is_empty()
 	}
 
-	/// Check watches before the instruction at `ctx`. Return changes passing
-	/// conditions and hit filters; expire watches whose targets are gone.
 	pub fn watched_changes(&mut self, ctx: *mut raw_types::procs::ExecutionContext) -> Option<Vec<DataChange>> {
 		let instance = unsafe { *(*ctx).proc_instance() };
 		let mut changed: Vec<(usize, RawValue)> = vec![];
 		let mut over: Vec<(u32, &'static str)> = vec![];
 
-		// Pointer-read errors from deleted targets belong to watch handling,
-		// not the world's runtime error breakpoints.
 		self.in_eval = true;
 		auxtools::instruction_hook::hear_all();
 		for (index, watch) in self.watches.iter().enumerate() {
@@ -113,8 +86,6 @@ impl Server {
 						continue;
 					}
 					unsafe {
-						// The original frame ended between checks; this ID now
-						// belongs to another call.
 						if (*instance).proc != *proc || *(*ctx).bytecode_offset() == 0 {
 							over.push((watch.id, "watched proc ended"));
 							continue;
@@ -130,7 +101,6 @@ impl Server {
 								continue;
 							}
 						}
-						// Its last instruction: nothing changes it after this
 						let opcode = *(*(*ctx).bytecode()).add(*(*ctx).bytecode_offset() as usize);
 						if opcode == dmasm::Opcode::Ret.word() || opcode == dmasm::Opcode::End.word() {
 							over.push((watch.id, "watched proc returned"));
@@ -146,7 +116,6 @@ impl Server {
 			return None;
 		}
 
-		// What was there, and what is now
 		let mut changes = vec![];
 		for (index, now) in changed {
 			let watch = &mut self.watches[index];
@@ -158,7 +127,6 @@ impl Server {
 			self.end_watch(id, reason);
 		}
 
-		// Conditions evaluate in the running frame and need its stack snapshot.
 		let paused = self.state.is_some();
 		if !paused {
 			self.state = Some(State::new());
@@ -178,7 +146,6 @@ impl Server {
 				match passed {
 					Ok(true) => {}
 					Ok(false) => continue,
-					// Skip failed conditions and report the first error.
 					Err(error) => {
 						let Some(watch) = self.watches.iter_mut().find(|watch| watch.id == id) else {
 							continue;
@@ -195,7 +162,6 @@ impl Server {
 					}
 				}
 			}
-			// The condition's code could have taken the watch away
 			let Some(watch) = self.watches.iter_mut().find(|watch| watch.id == id) else {
 				continue;
 			};
@@ -216,13 +182,10 @@ impl Server {
 		(!wanted.is_empty()).then_some(wanted)
 	}
 
-	/// Reset baselines after debugger evaluations and assignments so their
-	/// side effects do not trigger data breakpoints.
 	pub(super) fn refresh_watches(&mut self) {
 		if self.watches.is_empty() {
 			return;
 		}
-		// The frames this pause has read, which are still there
 		let frames: Vec<(u32, *mut raw_types::procs::ExecutionContext)> = match &self.state {
 			Some(state) => {
 				let asleep = state.suspended.get().map(|stacks| stacks.iter().flatten());
@@ -252,7 +215,6 @@ impl Server {
 		self.in_eval = was_in_eval;
 	}
 
-	/// A watch is over: its client is told why
 	fn end_watch(&mut self, id: u32, reason: &str) {
 		let Some(at) = self.watches.iter().position(|watch| watch.id == id) else {
 			return;
@@ -273,7 +235,6 @@ impl Server {
 		self.watches.retain(|watch| watch.client != client);
 	}
 
-	/// Evaluate `&(expression)` to resolve a watch pointer.
 	fn pointer_to(&mut self, frame_id: Option<u32>, expression: &str, given: Vec<(String, Value)>) -> Result<Value, String> {
 		if !auxtools::pointer::readable() {
 			return Err("pointer reads are unavailable in this BYOND build".to_owned());
@@ -284,8 +245,6 @@ impl Server {
 			state.invalidate_stacks();
 		}
 		let pointer = pointer?;
-		// Pointers to evaluation-local variables expire when evaluation
-		// returns.
 		let names_something = pointer.raw.tag == ValueTag::Pointer && pointer.to_string().is_ok_and(|text| !text.is_empty());
 		if !names_something || auxtools::pointer::read_raw(&pointer).is_none() {
 			return Err("expression has no persistent watch target; select an object variable, list entry or global".to_owned());
@@ -293,7 +252,6 @@ impl Server {
 		Ok(pointer)
 	}
 
-	/// A frame's own var by name: its slot, if it has one of that name
 	fn slot_of(frame: &debug::StackFrame, name: &str) -> Result<Option<Slot>, String> {
 		if name == "." {
 			return Ok(Some(Slot::Dot));
@@ -322,7 +280,6 @@ impl Server {
 		Ok((place, unsafe { Value::from_raw(now) }))
 	}
 
-	/// Resolve a watch target and read its current value.
 	fn watched_place(&mut self, place: &WatchPlace) -> Result<(Place, String, Value), String> {
 		const ITS_VARS: &str = "select a variable of this value to watch";
 		let pointed = |pointer: Value, name: String| -> Result<(Place, String, Value), String> {
@@ -333,7 +290,6 @@ impl Server {
 		match place {
 			WatchPlace::Expression { frame_id, expression } => {
 				let expression = expression.trim();
-				// A name alone may be the frame's own var
 				let plain = expression == "." || (!expression.is_empty() && expression.chars().all(|c| c.is_alphanumeric() || c == '_'));
 				if let (true, Some(frame_id)) = (plain, frame_id) {
 					if expression == "src" || expression == "usr" {
@@ -355,8 +311,6 @@ impl Server {
 					.as_ref()
 					.and_then(|state| state.get_variables(vars.clone()))
 					.ok_or("variable reference expired after execution resumed")?;
-				// What's inside something is reached through it, by what
-				// it's called in these expressions
 				const HOLDER: &str = "__watched";
 				const KEY: &str = "__key";
 				let within = |holder: &Option<String>, rest: String| match holder {
@@ -384,8 +338,6 @@ impl Server {
 					}
 					Variables::ListContents(list, holder) => {
 						let number = Self::entry_number(name).ok_or_else(|| format!("the list has no entry {}", name))?;
-						// An entry with a value for its key: the value is
-						// what changes
 						let runtime = |e: Runtime| format!("runtime error: {}", e.message);
 						let entries = List::from_value(&list).map_err(runtime)?;
 						let key = if entries.is_alist() {
@@ -420,14 +372,12 @@ impl Server {
 						])?;
 						pointed(pointer, entry.unwrap_or_else(|| name.clone()))
 					}
-					// What a pointer names is the place itself
 					Variables::Pointee(pointer, holder) => pointed(pointer, within(&holder, String::new()).trim_start_matches('*').to_owned())
 				}
 			}
 		}
 	}
 
-	/// Describe a watch target for the client.
 	pub(super) fn watch_info(&mut self, place: &WatchPlace) -> Result<String, String> {
 		self.watched_place(place).map(|(_, name, _)| name)
 	}

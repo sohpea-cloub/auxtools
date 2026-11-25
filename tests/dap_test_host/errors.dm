@@ -1,5 +1,3 @@
-// Runtime errors of each kind
-
 /proc/fail_null()
 	var/list/L = null
 	return L[1] // @fail_null
@@ -56,7 +54,6 @@
 		fail_index()
 	fail_divide()
 
-// A runtime error in the try block itself
 /proc/fail_caught_here()
 	try
 		var/list/L = null

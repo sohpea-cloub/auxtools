@@ -1,5 +1,3 @@
-//! Read and format debugger journal entries as text or JSON.
-
 use std::{
 	collections::VecDeque,
 	io::Write,
@@ -11,11 +9,9 @@ use serde_json::json;
 
 use super::{args, hung_up, seconds_text, unexpected, Failure, Result, World, HUNG_UP, TIMED_OUT};
 
-/// `auxtools log`
 pub fn log(world: &mut World, args: &args::Log) -> Result<()> {
 	let kinds = kinds(args);
 	let filter = args.runtime_filter.as_deref().map(RuntimeFilter::parse);
-	// Apply --last after filtering, since only matching entries count.
 	let shown = |entry: &JournalEntry| match (&filter, &entry.event) {
 		(Some(filter), JournalEvent::Runtime { message, .. }) => filter.takes(message),
 		_ => true
@@ -47,7 +43,6 @@ pub fn log(world: &mut World, args: &args::Log) -> Result<()> {
 		return Ok(());
 	}
 
-	// From where that left off, across reboots, until the world ends
 	let mut follower = Follower::new(newest.max(args.since.unwrap_or(0)), kinds);
 	loop {
 		match follower.next(world, None) {
@@ -57,20 +52,16 @@ pub fn log(world: &mut World, args: &args::Log) -> Result<()> {
 				}
 			}
 			Ok(None) => {}
-			// The world exited, which is where following it ends
 			Err(Failure(HUNG_UP, _)) => return Ok(()),
 			Err(e) => return Err(e)
 		}
 	}
 }
 
-/// What a time limit is in an error, when there was one
 fn limit(timeout: Option<Duration>) -> String {
 	timeout.map(|timeout| format!(" after {}", seconds_text(timeout))).unwrap_or_default()
 }
 
-/// Wait for the next reload result, optionally after `since`.
-/// Return exit code 1 if the reload was rejected.
 pub fn wait_reload(world: &mut World, since: Option<u64>, timeout: Option<Duration>, json: bool) -> Result<()> {
 	let until = timeout.map(|timeout| Instant::now() + timeout);
 	let mut follower = Follower::new(since.unwrap_or(u64::MAX), vec![JournalKind::Reload]);
@@ -87,8 +78,6 @@ pub fn wait_reload(world: &mut World, since: Option<u64>, timeout: Option<Durati
 	}
 }
 
-/// `wait reboot`: waits for the world to reboot (or for the first load after
-/// entry `since`), and for the new world to answer
 pub fn wait_reboot(world: &mut World, since: Option<u64>, timeout: Option<Duration>, json: bool) -> Result<()> {
 	let until = timeout.map(|timeout| Instant::now() + timeout);
 	let mut follower = Follower::new(since.unwrap_or(u64::MAX), vec![JournalKind::World]);
@@ -100,12 +89,9 @@ pub fn wait_reboot(world: &mut World, since: Option<u64>, timeout: Option<Durati
 			));
 		};
 		if let JournalEvent::Loaded { .. } = entry.event {
-			// Wait for the launcher to release the newly loaded world before
-			// sending commands.
 			loop {
 				match world.started(until)? {
 					Some(true) => break,
-					// An unlimited event wait still has response timeouts.
 					None if until.is_none() => return Err(world.unresponsive("respond")),
 					_ => {}
 				}
@@ -123,7 +109,6 @@ pub fn wait_reboot(world: &mut World, since: Option<u64>, timeout: Option<Durati
 	}
 }
 
-/// The kinds of entries the options ask for: all of them, if none are named
 pub fn kinds(args: &args::Log) -> Vec<JournalKind> {
 	[
 		(args.runtimes || args.runtime_filter.is_some(), JournalKind::Runtime),
@@ -138,23 +123,16 @@ pub fn kinds(args: &args::Log) -> Vec<JournalKind> {
 	.collect()
 }
 
-/// Prints an entry. False once nothing reads what's printed (a closed pipe),
-/// which ends the command quietly.
 pub fn print(entry: &JournalEntry, json: bool) -> bool {
 	let text = if json { to_json(entry).to_string() } else { block(entry) };
 	let mut out = std::io::stdout().lock();
 	writeln!(out, "{}", text).and_then(|()| out.flush()).is_ok()
 }
 
-/// Stream selected journal entries and reconnect after reboots,
-/// resuming from the last entry received.
 pub struct Follower {
-	/// Last received entry number; `u64::MAX` starts at the current position.
 	after: u64,
 	kinds: Vec<JournalKind>,
-	/// Entries read, and not handed out yet
 	waiting: VecDeque<JournalEntry>,
-	/// Whether this connection has asked for them
 	asked: bool
 }
 
@@ -168,8 +146,6 @@ impl Follower {
 		}
 	}
 
-	/// Receive the next entry, or `None` at the deadline.
-	/// Return `HUNG_UP` if the world exits.
 	pub fn next(&mut self, world: &mut World, until: Option<Instant>) -> Result<Option<JournalEntry>> {
 		loop {
 			if let Some(entry) = self.waiting.pop_front() {
@@ -209,17 +185,12 @@ impl Follower {
 	}
 }
 
-/// How often to try a world's socket while it reboots
 const RECONNECT_INTERVAL: Duration = Duration::from_millis(100);
 
 impl World {
-	/// Reconnect after a reboot, or return `HUNG_UP` if the process exited.
-	/// Connections opened during reboot wait for the new world.
 	pub fn reconnect(&mut self, until: Option<Instant>) -> Result<()> {
 		loop {
 			if let Ok(world) = World::connect(self.pid) {
-				// Preserve output options and timeout settings across
-				// reconnects.
 				self.stream = world.stream;
 				self.received = world.received;
 				self.events.clear();
@@ -240,9 +211,6 @@ impl World {
 }
 
 impl World {
-	/// Whether the world has started executing rather than waiting for
-	/// launcher configuration. Return `None` if either the response timeout
-	/// or `until` expires.
 	pub fn started(&mut self, until: Option<Instant>) -> Result<Option<bool>> {
 		let patience = Instant::now() + self.patience;
 		let until = until.map_or(patience, |until| until.min(patience));
@@ -254,7 +222,6 @@ impl World {
 	}
 }
 
-/// Seconds, as hours, minutes and seconds
 pub fn duration(seconds: f64) -> String {
 	let seconds = seconds as u64;
 	match (seconds / 3600, seconds / 60 % 60, seconds % 60) {
@@ -264,7 +231,6 @@ pub fn duration(seconds: f64) -> String {
 	}
 }
 
-/// Format an entry number followed by its indented details.
 pub fn block(entry: &JournalEntry) -> String {
 	let (what, more) = describe(&entry.event);
 	let mut text = format!(
@@ -281,7 +247,6 @@ pub fn block(entry: &JournalEntry) -> String {
 	text
 }
 
-/// What happened, in a line, and the lines that go under it
 pub fn describe(event: &JournalEvent) -> (String, Vec<String>) {
 	match event {
 		JournalEvent::Runtime { message, caught, stack } => {
@@ -321,7 +286,6 @@ pub fn describe(event: &JournalEvent) -> (String, Vec<String>) {
 			expression,
 			result: Err(error)
 		} => {
-			// Its first line, then the procs it was in
 			let mut lines = error.lines().map(|line| line.trim_start().to_owned());
 			(
 				format!("spawn {}: {} failed: {}", spawn, expression, lines.next().unwrap_or_default()),
@@ -331,8 +295,6 @@ pub fn describe(event: &JournalEvent) -> (String, Vec<String>) {
 	}
 }
 
-/// Report a spawned evaluation's callee error using the same format as
-/// synchronous eval.
 pub fn callee_runtime(message: &str, stack: &[JournalFrame]) -> String {
 	let mut said = format!("runtime error in a called proc (the evaluation carried on): {}", message);
 	for (i, at) in stack[..stack.len() - 1].iter().enumerate() {
@@ -350,7 +312,6 @@ fn frame(frame: &JournalFrame) -> String {
 	}
 }
 
-/// A number without a fraction if it has none
 pub fn number(n: f64) -> String {
 	if n.fract() == 0.0 && n.abs() < 1e15 {
 		format!("{}", n as i64)
@@ -359,7 +320,6 @@ pub fn number(n: f64) -> String {
 	}
 }
 
-/// The time of day of a time in milliseconds since 1970, in UTC
 pub fn clock(ms: u64) -> String {
 	let of_day = ms % 86_400_000;
 	format!(
@@ -371,8 +331,6 @@ pub fn clock(ms: u64) -> String {
 	)
 }
 
-/// Serialize an entry with number, Unix time in milliseconds, world time
-/// in deciseconds, kind and kind-specific fields.
 pub fn to_json(entry: &JournalEntry) -> serde_json::Value {
 	let mut value = match &entry.event {
 		JournalEvent::Runtime { message, caught, stack } => {

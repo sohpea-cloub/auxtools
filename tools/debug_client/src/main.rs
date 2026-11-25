@@ -1,7 +1,3 @@
-//! Debug server probe for real codebases. Launch a world, set a breakpoint,
-//! inspect stacks and variables, then evaluate the requested watches.
-//! Print every protocol message to identify the request preceding a crash.
-
 use std::{
 	collections::HashMap,
 	io::{Read, Write},
@@ -113,7 +109,6 @@ impl Connection {
 		println!(">> {:?}", request);
 	}
 
-	/// The next message, or None once DreamDaemon has gone
 	fn recv_any(&mut self) -> Option<Response> {
 		let mut len = [0u8; 4];
 		if let Err(e) = self.0.read_exact(&mut len) {
@@ -128,7 +123,6 @@ impl Connection {
 		Some(bincode::deserialize(&data).unwrap())
 	}
 
-	/// The next message that isn't a notification, printing those on the way
 	fn recv(&mut self) -> Option<Response> {
 		loop {
 			match self.recv_any()? {
@@ -219,7 +213,6 @@ fn main() {
 			std::process::exit(1);
 		}
 	};
-	// It listens once the world has loaded
 	let stream = loop {
 		if let Ok(stream) = local::connect(game.pid()) {
 			break stream;
@@ -252,7 +245,6 @@ fn main() {
 		hit: None,
 		log: None
 	});
-	// Runtimes would stop us somewhere else. This one gets no reply.
 	conn.send(&Request::CatchRuntimes {
 		uncaught: None,
 		caught: None
@@ -277,13 +269,11 @@ fn main() {
 	conn.request(Request::Continue {
 		kind: ContinueKind::Continue
 	});
-	// Long enough to see the world carry on before we let go of it
 	std::thread::sleep(Duration::from_secs(3));
 	conn.send(&Request::Disconnect);
 	game.kill();
 }
 
-/// Starts the world, which waits for us
 fn start(options: &Options) -> Result<Game, String> {
 	let bin = byond::bin_dir(options.byond.as_deref())?;
 	let library = match &options.library {

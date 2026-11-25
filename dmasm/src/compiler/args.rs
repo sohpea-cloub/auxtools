@@ -6,10 +6,6 @@ use crate::{
     Instruction,
 };
 
-// (((x))) -> x
-// ((-(x))) -> -(x)
-// (((x).y)) -> (x).y
-// (x = y) -> x = y
 fn unroll(expr: &Expression) -> &Expression {
     match expr {
         Expression::Base { term, follow } => {
@@ -26,12 +22,6 @@ fn unroll(expr: &Expression) -> &Expression {
     }
 }
 
-// Only true if any short-circuit behavior would step _over_ the entire expression
-// x.y -> false
-// x[x?.y] -> false
-// x?.y -> true
-// x?.y && z -> false
-// x?.y = z -> true
 fn can_short_circuit(expr: &Expression) -> bool {
     match expr {
         Expression::Base { term: _, follow } => {
@@ -61,8 +51,6 @@ fn has_assoc_argument(context: ArgsContext, args: &[Expression]) -> Result<bool,
 
     for arg in args {
         match context {
-            // Proc arguments are only treated as associative if they contain an unwrapped assign operation where the LHS is not a nested expression
-            // (anything else is a key worked out: `f(a + 1 = 2)`)
             ArgsContext::Proc => {
                 if let Expression::AssignOp {
                     op: AssignOp::Assign,
@@ -70,7 +58,6 @@ fn has_assoc_argument(context: ArgsContext, args: &[Expression]) -> Result<bool,
                     rhs: _,
                 } = arg
                 {
-                    // `a?.b = x` is an assignment, as an argument like any other
                     if can_short_circuit(unroll(lhs)) {
                         continue;
                     }
@@ -82,7 +69,6 @@ fn has_assoc_argument(context: ArgsContext, args: &[Expression]) -> Result<bool,
                 }
             }
 
-            // Lists arguments are treated as associative if they contain _any_ assign operation (after unrolling)
             ArgsContext::List => {
                 if let Expression::AssignOp {
                     op: AssignOp::Assign,
@@ -90,12 +76,10 @@ fn has_assoc_argument(context: ArgsContext, args: &[Expression]) -> Result<bool,
                     rhs: _,
                 } = unroll(arg)
                 {
-                    // `a?.b = x` is an assignment, as an argument like any other
                     if can_short_circuit(unroll(lhs)) {
                         continue;
                     }
 
-                    // Finding an assign op means these args are associative
                     found_associative = true;
                 }
             }
@@ -105,7 +89,6 @@ fn has_assoc_argument(context: ArgsContext, args: &[Expression]) -> Result<bool,
     Ok(found_associative)
 }
 
-// TODO: The differences between these are... weird. We should pick a behavior that counts as a sub-set of BYOND and enforce it with errors.
 #[derive(PartialEq, Clone, Copy)]
 pub(super) enum ArgsContext {
     Proc,
@@ -113,13 +96,10 @@ pub(super) enum ArgsContext {
 }
 
 pub(super) enum ArgsResult {
-    // Each argument has been pushed on to the stack
     Normal,
 
-    // Each argument has its key pushed on the stack followed by its value
     Assoc,
 
-    // Similar to assoc, except the arg list itself has been pushed to the stack
     ArgList,
 }
 
@@ -164,7 +144,6 @@ fn do_normal(compiler: &mut Compiler, args: Vec<Expression>) -> Result<ArgsResul
         compiler.regroup_root = true;
         let expr = compiler.emit_expr(arg)?;
 
-        // If our param is an arg list and it's the only param, we're an arg list!
         if let EvalKind::ArgList = expr {
             if args_len == 1 {
                 return Ok(ArgsResult::ArgList);
@@ -182,11 +161,9 @@ fn do_assoc(
     context: ArgsContext,
     args: Vec<Expression>,
 ) -> Result<ArgsResult, CompileError> {
-    // TODO: Lots of cloning in here :(
     for (idx, arg) in args.into_iter().enumerate() {
         let idx = idx + 1;
 
-        // Handle `ident = {expr}` case first. The identifier turns into a string literal intead of being evaluated.
         if let Expression::AssignOp {
             op: AssignOp::Assign,
             lhs,
@@ -195,7 +172,6 @@ fn do_assoc(
         {
             if let Expression::Base { term, follow } = lhs.as_ref() {
                 if follow.is_empty() {
-                    // `null = x` is keyed by "null"
                     if let Term::Null = &term.elem {
                         compiler.emit_ins(Instruction::PushVal(Value::DMString(DMString(
                             b"null".to_vec(),
@@ -207,7 +183,6 @@ fn do_assoc(
                     }
 
                     if let Term::Ident(ident) = &term.elem {
-                        // In a list, a builtin constant key is its value (MALE is "male")
                         if context == ArgsContext::List
                             && super::procs::is_builtin_const(compiler, ident.as_str())
                         {
@@ -229,11 +204,9 @@ fn do_assoc(
             }
         }
 
-        // Now we unroll. Cases like f((x = y)) will treat the lhs as an expression instead of an identifier
         let arg = unroll(&arg);
 
         match arg {
-            // Assoc entry
             Expression::AssignOp {
                 op: AssignOp::Assign,
                 lhs,
@@ -248,7 +221,6 @@ fn do_assoc(
                 compiler.emit_move_to_stack(kind)?;
             }
 
-            // Normal entry
             other => {
                 compiler.emit_ins(Instruction::PushInt(idx as i32));
 

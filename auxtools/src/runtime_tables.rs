@@ -37,7 +37,6 @@ impl ProcEntryWords {
 /// No proc, string or misc entry.
 pub const NONE: u32 = 0xFFFF;
 
-/// One type's proc names, sorted by key.
 #[repr(C)]
 pub struct ProcNameMap {
 	pub buckets: *mut ProcNameBucket,
@@ -49,7 +48,6 @@ pub struct ProcNameMap {
 /// buffer (`AllocShared`), and the same buffer can be in several types' maps.
 #[repr(C)]
 pub struct ProcNameBucket {
-	/// The name's string id
 	pub key: u32,
 	pub ids: *mut u32,
 	pub count: u16,
@@ -58,7 +56,6 @@ pub struct ProcNameBucket {
 	pub no_link: u8
 }
 
-/// Byte offsets into a type table entry. The same on Windows and Linux.
 pub mod type_fields {
 	pub const PATH: usize = 0x00;
 	pub const PARENT: usize = 0x04;
@@ -119,26 +116,14 @@ pub mod type_fields {
 	pub const TYPEPATH: usize = 0x8C;
 }
 
-/// First build storing typepath values in type entries and indexing them
-/// for text2path. Earlier entries end after PREORDER_END and compute
-/// typepath values on demand.
 const TYPEPATH_BUILD: u32 = 1641;
 
-/// Linux builds before this one were compiled with frame pointers, and keep
-/// some tables' pointers before their counts, as on Windows.
 #[cfg(unix)]
 const LINUX_SWAPPED_BUILD: u32 = 1644;
 
-/// Cache layout verified through this build, starting at 515.1641 on Windows
-/// and 515.1644 on Linux.
 const PATH_CACHE_CHECKED_BUILD: u32 = 1689;
-/// The value tag of a proc.
 const PROC_VALUE: u32 = 0x26;
 
-/// Locate the text2path cache, including cached misses. Its root pointer is
-/// the first `push ADDRESS; call` operand in the typepath registration
-/// function. Return None outside verified builds or if the pattern is absent,
-/// including Linux 515.1641–1643.
 unsafe fn path_cache(build: u32, register: Option<usize>) -> Option<*const *mut u8> {
 	if !(TYPEPATH_BUILD..=PATH_CACHE_CHECKED_BUILD).contains(&build) {
 		return None;
@@ -180,7 +165,6 @@ pub fn recache_path(path: u32, value: [u32; 2]) {
 	}
 }
 
-/// The size of a type table entry on `build`
 fn type_stride(build: u32) -> usize {
 	if build < TYPEPATH_BUILD {
 		if cfg!(windows) {
@@ -197,65 +181,39 @@ fn type_stride(build: u32) -> usize {
 
 struct Functions {
 	procdef_add: extern "C" fn(*const ProcEntryWords) -> u32,
-	/// BYOND's own, or on builds that inlined it (Linux before 515.1644),
-	/// `misc_intern`, which takes a 12-byte entry the caller allocated
 	misc_intern: MiscIntern,
 	alloc_shared: extern "C" fn(usize) -> *mut c_void,
 	free_shared: extern "C" fn(*mut c_void) -> bool,
 	copy_shared: extern "C" fn(*mut c_void) -> *mut c_void,
-	/// Register a typepath for `text2path` (absent before `TYPEPATH_BUILD`).
-	/// Only type additions require this; proc and var additions can proceed
-	/// when it is unavailable.
 	register_typepath: Result<Option<extern "C" fn(u32)>, String>,
-	/// Verified text2path cache root pointer; see `path_cache`.
 	path_cache: Option<*const *mut u8>,
-	/// The size of a type table entry
 	type_stride: usize,
 	crt_realloc: extern "C" fn(*mut c_void, usize) -> *mut c_void,
 	type_count: *const u32,
 	type_table: *const *mut u8,
 	name_maps: *const *mut ProcNameMap,
-	/// Every type id in preorder
 	preorder: *const *mut u32,
-	/// Each type's default appearance, worked out when first needed (NONE
-	/// until then)
 	appearance_cache: *const *mut u32,
-	/// The procs that return parameters' `in` lists, by the index a
-	/// parameter's `in` list word has (`(index << 8) | 0x40`)
 	in_list_count: *const u32,
 	in_list_procs: *const *mut u32,
-	/// Prefab instances (`/obj{a = 1}`, and the types placed on the map), by
-	/// the id a value with tag 0x29 has: 12 bytes each (see `Instance`)
 	instance_count: *const u32,
 	instances: *const *mut Instance,
-	/// Mob types, by the id a mob typepath value has (see `MobType`)
 	mob_count: *const u32,
 	mobs: *const *mut MobType,
-	/// Separate world proc name map, built after global initialization.
-	/// `built` is zero before construction; earlier edits are overwritten.
 	world_name_map: *mut ProcNameMap,
 
-	/// Global slot for each variable ID: global/static values and declared
-	/// variable defaults. New locals start with their ID's slot value.
 	global_values: *const *const crate::raw_types::values::Value,
-	/// Misc entry of (var ID, flags) pairs, sorted by name string ID.
-	/// `global.vars` enumerates it and binary-searches it for name lookups.
-	/// Reloads can proceed without it, but new globals will be absent there.
 	global_vars: Result<*mut u32, String>
 }
 
 #[derive(Clone, Copy)]
 enum MiscIntern {
-	/// Copies `count` words into a new entry, or finds an identical one
 	Copy(extern "C" fn(*const u32, u32) -> u32),
-	/// Interns an entry (u16 count, refcount at +4, words at +8) and its
-	/// words, which it owns from then on (freeing them if one like it exists)
 	Take(extern "C" fn(*mut u8) -> u32)
 }
 
 static mut FUNCTIONS: Option<Result<Functions, String>> = None;
 
-/// Forgets what was looked up, for the next world.
 pub(crate) fn reset() {
 	unsafe {
 		FUNCTIONS = None;
@@ -268,7 +226,6 @@ mod recipes {
 
 	const CHECKED: VersionRange = VersionRange { min: 1637, max: 1688 };
 
-	// Appends an entry to the proc table, or finds an identical one
 	pub const PROCDEF_ADD: Recipe = Recipe {
 		name: "procdef_add",
 		versions: CHECKED,
@@ -280,7 +237,6 @@ mod recipes {
 		extract: Extract::Entry
 	};
 
-	// Copies words into a new misc entry, or finds an identical one
 	pub const MISC_INTERN_COPY: Recipe = Recipe {
 		name: "misc_intern_copy",
 		versions: CHECKED,
@@ -293,8 +249,6 @@ mod recipes {
 		extract: Extract::Entry
 	};
 
-	// The proc name map of a type: the type count is operand 0, the maps 1. The
-	// type table is the word before the count.
 	const TYPE_MAP_ACCESSOR: &str = "55 8B EC 8B 4D 08 3B 0D ?? ?? ?? ?? 77 0A A1 ?? ?? ?? ?? 8D 04 C8 5D C3 33 C0 5D C3";
 
 	pub const TYPE_COUNT: Recipe = Recipe {
@@ -313,8 +267,6 @@ mod recipes {
 		extract: Extract::AbsMem(OperandSelect::NthAbsMem(1))
 	};
 
-	// The loader of the var tables, as auxtools' `variable_names` finds it.
-	// global_values is operand 1.
 	pub const GLOBAL_VALUES: Recipe = Recipe {
 		name: "global_values",
 		versions: CHECKED,
@@ -327,8 +279,6 @@ mod recipes {
 		extract: Extract::AbsMem(OperandSelect::NthAbsMem(1))
 	};
 
-	// Loader store of the sorted, interned global (var ID, flags) list.
-	// The destination address is operand 0.
 	pub const GLOBAL_VARS: Recipe = Recipe {
 		name: "global_vars",
 		versions: CHECKED,
@@ -364,16 +314,11 @@ mod recipes {
 		extract: Extract::Entry
 	};
 
-	// The loader of the type table, which allocates the table, the preorder,
-	// the proc name maps and the appearance cache, one after the other. Memory
-	// operands without a base register count, `lea`s of the sizes too.
 	const TYPE_LOADER: &str = "69 F0 98 00 00 00 83 C4 04 A3 ?? ?? ?? ?? 56 FF D3 83 C4 04 85 F6 74 08 85 C0 0F 84 ?? ?? ?? ?? A3 ?? ?? ?? ?? A1 ?? \
 	                           ?? ?? ?? 8D 34 85 00 00 00 00 56 FF D3 83 C4 04 85 F6 74 08 85 C0 0F 84 ?? ?? ?? ?? A3 ?? ?? ?? ?? A1 ?? ?? ?? ?? 8D \
 	                           34 C5 00 00 00 00 56 FF D3 83 C4 04 85 F6 74 08 85 C0 0F 84 ?? ?? ?? ?? A3 ?? ?? ?? ?? A1 ?? ?? ?? ?? 8D 34 85 00 00 \
 	                           00 00 56 FF D3 83 C4 04 85 F6 74 08 85 C0 0F 84 ?? ?? ?? ?? 33 F6 A3 ?? ?? ?? ??";
 
-	// Before 515.1641 a type entry is 0x90 bytes, multiplied with a `lea` and
-	// a shift. The operands are numbered the same.
 	const TYPE_LOADER_515: &str = "A3 ?? ?? ?? ?? 8D 34 C0 C1 E6 04 56 FF D3 83 C4 04 85 F6 74 08 85 C0 0F 84 ?? ?? ?? ?? A3 ?? ?? ?? ?? A1 ?? ?? \
 	                               ?? ?? 8D 34 85 00 00 00 00 56 FF D3 83 C4 04 85 F6 74 08 85 C0 0F 84 ?? ?? ?? ?? A3 ?? ?? ?? ?? A1 ?? ?? ?? ?? \
 	                               8D 34 C5 00 00 00 00 56 FF D3 83 C4 04 85 F6 74 08 85 C0 0F 84 ?? ?? ?? ?? A3 ?? ?? ?? ?? A1 ?? ?? ?? ?? 8D 34 \
@@ -415,8 +360,6 @@ mod recipes {
 		}
 	];
 
-	// The loader of the procs that return parameters' `in` lists: the count
-	// is operand 1, the table 2 (after the `lea` of its size)
 	const IN_LIST_LOADER: &str = "8D 34 85 00 00 00 00 83 C4 04 A3 ?? ?? ?? ?? 56 FF D3 83 C4 04 85 F6 74 08 85 C0 0F 84 ?? ?? ?? ?? 33 F6 A3 ?? ?? \
 	                              ?? ?? 39 35 ?? ?? ?? ?? 76 ?? 80 3D ?? ?? ?? ?? 00 57 74 ?? E8 ?? ?? ?? ?? 8B C8 EB ?? E8 ?? ?? ?? ?? 0F B7 C8 A1 \
 	                              ?? ?? ?? ?? 83 C4 04 89 0C B0";
@@ -437,9 +380,6 @@ mod recipes {
 		extract: Extract::AbsMem(OperandSelect::NthAbsMem(2))
 	};
 
-	// The loader of the mob types: the count is operand 0, the table 1
-	// The world's proc name map: looking a proc up by name on the world
-	// pushes it (the push's operand).
 	pub const WORLD_NAME_MAP: Recipe = Recipe {
 		name: "world_name_map",
 		versions: CHECKED,
@@ -470,7 +410,6 @@ mod recipes {
 	const MOB_LOADER: &str =
 		"89 35 ?? ?? ?? ?? C1 E6 04 56 FF D3 83 C4 04 85 F6 74 08 85 C0 0F 84 ?? ?? ?? ?? 33 DB A3 ?? ?? ?? ?? 39 1D ?? ?? ?? ?? 76";
 
-	// The loader of the prefab instances: the count is operand 0, the table 1
 	const INSTANCE_LOADER: &str = "A3 ?? ?? ?? ?? 8D 34 40 C1 E6 02 56 FF D3 83 C4 04 85 F6 74 08 85 C0 0F 84 ?? ?? ?? ?? 33 DB A3 ?? ?? ?? ?? 39 \
 	                               1D ?? ?? ?? ?? 76 ?? 33 F6 A1 ?? ?? ?? ?? 03 C6 57 50 E8";
 
@@ -490,7 +429,6 @@ mod recipes {
 		extract: Extract::AbsMem(OperandSelect::NthAbsMem(1))
 	};
 
-	// Builds before 1686 don't check for NONE
 	pub const REGISTER_TYPEPATH: Recipe = Recipe {
 		name: "register_typepath",
 		versions: VersionRange { min: 1686, max: 1688 },
@@ -522,8 +460,6 @@ fn resolve() -> Result<Functions, String> {
 	let find = |recipe| crate::find_recipe(recipe);
 	let build = crate::byond_build()?;
 
-	// BYOND's tables are allocated by the CRT DLL it links (ucrtbase), and
-	// growing one has to go through the same heap. Ours is linked statically.
 	let crt_realloc = unsafe {
 		use winapi::um::libloaderapi::{GetModuleHandleA, GetProcAddress};
 		let module = GetModuleHandleA(c"ucrtbase.dll".as_ptr());
@@ -566,7 +502,6 @@ fn resolve() -> Result<Functions, String> {
 			instances: find(&INSTANCES)? as *const *mut Instance,
 			mob_count: find(&MOB_COUNT)? as *const u32,
 			mobs: find(&MOBS)? as *const *mut MobType,
-			// The code holds the map's address
 			world_name_map: (find(&WORLD_NAME_MAP)? as *const *mut ProcNameMap).read_unaligned(),
 			global_values: find(&GLOBAL_VALUES)? as *const *const crate::raw_types::values::Value,
 			global_vars: find(&GLOBAL_VARS).map(|address| address as *mut u32)
@@ -574,15 +509,11 @@ fn resolve() -> Result<Functions, String> {
 	}
 }
 
-// The same functions in libbyond.so, from 516.1688 (procdef_add 0x2ED8C0,
-// misc_intern_copy 0x308840, the proc name map accessor 0x2EC7C0). Where
-// Windows keeps a table's pointer before its count, Linux keeps it after.
 #[cfg(unix)]
 mod recipes {
 	use byond_scan::{Anchor, Extract, OperandSelect, Recipe, SignatureTreatment, VersionRange};
 
 	const CHECKED: VersionRange = VersionRange { min: 1644, max: 1688 };
-	// exported by name on every build from 515.1637
 	const EXPORTED: VersionRange = VersionRange { min: 1637, max: 1688 };
 
 	pub const PROCDEF_ADD: Recipe = Recipe {
@@ -607,8 +538,6 @@ mod recipes {
 		extract: Extract::Entry
 	};
 
-	// The type count is operand 0, the maps 1. The type table is the word
-	// after the count.
 	const TYPE_MAP_ACCESSOR: &str = "8B 54 24 04 31 C0 39 15 ?? ?? ?? ?? 72 08 A1 ?? ?? ?? ?? 8D 04 D0 C3";
 
 	pub const TYPE_COUNT: Recipe = Recipe {
@@ -627,8 +556,6 @@ mod recipes {
 		extract: Extract::AbsMem(OperandSelect::NthAbsMem(1))
 	};
 
-	// The loader of the var tables, as auxtools' `variable_names` finds it.
-	// global_values is operand 1.
 	pub const GLOBAL_VALUES: Recipe = Recipe {
 		name: "global_values",
 		versions: CHECKED,
@@ -641,8 +568,6 @@ mod recipes {
 		extract: Extract::AbsMem(OperandSelect::NthAbsMem(1))
 	};
 
-	// Loader store of the sorted, interned global (var ID, flags) list.
-	// The destination address is operand 0.
 	pub const GLOBAL_VARS: Recipe = Recipe {
 		name: "global_vars",
 		versions: CHECKED,
@@ -678,9 +603,6 @@ mod recipes {
 		extract: Extract::Entry
 	};
 
-	// The loader of the type table, which allocates the table, the preorder,
-	// the proc name maps and the appearance cache, one after the other. Memory
-	// operands without a base register count, `lea`s of the sizes too.
 	const TYPE_LOADER: &str = "69 FB 94 00 00 00 83 EC 0C 89 1D ?? ?? ?? ?? 57 E8 ?? ?? ?? ?? 83 C4 10 85 FF 74 08 85 C0 0F 84 ?? ?? ?? ?? 83 EC 0C \
 	                           8D 3C 9D 00 00 00 00 A3 ?? ?? ?? ?? 57 89 BD ?? ?? ?? ?? E8 ?? ?? ?? ?? 83 C4 10 85 FF 0F 95 85 ?? ?? ?? ?? 0F B6 8D \
 	                           ?? ?? ?? ?? 85 C0 75 08 84 C9 0F 85 ?? ?? ?? ?? 83 EC 0C 8D 3C DD 00 00 00 00 A3 ?? ?? ?? ?? 57 E8 ?? ?? ?? ?? 83 C4 \
@@ -721,8 +643,6 @@ mod recipes {
 		}
 	];
 
-	// The loader of the procs that return parameters' `in` lists: the count
-	// is operand 1, the table 2 (after the `lea` of its size)
 	const IN_LIST_LOADER: &str = "83 EC 0C 8D 1C 85 00 00 00 00 A3 ?? ?? ?? ?? 53 E8 ?? ?? ?? ?? 83 C4 10 85 DB 74 08 85 C0 0F 84 ?? ?? ?? ?? A3 ?? \
 	                              ?? ?? ?? 31 DB EB ?? 83 EC 0C 56 E8 ?? ?? ?? ?? 83 C4 10 8B 15 ?? ?? ?? ?? 89 04 9A";
 
@@ -742,9 +662,6 @@ mod recipes {
 		extract: Extract::AbsMem(OperandSelect::NthAbsMem(2))
 	};
 
-	// The loader of the mob types: the count is operand 0, the table 1
-	// The world's proc name map: looking a proc up by name on the world
-	// stores it as an argument (the store's operand) and jumps to the lookup.
 	pub const WORLD_NAME_MAP: Recipe = Recipe {
 		name: "world_name_map",
 		versions: CHECKED,
@@ -775,7 +692,6 @@ mod recipes {
 	const MOB_LOADER: &str = "89 C7 83 C4 10 89 FB 83 EC 0C 89 3D ?? ?? ?? ?? C1 E3 04 53 E8 ?? ?? ?? ?? 83 C4 10 85 DB 74 08 85 C0 0F 84 ?? ?? ?? \
 	                          ?? A3 ?? ?? ?? ?? 31 DB 85 FF 74 ?? 89 D8 83 EC 08 C1 E0 04 03 05";
 
-	// The loader of the prefab instances: the count is operand 0, the table 1
 	const INSTANCE_LOADER: &str = "6B D8 0C 83 EC 0C A3 ?? ?? ?? ?? 53 E8 ?? ?? ?? ?? 83 C4 10 85 DB 74 08 85 C0 0F 84 ?? ?? ?? ?? A3 ?? ?? ?? ?? \
 	                               31 DB EB ?? 6B C3 0C 03 05 ?? ?? ?? ?? 57 57 56 50 E8";
 
@@ -795,7 +711,6 @@ mod recipes {
 		extract: Extract::AbsMem(OperandSelect::NthAbsMem(1))
 	};
 
-	// Builds before 1686 don't check for NONE
 	pub const REGISTER_TYPEPATH: Recipe = Recipe {
 		name: "register_typepath",
 		versions: VersionRange { min: 1686, max: 1688 },
@@ -820,8 +735,6 @@ mod recipes {
 		extract: Extract::Entry
 	};
 
-	// Linux 515 before 515.1644, which GCC compiled with frame pointers. The
-	// loaders' operands are numbered as above.
 	const EARLY: VersionRange = VersionRange { min: 1637, max: 1643 };
 	const TYPE_LOADER_EARLY: &str = "A3 ?? ?? ?? ?? 69 F0 ?? 00 00 00 89 34 24 E8 ?? ?? ?? ?? 85 F6 0F 85 ?? ?? ?? ?? 8B 35 ?? ?? ?? ?? A3 ?? ?? ?? \
 	                                 ?? C1 E6 02 89 34 24 E8 ?? ?? ?? ?? 85 C0 0F 84 ?? ?? ?? ?? 8B 35 ?? ?? ?? ?? A3 ?? ?? ?? ?? C1 E6 03 89 34 24 \
@@ -844,8 +757,6 @@ mod recipes {
 		hops: &[],
 		extract: Extract::Entry
 	};
-	// What a misc entry's words are copied into is inlined into every caller:
-	// this is what they hand the entry to
 	pub const MISC_INTERN: Recipe = Recipe {
 		name: "misc_intern",
 		versions: EARLY,
@@ -929,8 +840,6 @@ mod recipes {
 		hops: &[],
 		extract: Extract::AbsMem(OperandSelect::NthAbsMem(1))
 	};
-	// the world's proc name map, which the lookup of a proc on the world hands
-	// to the map search
 	pub const WORLD_NAME_MAP_EARLY: Recipe = Recipe {
 		name: "world_name_map",
 		versions: EARLY,
@@ -941,7 +850,6 @@ mod recipes {
 		hops: &[],
 		extract: Extract::Offset(11)
 	};
-	// from 515.1641, when types started keeping their typepath values
 	pub const REGISTER_TYPEPATH_EARLY: Recipe = Recipe {
 		name: "register_typepath",
 		versions: VersionRange { min: 1641, max: 1643 },
@@ -955,7 +863,6 @@ mod recipes {
 	};
 }
 
-// libbyond.so allocates with the C library, as we do
 #[cfg(unix)]
 fn resolve() -> Result<Functions, String> {
 	use recipes::*;
@@ -990,8 +897,6 @@ fn resolve() -> Result<Functions, String> {
 			type_stride: type_stride(build),
 			crt_realloc: std::mem::transmute::<unsafe extern "C" fn(*mut c_void, usize) -> *mut c_void, _>(realloc),
 			type_count: type_count as *const u32,
-			// the table's pointer is the word after its count, or before it (as
-			// on Windows) on builds before 515.1644
 			type_table: if build < LINUX_SWAPPED_BUILD { type_count - 4 } else { type_count + 4 } as *const *mut u8,
 			name_maps: crate::find_recipe_of(&[NAME_MAPS, NAME_MAPS_EARLY])? as *const *mut ProcNameMap,
 			preorder: crate::find_recipe_of(&PREORDER)? as *const *mut u32,
@@ -1002,7 +907,6 @@ fn resolve() -> Result<Functions, String> {
 			instances: crate::find_recipe_of(&[INSTANCES, INSTANCES_EARLY])? as *const *mut Instance,
 			mob_count: crate::find_recipe_of(&[MOB_COUNT, MOB_COUNT_EARLY])? as *const u32,
 			mobs: crate::find_recipe_of(&[MOBS, MOBS_EARLY])? as *const *mut MobType,
-			// The code holds the map's address
 			world_name_map: (crate::find_recipe_of(&[WORLD_NAME_MAP, WORLD_NAME_MAP_EARLY])? as *const *mut ProcNameMap).read_unaligned(),
 			global_values: crate::find_recipe_of(&[GLOBAL_VALUES, GLOBAL_VALUES_EARLY])? as *const *const crate::raw_types::values::Value,
 			global_vars: crate::find_recipe_of(&[GLOBAL_VARS, GLOBAL_VARS_EARLY]).map(|address| address as *mut u32)
@@ -1023,12 +927,10 @@ pub fn available() -> Result<(), String> {
 	functions().map(|_| ())
 }
 
-/// Whether this build of BYOND has everything [`add_type`] needs.
 pub fn types_available() -> Result<(), String> {
 	functions()?.register_typepath.as_ref().map(|_| ()).map_err(Clone::clone)
 }
 
-/// A proc's table entry.
 pub fn proc_entry(id: ProcId) -> Option<ProcEntryWords> {
 	let mut entry: *mut crate::raw_types::procs::ProcEntry = std::ptr::null_mut();
 	unsafe {
@@ -1039,7 +941,6 @@ pub fn proc_entry(id: ProcId) -> Option<ProcEntryWords> {
 	}
 }
 
-/// Overwrites one word of a proc's table entry.
 pub fn set_proc_entry_word(id: ProcId, word: usize, value: u32) {
 	let mut entry: *mut crate::raw_types::procs::ProcEntry = std::ptr::null_mut();
 	unsafe {
@@ -1049,7 +950,6 @@ pub fn set_proc_entry_word(id: ProcId, word: usize, value: u32) {
 	}
 }
 
-/// Replaces a proc's whole table entry.
 pub fn set_proc_entry(id: ProcId, words: &ProcEntryWords) {
 	for (word, &value) in words.0.iter().enumerate() {
 		set_proc_entry_word(id, word, value);
@@ -1071,7 +971,6 @@ pub fn add_proc(entry: &ProcEntryWords) -> Result<ProcId, String> {
 /// Unlike `add_proc`, this supports re-adding removed procs and adding
 /// identical definitions.
 pub fn append_proc(entry: &ProcEntryWords) -> Result<ProcId, String> {
-	// Temporarily hide matching paths to prevent BYOND from reusing an entry.
 	let path = entry.0[ProcEntryWords::PATH];
 	let hidden: Vec<ProcId> = (0..proc_count())
 		.map(ProcId)
@@ -1087,7 +986,6 @@ pub fn append_proc(entry: &ProcEntryWords) -> Result<ProcId, String> {
 	added
 }
 
-/// How many procs there are. The next one added gets this id.
 pub fn proc_count() -> u32 {
 	let mut id = 0;
 	while proc_entry(ProcId(id)).is_some() {
@@ -1096,7 +994,6 @@ pub fn proc_count() -> u32 {
 	id
 }
 
-/// A misc entry's words.
 pub fn misc_words(id: u32) -> Option<Vec<u32>> {
 	if id == NONE {
 		return Some(vec![]);
@@ -1106,7 +1003,6 @@ pub fn misc_words(id: u32) -> Option<Vec<u32>> {
 		if crate::raw_types::funcs::get_misc_by_id(&mut entry, misc::MiscId::from_raw(id)) != 1 || entry.is_null() {
 			return None;
 		}
-		// count (u16), reference count, data
 		let count = *(entry as *const u16) as usize;
 		let data = *((entry as *const u8).add(8) as *const *const u32);
 		if count == 0 || data.is_null() {
@@ -1126,7 +1022,6 @@ pub fn intern_misc(words: &[u32]) -> Result<u32, String> {
 	let id = match functions.misc_intern {
 		MiscIntern::Copy(copy) => copy(words.as_ptr(), words.len() as u32),
 		MiscIntern::Take(take) => unsafe {
-			// allocated as BYOND allocates them, so it can free them
 			let entry = (functions.crt_realloc)(std::ptr::null_mut(), 12) as *mut u8;
 			if entry.is_null() {
 				return Err("out of memory making a misc entry".to_owned());
@@ -1167,7 +1062,6 @@ fn type_entry(type_id: u32) -> Result<*mut u8, String> {
 	}
 }
 
-/// A word of a type's table entry (see `type_fields`).
 pub fn type_field(type_id: u32, offset: usize) -> Result<u32, String> {
 	Ok(unsafe { *(type_entry(type_id)?.add(offset) as *const u32) })
 }
@@ -1185,7 +1079,6 @@ pub fn set_type_field(type_id: u32, offset: usize, value: u32) -> Result<(), Str
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct MobType {
 	pub type_id: u32,
-	/// String id
 	pub key: u32,
 	pub sight: u32,
 	pub see_in_dark: u8,
@@ -1198,17 +1091,14 @@ pub struct MobType {
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Instance {
-	/// The type's typepath value: its tag and data
 	pub tag: u8,
 	pub data: u32,
 	/// NONE for a type placed on the map as it is
 	pub init: u32
 }
 
-/// The typepath value tag of a mob type
 const MOB_TYPEPATH: u8 = 0x08;
 
-/// Adds a mob type to the mob table, and returns its index.
 fn add_mob_type(mob: MobType) -> Result<u32, String> {
 	let functions = functions()?;
 	unsafe {
@@ -1225,7 +1115,6 @@ fn add_mob_type(mob: MobType) -> Result<u32, String> {
 	}
 }
 
-/// Sets a mob type's `key`, `sight`, `see_in_dark` and `see_invisible`.
 pub fn set_mob_type(type_id: u32, set: impl FnOnce(&mut MobType)) -> Result<(), String> {
 	let functions = functions()?;
 	unsafe {
@@ -1236,7 +1125,6 @@ pub fn set_mob_type(type_id: u32, set: impl FnOnce(&mut MobType)) -> Result<(), 
 	Ok(())
 }
 
-/// The world's prefab instances, by id.
 pub fn instances() -> Result<Vec<Instance>, String> {
 	let functions = functions()?;
 	unsafe {
@@ -1249,7 +1137,6 @@ pub fn instances() -> Result<Vec<Instance>, String> {
 	}
 }
 
-/// Adds a prefab instance, and returns its id.
 pub fn add_instance(instance: Instance) -> Result<u32, String> {
 	let functions = functions()?;
 	unsafe {
@@ -1266,12 +1153,10 @@ pub fn add_instance(instance: Instance) -> Result<u32, String> {
 	}
 }
 
-/// How many procs that return `in` lists the world has.
 pub fn in_list_count() -> Result<u32, String> {
 	Ok(unsafe { *functions()?.in_list_count })
 }
 
-/// The procs that return parameters' `in` lists, by index.
 pub fn in_list_procs() -> Result<Vec<u32>, String> {
 	let functions = functions()?;
 	unsafe {
@@ -1315,7 +1200,6 @@ pub fn forget_type_appearance(type_id: u32) -> Result<(), String> {
 	Ok(())
 }
 
-/// A type's proc name map.
 fn name_map(type_id: u32) -> Result<*mut ProcNameMap, String> {
 	let functions = functions()?;
 	unsafe {
@@ -1326,7 +1210,6 @@ fn name_map(type_id: u32) -> Result<*mut ProcNameMap, String> {
 	}
 }
 
-/// A map's buckets. A map with none can have no buffer.
 unsafe fn buckets<'a>(map: *mut ProcNameMap) -> &'a [ProcNameBucket] {
 	if (*map).buckets.is_null() {
 		&[]
@@ -1340,7 +1223,6 @@ pub fn named_procs(type_id: u32, key: u32) -> Result<Vec<u32>, String> {
 	named_procs_in(name_map(type_id)?, key)
 }
 
-/// The procs a name finds on the world, most derived first.
 pub fn world_named_procs(key: u32) -> Result<Vec<u32>, String> {
 	named_procs_in(functions()?.world_name_map, key)
 }
@@ -1373,8 +1255,6 @@ pub fn world_names_built() -> Result<bool, String> {
 	unsafe { Ok((*functions()?.world_name_map).built != 0) }
 }
 
-/// Gives a name these procs on the world, as [`set_named_procs`] does on a
-/// type.
 pub fn set_world_named_procs(key: u32, procs: &[u32]) -> Result<(), String> {
 	set_named_procs_in(functions()?.world_name_map, key, procs)
 }
@@ -1450,7 +1330,6 @@ pub fn set_global_words(var_id: u32, tag: u8, data: u32) -> Result<(), String> {
 	Ok(())
 }
 
-/// The value of a var id's global slot (see `Functions::global_values`).
 pub fn global_value(var_id: u32) -> Result<crate::raw_types::values::Value, String> {
 	let functions = functions()?;
 	unsafe {
@@ -1461,8 +1340,6 @@ pub fn global_value(var_id: u32) -> Result<crate::raw_types::values::Value, Stri
 	}
 }
 
-/// Add globals to `global.vars`, sorted by name string ID.
-/// Leave existing (var ID, flags) pairs unchanged.
 pub fn add_global_vars(vars: &[(u32, u32)]) -> Result<(), String> {
 	let global_vars = functions()?.global_vars.clone()?;
 	let current = unsafe { *global_vars };
@@ -1489,19 +1366,16 @@ pub fn add_global_vars(vars: &[(u32, u32)]) -> Result<(), String> {
 	Ok(())
 }
 
-/// Var IDs listed by `global.vars`.
 pub fn global_var_ids() -> Result<Vec<u32>, String> {
 	let current = unsafe { *functions()?.global_vars.clone()? };
 	let words = misc_words(current).ok_or_else(|| format!("global-var misc entry {} is missing", current))?;
 	Ok(words.chunks(2).map(|pair| pair[0]).collect())
 }
 
-/// How many var ids there are.
 pub fn variable_count() -> u32 {
 	unsafe { *crate::raw_types::funcs::VARIABLE_NAME_COUNT }
 }
 
-/// The string id of a var id's name.
 pub fn variable_name(var_id: u32) -> Option<u32> {
 	unsafe { (var_id < variable_count()).then(|| (*(*crate::raw_types::funcs::VARIABLE_NAME_ENTRIES).add(var_id as usize)).0) }
 }
@@ -1556,7 +1430,6 @@ pub fn add_type(parent: u32, path: u32) -> Result<u32, String> {
 			return Err("BYOND type ID limit reached".to_owned());
 		}
 
-		// The tables BYOND sizes by the type count, one entry longer
 		let grow = |table: *const *mut u8, size: usize| -> Result<*mut u8, String> {
 			let grown = (functions.crt_realloc)(*table as *mut c_void, size) as *mut u8;
 			if grown.is_null() {
@@ -1586,7 +1459,6 @@ pub fn add_type(parent: u32, path: u32) -> Result<u32, String> {
 				misc::add_ref(&misc::MiscId::from_raw(id));
 			}
 		}
-		// What BYOND frees with the type is the type's own
 		for (offset, size) in [(TRANSFORM, 6 * 4), (COLOR_MATRIX, 20 * 4)] {
 			let from = *word(count, offset) as *const u8;
 			if !from.is_null() {
@@ -1604,7 +1476,6 @@ pub fn add_type(parent: u32, path: u32) -> Result<u32, String> {
 			*word(count, TYPEPATH + 4) = 0;
 		}
 
-		// The parent's proc name map, sharing its id buffers as BYOND does
 		let from = &*maps.add(parent as usize);
 		let mut buckets = std::ptr::null_mut();
 		if from.count > 0 && !from.buckets.is_null() {
@@ -1628,8 +1499,6 @@ pub fn add_type(parent: u32, path: u32) -> Result<u32, String> {
 		});
 		*cache.add(count) = NONE;
 
-		// Last in its parent's subtree: what comes after moves along one, and
-		// the subtrees it's in grow by one
 		let at = *word(parent as usize, PREORDER_END) as usize;
 		std::ptr::copy(preorder.add(at), preorder.add(at + 1), count - at);
 		*preorder.add(at) = count as u32;
@@ -1649,9 +1518,6 @@ pub fn add_type(parent: u32, path: u32) -> Result<u32, String> {
 
 		*(functions.type_count as *mut u32) += 1;
 
-		// For mob types, allocate a mob table entry initialized from the
-		// parent. Its index is the mob typepath value. Older builds without
-		// stored typepath values resolve it by type ID.
 		let mobs = std::slice::from_raw_parts(*functions.mobs, *functions.mob_count as usize);
 		let mob = match register_typepath {
 			Some(register) => {
@@ -1675,7 +1541,6 @@ pub fn add_type(parent: u32, path: u32) -> Result<u32, String> {
 		}
 		if let Some(register) = register_typepath {
 			register(count as u32);
-			// Registration leaves cached misses unchanged.
 			let typepath = *(word(count, TYPEPATH) as *const [u32; 2]);
 			recache_path(path, typepath);
 		}
@@ -1683,7 +1548,6 @@ pub fn add_type(parent: u32, path: u32) -> Result<u32, String> {
 	}
 }
 
-/// Sets 16 bits of a type's table entry.
 pub fn set_type_half(type_id: u32, offset: usize, value: u16) -> Result<(), String> {
 	unsafe {
 		*(type_entry(type_id)?.add(offset) as *mut u16) = value;
@@ -1691,7 +1555,6 @@ pub fn set_type_half(type_id: u32, offset: usize, value: u16) -> Result<(), Stri
 	Ok(())
 }
 
-/// Sets a byte of a type's table entry.
 pub fn set_type_byte(type_id: u32, offset: usize, value: u8) -> Result<(), String> {
 	unsafe {
 		*type_entry(type_id)?.add(offset) = value;
@@ -1699,7 +1562,6 @@ pub fn set_type_byte(type_id: u32, offset: usize, value: u8) -> Result<(), Strin
 	Ok(())
 }
 
-/// All proc-name map buckets as (key, procs, no_link), sorted by key.
 pub fn name_map_entries(type_id: u32) -> Result<Vec<(u32, Vec<u32>, u8)>, String> {
 	unsafe {
 		Ok(buckets(name_map(type_id)?)
@@ -1725,8 +1587,6 @@ pub struct NameMapPlan {
 	written: bool
 }
 
-/// Allocate a proc-name map from `entries` in any order, omitting empty
-/// entries. Accepts the output of [`name_map_entries`].
 pub fn plan_name_map(type_id: u32, entries: &[(u32, Vec<u32>, u8)]) -> Result<NameMapPlan, String> {
 	let functions = functions()?;
 	let map = name_map(type_id)?;
@@ -1798,7 +1658,6 @@ impl Drop for NameMapPlan {
 	}
 }
 
-/// Prepared parents and type preorder. [`ParentPlan::write`] cannot fail.
 pub struct ParentPlan {
 	changes: Vec<(u32, u32)>,
 	order: Vec<u32>,
@@ -1832,10 +1691,8 @@ pub fn plan_parents(changes: &[(u32, u32)]) -> Result<ParentPlan, String> {
 				roots.push(id as u32);
 			}
 		}
-		// (type, place, end) in the new preorder
 		let mut order = Vec::with_capacity(count);
 		let mut places = vec![(0u32, 0u32); count];
-		// (type, next child to visit)
 		let mut stack: Vec<(u32, usize)> = vec![];
 		for root in roots {
 			places[root as usize].0 = order.len() as u32;

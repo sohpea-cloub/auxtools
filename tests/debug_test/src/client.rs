@@ -12,22 +12,15 @@ use auxtools_cli::{
 
 use crate::server_types::{BreakpointReason, Request, Response};
 
-// Long enough for a world reboot, short enough that a dead world fails the run
-// instead of hanging it
 const TIMEOUT: Duration = Duration::from_secs(30);
 
-/// A world in DreamDaemon with the debug library loaded into it, as the
-/// launcher starts one to debug: it waits for a client to say it's configured.
-/// It's ended when this is dropped.
 pub struct World {
 	game: Game,
 	output: Arc<Mutex<String>>,
-	/// The exit code, once it has exited: none for a world a signal ended
 	exited: mpsc::Receiver<Option<i32>>
 }
 
 impl World {
-	/// `env` is the world's environment, beyond what it inherits
 	pub fn start(dmb: &Path, env: &[(&str, String)]) -> Self {
 		let env = env.iter().map(|(name, value)| (name.to_string(), value.clone())).collect();
 		let args = ["-trusted".to_owned(), "-close".to_owned()];
@@ -56,30 +49,22 @@ impl World {
 		Self { game, output, exited }
 	}
 
-	/// Waits for the world to exit by itself and gives its exit code
 	pub fn exit_code(&self) -> Option<i32> {
 		self.exited.recv_timeout(TIMEOUT).expect("the world is still running")
 	}
 
-	/// Everything the world has printed
 	pub fn output(&self) -> String {
 		self.output.lock().unwrap().clone()
 	}
 
-	/// Connects to the world's debug server, once it's listening (when the
-	/// world loads, and again after each reboot), and lets the world run
 	pub fn connect(&self) -> Client {
 		self.connect_as(false)
 	}
 
-	/// Connects as a hot reload watcher does, which doesn't hear about the
-	/// world pausing
 	pub fn connect_watcher(&self) -> Client {
 		self.connect_as(true)
 	}
 
-	/// Connects and says nothing: the world doesn't wait for this client, and
-	/// isn't told it's configured
 	pub fn connect_silent(&self) -> Client {
 		let start = Instant::now();
 		loop {
@@ -102,8 +87,6 @@ impl World {
 			};
 			let stream = Shared::new(stream);
 			let mut client = Client::new(Box::new(stream.clone()), Box::new(stream), watcher);
-			// It waits for the breakpoints the launcher has, and there are
-			// none. A world on its way to a reboot hangs up instead.
 			if client.try_send(&Request::Configured).is_err() {
 				std::thread::sleep(Duration::from_millis(100));
 				continue;
@@ -143,14 +126,9 @@ fn find_debug_server() -> PathBuf {
 	path
 }
 
-/// Stands in for the launcher: speaks the debug server's protocol over the
-/// world's local socket
 pub struct Client {
 	writer: Box<dyn Write + Send>,
-	/// What the server sends, read on a thread of its own so a quiet server
-	/// can time out. It closes when the server hangs up.
 	messages: mpsc::Receiver<Response>,
-	/// Whether to pass over the world pausing and carrying on
 	watcher: bool
 }
 
@@ -177,20 +155,15 @@ impl Client {
 		self.writer.write_all(&data)
 	}
 
-	/// Sends bytes as they are
 	pub fn send_bytes(&mut self, bytes: &[u8]) {
 		self.writer.write_all(bytes).unwrap();
 	}
 
-	/// Says goodbye, and waits for the server to have let this client go:
-	/// what another client does next comes after
 	pub fn leave(mut self) {
 		let _ = self.try_send(&Request::Disconnect);
 		self.wait_closed();
 	}
 
-	/// The next message that isn't a notification, or another client
-	/// letting the world carry on
 	pub fn recv(&mut self) -> Response {
 		loop {
 			match self.messages.recv_timeout(TIMEOUT).expect("debug server stopped answering") {
@@ -207,7 +180,6 @@ impl Client {
 		self.recv()
 	}
 
-	/// Waits for the world to pause and says why it did.
 	pub fn expect_pause(&mut self) -> BreakpointReason {
 		match self.recv() {
 			Response::BreakpointHit(stop) => stop.reason,
@@ -222,7 +194,6 @@ impl Client {
 		assert!(matches!(response, Response::Ack), "expected Ack for Continue, got {:?}", response);
 	}
 
-	/// Waits for the server to hang up on us.
 	pub fn wait_closed(self) {
 		loop {
 			match self.messages.recv_timeout(TIMEOUT) {

@@ -1,21 +1,6 @@
-//! Resolve DreamMaker debug source names from include paths.
-//!
-//! Checked on Windows and Linux, 515.1637–516.1688:
-//! - A `.dme` include uses its literal include path with forward slashes.
-//!   `_std/__std.dme` including `tgs.dm` names `_std/tgs.dm` as `tgs.dm`.
-//! - Other includes are relative to the including file's debug-name directory,
-//!   retaining `..` segments, e.g. `deep/../b.dm`.
-//! - The root `.dme` retains its build-time path.
-//!
-//! Debug names can therefore differ from project-relative paths.
-//! `__FILE__` uses project-relative paths instead.
-
 use std::collections::HashSet;
 use std::path::{Component, Path, PathBuf};
 
-/// Return (debug name, normalized project-relative path) pairs in include
-/// order, excluding `dme` itself. Follow literal include directives regardless
-/// of `#if`; `keep` filters paths and traversal to files actually parsed.
 pub fn names(dme: &Path, keep: &dyn Fn(&Path) -> bool) -> Vec<(String, PathBuf)> {
     let root = dme.parent().unwrap_or(Path::new(""));
     let mut found = vec![];
@@ -27,7 +12,6 @@ pub fn names(dme: &Path, keep: &dyn Fn(&Path) -> bool) -> Vec<(String, PathBuf)>
     found
 }
 
-/// Normalize `.` and `name/..` path components lexically.
 pub fn normalize(path: &Path) -> PathBuf {
     let mut out = PathBuf::new();
     for part in path.components() {
@@ -72,8 +56,6 @@ fn scan(
             continue;
         }
         let name = format!("{prefix}{included}");
-        // What a file includes is named from where its own name is, but for
-        // an environment's, which start over
         let inner = match name.rfind('/') {
             Some(slash) if !environment => name[..=slash].to_owned(),
             _ => String::new(),
@@ -83,7 +65,6 @@ fn scan(
     }
 }
 
-/// The file an `#include "file"` line names
 fn included(line: &str) -> Option<&str> {
     let rest = line
         .trim_start()
@@ -121,7 +102,6 @@ mod tests {
         assert_eq!(normalize(Path::new("a/../../b.dm")), Path::new("../b.dm"));
     }
 
-    /// The names DreamMaker 516.1688 and 515.1637 gave this tree's files
     #[test]
     fn names_as_dream_maker_has_them() {
         let dir = std::env::temp_dir().join(format!("dmasm-debug-files-{}", std::process::id()));
@@ -163,7 +143,6 @@ mod tests {
             .iter()
             .map(|(name, path)| (name.as_str(), path.as_path()))
             .collect();
-        // Compared as paths: Windows has them with its own separator
         assert_eq!(
             all,
             [

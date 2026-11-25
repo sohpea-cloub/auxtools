@@ -1,18 +1,4 @@
-//! Exercise launcher startup, breakpoints, reboots, hot reload, concurrent
-//! attachments and CLI commands against worlds without embedded debugger procs.
-//!
-//! Build `auxtools-cli`, `debug_server` and `launcher_test`, then run from the
-//! repository root with `BYOND_PATH` set. On Windows, `LAUNCHER_TEST_SERVER`
-//! selects the host (default `dreamdaemon`, meaning dd.exe). DreamSeeker and
-//! windowed DreamDaemon need a display. `LAUNCHER_TEST_ARGS` overrides host
-//! arguments, including trusted-mode options.
-//!
-//! Arguments select groups (see `GROUPS`); no arguments runs all groups.
-//! `ATTACHED` groups share a world within one process. Parallel runs need
-//! separate copies of `tests`, since each run builds its worlds in place.
-
 mod check;
-// The debug client, which dap_test uses more of
 #[allow(dead_code)]
 #[path = "../../dap_test/src/client.rs"]
 mod client;
@@ -38,14 +24,12 @@ use client::{launcher_command, launcher_path, library_path, test_args, Launcher}
 use paths::ByondCommand;
 use serde_json::json;
 
-/// The line `target` doubles its argument on
 const TARGET_LINE: u64 = 28;
 
 fn host_file(name: &str) -> PathBuf {
 	std::env::current_dir().unwrap().join("tests/launcher_test_host").join(name)
 }
 
-/// What the client checks at the breakpoint in `target`, in each world
 fn at_target(launcher: &mut Launcher) {
 	launcher.stopped("breakpoint");
 	let frame = launcher.top_frame();
@@ -96,7 +80,6 @@ fn at_runtime(launcher: &mut Launcher) {
 	launcher.resume();
 }
 
-/// Test groups in execution order.
 const GROUPS: &[&str] = &[
 	"launch",
 	"attach",
@@ -110,7 +93,6 @@ const GROUPS: &[&str] = &[
 	"builds"
 ];
 
-/// Groups sharing the attached world.
 const ATTACHED: &[&str] = &["attach", "inspect", "inspect_breakpoints", "inspect_spawned", "trace", "journal"];
 
 fn main() {
@@ -124,8 +106,6 @@ fn main() {
 	for name in &wanted {
 		assert!(GROUPS.contains(&name.as_str()), "unknown group {}; available groups: {:?}", name, GROUPS);
 	}
-	// The launcher looks for edited files this often, in milliseconds, in
-	// place of twice a second: the tests wait for every reload
 	std::env::set_var("AUXTOOLS_WATCH_INTERVAL", "50");
 	let res = Command::new(paths::find_dm())
 		.with_byond_paths()
@@ -187,7 +167,6 @@ fn main() {
 	println!("all ok");
 }
 
-/// Launch, protocol compatibility and breakpoint persistence across reboot.
 fn launch(server: &str, library: &Path) {
 	command_line_shape();
 	check::checks();
@@ -227,7 +206,6 @@ fn launch(server: &str, library: &Path) {
 	at_second_target(&mut launcher);
 	at_runtime(&mut launcher);
 
-	// The world reboots, and the launcher gives the new one the breakpoints
 	at_target(&mut launcher);
 	assert!(
 		launcher.output.contains("The world restarted"),
@@ -237,10 +215,8 @@ fn launch(server: &str, library: &Path) {
 	at_second_target(&mut launcher);
 	at_runtime(&mut launcher);
 
-	// The world ends, and the launcher with it
 	launcher.event("terminated");
 	launcher.event("exited");
-	// The programs with windows show world.log in them
 	if server == "dreamdaemon" || server == "dd" || cfg!(unix) {
 		assert!(
 			launcher.output.contains("launcher test: world/New"),
@@ -257,8 +233,6 @@ fn launch(server: &str, library: &Path) {
 	let _ = std::fs::remove_file(host_file("rebooted"));
 }
 
-/// The command line, a command at a time: each connects, does it and leaves,
-/// and the world stays paused between them
 fn command_line(pid: u64, code: &Path) {
 	let pid = pid.to_string();
 	let run = |args: &[&str], code: i32| {
@@ -285,7 +259,6 @@ fn command_line(pid: u64, code: &Path) {
 		"it didn't stay paused: {}",
 		printed
 	);
-	// The pid goes after the command as well as before it
 	let (got, after) = launcher_command(&["status", "--pid", &pid]);
 	assert_eq!(
 		(got, after.lines().next()),
@@ -295,7 +268,6 @@ fn command_line(pid: u64, code: &Path) {
 	);
 	run(&["continue"], 0);
 
-	// A line with no code of its own breaks on the next that has
 	let declared = line_of(code, "/proc/value()");
 	let printed = run(
 		&["wait", "pause", "--break", &format!("attach_host.dm:{}", declared), "--timeout", "60"],
@@ -356,10 +328,7 @@ fn command_line(pid: u64, code: &Path) {
 	println!("ok: CLI pause and wait timeouts");
 }
 
-/// What the command line is, before any world: a word for each command, and
-/// help that says what each does
 fn command_line_shape() {
-	// Alone, it says how it's used, and doesn't wait to be spoken to
 	let (code, alone) = launcher_command(&[]);
 	assert_eq!(code, 0, "{}", alone);
 	assert!(
@@ -416,7 +385,6 @@ fn command_line_shape() {
 	}
 	println!("ok: command listing and top-level help");
 
-	// A command's page, and one of a command of a command
 	let (code, of_wait) = launcher_command(&["help", "wait"]);
 	assert_eq!(code, 0);
 	assert!(
@@ -425,7 +393,6 @@ fn command_line_shape() {
 		of_wait
 	);
 	assert_eq!(launcher_command(&["wait", "--help"]), (0, of_wait.clone()));
-	// Alone, it's told what it can wait for, and that it waited for nothing
 	let (code, bare) = launcher_command(&["wait"]);
 	assert_eq!(code, 1, "{}", bare);
 	assert_eq!(bare, format!("{}error: wait requires a command: pause, reload, or reboot.\n", of_wait));
@@ -497,8 +464,6 @@ fn command_line_shape() {
 	);
 	println!("ok: version and protocol output");
 
-	// What's wrong with a command's options is said before any world is looked
-	// for: there's none here
 	for (args, said) in [
 		(&["vars", "--depth", "3"][..], "error: --depth requires --json."),
 		(&["eval", "1", "--wait"], "error: --wait requires --spawn."),
@@ -588,7 +553,6 @@ fn command_line_shape() {
 	println!("ok: world listing and legacy flag rejection");
 }
 
-/// The protocol version in what `auxtools version` prints
 fn protocol(version: &str) -> u32 {
 	version
 		.trim()
@@ -598,10 +562,6 @@ fn protocol(version: &str) -> u32 {
 		.unwrap_or_else(|| panic!("unexpected version output: {}", version))
 }
 
-/// A world whose debug library speaks another version of the protocol: it's
-/// listed as one that can't be attached to, and attaching says why. The
-/// stand-in is a BYOND server with no debug library, and this test listening
-/// where the library of the version before ours would.
 fn another_version() {
 	let (dir, dme) = attach_host_copy("another_version");
 	let mut plain = KilledOnDrop(
@@ -617,7 +577,6 @@ fn another_version() {
 	let pid = plain.id();
 	let ours = protocol(&launcher_command(&["version"]).1);
 	let theirs = ours - 1;
-	// Whoever connects is let in, and told nothing
 	let stand_in = StandIn::listen(format!("auxtools-debug-v{}-{}", theirs, pid), drop);
 
 	let (code, list) = launcher_command(&["list", "--json"]);
@@ -635,7 +594,6 @@ fn another_version() {
 		"{}",
 		listed
 	);
-	// The table says the same
 	let (code, table) = launcher_command(&["list"]);
 	assert_eq!(code, 0, "{}", table);
 	let header: Vec<&str> = table.lines().next().unwrap_or_default().split_whitespace().collect();
@@ -665,7 +623,6 @@ fn another_version() {
 		"attaching to another version's world said {}",
 		printed
 	);
-	// Release the listener before the PID can be reused.
 	drop(stand_in);
 	let _ = plain.kill();
 	let _ = plain.wait();
@@ -673,8 +630,6 @@ fn another_version() {
 	println!("ok: incompatible protocol discovery and attach rejection");
 }
 
-/// Mock debugger listener, closed on drop to prevent stale responses when
-/// Wine reuses the world's PID.
 struct StandIn {
 	name: String,
 	done: Arc<AtomicBool>,
@@ -710,8 +665,6 @@ impl Drop for StandIn {
 	fn drop(&mut self) {
 		use interprocess::local_socket::{prelude::*, GenericNamespaced, Stream};
 		self.done.store(true, Ordering::SeqCst);
-		// Wake the listener so it sees the stop flag. Windows pipes can miss
-		// clients that disconnect before acceptance, so retry until it exits.
 		let Some(listening) = self.listening.take() else {
 			return;
 		};
@@ -728,9 +681,6 @@ impl Drop for StandIn {
 	}
 }
 
-/// Kill and reap the child on drop, including after a failed assertion.
-/// `Child::kill` leaves an already reaped process alone, even if its PID is
-/// reused.
 struct KilledOnDrop(Child);
 
 impl std::ops::Deref for KilledOnDrop {
@@ -754,15 +704,10 @@ impl Drop for KilledOnDrop {
 	}
 }
 
-/// An unavailable debugger reports its initialization failure once and
-/// disconnects. The launcher must stop reconnecting, list the reason and
-/// allow stop to terminate the world.
 fn no_debugger() {
 	use auxtools_cli::{local, server_types::Response};
 
 	const WHY: &str = "Couldn't find current_execution_context (BYOND 516.1600 is outside the checked range 1637..=1688)";
-	// The normal host can exit before these checks finish or leave a reboot
-	// marker if killed mid-reboot. This host runs until explicitly stopped.
 	let (dir, dme) = attach_host_copy("no_debugger");
 	let mut plain = KilledOnDrop(
 		Command::new(paths::find_dreamdaemon())
@@ -775,8 +720,6 @@ fn no_debugger() {
 			.unwrap()
 	);
 	let pid = plain.id();
-	// Match the debug library's initialization-failure response; keep the
-	// connection until the client closes it.
 	let stand_in = StandIn::listen(local::world_name(pid), |mut client| {
 		let _ = local::send(&mut client, &Response::Unavailable { reason: WHY.to_owned() });
 		let _ = local::send(&mut client, &Response::Disconnect);
@@ -787,7 +730,6 @@ fn no_debugger() {
 	launcher.initialize();
 	launcher.request("attach", json!({ "processId": pid }));
 	launcher.event("terminated");
-	// Allow time for an incorrect reconnection attempt.
 	std::thread::sleep(Duration::from_secs(1));
 	launcher.has_event("output");
 	let said = format!("Debugger initialization failed for process {}: {}", pid, WHY);
@@ -830,7 +772,6 @@ fn no_debugger() {
 		"stop said {}",
 		printed
 	);
-	// Release the listener before the PID can be reused.
 	drop(stand_in);
 	let deadline = Instant::now() + Duration::from_secs(10);
 	while plain.try_wait().unwrap().is_none() {
@@ -841,8 +782,6 @@ fn no_debugger() {
 	let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// The rest of the command line: the other steps, the stacks, a frame's
-/// variables, runtime errors, and what it says to what it doesn't understand
 fn command_line_more(pid: u64, dir: &Path) {
 	let pid = pid.to_string();
 	let run = |args: &[&str], code: i32| {
@@ -879,8 +818,6 @@ fn command_line_more(pid: u64, dir: &Path) {
 		printed
 	);
 	let printed = run(&["stack", "--all"], 0);
-	// The running proc's first, then the sleeping ones, each with the id it
-	// keeps
 	let first = printed.split_once(": ").map(|(_, rest)| rest).unwrap_or_default();
 	assert!(
 		printed.starts_with("stack ")
@@ -889,7 +826,6 @@ fn command_line_more(pid: u64, dir: &Path) {
 		"stack --all said {}",
 		printed
 	);
-	// Exclude the sleeping debugger helper.
 	assert!(!printed.contains("auxtools_keepalive"), "stack --all said {}", printed);
 	println!("ok: CLI running and sleeping stacks");
 
@@ -908,7 +844,6 @@ fn command_line_more(pid: u64, dir: &Path) {
 		printed
 	);
 	assert_eq!(run(&["eval", "--frame", "0", "6", "*", "7"], 0).trim(), "42");
-	// Its options go after its words as well
 	assert_eq!(run(&["eval", "6", "*", "7", "--frame", "0"], 0).trim(), "42");
 	assert_eq!(run(&["eval", "-1"], 0).trim(), "-1");
 	assert_eq!(run(&["eval", "--", "-rounds", "<", "0"], 0).trim(), "1");
@@ -926,7 +861,6 @@ fn command_line_more(pid: u64, dir: &Path) {
 	);
 	assert_eq!(run(&["eval", "1", "/", "0"], 1).trim(), "error: runtime error: Division by zero");
 	println!("ok: CLI frame variables, globals and evaluation");
-	// A proc's body, as one argument with newlines in it
 	assert_eq!(run(&["eval", "var/n = 0\nfor(var/i in 1 to 3)\n\tn += i\nn"], 0).trim(), "6");
 	assert_eq!(
 		run(&["eval", "var/x = 1\nx = nothing_called_this"], 1).trim(),
@@ -935,7 +869,6 @@ fn command_line_more(pid: u64, dir: &Path) {
 	println!("ok: CLI proc-body evaluation");
 	run(&["continue"], 0);
 
-	// The world fails when it finds this file
 	std::fs::write(dir.join("fail"), "yes").unwrap();
 	let printed = run(&["wait", "pause", "--runtimes", "--timeout", "60"], 0);
 	assert!(
@@ -946,7 +879,6 @@ fn command_line_more(pid: u64, dir: &Path) {
 	run(&["continue"], 0);
 	println!("ok: CLI runtime wait");
 
-	// Only runtime messages accepted by the filter should pause.
 	std::fs::write(dir.join("fail"), "yes").unwrap();
 	let printed = run(&["wait", "pause", "--runtime-filter", "!cannot read", "--timeout", "3"], 2);
 	assert!(printed.contains("timed out"), "wait --runtime-filter said {}", printed);
@@ -959,7 +891,6 @@ fn command_line_more(pid: u64, dir: &Path) {
 	);
 	run(&["continue"], 0);
 	println!("ok: CLI runtime filter");
-	// Apply the same filter to journal entries.
 	let printed = run(&["log", "--runtime-filter", "!cannot read", "--last", "3"], 0);
 	assert!(!printed.contains("cannot read from list"), "log --runtime-filter said {}", printed);
 	let printed = run(&["log", "--runtime-filter", "FROM LIST", "--last", "1"], 0);
@@ -970,7 +901,6 @@ fn command_line_more(pid: u64, dir: &Path) {
 	);
 	println!("ok: log runtime filter");
 
-	// A wait with its own breakpoint must ignore another client's pause.
 	let waiting = std::process::Command::new(launcher_path())
 		.args(["--pid", pid.as_str(), "wait", "pause", "--break", "/proc/fail", "--timeout", "60"])
 		.stdout(std::process::Stdio::piped())
@@ -994,7 +924,6 @@ fn command_line_more(pid: u64, dir: &Path) {
 	run(&["continue"], 0);
 	println!("ok: CLI wait passes over another client's pause");
 
-	// A wait that doesn't hold its pause: the world carries on when it's gone
 	let printed = run(&["wait", "pause", "--break", "/proc/value", "--no-hold", "--timeout", "60"], 0);
 	assert!(
 		printed.starts_with(&format!("pid {}: paused at a breakpoint\n#0 /value", pid)),
@@ -1004,8 +933,6 @@ fn command_line_more(pid: u64, dir: &Path) {
 	assert_eq!(run(&["status"], 0).lines().next().unwrap_or_default(), format!("pid {}: running", pid));
 	println!("ok: wait without retained pause");
 
-	// A condition that fails with an error at each hit doesn't pause, and is
-	// said once
 	let printed = run(
 		&["wait", "pause", "--break", "/proc/value", "--if", "rounds.len > 0", "--timeout", "2"],
 		2
@@ -1018,8 +945,6 @@ fn command_line_more(pid: u64, dir: &Path) {
 	);
 	println!("ok: wait condition error reported once");
 
-	// A global, watched from a running world; then a var of the proc it
-	// paused in, until that changes
 	let printed = run(&["wait", "pause", "--change", "rounds", "--timeout", "60"], 0);
 	assert!(
 		printed.starts_with("watching rounds, now ")
@@ -1079,7 +1004,6 @@ fn command_line_more(pid: u64, dir: &Path) {
 	println!("ok: invalid command diagnostics");
 }
 
-/// `trace`: breakpoints that print or count their hits and never pause
 fn command_line_trace(pid: u64, code: &Path) {
 	let pid = pid.to_string();
 	let run = |args: &[&str], code: i32| {
@@ -1088,13 +1012,11 @@ fn command_line_trace(pid: u64, code: &Path) {
 		assert_eq!(got, code, "`{}` gave {}, not {}: {}", args.join(" "), got, code, printed);
 		printed
 	};
-	// Hot reloaded to return 2 by now
 	let value = line_of(code, "\treturn 2");
 	let called = line_of(code, "\t\tworld.log << \"attach test: [value()]\"");
 	let every = line_of(code, "\ttick(1)");
 	let other = line_of(code, "\t\ttick(2)");
 
-	// A line a hit, saying where and what called it
 	let printed = run(&["trace", "/proc/value", "--count", "3"], 0);
 	let lines: Vec<&str> = printed.lines().collect();
 	let hit = format!(
@@ -1136,7 +1058,6 @@ fn command_line_trace(pid: u64, code: &Path) {
 	);
 	println!("ok: trace message interpolation");
 
-	// tick(1) is called every round, tick(2) every other
 	let started = Instant::now();
 	let printed = run(&["trace", "/proc/tick", "--by", "caller", "--for", "3"], 0);
 	assert!(started.elapsed() >= Duration::from_secs(3), "trace --for 3 ended early");
@@ -1165,7 +1086,6 @@ fn command_line_trace(pid: u64, code: &Path) {
 	);
 	println!("ok: trace grouping and limits");
 
-	// A condition that fails is said once, and the hits it skipped counted
 	let printed = run(&["trace", "/proc/tick", "--if", "n.len > 0", "--for", "2"], 0);
 	assert_eq!(printed.matches("reported once").count(), 1, "unexpected trace --if output: {}", printed);
 	assert!(
@@ -1196,7 +1116,6 @@ fn command_line_trace(pid: u64, code: &Path) {
 	);
 	println!("ok: trace JSON Lines");
 
-	// Read from by something that stops reading: it ends quietly
 	let mut tracing = Command::new(client::launcher_path())
 		.args(["--pid", &pid, "trace", "/proc/value"])
 		.stdout(Stdio::piped())
@@ -1217,7 +1136,6 @@ fn command_line_trace(pid: u64, code: &Path) {
 	);
 	println!("ok: trace handles closed output pipe");
 
-	// Closing stdout must also work for output larger than the pipe buffer.
 	let mut evaluating = Command::new(client::launcher_path())
 		.args(["--pid", &pid, "eval", "jointext(new/list(100000), \"xxxxxxxx\")"])
 		.stdout(Stdio::piped())
@@ -1280,15 +1198,12 @@ fn command_line_trace(pid: u64, code: &Path) {
 		let printed = run(args, 1);
 		assert!(printed.contains(said), "unexpected output from `{}`: {}", args.join(" "), printed);
 	}
-	// The breakpoint set before the place that failed went with it
 	assert_eq!(run(&["status"], 0).lines().next().unwrap_or_default(), format!("pid {}: running", pid));
 	let printed = run(&["trace", "/proc/value", "--count", "1"], 0);
 	assert_eq!(printed.lines().count(), 3, "unexpected trace output: {}", printed);
 	println!("ok: invalid trace target diagnostics");
 }
 
-/// Warn about source edits newer than the .dmb at launch and after rebuild.
-/// They are part of the source baseline but may be absent from the world.
 fn edited_after_build(server: &str) {
 	let (dir, dme) = attach_host_copy("later");
 	let dmb = dme.with_extension("dmb");
@@ -1296,8 +1211,6 @@ fn edited_after_build(server: &str) {
 	let source = std::fs::read_to_string(&code).unwrap();
 	let edit = |text: String| {
 		std::fs::write(&code, text).unwrap();
-		// Ensure the file timestamp is newer than the build despite coarse
-		// clocks.
 		let later = std::fs::metadata(&dmb).unwrap().modified().unwrap() + Duration::from_secs(2);
 		std::fs::File::options().write(true).open(&code).unwrap().set_modified(later).unwrap();
 	};
@@ -1314,8 +1227,6 @@ fn edited_after_build(server: &str) {
 	let said = "Hot reload: files newer than the .dmb may have unapplied changes: attach_host.dm";
 	assert!(read_log().contains(said), "launch said:\n{}", read_log());
 
-	// Reload an edit saved after rebuilding but before rebooting into that
-	// build.
 	let res = Command::new(paths::find_dm()).with_byond_paths().arg(&dme).status().unwrap();
 	assert!(res.success(), "dreammaker build failed");
 	edit(format!("{}\n/proc/edited()\n\treturn 1\n\n/proc/edited_again()\n\treturn 2\n", source));
@@ -1335,13 +1246,11 @@ fn edited_after_build(server: &str) {
 	let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// The line of `file` that `text` starts
 fn line_of(file: &Path, text: &str) -> u64 {
 	let source = std::fs::read_to_string(file).unwrap();
 	source.lines().position(|line| line.starts_with(text)).expect("no such line") as u64 + 1
 }
 
-/// Shared test world and its launcher.
 struct Attached {
 	runner: Launcher,
 	pid: u64,
@@ -1349,8 +1258,6 @@ struct Attached {
 	code: PathBuf
 }
 
-/// Launch and discover a world, attach two launchers, then reload its code
-/// to return 2 instead of 1.
 fn attach_and_reload(server: &str, library: &Path) -> Attached {
 	let (dir, dme) = attach_host_copy("attach");
 	let code = dir.join("attach_host.dm");
@@ -1377,8 +1284,6 @@ fn attach_and_reload(server: &str, library: &Path) -> Attached {
 	let pid = client::listed_world("attach_host.dmb");
 	println!("ok: world discovered with PID {}", pid);
 
-	// Two debuggers: one finds the code from the world's command line, the
-	// other is told where it is
 	let mut first = Launcher::start();
 	first.initialize();
 	first.request("attach", json!({ "processId": pid.to_string() }));
@@ -1386,7 +1291,6 @@ fn attach_and_reload(server: &str, library: &Path) -> Attached {
 	first.request("configurationDone", json!({}));
 	let mut second = Launcher::start();
 	second.initialize();
-	// The original launcher already owns hot reload for this world.
 	second.request("attach", json!({ "processId": pid, "dme": dme, "hotReload": true }));
 	second.event("initialized");
 	second.request("configurationDone", json!({}));
@@ -1398,8 +1302,6 @@ fn attach_and_reload(server: &str, library: &Path) -> Attached {
 	);
 	println!("ok: one reloader per world");
 
-	// Either one's breakpoint stops the world for both, and either can let it
-	// carry on
 	let line = line_of(&code, "\treturn 1");
 	let set = first.request("setBreakpoints", json!({ "source": { "path": code }, "breakpoints": [{ "line": line }] }));
 	assert_eq!(set["breakpoints"][0]["verified"], true, "the breakpoint wasn't set: {}", set);
@@ -1412,14 +1314,12 @@ fn attach_and_reload(server: &str, library: &Path) -> Attached {
 	first.event("continued");
 	println!("ok: concurrent launcher sessions");
 
-	// The launcher that started it reloads it as the code changes
 	let source = std::fs::read_to_string(&code).unwrap();
 	std::fs::write(&code, source.replace("\treturn 1", "\treturn 2")).unwrap();
 	runner.wait_output("Hot reload: reloaded /value");
 	runner.wait_output("attach test: 2");
 	println!("ok: source reload");
 
-	// Leaving doesn't end a world that was attached to
 	first.disconnect(json!({}));
 	second.disconnect(json!({ "terminateDebuggee": false }));
 	let seen = runner.output.matches("attach test: 2").count();
@@ -1429,11 +1329,8 @@ fn attach_and_reload(server: &str, library: &Path) -> Attached {
 }
 
 impl Attached {
-	/// Check attachment while paused and trace termination, then stop the
-	/// world.
 	fn finish(self) {
 		let Attached { mut runner, pid, dir, .. } = self;
-		// Newly attached launchers receive the existing pause.
 		let (code_given, printed) = launcher_command(&["--pid", &pid.to_string(), "pause"]);
 		assert_eq!(code_given, 0, "unexpected pause output: {}", printed);
 		let mut late = Launcher::start();
@@ -1450,8 +1347,6 @@ impl Attached {
 		println!("ok: CLI resume");
 
 		let waiting = journal::wait_for_reboot(pid);
-		// An open-ended trace reports its counts when the world exits. It says
-		// where it traces once it has connected and set its breakpoint.
 		let mut tracing = journal::Background::start(pid, &["trace", "/proc/value", "--by", "caller"]);
 		tracing.line_with("tracing /value");
 		let seen = runner.output.matches("attach test: 2").count();
@@ -1474,14 +1369,8 @@ impl Attached {
 	}
 }
 
-/// A copy of the world that runs until told to stop, built, in a directory of
-/// its own named after `name`, so its code can be edited
 fn attach_host_copy(name: &str) -> (PathBuf, PathBuf) {
 	let dir = std::env::temp_dir().join(format!("launcher_test_{}-{}", name, std::process::id()));
-	// A run before this one may have had this process's id (they come round
-	// again quickly on Windows), and left its directory behind when a file in
-	// it was still open: what it told its world to do (`refuse_del`) isn't
-	// for this one
 	let _ = std::fs::remove_dir_all(&dir);
 	std::fs::create_dir_all(&dir).unwrap();
 	for left in [
@@ -1511,9 +1400,6 @@ fn attach_host_copy(name: &str) -> (PathBuf, PathBuf) {
 	(dir, dme)
 }
 
-/// Processes the test started, ended when it's done with them, whether it
-/// passes or fails: a world, a launcher in the background, a launcher in the
-/// foreground (`child`)
 #[derive(Default)]
 struct Started {
 	child: Option<Child>,
@@ -1526,9 +1412,6 @@ impl Drop for Started {
 			let _ = child.kill();
 			let _ = child.wait();
 		}
-		// A check that failed may not have got as far as hearing which
-		// processes there were: the worlds of this run's copies are found, and
-		// their launchers go with them
 		if std::thread::panicking() {
 			let list = Command::new(launcher_path()).args(["list", "--json"]).output().ok();
 			let worlds: serde_json::Value = list.and_then(|list| serde_json::from_slice(&list.stdout).ok()).unwrap_or_default();
@@ -1549,7 +1432,6 @@ impl Drop for Started {
 	}
 }
 
-/// Whether process `pid` is running
 fn alive(pid: u64) -> bool {
 	if cfg!(windows) {
 		let listed = Command::new("tasklist")
@@ -1560,7 +1442,6 @@ fn alive(pid: u64) -> bool {
 			.split_whitespace()
 			.any(|word| word == pid.to_string())
 	} else {
-		// One that's ended and not waited for yet is a zombie, `Z`
 		std::fs::read_to_string(format!("/proc/{}/stat", pid))
 			.is_ok_and(|stat| stat.rsplit_once(") ").is_some_and(|(_, rest)| !rest.starts_with('Z')))
 	}
@@ -1577,7 +1458,6 @@ fn gone_within(pid: u64, seconds: u64) -> bool {
 	true
 }
 
-/// Waits for `text` to be in what `read` gives
 fn wait_for_text(what: &str, text: &str, read: impl Fn() -> String) {
 	let until = Instant::now() + Duration::from_secs(60);
 	loop {
@@ -1590,7 +1470,6 @@ fn wait_for_text(what: &str, text: &str, read: impl Fn() -> String) {
 	}
 }
 
-/// `auxtools launch DMB` and the options every launch here has
 fn launch_args(dmb: &Path, server: &str, more: &[&str]) -> Vec<String> {
 	let mut args: Vec<String> = vec!["launch".into(), dmb.to_string_lossy().into_owned()];
 	args.extend([
@@ -1607,7 +1486,6 @@ fn launch_args(dmb: &Path, server: &str, more: &[&str]) -> Vec<String> {
 	args
 }
 
-/// `auxtools launch` in the foreground, its output collected as it comes
 fn launch_here(dmb: &Path, server: &str, started: &mut Started) -> Arc<Mutex<String>> {
 	let mut child = Command::new(launcher_path())
 		.args(launch_args(dmb, server, &[]))
@@ -1635,7 +1513,6 @@ fn launch_here(dmb: &Path, server: &str, started: &mut Started) -> Arc<Mutex<Str
 	output
 }
 
-/// The exit code of the foreground launcher, once it's gone
 fn launcher_exit(started: &mut Started, output: &Mutex<String>) -> i32 {
 	let child = started.child.as_mut().unwrap();
 	let until = Instant::now() + Duration::from_secs(30);
@@ -1648,7 +1525,6 @@ fn launcher_exit(started: &mut Started, output: &Mutex<String>) -> i32 {
 	}
 }
 
-/// The process id in `launch`'s line about the program it started
 fn started_pid(output: &str) -> u64 {
 	output
 		.lines()
@@ -1656,13 +1532,10 @@ fn started_pid(output: &str) -> u64 {
 		.unwrap_or_else(|| panic!("launch output missing process ID:\n{}", output))
 }
 
-/// Repairing a parse error in the initial baseline must not duplicate
-/// definitions already present in the built world.
 fn errored_baseline(server: &str) {
 	let (dir, dme) = attach_host_copy("errored");
 	let code = dir.join("attach_host.dm");
 	let source = std::fs::read_to_string(&code).unwrap();
-	// An unclosed parenthesis hides the remaining definitions.
 	std::fs::write(&code, source.replace("\treturn 1", "\treturn (1")).unwrap();
 	let mut started = Started::default();
 	let output = launch_here(&dme.with_extension("dmb"), server, &mut started);
@@ -1690,8 +1563,6 @@ fn errored_baseline(server: &str) {
 	println!("ok: repaired baseline errors do not duplicate definitions");
 }
 
-/// Detect rebuilds of a .dmb outside the source directory and avoid reapplying
-/// changes already included in it.
 fn dmb_elsewhere(server: &str) {
 	let (dir, dme) = attach_host_copy("elsewhere");
 	let built = dme.with_extension("dmb");
@@ -1727,14 +1598,11 @@ fn dmb_elsewhere(server: &str) {
 	let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// `auxtools launch`, `stop` and `reboot`: worlds the command line starts and
-/// ends itself, in the foreground and in the background
 fn launch_from_the_command_line(server: &str) {
 	let (dir, dme) = attach_host_copy("launch");
 	let dmb = dme.with_extension("dmb");
 	let code = dir.join("attach_host.dm");
 
-	// The launcher never builds: a world that isn't built isn't launched
 	let missing = dir.join("nothing.dmb");
 	for more in [&[][..], &["--detach"][..]] {
 		let args = launch_args(&missing, server, more);
@@ -1748,8 +1616,6 @@ fn launch_from_the_command_line(server: &str) {
 	}
 	println!("ok: missing .dmb launch error");
 
-	// Check foreground output, reloads and shutdown. The source baseline
-	// includes a proc and var absent from the .dmb.
 	let source = std::fs::read_to_string(&code).unwrap();
 	let unbuilt = "\n/datum/held/var/unbuilt = 1\n\n/datum/held/proc/unbuilt_proc()\n\treturn src\n";
 	std::fs::write(&code, format!("{}{}", source, unbuilt)).unwrap();
@@ -1762,7 +1628,6 @@ fn launch_from_the_command_line(server: &str) {
 	std::fs::write(&code, source.replace("\treturn 1", "\treturn 2")).unwrap();
 	wait_for_text("launch", "Hot reload: reloaded /value", read);
 	wait_for_text("launch", "attach test: 2", read);
-	// Removing these definitions must not claim runtime removals.
 	wait_for_text("launch", "var unbuilt was removed from source and isn't in the running world", read);
 	let printed = read();
 	assert!(
@@ -1793,7 +1658,6 @@ fn launch_from_the_command_line(server: &str) {
 	drop(started);
 	println!("ok: foreground output and reloads");
 
-	// Interrupted, it has the world end itself
 	if cfg!(unix) {
 		let mut started = Started::default();
 		let output = launch_here(&dmb, server, &mut started);
@@ -1813,8 +1677,6 @@ fn launch_from_the_command_line(server: &str) {
 		println!("ok: interrupt requests graceful shutdown");
 	}
 
-	// In the background: it returns once the world is up, and other
-	// commands work with it
 	let mut started = Started::default();
 	let args = launch_args(&dmb, server, &["--detach", "--json"]);
 	let (got, printed) = launcher_command(&args.iter().map(String::as_str).collect::<Vec<_>>());
@@ -1850,13 +1712,11 @@ fn launch_from_the_command_line(server: &str) {
 	wait_for_text("the background launcher's log", "attach test: 1", read_log);
 	println!("ok: detached launch readiness and commands");
 
-	// Keep stalled worlds visible in both text and JSON listings.
 	#[cfg(unix)]
 	{
 		let mine = |listed: Vec<serde_json::Value>| listed.into_iter().find(|world| world["pid"] == pid);
 		let listed = mine(client::listed_worlds()).unwrap_or_else(|| panic!("list doesn't show the world"));
 		assert_eq!(listed["responsive"], json!(true), "{}", listed);
-		// Run checks concurrently to minimize time spent under SIGSTOP.
 		assert!(Command::new("kill").args(["-STOP", &pid_text]).status().unwrap().success());
 		let asked: Vec<_> = [
 			&["list"][..],
@@ -1916,7 +1776,6 @@ fn launch_from_the_command_line(server: &str) {
 	wait_for_text("the background launcher's log", "The world restarted", read_log);
 	println!("ok: reboot waits for reconnection");
 
-	// Reboot must wait for hot reloads to be restored.
 	let source = std::fs::read_to_string(&code).unwrap();
 	std::fs::write(&code, format!("{}\n/proc/added_by_reload()\n\treturn 99\n", source)).unwrap();
 	wait_for_text("the background launcher's log", "Hot reload: added /added_by_reload", read_log);
@@ -1934,8 +1793,6 @@ fn launch_from_the_command_line(server: &str) {
 	);
 	println!("ok: reboot waits for hot reloads to be reapplied");
 
-	// Pause the launcher so it receives a source edit and reboot together.
-	// The rebuilt world already contains the edit; do not apply it again.
 	#[cfg(unix)]
 	{
 		let rebaselined = || read_log().matches("Hot reload: using the rebuilt .dmb").count();
@@ -1946,7 +1803,6 @@ fn launch_from_the_command_line(server: &str) {
 		std::fs::write(&code, format!("{}\n/proc/zz_agent_probe()\n\treturn 7\n", edited)).unwrap();
 		let built = Command::new(paths::find_dm()).with_byond_paths().arg(&dme).output().unwrap();
 		std::fs::write(dir.join("reboot"), "yes").unwrap();
-		// The world reboots by itself within half a second
 		std::thread::sleep(Duration::from_secs(3));
 		assert!(Command::new("kill").args(["-CONT", &launcher_text]).status().unwrap().success());
 		assert!(built.status.success(), "dreammaker build failed");
@@ -1970,9 +1826,6 @@ fn launch_from_the_command_line(server: &str) {
 		println!("ok: rebuilt worlds skip reloads already included in the build");
 	}
 
-	// Whenever in the world's round it's asked: a proc that wakes between the
-	// world's Del() and the next world loading is the old world's, and the
-	// debugger waits for the new one
 	for moment in 0..8u64 {
 		std::thread::sleep(Duration::from_millis(moment * 70));
 		run(&["reboot", "--timeout", "60"], 0);
@@ -1987,7 +1840,6 @@ fn launch_from_the_command_line(server: &str) {
 	);
 	println!("ok: reboot throughout world execution");
 
-	// A sleeping reboot resumes the world; breakpoints work after reboot.
 	std::fs::write(dir.join("slow_reboot"), "yes").unwrap();
 	run(&["wait", "pause", "--break", "/proc/value", "--timeout", "60"], 0);
 	run(&["reboot", "--timeout", "60"], 0);
@@ -1995,8 +1847,6 @@ fn launch_from_the_command_line(server: &str) {
 	run(&["wait", "pause", "--break", "/proc/value", "--timeout", "60"], 0);
 	println!("ok: paused reboot with sleeping world/Reboot");
 
-	// Pauses resume after a sleeping reboot declines or a sleeping world/Del()
-	// fails.
 	for (files, command) in [(["slow_reboot", "refuse_reboot"], "reboot"), (["slow_del", "fail_del"], "stop")] {
 		for file in files {
 			std::fs::write(dir.join(file), "yes").unwrap();
@@ -2009,7 +1859,6 @@ fn launch_from_the_command_line(server: &str) {
 	}
 	println!("ok: pauses after declined reboot and failed shutdown");
 
-	// Still paused
 	let before = read_log().len();
 	std::fs::write(dir.join("slow_del"), "yes").unwrap();
 	let printed = run(&["stop"], 0);
@@ -2023,8 +1872,6 @@ fn launch_from_the_command_line(server: &str) {
 		"the log has:\n{}",
 		said
 	);
-	// Each reboot occurs before the shutdown notification, so clients
-	// reconnect.
 	assert!(
 		!said[before..].contains("waiting to reconnect"),
 		"the launcher took the world's end for a lost connection:\n{}",
@@ -2034,7 +1881,6 @@ fn launch_from_the_command_line(server: &str) {
 	drop(started);
 	println!("ok: paused shutdown with sleeping world/Del");
 
-	// A world whose world/Del() doesn't end it
 	let mut started = Started::default();
 	let args = launch_args(&dmb, server, &["--detach", "--no-hot-reload"]);
 	let (got, printed) = launcher_command(&args.iter().map(String::as_str).collect::<Vec<_>>());
@@ -2063,7 +1909,6 @@ fn launch_from_the_command_line(server: &str) {
 		assert_eq!(got, code, "`{}` gave {}, not {}: {}", args.join(" "), got, code, printed);
 		printed
 	};
-	// Its code isn't read, so it has no macros, and says so
 	let printed = run(&["eval", "DOUBLE_IT(1)"], 1);
 	assert!(
 		printed.starts_with("error: proc not found: /proc/DOUBLE_IT (if that's a #define: source macros unavailable"),
@@ -2071,7 +1916,6 @@ fn launch_from_the_command_line(server: &str) {
 		printed
 	);
 	println!("ok: missing source-macro diagnostic");
-	// A failed world/Del must leave the running world debuggable.
 	std::fs::remove_file(dir.join("refuse_del")).unwrap();
 	std::fs::write(dir.join("fail_del"), "yes").unwrap();
 	let printed = run(&["stop", "--timeout", "10"], 1);
@@ -2109,7 +1953,6 @@ fn launch_from_the_command_line(server: &str) {
 		printed
 	);
 	assert!(!alive(pid), "world process is still running");
-	// (a process that's ended on Windows exits with the code it was ended with)
 	let ended = if cfg!(windows) {
 		"The world exited with code 1"
 	} else {
@@ -2122,12 +1965,10 @@ fn launch_from_the_command_line(server: &str) {
 	drop(started);
 	println!("ok: stop timeout and forced termination");
 
-	// (the directory can outlast this on Windows, while its files are open)
 	let _ = std::fs::remove_file(dir.join("refuse_del"));
 	let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// Line breakpoints should explain missing debug info in non-DEBUG worlds.
 fn without_debug_info(server: &str) {
 	let (dir, dme) = attach_host_copy("nolines");
 	let text = std::fs::read_to_string(&dme).unwrap().replace("#define DEBUG\n", "");
@@ -2161,7 +2002,6 @@ fn without_debug_info(server: &str) {
 	let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// Preserve unread static locals and avoid rerunning their initializers.
 fn unread_statics(server: &str) {
 	let (dir, dme) = attach_host_copy("statics");
 	let code = dir.join("attach_host.dm");
@@ -2203,8 +2043,6 @@ fn unread_statics(server: &str) {
 			&format!("count_init(STATIC_NAME)\n\treturn {}\n", before),
 			&format!("count_init(STATIC_NAME)\n\treturn {}\n", edited)
 		);
-		// Start before the edit so the wait can find a reload that already
-		// finished.
 		let since = journal::newest(pid).to_string();
 		std::fs::write(&code, &source).unwrap();
 		let printed = run(&["wait", "reload", "--since", &since, "--timeout", "60"], 0);
@@ -2213,8 +2051,6 @@ fn unread_statics(server: &str) {
 	}
 	assert_eq!(run(&["eval", "unread_static() + unread_static_proc()"], 0).trim(), "6");
 
-	// Resolve a newly read static through its original initializer and preserve
-	// its value.
 	source = source.replace("count_init(1)\n\treturn 3\n", "count_init(1)\n\treturn kept + 10\n");
 	let since = journal::newest(pid).to_string();
 	std::fs::write(&code, &source).unwrap();

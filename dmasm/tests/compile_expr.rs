@@ -1,5 +1,3 @@
-//! Debugger expression compilation without project type information.
-
 use dmasm::compiler::{compile_expr, compile_expr_for};
 use dmasm::{Instruction, Node};
 
@@ -16,7 +14,6 @@ fn instructions(code: &str, params: &[&str]) -> Vec<Instruction> {
 
 #[test]
 fn calls_on_a_value_go_by_name_to_find_verbs_too() {
-    // Without static types, dynamic lookup must resolve both procs and verbs.
     let code = instructions("x.greet(1, 2)", &["x"]);
     assert!(code.contains(&Instruction::CallName(2)), "{:?}", code);
     let code = instructions("x:greet(a = 1)", &["x"]);
@@ -96,20 +93,15 @@ fn an_expression_ends_where_it_ends() {
     }
 }
 
-// Runtime scope supplied by the debugger.
-
 use dmasm::compiler::{compile_expr_in, CompileError, ExprGlobal, ExprScope, FoundProc};
 use dmasm::ByondVersion;
 
-/// Compile with src variables hp/name, src proc bump and globals ticks/name.
-/// The globals parameter represents global.vars.
 fn scoped(code: &str, params: &[&str]) -> Result<Vec<Instruction>, CompileError> {
     let scope = ExprScope {
         has_src_var: &|name| matches!(name, "hp" | "name"),
         has_src_proc: &|name| name == "bump",
         global: &|name| match name {
             "ticks" | "name" => Some(ExprGlobal::Listed),
-            // One a hot reload added
             "added" => Some(ExprGlobal::Id(77)),
             _ => None,
         },
@@ -154,7 +146,6 @@ fn scoped(code: &str, params: &[&str]) -> Result<Vec<Instruction>, CompileError>
     )
 }
 
-/// Expected scoped bytecode.
 fn written_out(code: &str, params: &[&str]) -> Vec<Instruction> {
     let mut params = params.to_vec();
     params.push("globals");
@@ -203,7 +194,6 @@ fn a_param_comes_before_a_var_of_src() {
 
 #[test]
 fn a_var_of_src_comes_before_a_global() {
-    // Both are called `name`
     assert_eq!(scoped("name", &[]).unwrap(), written_out("src.name", &[]));
 }
 
@@ -255,7 +245,6 @@ fn a_name_nothing_has_is_an_error() {
         error
     );
     assert_eq!(error.to_string(), "undefined var: nowhere");
-    // Not so for what's reached through something else
     assert!(scoped("hp.nowhere", &[]).is_ok());
     let error = scoped("global.nowhere", &[]).unwrap_err();
     assert!(
@@ -275,7 +264,6 @@ fn a_bare_call_is_src_s_proc_if_it_has_one() {
         scoped("other(1)", &[]).unwrap(),
         written_out("other(1)", &[])
     );
-    // BYOND's own procs are themselves
     assert_eq!(
         scoped("length(hp)", &[]).unwrap(),
         written_out("length(src.hp)", &[])
@@ -327,8 +315,6 @@ fn without_a_scope_a_bare_name_is_a_global() {
 #[test]
 fn a_pointer_made_in_place_is_read_through() {
     use dmasm::Variable;
-    // As DreamMaker has it: the pointer goes in cache_key, and is read
-    // through that
     let code = instructions("*(&x)", &["x"]);
     assert_eq!(
         &code[1..4],
@@ -340,7 +326,6 @@ fn a_pointer_made_in_place_is_read_through() {
         "{:?}",
         code
     );
-    // and written through
     let code = instructions("*(&x) = 5", &["x"]);
     assert!(
         code.iter().any(|i| matches!(i, Instruction::SetVarExpr(Variable::PtrDeref(p)) if **p == Variable::CacheKey)
@@ -348,7 +333,6 @@ fn a_pointer_made_in_place_is_read_through() {
         "{:?}",
         code
     );
-    // A pointer held in a var is read through the var, as before
     let code = instructions("*p", &["p"]);
     assert_eq!(
         code[1],
@@ -361,7 +345,6 @@ fn a_pointer_made_in_place_is_read_through() {
 #[test]
 fn a_type_s_var_by_double_colon_is_its_initial_value() {
     use dmasm::Variable;
-    // Without static types, compile x::v as runtime initial(cache.v).
     let read = |base: Instruction| {
         vec![
             base,
@@ -393,7 +376,6 @@ fn a_type_s_var_by_double_colon_is_its_initial_value() {
             code
         );
     }
-    // and so is a bare name's, in a scope
     let ins = scoped("initial(hp::throwforce)", &[]).unwrap();
     assert_eq!(
         &ins[2..4],
@@ -401,7 +383,6 @@ fn a_type_s_var_by_double_colon_is_its_initial_value() {
         "{:?}",
         ins
     );
-    // Proc path resolution requires project types.
     assert!(compile_expr("/obj/item::f()", &[]).is_err());
 }
 
@@ -453,7 +434,6 @@ fn global_vars_is_the_globals_list() {
         "{:?}",
         code
     );
-    // The list itself is read-only; bare `vars` keeps normal src/global lookup.
     assert!(matches!(
         scoped("global.vars = 1", &[]),
         Err(CompileError::ExpectedLValue)
@@ -463,7 +443,6 @@ fn global_vars_is_the_globals_list() {
 
 #[test]
 fn a_constant_nan_test_is_its_result_on_builds_that_fold_it_cleanly() {
-    // From 516.1672, constant isnan()/isinf() returns its result without reading the test flag.
     for (code, result) in [
         ("isnan(1.#INF - 1.#INF)", 1),
         ("isnan(1)", 0),
@@ -473,7 +452,6 @@ fn a_constant_nan_test_is_its_result_on_builds_that_fold_it_cleanly() {
         assert_eq!(code[1], Instruction::PushInt(result), "{:?}", code);
         assert!(!code.contains(&Instruction::GetFlag), "{:?}", code);
     }
-    // Preserve the previous-test-flag quirk on affected builds.
     let old = compile_expr_for("isnan(1)", &[], ByondVersion::new(516, 1659)).unwrap();
     assert!(
         old.iter()
@@ -485,8 +463,6 @@ fn a_constant_nan_test_is_its_result_on_builds_that_fold_it_cleanly() {
 
 #[test]
 fn a_parser_warning_does_not_refuse_an_expression() {
-    // Integer precision warnings must not reject valid debugger expressions.
-    // Constant -2147483648 folds as it does in a proc.
     for (code, value) in [
         ("4294967295", 4294967295.0f32),
         ("-2147483648", -2147483648.0),
@@ -513,20 +489,16 @@ fn a_types_proc_reference_is_the_one_the_world_finds() {
                 _ => None,
             })
     };
-    // Resolve the nearest definition through type ancestry.
     assert_eq!(pushed("/datum/foo/bar/baz::double()"), Some((0x26, 6)));
     assert_eq!(pushed("/datum/foo::double()"), Some((0x26, 5)));
     assert_eq!(pushed("call(/datum/foo/bar::double())(1)"), Some((0x26, 6)));
-    // Resolve proc paths too.
     assert_eq!(pushed("/datum/foo/proc/double"), Some((0x26, 5)));
-    // Report missing procs.
     let error = scoped("/datum/foo::triple()", &[]).unwrap_err().to_string();
     assert!(
         error.contains("/datum/foo has no proc called triple"),
         "{}",
         error
     );
-    // Proc references through runtime values lack the required constant type.
     assert!(scoped("src::double()", &[]).is_err());
 }
 
@@ -568,7 +540,6 @@ fn a_modified_type_is_refused_in_debugger_code() {
 
 #[test]
 fn pick_draws_as_a_procs_pick_does() {
-    // Match the proc compiler's RNG use for constant weights.
     let code = instructions("pick(1, 2, x)", &["x"]);
     assert!(
         code.iter()
@@ -583,7 +554,6 @@ fn pick_draws_as_a_procs_pick_does() {
         "{:?}",
         code
     );
-    // Nonconstant weights use weighted draws.
     let code = instructions("pick(x; 1, 2)", &["x"]);
     assert!(
         code.iter()
@@ -595,7 +565,6 @@ fn pick_draws_as_a_procs_pick_does() {
 
 #[test]
 fn a_unary_operator_applies_to_a_safe_chain_that_stops() {
-    // A null safe chain must still apply its trailing unary operator.
     for (code, op) in [
         ("!a?.f()", Instruction::Not),
         ("-a?.f()", Instruction::UnaryNeg),
@@ -618,7 +587,6 @@ fn a_unary_operator_applies_to_a_safe_chain_that_stops() {
 
 #[test]
 fn an_assignment_in_parentheses_is_a_methods_argument_not_a_name() {
-    // Parenthesized assignments are positional; unparenthesized ones name arguments.
     let code = instructions("o.f((x = y), 5)", &["o", "x", "y"]);
     assert!(code.contains(&Instruction::CallName(2)), "{:?}", code);
     let code = instructions("o.f(x = y)", &["o", "x", "y"]);
@@ -627,8 +595,6 @@ fn an_assignment_in_parentheses_is_a_methods_argument_not_a_name() {
 
 #[test]
 fn an_expression_folds_constants_as_a_proc_does() {
-    // Constant folding must match compiled procs: `~-4` folds to 16777215
-    // but evaluates to 3 at runtime.
     let code = instructions("~-4", &[]);
     assert!(
         code.contains(&Instruction::PushInt(16777215))
@@ -636,14 +602,12 @@ fn an_expression_folds_constants_as_a_proc_does() {
         "{:?}",
         code
     );
-    // A constant `new T` condition selects a branch without constructing T.
     let code = instructions("new /datum ? 1 : 2", &[]);
     assert!(
         !code.iter().any(|ins| matches!(ins, Instruction::New(_))),
         "{:?}",
         code
     );
-    // Variable operands still run at runtime.
     let code = instructions("~x", &["x"]);
     assert!(code.contains(&Instruction::Bnot), "{:?}", code);
 }

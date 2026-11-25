@@ -1,20 +1,12 @@
-//! Remap breakpoint lines after source edits.
-
-/// Map old source lines to new source lines.
 pub struct LineMap {
-	/// Zero-based new line index for each old line.
 	to: Vec<u32>,
 	new_len: u32
 }
 
-/// Maximum old-line count × new-line count for detailed matching.
-/// Larger changed regions use positional mapping.
 const MOST_CELLS: usize = 4_000_000;
 
 impl LineMap {
 	pub fn new(old: &[String], new: &[String]) -> Self {
-		// Trim unchanged prefixes and suffixes before matching the edited
-		// region.
 		let prefix = old.iter().zip(new).take_while(|(a, b)| a == b).count();
 		let suffix = old[prefix..]
 			.iter()
@@ -24,13 +16,9 @@ impl LineMap {
 			.count();
 		let (old_mid, new_mid) = (&old[prefix..old.len() - suffix], &new[prefix..new.len() - suffix]);
 
-		// Map changed runs between matching lines by relative position,
-		// clamping to the replacement's last line. Deleted runs map to the next
-		// surviving line.
 		let matches = matching_lines(old_mid, new_mid);
 		let mut mid = vec![0u32; old_mid.len()];
 		let mut i = 0;
-		// Where the new lines of the run being looked at start
 		let mut run_new = 0;
 		while i < old_mid.len() {
 			if let Some(j) = matches[i] {
@@ -62,31 +50,24 @@ impl LineMap {
 		}
 	}
 
-	/// Map a one-based old line to its new position. Changed lines map to their
-	/// replacement; deleted lines map to the next surviving line.
 	pub fn line(&self, old: u32) -> u32 {
 		let last = self.new_len.max(1);
-		// An empty file has nothing to go by: the line is where it was, if
-		// the new text has it
 		if self.to.is_empty() {
 			return old.clamp(1, last);
 		}
 		match self.to.get(old.saturating_sub(1) as usize) {
 			Some(new) => (new + 1).min(last),
-			// Past the end of the old text: as far past the end of the new
 			None => old.saturating_sub(self.to.len() as u32) + self.new_len
 		}
 	}
 }
 
-/// Find matching lines using the longest common subsequence.
 fn matching_lines(old: &[String], new: &[String]) -> Vec<Option<usize>> {
 	let mut matches = vec![None; old.len()];
 	if old.is_empty() || new.is_empty() || old.len() * new.len() > MOST_CELLS {
 		return matches;
 	}
 
-	// common[i][j]: how many lines old[i..] and new[j..] have in common
 	let width = new.len() + 1;
 	let mut common = vec![0u32; (old.len() + 1) * width];
 	for i in (0..old.len()).rev() {
@@ -114,7 +95,6 @@ fn matching_lines(old: &[String], new: &[String]) -> Vec<Option<usize>> {
 	matches
 }
 
-/// A file's lines, if it can be read
 pub fn read(path: &str) -> Option<Vec<String>> {
 	let text = std::fs::read_to_string(path).ok()?;
 	Some(text.lines().map(str::to_owned).collect())
@@ -150,7 +130,6 @@ mod tests {
 	fn lines_taken_away_above_pull_the_rest_up() {
 		let new = "/proc/b()\n\tvar/x = 1\n\treturn x\n";
 		assert_eq!(moved(OLD, new, &[4, 5, 6]), [1, 2, 3]);
-		// What was taken away is where the next line left is
 		assert_eq!(moved(OLD, new, &[1, 2, 3]), [1, 1, 1]);
 	}
 
@@ -170,10 +149,8 @@ mod tests {
 
 	#[test]
 	fn lines_written_in_place_of_others_take_them_in_order() {
-		// Two lines for three: the third is on the second
 		let new = "/proc/a()\n\treturn 1\n\n/proc/c()\n\treturn 2\n";
 		assert_eq!(moved(OLD, new, &[3, 4, 5, 6]), [3, 4, 5, 5]);
-		// Three lines for one: it's on the first
 		let new = "/proc/a()\n\tvar/y = 1\n\ty += 1\n\treturn y\n\n/proc/b()\n\tvar/x = 1\n\treturn x\n";
 		assert_eq!(moved(OLD, new, &[2, 3, 4]), [2, 5, 6]);
 	}
@@ -182,7 +159,6 @@ mod tests {
 	fn lines_swapped_around_are_matched_where_they_can_be() {
 		let old = "a\nb\nc\nd\ne\n";
 		let new = "a\nd\nb\nc\ne\n";
-		// b and c kept their order, d moved past them
 		assert_eq!(moved(old, new, &[1, 2, 3, 5]), [1, 3, 4, 5]);
 	}
 
@@ -209,7 +185,6 @@ mod tests {
 		let new: String = (0..3000).map(|i| format!("new {}\n", i)).collect();
 		let old = format!("first\n{}last\n", old);
 		let new = format!("first\n{}more\nlast\n", new);
-		// Too much changed to match up: its lines keep their order
 		assert_eq!(moved(&old, &new, &[1, 2, 100, 3002]), [1, 2, 100, 3003]);
 	}
 }

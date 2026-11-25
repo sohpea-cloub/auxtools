@@ -6,14 +6,10 @@ edition = "2018"
 license = "GPL-3.0"
 repository = "https://github.com/willox/dmasm"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
 [dependencies]
 nom = "7"
 bitflags = "2"
 serde = { version = "1", features = ["derive"], optional = true }
-# auxtools' SpacemanDMM, with parser fixes SpaceManiac/SpacemanDMM doesn't have yet
 dreammaker = { git = "https://github.com/auxtools/SpacemanDMM", branch = "master" }
-# md5() and sha1() of constant text fold, as in DreamMaker
 md-5 = "0.10.6"
 sha1 = "0.10.7"

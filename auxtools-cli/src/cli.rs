@@ -1,19 +1,9 @@
-//! Run a command against a world and print the result.
-//!
-//! Commands that leave the world paused hold the pause after disconnecting.
-//! Results go to stdout as text or JSON; diagnostics go to stderr.
-//! Exit codes: 0 success, 1 failure, 2 timeout, 3 world exited or rebooted,
-//! 4 the launched world failed, 5 `check` found something.
-
-/// Print to stdout, exiting quietly on write failure (e.g. `| head`).
-/// This also handles Windows, where `print!` would panic on a closed pipe.
 macro_rules! say_part {
 	($($arg:tt)*) => {
 		crate::cli::say(format_args!($($arg)*))
 	};
 }
 
-/// `say_part!` with a trailing newline.
 macro_rules! say {
 	($($arg:tt)*) => {
 		crate::cli::say(format_args!("{}\n", format_args!($($arg)*)))
@@ -45,7 +35,6 @@ use serde_json::{json, Map, Value};
 
 use self::args::{Command, WaitFor};
 
-/// Command error and exit code.
 pub struct Failure(pub i32, pub String);
 
 impl From<io::Error> for Failure {
@@ -68,14 +57,10 @@ impl From<&str> for Failure {
 
 pub type Result<T> = std::result::Result<T, Failure>;
 
-/// Command timed out.
 const TIMED_OUT: i32 = 2;
-/// World exited or rebooted before the command completed.
 const HUNG_UP: i32 = 3;
 
-/// Runs `args` (everything after the program's name), and exits with its code
 pub fn run(args: &[String]) -> ! {
-	// Exit quietly when a downstream reader closes the pipe (`| head`).
 	#[cfg(unix)]
 	unsafe {
 		libc::signal(libc::SIGPIPE, libc::SIG_DFL);
@@ -90,7 +75,6 @@ pub fn run(args: &[String]) -> ! {
 	std::process::exit(code)
 }
 
-/// Write to stdout and exit with code 0 on write or flush failure.
 pub fn say(text: std::fmt::Arguments) {
 	use std::io::Write;
 	let mut stdout = io::stdout().lock();
@@ -109,7 +93,6 @@ fn execute(raw: &[String]) -> Result<()> {
 		Err(args::Unparsed::Usage(why)) => return Err(why.into())
 	};
 	let Some(command) = cli.command else {
-		// Asked which it is, or nothing at all
 		if cli.version {
 			return version(false);
 		}
@@ -128,7 +111,6 @@ fn execute(raw: &[String]) -> Result<()> {
 		}
 		.into());
 	}
-	// Validate arguments before connecting to a world.
 	args::rules(&command)?;
 	match command {
 		Command::Dap => {
@@ -171,7 +153,6 @@ fn version(as_json: bool) -> Result<()> {
 	Ok(())
 }
 
-/// `list`: the worlds running the debug library, as a table or as JSON
 fn list(as_json: bool) -> Result<()> {
 	let worlds = local::worlds();
 	if as_json {
@@ -184,8 +165,6 @@ fn list(as_json: bool) -> Result<()> {
 	}
 	let mut rows = vec![["PID", "PROGRAM", "PROTOCOL", "COMPATIBLE", "RESPONSIVE", "DMB", "CWD", "ARGS"].map(str::to_owned)];
 	for world in &worlds {
-		// World details are unavailable for incompatible or unresponsive
-		// worlds.
 		let unknown = |text: String| if text.is_empty() { "-".to_owned() } else { text };
 		rows.push([
 			world.pid.to_string(),
@@ -219,7 +198,6 @@ fn list(as_json: bool) -> Result<()> {
 	Ok(())
 }
 
-/// A time as an error says it: `30 seconds`, `1 second`, `0.5 seconds`
 fn seconds_text(time: Duration) -> String {
 	let seconds = time.as_secs_f64();
 	let number = if seconds.fract() == 0.0 {
@@ -230,8 +208,6 @@ fn seconds_text(time: Duration) -> String {
 	format!("{} {}", number, if seconds == 1.0 { "second" } else { "seconds" })
 }
 
-/// Read an expression or message argument: `@FILE` reads a file and
-/// `@@...` escapes a literal `@`. File input avoids shell quoting.
 fn given_text(value: &str) -> Result<String> {
 	match value.strip_prefix('@') {
 		Some(rest) if rest.starts_with('@') => Ok(rest.to_owned()),
@@ -240,7 +216,6 @@ fn given_text(value: &str) -> Result<String> {
 	}
 }
 
-/// Read a file and remove its final line ending.
 fn read_text(file: &str) -> Result<String> {
 	let text = std::fs::read_to_string(file).map_err(|e| format!("cannot read {}: {}.", file, e))?;
 	Ok(text.trim_end_matches(['\r', '\n']).to_owned())
@@ -248,7 +223,6 @@ fn read_text(file: &str) -> Result<String> {
 
 fn read_stdin() -> Result<String> {
 	use std::io::{IsTerminal, Read};
-	// Require piped input so an unattended caller cannot block on a terminal.
 	if io::stdin().is_terminal() {
 		return Err("'-' reads the expression from stdin, but stdin is a terminal.".into());
 	}
@@ -257,8 +231,6 @@ fn read_stdin() -> Result<String> {
 	Ok(text.trim_end_matches(['\r', '\n']).to_owned())
 }
 
-/// `eval`'s expression: its words, what's in `--file FILE`, or stdin for `-`
-/// (`args::rules` has seen that it's one of them)
 fn expression(words: &[String], file: Option<&std::path::Path>, stdin: impl FnOnce() -> Result<String>) -> Result<String> {
 	let (expression, from) = match (words, file) {
 		(_, Some(file)) => (read_text(&file.to_string_lossy())?, file.display().to_string()),
@@ -271,8 +243,6 @@ fn expression(words: &[String], file: Option<&std::path::Path>, stdin: impl FnOn
 	Ok(expression)
 }
 
-/// Parse `/path` or `/path#N`, where N is the zero-based override index, or
-/// the name of a proc without a path, such as `(global init)`.
 fn proc_ref(text: &str) -> Result<ProcRef> {
 	if !text.starts_with(['/', '(']) {
 		return Err(format!("invalid proc path '{}': expected /PATH[#N].", text).into());
@@ -291,8 +261,6 @@ fn proc_ref(text: &str) -> Result<ProcRef> {
 	})
 }
 
-/// A proc's name as the stack shows it: its path, and `#N` for a definition
-/// after the first
 fn proc_name(proc: &ProcRef) -> String {
 	match proc.override_id {
 		0 => proc.path.clone(),
@@ -300,7 +268,6 @@ fn proc_name(proc: &ProcRef) -> String {
 	}
 }
 
-/// Choose the only running world when no process ID was supplied.
 fn only_world() -> Result<u32> {
 	let worlds = local::worlds();
 	let compatible: Vec<&local::World> = worlds.iter().filter(|world| world.compatible).collect();
@@ -317,54 +284,36 @@ fn only_world() -> Result<u32> {
 	}
 }
 
-/// What `wait pause` waits for
 struct Wait {
 	breaks: Vec<String>,
-	/// Expressions for places to watch for a change
 	changes: Vec<String>,
-	/// The frame they're of, when the world is paused
 	frame: u32,
 	condition: Option<String>,
 	runtimes: bool,
-	/// Those inside a `try` too
 	caught: bool,
-	/// Runtime error message filter.
 	runtime_filter: RuntimeFilter,
 	timeout: Option<Duration>,
 	hold: bool
 }
 
-/// How a step ended
 enum Stepped {
 	Paused(BreakpointReason),
-	/// With the world running: nothing was left to pause in
 	Ended,
 	TimedOut
 }
 
 pub struct World {
-	/// Its process
 	pid: u32,
 	stream: Shared,
 	received: Receiver<io::Result<Response>>,
-	/// Pause and resume events received while awaiting a response.
 	events: Vec<Response>,
-	/// A reload may have moved the breakpoints installed by `wait`.
 	reloaded: bool,
-	/// Server notifications, including evaluation errors.
 	notes: Vec<String>,
-	/// Condition errors already reported, to avoid duplicate diagnostics.
 	failed_conditions: Vec<String>,
-	/// Include the current instruction after instruction stepping.
 	show_instruction: bool,
-	/// What it prints is one JSON document (`--json`), with lists and objects
-	/// to this depth
 	json: Option<u32>,
-	/// What `wait pause` adds to the JSON of a pause
 	waited: Map<String, Value>,
-	/// How long to wait for each response (`--response-timeout`).
 	patience: Duration,
-	/// Reported debugger initialization failure, if any.
 	unavailable: Option<String>
 }
 
@@ -396,10 +345,7 @@ impl World {
 		})
 	}
 
-	/// Execute the command and print its result.
 	fn command(&mut self, command: Command) -> Result<()> {
-		// How it prints: as text, or as JSON, with lists and objects in it
-		// written out to a depth
 		let output = |json: bool, depth: Option<u32>| json.then(|| depth.unwrap_or(json::DEFAULT_DEPTH));
 		match command {
 			Command::Status(args) => {
@@ -489,7 +435,6 @@ impl World {
 			}) => log::wait_reboot(self, args.since, args.timeout, args.json),
 			Command::Trace(args) => trace::trace(self, &args),
 			Command::Profile(args) => profile::profile(self, &args),
-			// (these aren't a world's, and were done without one)
 			Command::Wait(args::Wait { event: None })
 			| Command::Launch(_)
 			| Command::List(_)
@@ -500,7 +445,6 @@ impl World {
 		}
 	}
 
-	/// Print auxiliary output to stderr in JSON mode.
 	fn aside(&self, text: &str) {
 		if self.json.is_some() {
 			eprintln!("{}", text);
@@ -513,7 +457,6 @@ impl World {
 		let _ = local::send(&mut self.stream, &Request::Disconnect);
 	}
 
-	/// Receive the next non-notification message, or `None` at the deadline.
 	fn next(&mut self, until: Option<Instant>) -> Result<Option<Response>> {
 		loop {
 			let response = match until {
@@ -539,8 +482,6 @@ impl World {
 				}
 				Response::Notification { message } => self.notes.push(message),
 				Response::CodeChanged => self.reloaded = true,
-				// Report each breakpoint condition error once; failed hits are
-				// skipped.
 				Response::ConditionFailed { message } => {
 					eprintln!("{}", message);
 					self.failed_conditions.push(message);
@@ -556,7 +497,6 @@ impl World {
 		self.request_by(request, until)?.ok_or_else(|| self.unresponsive("respond"))
 	}
 
-	/// Send a request and receive its answer, or `None` at the deadline.
 	fn request_by(&mut self, request: Request, until: Instant) -> Result<Option<Response>> {
 		local::send(&mut self.stream, &request).map_err(|_| hung_up())?;
 		loop {
@@ -570,7 +510,6 @@ impl World {
 		}
 	}
 
-	/// Report a response or pause timeout.
 	fn unresponsive(&self, act: &str) -> Failure {
 		Failure(
 			TIMED_OUT,
@@ -582,7 +521,6 @@ impl World {
 		)
 	}
 
-	/// Why it's paused, if it is
 	fn paused(&mut self) -> Result<Option<BreakpointReason>> {
 		match self.request(Request::Status)? {
 			Response::Status { paused } => Ok(paused.map(|stop| stop.reason)),
@@ -590,8 +528,6 @@ impl World {
 		}
 	}
 
-	/// `status`: what the world is doing, how long it has been up, and what
-	/// came of its last hot reload
 	fn status(&mut self) -> Result<()> {
 		let reason = self.paused()?;
 		let (mut document, mut lines) = self.execution(reason.as_ref())?;
@@ -625,7 +561,6 @@ impl World {
 		Ok(())
 	}
 
-	/// A command's result: the JSON document, or the lines that say the same
 	fn print(&self, document: Map<String, Value>, lines: &[String]) {
 		if self.json.is_some() {
 			say!("{}", Value::Object(document));
@@ -647,8 +582,6 @@ impl World {
 		}
 	}
 
-	/// Build the shared execution status fields and their text representation.
-	/// `reason` is `None` while running.
 	fn execution(&mut self, reason: Option<&BreakpointReason>) -> Result<(Map<String, Value>, Vec<String>)> {
 		let Some(reason) = reason else {
 			return Ok((json::execution(self.pid, None), vec![format!("pid {}: running", self.pid)]));
@@ -682,7 +615,6 @@ impl World {
 		Ok((json::execution(self.pid, Some((reason, &frames, instruction))), lines))
 	}
 
-	/// Prints what the world is doing, with what `wait pause` adds to it
 	fn report(&mut self, reason: Option<&BreakpointReason>) -> Result<()> {
 		let (mut document, lines) = self.execution(reason)?;
 		document.extend(std::mem::take(&mut self.waited));
@@ -690,7 +622,6 @@ impl World {
 		Ok(())
 	}
 
-	/// The offset of the instruction a frame is about to run, and its text
 	fn instruction_of(&mut self, frame: &StackFrame) -> Result<(u32, String)> {
 		let offset = frame.instruction.offset;
 		let disassembly = self.instructions(frame.code)?;
@@ -720,7 +651,6 @@ impl World {
 
 	fn stack(&mut self, all: bool) -> Result<()> {
 		self.need_pause()?;
-		// Every sleeping proc, when they're asked for
 		let stacks = match self.request(Request::Stacks {
 			sleeping: Some(if all { u32::MAX } else { 0 })
 		})? {
@@ -752,7 +682,6 @@ impl World {
 		Ok(())
 	}
 
-	/// The id of the `n`th frame of the paused stack
 	fn frame_id(&mut self, n: u32) -> Result<u32> {
 		self.need_pause()?;
 		let frames = self.frames(0, Some(n.saturating_add(1)))?;
@@ -781,7 +710,6 @@ impl World {
 		if globals {
 			scopes.push(("globals", global_vars));
 		}
-		// The vars are a level down from the frame
 		if let Some(depth) = self.json {
 			let mut document = Map::new();
 			for (name, vars) in scopes {
@@ -821,7 +749,6 @@ impl World {
 	fn eval(&mut self, expression: &str, frame: Option<u32>) -> Result<()> {
 		let frame_id = match frame {
 			Some(n) => Some(self.frame_id(n)?),
-			// The top frame, if it's paused
 			None => match self.paused()? {
 				Some(_) => Some(self.frame_id(0)?),
 				None => None
@@ -851,7 +778,6 @@ impl World {
 			Response::Eval(result) => result,
 			other => return Err(unexpected(&other))
 		};
-		// What the world said on the way
 		for note in std::mem::take(&mut self.notes) {
 			eprintln!("{}", note);
 		}
@@ -859,7 +785,6 @@ impl World {
 		Ok(())
 	}
 
-	/// `eval --src`: with `src` an object, in no frame
 	fn eval_on(&mut self, object: &str, expression: &str) -> Result<()> {
 		self.notes.clear();
 		let response = self.request(Request::EvalOn {
@@ -878,10 +803,7 @@ impl World {
 		Ok(())
 	}
 
-	/// Spawn evaluation on the next tick and optionally wait for its result.
 	fn spawn(&mut self, expression: &str, object: Option<&str>, wait: Option<Option<Duration>>) -> Result<()> {
-		// Capture the journal position before spawning so the result cannot be
-		// missed.
 		let newest = match self.request(Request::Journal {
 			after: u64::MAX,
 			kinds: vec![],
@@ -937,8 +859,6 @@ impl World {
 					return Ok(());
 				}
 				JournalEvent::Loaded { .. } => return Err(Failure(HUNG_UP, format!("the world rebooted before spawn {} finished.", number))),
-				// Report non-fatal callee errors. The journal cannot identify
-				// which spawn caused them.
 				JournalEvent::Runtime {
 					message,
 					caught: false,
@@ -951,7 +871,6 @@ impl World {
 		}
 	}
 
-	/// What the world knows of a proc
 	fn find_proc(&mut self, proc: &ProcRef) -> Result<ProcInfo> {
 		match self.request(Request::ProcInfo { proc: proc.clone() })? {
 			Response::ProcInfo(info) => Ok(info?),
@@ -994,7 +913,6 @@ impl World {
 		Ok(())
 	}
 
-	/// The instructions of some code, as the world reads them
 	fn instructions(&mut self, code: CodeRef) -> Result<Disassembly> {
 		match self.request(Request::Disassemble { code })? {
 			Response::Disassemble(disassembly) => Ok(disassembly?),
@@ -1005,7 +923,6 @@ impl World {
 	fn disassemble(&mut self, proc: &ProcRef) -> Result<()> {
 		let info = self.find_proc(proc)?;
 		let disassembly = self.instructions(info.code)?;
-		// One the world couldn't read says so where its text would be
 		let text = |instruction: &BytecodeInstruction| match (&instruction.text, &disassembly.error) {
 			(text, _) if !text.is_empty() => text.clone(),
 			(_, Some(error)) => format!("(not read: {})", error),
@@ -1040,7 +957,6 @@ impl World {
 		Ok(())
 	}
 
-	/// Report resolved breakpoint locations on stderr and in JSON.
 	fn say_bound(&mut self, place: &str, bound: &Bound) {
 		eprintln!("{}", bound.describe());
 		if self.json.is_some() {
@@ -1049,8 +965,6 @@ impl World {
 		}
 	}
 
-	/// Add wait progress to text output or the pause result's JSON fields.
-	/// Append array entries when the field already exists.
 	fn say_waited(&mut self, key: &str, value: Value, text: Option<&str>) {
 		if self.json.is_none() {
 			if let Some(text) = text {
@@ -1066,15 +980,10 @@ impl World {
 		}
 	}
 
-	/// Waits for a pause, and keeps it held after we leave
 	fn await_pause(&mut self, until: Option<Instant>, hold: bool) -> Result<Option<BreakpointReason>> {
 		self.await_pause_for(until, hold, |_, _| true)
 	}
 
-	/// Wait for a pause accepted by `ours`, ignoring other clients' triggers.
-	/// Pass whether reload has changed breakpoint locations in the meantime.
-	/// Ignored pauses require another client to resume before our trigger can
-	/// fire.
 	fn await_pause_for(&mut self, until: Option<Instant>, hold: bool, ours: impl Fn(&Stop, bool) -> bool) -> Result<Option<BreakpointReason>> {
 		let reason = loop {
 			if let Some(i) = self.events.iter().position(|e| matches!(e, Response::BreakpointHit { .. })) {
@@ -1104,7 +1013,6 @@ impl World {
 			return self.report(Some(&reason));
 		}
 		self.request(Request::Pause)?;
-		// A running world pauses at its next instruction.
 		let until = Instant::now() + self.patience;
 		match self.await_pause(Some(until), true)? {
 			Some(reason) => self.report(Some(&reason)),
@@ -1112,7 +1020,6 @@ impl World {
 		}
 	}
 
-	/// `continue`: lets a paused world carry on, and doesn't wait for more
 	fn resume(&mut self) -> Result<()> {
 		if self.paused()?.is_none() {
 			return Err("the world is not paused.".into());
@@ -1125,8 +1032,6 @@ impl World {
 		Ok(())
 	}
 
-	/// Report uncaught runtime errors since `after` in `from` or its callees
-	/// when a step completed without pausing on the error.
 	fn runtimes_in(&mut self, from: &str, after: u64) -> Result<()> {
 		let Response::Journal { entries, .. } = self.request(Request::Journal {
 			after,
@@ -1161,8 +1066,6 @@ impl World {
 
 	fn step(&mut self, kind: ContinueKind, timeout: Option<Duration>) -> Result<()> {
 		self.need_pause()?;
-		// Record the starting proc and journal position to find errors during
-		// the step.
 		let from = self.frames(0, Some(1))?.first().map(|frame| proc_name(&frame.instruction.proc));
 		let newest = match self.request(Request::Journal {
 			after: u64::MAX,
@@ -1193,7 +1096,6 @@ impl World {
 				Some(_) => {}
 			}
 		};
-		// A pause on the runtime error already reports it.
 		if !matches!(stepped, Stepped::TimedOut | Stepped::Paused(BreakpointReason::Runtime { .. })) {
 			if let Some(from) = from {
 				self.runtimes_in(&from, newest)?;
@@ -1209,8 +1111,6 @@ impl World {
 				self.report(None)
 			}
 			Stepped::TimedOut => {
-				// Query execution status rather than inferring it from missing
-				// stop events.
 				if let Some(reason) = self.observe(Duration::from_secs(2)) {
 					self.report(reason.as_ref())?;
 				}
@@ -1225,7 +1125,6 @@ impl World {
 		}
 	}
 
-	/// Query pause state within `patience`: `Some(None)` means running.
 	fn observe(&mut self, patience: Duration) -> Option<Option<BreakpointReason>> {
 		local::send(&mut self.stream, &Request::Status).ok()?;
 		let until = Instant::now() + patience;
@@ -1246,10 +1145,7 @@ impl World {
 				.unwrap_or_default();
 		}
 		let paused = self.paused()?;
-		// Track reloads that may move the breakpoints installed below.
 		self.reloaded = false;
-		// Set requested breakpoints before installing watches.
-		// With --change, conditions apply to the watches.
 		let condition = if wait.changes.is_empty() { wait.condition.clone() } else { None };
 		let mut ours_at = vec![];
 		let mut ours_watches = vec![];
@@ -1266,8 +1162,6 @@ impl World {
 			self.say_waited("already", Value::Bool(true), Some("already paused"));
 			return self.report(Some(reason));
 		}
-		// What's watched from a pause is of a frame there, and the wait is
-		// for the world to carry on and change it
 		let frame_id = match &paused {
 			Some(_) => Some(self.frame_id(wait.frame)?),
 			None => None
@@ -1298,7 +1192,6 @@ impl World {
 			})?;
 		}
 		if wait.runtimes {
-			// It has no answer
 			let catch = Request::CatchRuntimes {
 				uncaught: Some(wait.runtime_filter.clone()),
 				caught: wait.caught.then(|| wait.runtime_filter.clone())
@@ -1306,19 +1199,12 @@ impl World {
 			local::send(&mut self.stream, &catch).map_err(|_| hung_up())?;
 		}
 		let until = wait.timeout.map(|t| Instant::now() + t);
-		// With triggers, accept only matching pauses; otherwise accept any
-		// pause.
 		let triggered = !wait.breaks.is_empty() || !wait.changes.is_empty() || wait.runtimes;
 		let ours = |stop: &Stop, reloaded: bool| {
 			!triggered
 				|| match &stop.reason {
-					// Reloads do not report new breakpoint offsets. Accept a
-					// hit in any proc containing one of our breakpoints after a
-					// reload.
 					BreakpointReason::Breakpoint => ours_at.contains(&stop.at) || (reloaded && ours_at.iter().any(|at| at.proc == stop.at.proc)),
 					BreakpointReason::Data { changes } => changes.iter().any(|change| ours_watches.contains(&change.id)),
-					// The world pauses when any client's runtime filter
-					// matches.
 					BreakpointReason::Runtime { caught, message } => wait.runtimes && (wait.caught || !caught) && wait.runtime_filter.takes(message),
 					BreakpointReason::Step | BreakpointReason::Pause => false
 				}
@@ -1335,12 +1221,8 @@ impl World {
 		}
 	}
 
-	/// Set a breakpoint at `FILE:LINE` or `/proc/path#N`. A source line can
-	/// resolve to multiple procs. Reject targets without executable code.
-	/// With `log`, hits emit `Response::Log` without pausing.
 	fn set_breakpoint(&mut self, place: &str, condition: Option<String>, log: Option<Vec<LogPart>>) -> Result<Vec<Bound>> {
 		let (instructions, asked_line) = if place.starts_with(['/', '(']) {
-			// Asked first, for what's wrong with it if it isn't there
 			let proc = self
 				.find_proc(&proc_ref(place)?)
 				.map_err(|Failure(code, why)| Failure(code, format!("cannot set a breakpoint at {}: {}", place, why)))?;
@@ -1384,10 +1266,7 @@ impl World {
 		Ok(bound)
 	}
 
-	/// Remove a breakpoint and return the count of hits skipped by condition
-	/// errors.
 	fn unset_breakpoint(&mut self, bound: &Bound) -> Result<u32> {
-		// By what it was set with, which is how the world knows it
 		match self.request(Request::BreakpointUnset {
 			instruction: bound.asked.clone()
 		})? {
@@ -1396,7 +1275,6 @@ impl World {
 		}
 	}
 
-	/// Why there's no code at `line` of `file`, or after it
 	fn nowhere(&mut self, file: &str, line: u32) -> Result<Failure> {
 		let lines = match self.request(Request::LinesWithCode {
 			file: file.to_owned(),
@@ -1422,27 +1300,20 @@ impl World {
 	}
 }
 
-/// A breakpoint that was set
 struct Bound {
-	/// The place it was asked for, as it was given
 	place: String,
-	/// What it was set with
 	asked: InstructionRef,
-	/// Resolved proc and instruction.
 	at: InstructionRef,
 	file: Option<String>,
 	line: Option<u32>,
-	/// The line that was asked for, for one given as FILE:LINE
 	asked_line: Option<u32>
 }
 
 impl Bound {
-	/// Its proc and line, as a frame there is shown
 	fn spot(&self) -> String {
 		spot(&self.at.proc, false, self.file.as_deref(), self.line)
 	}
 
-	/// The same, for `wait pause` to say where it will pause
 	fn describe(&self) -> String {
 		let mut text = format!("breakpoint set at {}", self.spot());
 		if let (Some(asked), Some(line)) = (self.asked_line, self.line) {
@@ -1461,7 +1332,6 @@ fn place(frame: &StackFrame) -> String {
 	spot(&frame.instruction.proc, frame.old_code, frame.file.as_deref(), frame.line)
 }
 
-/// A proc and where in it
 fn spot(proc: &ProcRef, old_code: bool, file: Option<&str>, line: Option<u32>) -> String {
 	let name = match proc.override_id {
 		0 => proc.path.clone(),
@@ -1471,7 +1341,6 @@ fn spot(proc: &ProcRef, old_code: bool, file: Option<&str>, line: Option<u32>) -
 	match (file, line) {
 		(Some(file), Some(line)) => format!("{}  {}:{}", name, file, line),
 		(None, Some(line)) => format!("{}  line {}", name, line),
-		// At its start, before its first line
 		(Some(file), None) => format!("{}  {}", name, file),
 		(None, None) => name
 	}
@@ -1488,11 +1357,8 @@ fn unexpected(response: &Response) -> Failure {
 	Failure(1, format!("unexpected response from the world: {:?}", response))
 }
 
-/// Maximum value length shown in summary lines.
 const SHORT_VALUE: usize = 200;
 
-/// Truncate long summary values and include their full length. JSON and eval
-/// remain complete.
 fn short(value: &str) -> std::borrow::Cow<'_, str> {
 	let length = value.chars().count();
 	if length <= SHORT_VALUE + 50 {
@@ -1521,7 +1387,6 @@ mod tests {
 		args.iter().map(|arg| (*arg).to_owned()).collect()
 	}
 
-	/// Temporary test file removed on drop.
 	struct Scratch(std::path::PathBuf);
 
 	impl Scratch {
@@ -1561,7 +1426,6 @@ mod tests {
 		let file = Scratch::new("expression", "list(1, \"two\")\n\n");
 		assert_eq!(expression(&[], Some(file.0.as_path()), none).ok().unwrap(), "list(1, \"two\")");
 		assert_eq!(expression(&args(&["-"]), None, || Ok("1 + 1".to_owned())).ok().unwrap(), "1 + 1");
-		// A negative number is an expression, not stdin
 		assert_eq!(expression(&args(&["-", "1"]), None, none).ok().unwrap(), "- 1");
 		let Err(Failure(1, why)) = expression(&args(&["-"]), None, || Ok("\n".to_owned())) else {
 			panic!("nothing was an expression");

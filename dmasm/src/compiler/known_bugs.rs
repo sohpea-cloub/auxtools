@@ -1,18 +1,11 @@
-//! Detect known BYOND bugs in proc definitions and bodies. These affect
-//! DreamMaker builds and reloads alike; version checks exclude fixed bugs.
-
 use dreammaker::ast::{Block, Statement};
 
 use super::{procs::ProcSource, Compiler};
 
-/// First build whose `list.Find(x)` and `list ^ x` call `x.operator<=>()`.
 const FIND_COMPARES: u32 = 1674;
-/// First and last build that discard what `operator~=` and `operator~!` return.
 const EQUIV_DISCARDED: (u32, u32) = (1674, 1688);
-/// First build whose area `Exit()` calls `Uncross()`, ignoring the result.
 const AREA_UNCROSS: u32 = 1683;
 
-/// Check the proc definition and body for known BYOND bugs.
 pub(super) fn check(compiler: &Compiler, source: &ProcSource, code: &Block) {
     let line = source.value.location.line;
     if let Some(text) = proc_warning(compiler, source) {
@@ -25,7 +18,6 @@ pub(super) fn check(compiler: &Compiler, source: &ProcSource, code: &Block) {
     walk.block(code, None);
 }
 
-/// Detect ignored return values and incorrect operator dispatch.
 fn proc_warning(compiler: &Compiler, source: &ProcSource) -> Option<String> {
     let byond = compiler.byond;
     let name = source.name;
@@ -67,9 +59,7 @@ fn proc_warning(compiler: &Compiler, source: &ProcSource) -> Option<String> {
 
 #[derive(Clone, Copy, PartialEq)]
 enum LoopKind {
-    /// `for (i in a to b)` and `for (i = a to b)`
     Counted,
-    /// `for (x in list)` and `for (k, v in list)`
     List,
     DoWhile,
     Other,
@@ -78,7 +68,6 @@ enum LoopKind {
 struct Loop {
     kind: LoopKind,
     label: Option<String>,
-    /// A `try` block separates this loop from the current statement.
     try_inside: bool,
 }
 
@@ -88,7 +77,6 @@ struct Walk<'c, 'a> {
 }
 
 impl Walk<'_, '_> {
-    /// `label` names the first loop of the block.
     fn block(&mut self, block: &Block, label: Option<&str>) {
         let mut label = label.map(str::to_owned);
         for stmt in block.iter() {
@@ -142,7 +130,6 @@ impl Walk<'_, '_> {
                     }
                     self.block(catch_block, None);
                 }
-                // Spawned code runs after the loops around it have moved on.
                 Statement::Spawn { block, .. } => {
                     let loops = std::mem::take(&mut self.loops);
                     self.block(block, None);
@@ -156,7 +143,6 @@ impl Walk<'_, '_> {
 
     fn looped(&mut self, kind: LoopKind, label: Option<String>, block: &Block, line: u32) {
         if kind == LoopKind::List {
-            // Find an enclosing list loop separated by a `try` block.
             let caught_outside = self
                 .loops
                 .iter()

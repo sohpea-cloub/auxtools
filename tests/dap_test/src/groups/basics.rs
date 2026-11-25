@@ -1,6 +1,3 @@
-//! What a session is before and around the debugging: what the launcher says
-//! it can do, what it refuses, a world run without debugging, and the end.
-
 use std::{
 	path::PathBuf,
 	time::{Duration, Instant}
@@ -23,7 +20,6 @@ pub fn run() {
 	told_along_the_way();
 }
 
-/// Waits for the world to be over, and returns how long that took
 fn over(world: &mut World, since: std::time::Instant) -> std::time::Duration {
 	world.event("terminated");
 	let exited = world.event("exited");
@@ -31,7 +27,6 @@ fn over(world: &mut World, since: std::time::Instant) -> std::time::Duration {
 	since.elapsed()
 }
 
-/// `terminate`: the world ends itself, with the shutdown code it has
 fn asked_to_end() {
 	let grace = std::time::Duration::from_secs(5);
 
@@ -54,7 +49,6 @@ fn asked_to_end() {
 	ok("graceful shutdown calls world/Del");
 	world.end();
 
-	// Paused, it isn't going to run anything else
 	let mut world = World::start();
 	world.run_to("plain", "/sc_plain", "plain_1");
 	let asked = std::time::Instant::now();
@@ -74,7 +68,6 @@ fn asked_to_end() {
 	ok("shutdown while paused");
 	world.end();
 
-	// A world that doesn't end when asked is ended
 	let mut world = World::start();
 	assert_eq!(world.eval_global("on_shutdown = \"refuse\""), "\"refuse\"");
 	let asked = std::time::Instant::now();
@@ -94,7 +87,6 @@ fn asked_to_end() {
 	ok("shutdown timeout terminates process");
 	world.end();
 
-	// Run without debugging, and attached to
 	let mut world = World::launch(json!({ "noDebug": true }));
 	world.configure();
 	evaluate_when_connected(&mut world, "global_number");
@@ -116,7 +108,6 @@ fn asked_to_end() {
 	world.end();
 }
 
-/// The ids of the progress events that have come, as `(start or end, id)`
 fn progress(world: &mut World) -> Vec<(String, String)> {
 	world.has_event("progressStart");
 	let events: Vec<(String, String)> = world
@@ -134,18 +125,13 @@ fn progress(world: &mut World) -> Vec<(String, String)> {
 	events
 }
 
-/// What a client is told without asking: which program it debugs, what's
-/// taking a while, and where runtime errors were
 fn told_along_the_way() {
 	let pair = |event: &str, id: &str| (event.to_owned(), id.to_owned());
 
-	// A client that shows progress
 	let mut world = World::launch_as(json!({ "supportsProgressReporting": true }), host_file(""), json!({ "hotReload": true }));
 	world.catch_runtimes(false);
 	world.configure();
 	world.wait_output("Hot reload active");
-	// The source worker prints that itself; the adapter reports `active` after
-	// handling the worker's earlier events, which end the parse's progress.
 	while world.event("auxtoolsReload")["body"]["state"] != "active" {}
 	let events = progress(&mut world);
 	for id in ["starting", "reading"] {
@@ -186,8 +172,6 @@ fn told_along_the_way() {
 	);
 	ok("reboot progress events");
 
-	// BYOND's report of a runtime error says where it was, which is passed
-	// on as a place
 	let at = world.marks.clone();
 	world.run_through("fail_null");
 	let place = world
@@ -200,7 +184,6 @@ fn told_along_the_way() {
 	ok("runtime output source links");
 	world.end();
 
-	// A client that says nothing of progress isn't told of any
 	let mut world = World::start();
 	assert_eq!(progress(&mut world), Vec::<(String, String)>::new());
 	world.end();
@@ -327,12 +310,10 @@ fn refusals() {
 	world.end();
 }
 
-/// `loadedSources`: the world's files, each once, then stddef.dm
 fn loaded_sources(world: &mut World) {
 	let sources = world.request("loadedSources", json!({}))["sources"].as_array().unwrap().clone();
 	let (files, references): (Vec<&Value>, Vec<&Value>) = sources.iter().partition(|source| source["path"].is_string());
 	let paths: Vec<PathBuf> = files.iter().map(|source| PathBuf::from(source["path"].as_str().unwrap())).collect();
-	// (lib/tool.dm is just "tool.dm" to the world: where it is is worked out)
 	let expected: Vec<PathBuf> = [
 		"errors.dm",
 		"lib/tool.dm",
@@ -362,15 +343,10 @@ fn loaded_sources(world: &mut World) {
 	ok("stddef source reference");
 }
 
-/// DreamMaker names a file that a .dme other than the world's includes as
-/// that .dme does: lib/tool.dm, which lib/lib.dme includes, is "tool.dm" to
-/// the world. sub/tool.dm is "sub/tool.dm", with code on the same lines.
 fn files_another_environment_names(world: &mut World) {
 	assert_eq!(world.marks.line("lib_tool"), world.marks.line("sub_tool"));
 	let source_path = |world: &mut World| PathBuf::from(world.top_frame()["source"]["path"].as_str().unwrap());
 
-	// lib_tool() is called first: a breakpoint taken for the end of the
-	// file's name would stop there
 	world.run_to("tools", "/sub_tool", "sub_tool");
 	assert_eq!(source_path(world), world.marks.file("sub/tool.dm"));
 	world.resume_through("tools");
@@ -382,7 +358,6 @@ fn files_another_environment_names(world: &mut World) {
 	ok("nested .dme source resolution");
 }
 
-/// Evaluates in a world that may not be connected yet
 fn evaluate_when_connected(launcher: &mut Launcher, expression: &str) -> String {
 	let deadline = Instant::now() + client::TIMEOUT;
 	loop {
@@ -466,7 +441,6 @@ fn output_and_exit() {
 	ok("exit events include status");
 	world.end();
 
-	// A world that's still running ends with its session
 	let world = World::start();
 	let pid_again = client::listed_world("dap_test_host.dmb");
 	assert_ne!(pid, pid_again, "the first world is still there");
@@ -475,7 +449,6 @@ fn output_and_exit() {
 	assert!(list.is_empty(), "the world outlived its session: {:?}", list);
 	ok("launched world exits on disconnect");
 
-	// Asked to leave it running, the launcher can't: it says so
 	let mut world = World::start();
 	world.try_request("disconnect", json!({ "terminateDebuggee": false }));
 	assert!(

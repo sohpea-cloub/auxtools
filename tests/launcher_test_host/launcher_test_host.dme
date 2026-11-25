@@ -1,3 +1,2 @@
-// A world with none of auxtools' procs, for tests/launcher_test
 #define DEBUG
 #include "launcher_test_host.dm"

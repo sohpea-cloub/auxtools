@@ -165,7 +165,7 @@ pub fn hook(attr: TokenStream, item: TokenStream) -> TokenStream {
 	let args_len = args.len();
 
 	match &input.sig.output {
-		syn::ReturnType::Default => {} //
+		syn::ReturnType::Default => {}
 
 		syn::ReturnType::Type(_, ty) => {
 			return syn::Error::new(ty.span(), "Do not specify the return value of hooks")

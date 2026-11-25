@@ -27,8 +27,6 @@ mod ternary;
 mod unary;
 mod versions;
 
-/// Decode a parsed string literal into BYOND text, including escapes
-/// and text macros.
 pub(crate) fn text(raw: &str) -> Option<String> {
     String::from_utf8(strings::parse(raw).ok()?.0).ok()
 }
@@ -37,25 +35,19 @@ use chain_builder::ChainBuilder;
 
 fn is_writable(var: &Variable) -> bool {
     match var {
-        // Does Field count? We probably don't hit that code path but it might count
         Variable::Usr
         | Variable::Src
         | Variable::Args
         | Variable::Dot
         | Variable::CacheIndex
-        // TODO: These can be constant too.
         | Variable::Arg { .. }
         | Variable::Local { .. }
-        // TODO: Stuff like global.vars are constant and should return false here.
         | Variable::Global { .. } => true,
-        // `*p = x` writes through the pointer
         Variable::PtrDeref(_) => true,
         _ => false,
     }
 }
 
-/// The name BYOND stores for a call it resolves by name at runtime: a proc or
-/// verb's name with each `_` replaced by a space.
 fn dynamic_name(ident: &str) -> DMString {
     DMString(ident.replace('_', " ").into_bytes())
 }
@@ -68,7 +60,6 @@ pub enum CompileError {
     ExpectedLValue,
     ExpectedFieldReference,
 
-    // This is sort of snowflake
     ExpectedEnd,
 
     UnexpectedRange,
@@ -90,22 +81,17 @@ pub enum CompileError {
         name: String,
     },
     UnsupportedStatement(&'static str),
-    /// Unresolved identifier in a debugger expression.
     UndefinedVar(String),
-    /// Another error, at a source line.
     AtLine(u32, Box<CompileError>),
 
     AmbiguousListConstructor,
-    /// Feature unavailable in the target BYOND build.
     NotInByond {
         what: String,
         byond: ByondVersion,
     },
     InvalidLocateArgs,
-    /// No matching proc in the running world for `/type::name()`.
     BadProcReference(String),
 
-    // TODO: Merge these
     IncorrectArgCount(String),
     MissingArgument {
         proc: String,
@@ -199,53 +185,30 @@ impl fmt::Display for CompileError {
     }
 }
 
-/// Runtime name resolution for debugger expressions.
-///
-/// Resolve bare names as parameters, src variables, then globals; unknown
-/// names are errors. Resolve bare calls as src procs, then global procs.
-/// Without a scope, assume non-parameter names and bare calls are global.
 pub struct ExprScope<'a> {
-    /// Whether the object (`src`) has a var of this name
     pub has_src_var: &'a dyn Fn(&str) -> bool,
-    /// Whether the object has a proc or verb of this name
     pub has_src_proc: &'a dyn Fn(&str) -> bool,
-    /// How to reach the world's global var of this name, if it has one
     pub global: &'a dyn Fn(&str) -> Option<ExprGlobal>,
-    /// Parameter holding `global.vars` for name-based global access.
-    /// Names alone cannot distinguish globals from same-named type statics.
     pub globals: &'a str,
-    /// Resolve `/type::name()` to the nearest definition in the type ancestry.
     pub proc_ref: &'a dyn Fn(&str, &str) -> Result<FoundProc, String>,
-    /// Resolve a proc path such as `/type/proc/name` or `/type/name`, if it names a proc.
     pub proc_path: &'a dyn Fn(&str) -> Option<FoundProc>,
 }
 
-/// A proc reference resolved against the running world.
 pub struct FoundProc {
-    /// BYOND value tag for the proc reference.
     pub tag: u8,
     pub data: u32,
-    /// Warning when DreamMaker would reject the reference as written.
     pub warning: Option<String>,
 }
 
-/// How a debugger's expression reaches a global var
 pub enum ExprGlobal {
-    /// By its name, through the world's list of globals
     Listed,
-    /// Direct variable ID for globals absent from `global.vars`, such as
-    /// globals added by hot reload.
     Id(u32),
 }
 
-/// Compile a debugger expression for the newest supported build
-/// (see `compile_expr_for`).
 pub fn compile_expr(code: &str, params: &[&str]) -> Result<Vec<Node>, CompileError> {
     compile_expr_for(code, params, ByondVersion::LATEST)
 }
 
-/// Compiles an expression for the debugger's evals in a world running
-/// `byond`.
 pub fn compile_expr_for(
     code: &str,
     params: &[&str],
@@ -254,8 +217,6 @@ pub fn compile_expr_for(
     compile_expr_in(code, params, None, byond)
 }
 
-/// Compile a debugger expression for `byond` using runtime name resolution
-/// from `scope` (see `ExprScope`).
 pub fn compile_expr_in(
     code: &str,
     params: &[&str],
@@ -265,7 +226,6 @@ pub fn compile_expr_in(
     compile_expr_warned(code, params, scope, byond).map(|(nodes, _)| nodes)
 }
 
-/// Compile an expression with compatibility warnings (see `CompiledProc::warnings`).
 pub fn compile_expr_warned(
     code: &str,
     params: &[&str],
@@ -295,7 +255,6 @@ pub fn compile_expr_warned(
             .inspect(|_| taken.set(taken.get() + 1)),
     )?;
 
-    // Reject trailing input after the parsed expression.
     let rest = &tokens[taken.get().saturating_sub(1).min(tokens.len())..];
     let ends = |token: &dreammaker::lexer::LocatedToken| {
         use dreammaker::lexer::{Punctuation, Token};
@@ -328,24 +287,16 @@ pub fn compile_expr_warned(
     Ok((compiler.nodes, warnings))
 }
 
-/// Compiled debugger proc body.
 #[derive(Debug)]
 pub struct CompiledBody {
     pub nodes: Vec<Node>,
-    /// Local names by slot; the evaluation stub must allocate this many locals.
     pub locals: Vec<String>,
-    /// Compatibility warnings (see `CompiledProc::warnings`), with lines relative to the input.
     pub warnings: Vec<String>,
 }
 
-/// The proc a body is parsed as, and the file its debug info names
 const BODY_PROC: &str = "dmasm_body";
 const BODY_FILE: &str = "<dmasm expression>";
 
-/// Whether debugger input parses as a proc body containing multiple
-/// statements, a single non-expression statement, or a single call to a
-/// statement-only builtin such as `sleep(1)`. Leave invalid input to the
-/// expression compiler for diagnostics.
 pub fn is_body(code: &str) -> bool {
     use dreammaker::ast::Statement;
     let Ok(tree) = parse_body(code, ByondVersion::LATEST) else {
@@ -361,8 +312,6 @@ pub fn is_body(code: &str) -> bool {
     }
 }
 
-/// Identify calls to builtins with no expression form, such as `sleep(1)`.
-/// Compile these as statements rather than global proc calls or return values.
 fn is_statement_builtin(expr: &Expression, byond: ByondVersion) -> bool {
     use dreammaker::ast::Term;
     let Expression::Base { term, follow } = expr else {
@@ -374,7 +323,6 @@ fn is_statement_builtin(expr: &Expression, byond: ByondVersion) -> bool {
     if !follow.is_empty() {
         return false;
     }
-    // Try the builtin compilers on a scratch compiler and discard its code.
     let mut compiler = Compiler::new(vec![], None);
     compiler.byond = byond;
     if !matches!(
@@ -389,13 +337,6 @@ fn is_statement_builtin(expr: &Expression, byond: ByondVersion) -> bool {
     )
 }
 
-/// Compile debugger input as a proc body using `scope` for names outside
-/// its local declarations. Return `list(result, params...)` so the caller
-/// can restore modified frame variables.
-///
-/// A final expression becomes the result; otherwise, as after a final
-/// assignment or `x++`, return `.` on fallthrough.
-/// Diagnostic line numbers are relative to `code`.
 pub fn compile_body_in(
     code: &str,
     params: &[&str],
@@ -406,14 +347,12 @@ pub fn compile_body_in(
 
     let parsed = parse_body(code, byond)?;
     let mut statements = body_statements(&parsed).to_vec();
-    // A bare goto label must not become the return value.
     let ends_with_label = matches!(
         statements.last().map(|last| &last.elem),
         Some(Statement::Expr(expr)) if statements::is_bare_label(&statements, expr)
     );
     if let Some(last) = statements.last_mut().filter(|_| !ends_with_label) {
         if let Statement::Expr(expr) = &last.elem {
-            // Standalone shifts are input/output statements; `sleep(1)` also has no value.
             let io = matches!(
                 expr,
                 Expression::BinaryOp {
@@ -421,7 +360,6 @@ pub fn compile_body_in(
                     ..
                 }
             );
-            // Assignments and increments leave `.` as the result, as in a proc.
             let assigns = match expr {
                 Expression::AssignOp { .. } => true,
                 Expression::Base { follow, .. } => matches!(
@@ -451,8 +389,6 @@ pub fn compile_body_in(
             .value[0]
             .clone()
     };
-    // What the code can see of types is BYOND's own: the world's aren't
-    // known here
     let tree = builtins_tree();
     let root = tree.root();
     let source = procs::ProcSource {
@@ -476,14 +412,12 @@ pub fn compile_body_in(
     )));
     statements::emit_proc_body(&mut compiler, &source, value.code.as_ref().unwrap()).map_err(
         |e| match e {
-            // Adjust warning lines for the synthetic proc header.
             CompileError::AtLine(line, e) => CompileError::AtLine(line.saturating_sub(1), e),
             e => e,
         },
     )?;
     compiler.emit_ins(Instruction::End);
     let locals = compiler.proc.take().unwrap().locals;
-    // Adjust warning lines for the synthetic proc header.
     let warnings = compiler
         .warnings
         .take()
@@ -500,8 +434,6 @@ pub fn compile_body_in(
         })
         .collect();
 
-    // Every way out returns the result and the params, as an expression
-    // does; `End` returns `.`, which is the frame's when it's a param
     let count = params.len() as u32;
     let dot = match params.iter().rposition(|p| *p == ".") {
         Some(index) => Variable::Arg(index as u32),
@@ -544,8 +476,6 @@ pub fn compile_body_in(
     })
 }
 
-/// Parse debugger input as global proc `BODY_PROC`. Remove common
-/// indentation, then indent the body one level beneath a synthetic header.
 fn parse_body(
     code: &str,
     byond: ByondVersion,
@@ -565,7 +495,6 @@ fn parse_body(
         .iter()
         .map(|line| line.strip_prefix(common).unwrap_or(line.trim_start()))
         .collect();
-    // Use the body's indentation unit to avoid mixing tabs with user-supplied spaces.
     let unit = lines
         .iter()
         .filter(|line| !line.trim().is_empty())
@@ -584,16 +513,12 @@ fn parse_body(
     let pp = dreammaker::Preprocessor::from_buffer(&ctx, BODY_FILE.into(), text);
     let mut parser = dreammaker::Parser::new(&ctx, pp);
     parser.enable_procs();
-    // (with BYOND's types, the parser prints to stderr about a proc that
-    // doesn't parse)
     let tree = parser.parse_object_tree_without_builtins();
     if let Some(err) = ctx
         .errors()
         .iter()
         .find(|e| e.severity() == Severity::Error)
     {
-        // Map locations back to the input by removing the header and added indentation,
-        // then restoring the common indentation.
         let mut at = err.location();
         at.line = at
             .line
@@ -617,14 +542,12 @@ fn parse_body(
     Ok(tree)
 }
 
-/// A tree of BYOND's own types, and nothing else
 fn builtins_tree() -> dreammaker::objtree::ObjectTree {
     let ctx = dreammaker::Context::default();
     let pp = dreammaker::Preprocessor::from_buffer(&ctx, BODY_FILE.into(), "");
     dreammaker::Parser::new(&ctx, pp).parse_object_tree()
 }
 
-/// The statements of a body `parse_body` parsed
 fn body_statements(
     tree: &dreammaker::objtree::ObjectTree,
 ) -> &[dreammaker::ast::Spanned<dreammaker::ast::Statement>] {
@@ -636,7 +559,6 @@ fn body_statements(
         .unwrap_or(&[])
 }
 
-/// `src.member`, for a name a debugger's expression leaves `src.` off
 fn src_member(member: Follow) -> Expression {
     let location = dreammaker::Location::BUILTINS;
     Expression::Base {
@@ -650,27 +572,19 @@ fn src_member(member: Follow) -> Expression {
 
 #[derive(Debug, PartialEq)]
 enum EvalKind {
-    // The result of the expression will be on the top of the stack
     Stack,
 
-    // The result of the expression is a list entry L[K] where the top of the stack is the index and the 2nd top of the stack is the list
     ListRef,
 
-    // The result of the expression is 2 values on the Stack due to the `To` operator
     Range,
 
-    // The result of the expression is the `global` pseudo-object
     Global,
 
-    // The result of the expression is an arglist (which is on the top of the stack)
     ArgList,
 
-    // The result of the expression can be accessed using a Variable operand
     Var(Variable),
 
-    // Similar to Var, but more state
     Field(ChainBuilder, String),
-    // TODO: Eval?
 }
 
 impl fmt::Display for EvalKind {
@@ -693,72 +607,31 @@ struct Compiler<'a> {
     nodes: Vec<Node>,
     label_count: u32,
     short_circuit_labels: Vec<(String, bool)>,
-    /// Set when compiling a whole proc: what it can see.
     proc: Option<procs::ProcCtx<'a>>,
-    /// Set when compiling a debugger's expression that knows its
-    /// surroundings: what its names mean.
     expr_scope: Option<&'a ExprScope<'a>>,
-    /// Known cache-register access chain, or `None`. Omit redundant cache
-    /// loads using DreamMaker's reuse rules.
     cache: Option<Vec<Variable>>,
     last_line: Option<u32>,
-    /// The type a bare `new` creates: the declared type of what it's being
-    /// assigned to.
     implicit_type: Option<String>,
-    /// The next src-based chain was written with explicit `src.` and must
-    /// reload the cache.
     explicit_src: bool,
-    /// Emit DbgFile and DbgLine.
     debug_info: bool,
-    /// The build whose DreamMaker the code has to match.
     byond: ByondVersion,
-    /// The cache state at the jumps seen so far to each label, merged.
     label_states: std::collections::HashMap<String, (u32, Option<Vec<Variable>>)>,
-    /// Set while compiling an if or while condition that is a && or || chain.
     condition_chain: bool,
-    /// Set while compiling the left side of a `*`.
     mul_lhs: bool,
-    /// Regroup the next root expression using DreamMaker's rules for return
-    /// values, arguments and parentheses. Consumed by expression compilation.
     regroup_root: bool,
-    /// Passes `regroup_root` on to the binary operation it applies to.
     regroup_chain: bool,
-    /// Whether a field access or receiver call requires saving the cache
-    /// around a logical assignment RHS. Static/const reads through `.` and
-    /// `global.x` do not set this flag; `::` accesses do.
     global_field: bool,
-    /// Debug info currently names another file, such as a variable default.
-    /// Restore the proc's file before recording its next line.
     other_file: bool,
-    /// Set after a var default's line is recorded: the next compound term
-    /// records its own line, whatever it is (see `compound_line`)
     line_pending: bool,
-    /// After a lookahead line, force the next term to record its own line
-    /// (see `read_on`).
     pub(super) read_on_pending: bool,
-    /// Last lookahead line recorded in this statement.
     pub(super) read_to: Option<u32>,
-    /// Suppress the next compound term's line (`return "[x]"`).
     pub(super) skip_compound: bool,
-    /// Suppress target debug lines for compound assignments. Nested expressions
-    /// still record lines. Consumed by the next expression compilation.
     pub(super) place: bool,
-    /// Set while compiling `call(x, __PROC__)`'s proc, where builds before
-    /// 515.1644 take `__PROC__`
     proc_macro_ok: bool,
-    /// Set while compiling an expression with nothing folded (to see what
-    /// DreamMaker sees in its source)
     no_fold: bool,
-    /// Resource discovery with `no_fold`: still discard operands ruled out by
-    /// constant `&&`, `||` and `? :` conditions, as DreamMaker does.
     live_only: bool,
-    /// Compatibility warnings (see `CompiledProc::warnings`). Interior
-    /// mutability allows constant folding to report warnings through `&self`.
     warnings: std::cell::RefCell<Vec<String>>,
-    /// Warnings about bugs in BYOND, independent of dmasm compatibility.
     byond_bugs: std::cell::RefCell<Vec<ByondBug>>,
-    /// The element type of the `/list/T` var a follow starts from, for its
-    /// first index. Taken by `follow::emit_typed`.
     list_elem_type: Option<dreammaker::objtree::TypeRef<'a>>,
 }
 
@@ -816,14 +689,12 @@ impl<'a> Compiler<'a> {
         if let Instruction::DbgLine(line) = ins {
             self.line_pending = false;
             self.read_on_pending = false;
-            // DreamMaker doesn't repeat the line it last recorded
             if self.last_line == Some(line) {
                 return;
             }
             self.last_line = Some(line);
         }
         procs::track_cache(&mut self.cache, &mut ins, &mut self.explicit_src);
-        // (see ProcCtx::clear_new_vars)
         if matches!(
             ins,
             Instruction::Switch(_)
@@ -835,12 +706,10 @@ impl<'a> Compiler<'a> {
                 ctx.clear_new_vars = true;
             }
         }
-        // (a switch's cases to the same label are one way in)
         let mut targets = procs::label_targets(&ins);
         targets.sort();
         targets.dedup();
         for target in targets {
-            // (after a spawned block DreamMaker doesn't know what the cache holds)
             let state = if matches!(ins, Instruction::Spawn(_)) {
                 None
             } else {
@@ -859,8 +728,6 @@ impl<'a> Compiler<'a> {
         self.nodes.push(Node::Instruction(ins, ()));
     }
 
-    /// Merge incoming cache states at a jump target. DreamMaker preserves
-    /// knowledge only for a single incoming edge without fallthrough.
     fn emit_label(&mut self, label: String) {
         let falls_through = !matches!(
             self.nodes.last(),
@@ -882,14 +749,11 @@ impl<'a> Compiler<'a> {
         self.nodes.push(Node::Label(Label::Named(label)));
     }
 
-    /// A label jumped back to from later code, whose cache state isn't known.
     fn emit_loop_label(&mut self, label: String) {
         self.cache = None;
         self.nodes.push(Node::Label(Label::Named(label)));
     }
 
-    /// Pushes a call's arguments and returns the argument count operand:
-    /// named arguments and `arglist()` push one list and count as 65535.
     fn emit_call_args(&mut self, args: Vec<Expression>) -> Result<u32, CompileError> {
         let count = args.len() as u32;
         Ok(match args::emit(self, args::ArgsContext::Proc, args)? {
@@ -902,21 +766,14 @@ impl<'a> Compiler<'a> {
         })
     }
 
-    /// Whether proc macros have a valid source proc. Debugger bodies use a synthetic
-    /// proc, so `__TYPE__` and `__PROC__` would refer to it rather than the paused frame.
     fn proc_macros_known(&self) -> bool {
         self.proc.is_some() && self.expr_scope.is_none()
     }
 
-    /// The type path an expression is declared as, if it's a variable with a
-    /// declared type.
     fn static_type_name(&self, expr: &Expression) -> Option<String> {
         procs::expr_type(self, expr).map(|t| t.get().path.clone())
     }
 
-    /// DreamMaker forgets a chain through fields (`a.b.c`) held in the cache
-    /// at the end of an assignment statement (`x = y`, `x += y`, `x++`, even to
-    /// a local; not a list element's or a var declaration).
     pub(crate) fn end_assignment_statement(&mut self) {
         if self.cache.as_ref().is_some_and(|h| h.len() > 1) {
             self.cache = None;
@@ -949,8 +806,6 @@ impl<'a> Compiler<'a> {
             "global" => EvalKind::Global,
 
             name => match self.expr_scope {
-                // A debugger's expression: a var of the object it's
-                // evaluated for, then a global, as in a proc's code
                 Some(scope) => {
                     if (scope.has_src_var)(name) {
                         return self.emit_expr(src_member(Follow::Field(
@@ -961,15 +816,11 @@ impl<'a> Compiler<'a> {
                     return self.emit_global_by_name(name);
                 }
 
-                // Anything else is treated as a global var
                 None => EvalKind::Var(Variable::Global(GlobalVar::named(name.as_bytes(), None))),
             },
         })
     }
 
-    /// A global var in a debugger's expression: read through the list of
-    /// them that it's given (see `ExprScope::globals`), `globals["name"]`, or
-    /// by the id it's told
     fn emit_global_by_name(&mut self, name: &str) -> Result<EvalKind, CompileError> {
         let scope = self
             .expr_scope
@@ -1024,7 +875,6 @@ impl<'a> Compiler<'a> {
         label.0.to_owned()
     }
 
-    /// Pushes the value of a `const` var, which DreamMaker inlines.
     fn emit_constant(
         &mut self,
         value: dreammaker::constants::Constant,
@@ -1051,8 +901,6 @@ impl<'a> Compiler<'a> {
         Ok(())
     }
 
-    /// Pushes a number the way DreamMaker does: small non-negative integers
-    /// inline, anything else as a full value.
     fn emit_number(&mut self, value: f32) {
         if value.fract() == 0.0 && (0.0..=65535.0).contains(&value) {
             self.emit_ins(Instruction::PushInt(value as i32));
@@ -1061,7 +909,6 @@ impl<'a> Compiler<'a> {
         }
     }
 
-    /// Push a folded constant. Return false if it is not constant or needs runtime construction.
     fn emit_folded(&mut self, folded: Option<fold::Constant>) -> bool {
         match folded {
             Some(fold::Constant::Number(value)) => self.emit_number(value),
@@ -1074,21 +921,16 @@ impl<'a> Compiler<'a> {
             Some(fold::Constant::Path(path)) => {
                 self.emit_ins(Instruction::PushVal(operands::Value::Path(path)))
             }
-            // `constant` requires runtime construction.
             Some(fold::Constant::New) | None => return false,
         }
         true
     }
 
     fn emit_inner_expr(&mut self, expr: Expression) -> Result<EvalKind, CompileError> {
-        // (see `regroup_root`)
         let root = std::mem::take(&mut self.regroup_root);
         let place = std::mem::take(&mut self.place);
         if self.proc.is_some() {
-            // DreamMaker records lookahead lines for multiline operators and dot follows.
             if let Some(line) = self.read_on_line(&expr).filter(|_| !place) {
-                // A lookahead line can precede the last recorded line, such as a
-                // condition's final operator before its closing parenthesis.
                 if self.read_to.is_some_and(|r| line < r) && self.last_line == self.read_to {
                     self.emit_ins(Instruction::DbgLine(line));
                     self.read_on_pending = true;
@@ -1096,9 +938,6 @@ impl<'a> Compiler<'a> {
                     self.read_on(line);
                 }
             }
-            // Record multiline compound terms and the first term after a var
-            // default or lookahead line. Even a folded default forces this record:
-            // DreamMaker decides from the source.
             let ends = self.proc.as_ref().map_or(&[][..], |p| p.end_lines);
             let skip = std::mem::take(&mut self.skip_compound);
             if let Some(line) = compound_line(&expr, ends).filter(|_| !place && !skip) {
@@ -1110,18 +949,14 @@ impl<'a> Compiler<'a> {
                     self.emit_ins(Instruction::DbgLine(line));
                 }
             }
-            // Multiline named calls also record their closing parenthesis.
             if let Some(line) = self.named_call_end(&expr).filter(|_| !place) {
                 self.read_on(line);
             }
             let folded = fold::constant(self, &expr);
-            // (DreamMaker forgets the cache where it folds `&&` or `||`)
             if folded.as_ref().is_some_and(|c| *c != fold::Constant::New) && fold::has_logic(&expr)
             {
                 self.cache = None;
             }
-            // A `/type::var` default from another file that folds away
-            // records nothing, but the next line names the proc's file again
             if folded.as_ref().is_some_and(|c| *c != fold::Constant::New)
                 && self.debug_info
                 && !self.other_file
@@ -1134,23 +969,18 @@ impl<'a> Compiler<'a> {
                 return Ok(EvalKind::Stack);
             }
         } else if !place {
-            // Match DreamMaker's constant folding in debugger expressions too
-            // (`~-4` folds to 16777215).
             let folded = fold::constant(self, &expr);
             if self.emit_folded(folded) {
                 return Ok(EvalKind::Stack);
             }
         }
         match expr {
-            // Constant conditions select a branch without running it (`new T ? a : b`).
             Expression::TernaryOp { cond, if_, else_ } if fold::value(self, &cond).is_some() => {
                 let chosen = if fold::value(self, &cond).unwrap().truthy() {
                     if_
                 } else {
                     else_
                 };
-                // A default from another file changes the debug file; restore the
-                // proc's file and line before the selected branch.
                 if self.debug_info
                     && !self.other_file
                     && format!("{cond:?}").contains("StaticField")
@@ -1171,7 +1001,6 @@ impl<'a> Compiler<'a> {
             }
             Expression::AssignOp { op, lhs, rhs } => assignment::emit(self, op, *lhs, *rhs),
 
-            // `locate(X) in a in b` is `(locate(X) in a) in b`
             Expression::Base { term, follow }
                 if follow.is_empty()
                     && matches!(&term.elem, dreammaker::ast::Term::Locate { in_list: Some(list), .. }
@@ -1203,8 +1032,6 @@ impl<'a> Compiler<'a> {
                     rhs,
                 })
             }
-            // `&(x)` is `&x`, and `*(p)` is `*p` (but `*(&x)` reads the
-            // pointer it makes)
             Expression::Base { term, follow }
                 if self.proc.is_some()
                     && match follow.first().map(|f| &f.elem) {
@@ -1245,8 +1072,6 @@ impl<'a> Compiler<'a> {
                 {
                     self.explicit_src = true;
                 }
-                // `/type::var` and `/type::proc()` don't evaluate the type (also
-                // written `(/type)::var`)
                 let mut type_term = &term.elem;
                 while let dreammaker::ast::Term::Expr(inner) = type_term {
                     match &**inner {
@@ -1261,8 +1086,6 @@ impl<'a> Compiler<'a> {
                     Some(Follow::StaticField(_) | Follow::ProcReference(_)),
                 ) = (type_term, unspanned_follows.first())
                 {
-                    // (a debugger's code reads it at runtime: it doesn't
-                    // have the world's types)
                     if self.proc.is_some() && prefab.vars.is_empty() && self.expr_scope.is_none() {
                         self.global_field = true;
                         let path = prefab.path.to_string();
@@ -1270,7 +1093,6 @@ impl<'a> Compiler<'a> {
                         let ty = self.proc.as_ref().unwrap().tree.find(&path);
                         return follow::emit_typed(self, unspanned_follows[1..].to_vec(), kind, ty);
                     }
-                    // Resolve debugger proc references against the running world.
                     if let (Some(scope), Follow::ProcReference(name)) =
                         (self.expr_scope, &unspanned_follows[0])
                     {
@@ -1288,7 +1110,6 @@ impl<'a> Compiler<'a> {
                     }
                 }
                 let ty = procs::term_type(self, &term.elem);
-                // (and, for a `/list/T` var, what its elements are)
                 let elem_ty = match &term.elem {
                     dreammaker::ast::Term::Ident(_) | dreammaker::ast::Term::GlobalIdent(_) => {
                         procs::declared_type_path(
@@ -1302,8 +1123,6 @@ impl<'a> Compiler<'a> {
                     }
                     _ => None,
                 };
-                // An argument left empty, as in `f(a, , b)`, comes from the parser
-                // with an unknown location; DreamMaker pushes it rather than reading null
                 if matches!(term.elem, dreammaker::ast::Term::Null)
                     && term.location.file == dreammaker::FileId::UNKNOWN
                     && unspanned_follows.is_empty()
@@ -1312,8 +1131,6 @@ impl<'a> Compiler<'a> {
                     self.emit_ins(Instruction::PushVal(operands::Value::Null));
                     return Ok(EvalKind::Stack);
                 }
-                // `var/L[n]`, which the parser turns into a `new /list(n)` without a
-                // location, makes its list with EmptyList
                 if let dreammaker::ast::Term::NewPrefab {
                     prefab,
                     args: Some(args),
@@ -1332,8 +1149,6 @@ impl<'a> Compiler<'a> {
                 }
                 let is_ident = matches!(term.elem, dreammaker::ast::Term::Ident(_));
                 let mut kind = term::emit(self, term.elem)?;
-                // A static var of src's type, named alone, is reached through src
-                // when a field or call follows: `cache = src; cache = global(x); ...`
                 if is_ident
                     && self.proc.as_ref().is_some_and(|c| !c.ty.is_root())
                     && matches!(
@@ -1376,8 +1191,6 @@ impl<'a> Compiler<'a> {
         }
     }
 
-    /// Whether `expr`, compiled with nothing folded, records another file
-    /// (a `/type::var` default's): compiled and thrown away
     fn names_other_file(&mut self, expr: &Expression) -> bool {
         let start = self.nodes.len();
         let saved = (
@@ -1409,7 +1222,6 @@ impl<'a> Compiler<'a> {
         found
     }
 
-    /// Emit a resolved proc reference and any compatibility warning.
     fn emit_found_proc(&mut self, found: FoundProc) {
         if let Some(warning) = &found.warning {
             self.warn(warning);
@@ -1420,18 +1232,14 @@ impl<'a> Compiler<'a> {
         }));
     }
 
-    /// Record a compatibility warning once per source line.
     fn warn(&self, text: &str) {
         self.record(self.last_line, text, None);
     }
 
-    /// Record a BYOND bug once per source line. Append `ours` only to the
-    /// reload warning, where differences in generated code matter.
     fn warn_bug(&self, bug: &str, ours: &str) {
         self.record(self.last_line, &format!("{bug}{ours}"), Some(bug));
     }
 
-    /// Record a BYOND bug once for `line`.
     fn warn_at(&self, line: u32, text: &str) {
         self.record(Some(line), text, Some(text));
     }
@@ -1457,7 +1265,6 @@ impl<'a> Compiler<'a> {
         }
     }
 
-    /// Compiles the place an assignment writes to (see `place`)
     fn emit_place(
         &mut self,
         op: dreammaker::ast::AssignOp,
@@ -1476,7 +1283,6 @@ impl<'a> Compiler<'a> {
 
         let (label, used) = self.short_circuit_labels.pop().unwrap();
 
-        // TODO: BYOND would put this jump destination before any unary ops (if this is Expression::Base), idk if that is sane.
         if used {
             self.emit_move_to_stack(kind)?;
             self.emit_label(label);
@@ -1498,7 +1304,6 @@ fn compiles_safe_field_increment() {
     );
 }
 
-/// Look up `at` in `ProcValue::end_lines` or `operator_lines`.
 pub(super) fn line_at(
     lines: &[(dreammaker::Location, u32)],
     at: dreammaker::Location,
@@ -1509,7 +1314,6 @@ pub(super) fn line_at(
         .map(|i| lines[i].1)
 }
 
-/// Location of `expr`'s first token, including a leading unary operator.
 fn first_token(expr: &Expression) -> dreammaker::Location {
     match expr {
         Expression::Base { term, follow } => follow
@@ -1524,8 +1328,6 @@ fn first_token(expr: &Expression) -> dreammaker::Location {
 }
 
 impl Compiler<'_> {
-    /// Record a lookahead line beyond both the last recorded line and this
-    /// statement's last lookahead line. The next term records its own line.
     pub(super) fn read_on(&mut self, line: u32) {
         if self.last_line.is_some_and(|l| line > l) && self.read_to.is_none_or(|r| line > r) {
             self.emit_ins(Instruction::DbgLine(line));
@@ -1534,7 +1336,6 @@ impl Compiler<'_> {
         }
     }
 
-    /// Closing-parenthesis line of a multiline call with named arguments.
     pub(super) fn named_call_end(&self, expr: &Expression) -> Option<u32> {
         use dreammaker::ast::Term;
         let ctx = self.proc.as_ref()?;
@@ -1576,8 +1377,6 @@ impl Compiler<'_> {
         line
     }
 
-    /// Lookahead line for a binary or `?` operator, including one ending the
-    /// previous line, or a dot follow on a later line.
     pub(super) fn read_on_line(&self, expr: &Expression) -> Option<u32> {
         let ctx = self.proc.as_ref()?;
         let operator = |after: &Expression| {
@@ -1597,9 +1396,6 @@ impl Compiler<'_> {
     }
 }
 
-/// Debug line of a compound expression. Leaves (variables, variable fields
-/// such as `a.b` or `a:b`, literals including `-1`, and paths) have none.
-/// Interpolated text uses its end line.
 fn compound_line(expr: &Expression, ends: &[(dreammaker::Location, u32)]) -> Option<u32> {
     use dreammaker::ast::{PropertyAccessKind, Term, UnaryOp};
     match expr {
@@ -1637,7 +1433,6 @@ fn compound_line(expr: &Expression, ends: &[(dreammaker::Location, u32)]) -> Opt
     }
 }
 
-/// The line `expr` starts on.
 pub(super) fn first_line(expr: &Expression) -> u32 {
     match expr {
         Expression::Base { term, .. } => term.location.line,
@@ -1646,9 +1441,6 @@ pub(super) fn first_line(expr: &Expression) -> u32 {
     }
 }
 
-/// Fold a var initializer using DreamMaker rules beyond SpacemanDMM's evaluator,
-/// including `sqrt(4)`, `md5("x")`, `global.x` and `1 in list(1)`.
-/// Return `None` if folding is unsupported.
 pub(crate) fn fold_initializer(
     tree: &dreammaker::objtree::ObjectTree,
     ty: dreammaker::objtree::TypeRef,
@@ -1681,7 +1473,6 @@ pub(crate) fn fold_initializer(
     let ctx = procs::proc_ctx(&source, vec![]);
     let mut compiler = Compiler::new(vec![], Some(ctx));
     compiler.byond = byond;
-    // Fold constant list membership here; proc compilation leaves it to runtime.
     if let Expression::BinaryOp {
         op: dreammaker::ast::BinaryOp::In,
         lhs,
@@ -1700,7 +1491,6 @@ pub(crate) fn fold_initializer(
         }
         let mut found = false;
         for arg in args.iter() {
-            // Associative list membership tests keys.
             let key = match arg {
                 Expression::AssignOp { lhs, .. } => &**lhs,
                 arg => arg,
@@ -1712,7 +1502,6 @@ pub(crate) fn fold_initializer(
     Some(match fold::value(&compiler, expr)? {
         fold::Constant::Null => C::Null(None),
         fold::Constant::Number(n) => C::Float(n),
-        // Only preserve plain text that needs no escaping in source.
         fold::Constant::Text(text) => {
             let text = String::from_utf8(text).ok()?;
             if text.contains(['\\', '"', '[', ']']) {

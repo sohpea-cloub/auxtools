@@ -6,9 +6,6 @@ use crate::{
     Instruction,
 };
 
-/// Flatten a logical chain in evaluation order. The leftmost operand can be
-/// parenthesized. Elsewhere, parentheses join the chain only with `rhs_parens`
-/// (outside if/while conditions).
 fn flatten(
     op: BinaryOp,
     expr: Expression,
@@ -34,7 +31,6 @@ fn flatten(
             let Term::Expr(inner) = term.elem else {
                 unreachable!()
             };
-            // Only a chain of the same operator merges; anything else stays one operand
             let mut probe = &*inner;
             while let Expression::Base { term, follow } = probe {
                 match &term.elem {
@@ -58,7 +54,6 @@ fn flatten(
     }
 }
 
-/// The expression inside parentheses, if `expr` is a parenthesized `op`.
 fn paren_op(op: BinaryOp, expr: &Expression) -> Option<&Expression> {
     let mut inner = expr;
     let mut parens = false;
@@ -80,7 +75,6 @@ fn paren_op(op: BinaryOp, expr: &Expression) -> Option<&Expression> {
 }
 
 fn parenthesized(expr: Expression) -> Expression {
-    // (not Expression::from, which drops the parentheses)
     Expression::Base {
         term: Box::new(dreammaker::ast::Spanned::invalid(
             dreammaker::ast::Term::Expr(Box::new(expr)),
@@ -89,9 +83,6 @@ fn parenthesized(expr: Expression) -> Expression {
     }
 }
 
-/// Match DreamMaker regrouping for +, *, &, | and ^:
-/// `a + (b + c) + d` becomes `a + ((b + c) + d)`. Apply recursively
-/// so grouped constants fold together.
 fn regroup(op: BinaryOp, lhs: Expression, rhs: Expression) -> (Expression, Expression) {
     let lhs = match paren_op(op, &lhs) {
         Some(inner) => inner.clone(),
@@ -129,8 +120,6 @@ fn regroup(op: BinaryOp, lhs: Expression, rhs: Expression) -> (Expression, Expre
     }
 }
 
-/// `regroup` applied to every operation in an expression (not inside calls or
-/// parentheses, which are regrouped on their own).
 fn regroup_all(expr: Expression) -> Expression {
     match expr {
         Expression::BinaryOp { op, lhs, rhs } => {
@@ -169,7 +158,6 @@ pub(super) fn emit(
     );
     let root = std::mem::take(&mut compiler.regroup_chain);
     let (lhs, rhs) = if root && compiler.proc.is_some() {
-        // (and so is every operation under it)
         let (lhs, rhs) = if associative {
             regroup(op, lhs, rhs)
         } else {
@@ -180,10 +168,7 @@ pub(super) fn emit(
         (lhs, rhs)
     };
     let kind = match op {
-        // Short circuiting logic ops
         BinaryOp::And | BinaryOp::Or => {
-            // `a || b || c` short-circuits straight to the end of the chain, also
-            // through parentheses: `(a || b) || (c || d)` is one chain
             let mut operands = vec![];
             let in_proc = compiler.proc.is_some();
             let rhs_parens = in_proc && !std::mem::take(&mut compiler.condition_chain);
@@ -194,8 +179,6 @@ pub(super) fn emit(
             };
             flatten(op, chain, rhs_parens, in_proc, &mut operands);
 
-            // Fold short-circuit constants anywhere in the chain. Dropping
-            // an operand also invalidates DreamMaker's cache knowledge.
             let mut forget = vec![false; operands.len()];
             if compiler.proc.is_some() {
                 let mut i = 0;
@@ -207,9 +190,6 @@ pub(super) fn emit(
                     if c.truthy() == matches!(op, BinaryOp::Or) {
                         operands.truncate(i + 1);
                         forget.truncate(i + 1);
-                        // (a number that's all that's left forgets it as any
-                        // folded number does; text, null or a path has to be
-                        // told to: `"a" || x`, `null && x`)
                         if i == 0 && !matches!(c, super::fold::Constant::Number(_)) {
                             forget[0] = true;
                         }
@@ -232,7 +212,6 @@ pub(super) fn emit(
             let label = format!("LAB_{:0>4X}", compiler.label_count);
             compiler.label_count += 1;
             let count = operands.len();
-            // Each operand can be the value assigned: `x = (locate() in L) || new`
             let implicit = compiler.implicit_type.take();
             for (i, operand) in operands.into_iter().enumerate() {
                 if forget[i] {
@@ -255,7 +234,6 @@ pub(super) fn emit(
             EvalKind::Stack
         }
 
-        // x ** 2 and x ** -1 have instructions of their own
         BinaryOp::Pow
             if compiler.proc.is_some()
                 && matches!(super::fold::number(compiler, &rhs), Some(n) if n == 2.0 || n == -1.0) =>
@@ -271,7 +249,6 @@ pub(super) fn emit(
             EvalKind::Stack
         }
 
-        // x * x squares x
         BinaryOp::Mul
             if compiler.proc.is_some()
                 && !mul_lhs
@@ -284,7 +261,6 @@ pub(super) fn emit(
             EvalKind::Stack
         }
 
-        // Simple stack operations
         BinaryOp::Add
         | BinaryOp::Sub
         | BinaryOp::Mul
@@ -306,13 +282,10 @@ pub(super) fn emit(
         | BinaryOp::LShift
         | BinaryOp::RShift
         | BinaryOp::FloatMod => {
-            // A constant operand of `&`, `|` or `^` is stored as its 24 bits
-            // (not of a shift)
             let bit_op = compiler.proc.is_some()
                 && matches!(op, BinaryOp::BitAnd | BinaryOp::BitOr | BinaryOp::BitXor);
             for (i, operand) in vec![lhs, rhs].into_iter().enumerate() {
                 match super::fold::number(compiler, &operand) {
-                    // (only on the left)
                     Some(n)
                         if bit_op
                             && i == 0
@@ -321,12 +294,10 @@ pub(super) fn emit(
                         super::fold::warn_bits(compiler, n);
                         compiler.emit_number(super::fold::bits(n) as f32)
                     }
-                    // A const on the left of `*` is its value, not its global
                     Some(n) if op == BinaryOp::Mul && i == 0 && compiler.proc.is_some() => {
                         compiler.emit_number(n)
                     }
                     _ => {
-                        // `x * x * y` doesn't square x
                         compiler.mul_lhs = op == BinaryOp::Mul && i == 0;
                         let kind = compiler.emit_expr(operand)?;
                         compiler.mul_lhs = false;
@@ -370,17 +341,14 @@ pub(super) fn emit(
         BinaryOp::In => {
             match compiler.emit_expr(rhs)? {
                 EvalKind::Range => {
-                    // Bring LHS to stack (RHS already on stack)
                     let lhs = compiler.emit_expr(lhs)?;
                     compiler.emit_move_to_stack(lhs)?;
                     compiler.emit_ins(Instruction::IsIn(operands::IsInParams::Range))
                 }
 
                 other => {
-                    // Bring RHS to stack
                     compiler.emit_move_to_stack(other)?;
 
-                    // Bring LHS to stack
                     let lhs = compiler.emit_expr(lhs)?;
                     compiler.emit_move_to_stack(lhs)?;
 
@@ -393,11 +361,9 @@ pub(super) fn emit(
         }
 
         BinaryOp::To => {
-            // Bring LHS to stack
             let lhs = compiler.emit_expr(lhs)?;
             compiler.emit_move_to_stack(lhs)?;
 
-            // Bring RHS to stack
             let rhs = compiler.emit_expr(rhs)?;
             compiler.emit_move_to_stack(rhs)?;
 
@@ -408,8 +374,6 @@ pub(super) fn emit(
     Ok(kind)
 }
 
-/// Normalize operands for DreamMaker's `x * x` optimization.
-/// Strip parentheses and normalize unshadowed `global.x` to `x`.
 fn same_variable(compiler: &Compiler, expr: &Expression) -> Expression {
     use dreammaker::ast::{Follow, Term};
     let mut expr = expr;
@@ -422,7 +386,6 @@ fn same_variable(compiler: &Compiler, expr: &Expression) -> Expression {
     if let Expression::Base { term, follow } = expr {
         if let (Term::Ident(base), [first, rest @ ..]) = (&term.elem, &follow[..]) {
             if let Follow::Field(_, name) = &first.elem {
-                // (the bare name is the global too)
                 let global = matches!(
                     super::procs::find_var(compiler, name.as_str()),
                     Some(EvalKind::Var(crate::operands::Variable::Global(g))) if g.scope.as_deref() == Some("")
@@ -447,10 +410,7 @@ fn is_plain_variable(expr: &Expression) -> bool {
     match expr {
         Expression::Base { term, follow } => {
             let base = match &term.elem {
-                // (not with a fraction in it: DreamMaker doesn't see two equal
-                // fractions as the same)
                 Term::Ident(_) | Term::Int(_) => true,
-                // (and text, null and type paths, but not embedded text)
                 Term::String(_) | Term::Null | Term::Prefab(_) => true,
                 Term::Expr(inner) => is_plain_variable(inner),
                 _ => false,

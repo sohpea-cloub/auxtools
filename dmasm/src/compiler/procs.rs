@@ -1,5 +1,3 @@
-//! Compile complete procs, resolve their names and track cache-register state.
-
 use std::collections::HashMap;
 
 use dreammaker::ast::Block;
@@ -9,67 +7,43 @@ use super::{CompileError, Compiler, EvalKind};
 use crate::operands::{DMString, GlobalVar, Variable};
 use crate::{Instruction, Node};
 
-/// A proc to compile, as SpacemanDMM parsed it.
 pub struct ProcSource<'a> {
     pub tree: &'a ObjectTree,
-    /// The type the proc is defined on (the root type for global procs).
     pub ty: TypeRef<'a>,
     pub name: &'a str,
     pub value: &'a ProcValue,
-    /// The file name for `DbgFile`, as DreamMaker writes it: relative to the
-    /// .dme's directory, with forward slashes.
     pub file: &'a str,
-    /// Whether to emit DbgFile and DbgLine, as DreamMaker does for worlds
-    /// built with `#define DEBUG`.
     pub debug_info: bool,
-    /// Override index for a reparsed definition outside the snapshot's tree.
-    /// Otherwise infer the index from the tree.
     pub index: Option<usize>,
-    /// The build whose DreamMaker the code has to match: the running world's.
     pub byond: crate::ByondVersion,
-    /// Debug source names for defaults referenced from other files by `::`.
-    /// Without this map, omit those defaults' debug locations.
     pub file_names: Option<&'a dyn Fn(dreammaker::FileId) -> String>,
 }
 
 #[derive(Debug)]
 pub struct CompiledProc {
     pub nodes: Vec<Node>,
-    /// Local variable names, by slot.
     pub locals: Vec<String>,
     pub params: Vec<String>,
-    /// Static locals (and local consts), in the order they're declared.
     pub statics: Vec<StaticLocal>,
-    /// Compatibility warnings; see COMPILER.md.
     pub warnings: Vec<String>,
-    /// Known bugs affecting DreamMaker builds as well as reloads.
     pub byond_bugs: Vec<ByondBug>,
 }
 
-/// A known BYOND bug detected in source code.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ByondBug {
-    /// Source line, if known.
     pub line: Option<u32>,
-    /// What BYOND does with the code.
     pub text: String,
 }
 
-/// A static local: a global the world sets up when it starts.
 #[derive(Debug, Clone)]
 pub struct StaticLocal {
     pub name: String,
-    /// The scope the proc's code names it with (`proc:PATH#N`).
     pub scope: String,
-    /// Its initial value, when that's a constant.
     pub value: Option<dreammaker::constants::Constant>,
-    /// Optional initializer expression.
     pub expression: Option<dreammaker::ast::Expression>,
-    /// Declared type used to resolve implicit `new`.
     pub type_path: String,
 }
 
-/// Marks a static local's entry in `ProcCtx::scopes`.
 const STATIC_LOCAL: u32 = 1 << 31;
 
 #[derive(Clone)]
@@ -77,70 +51,44 @@ const STATIC_LOCAL: u32 = 1 << 31;
 pub(super) struct ProcCtx<'a> {
     pub tree: &'a ObjectTree,
     pub ty: TypeRef<'a>,
-    /// Lookahead line after each statement (`ProcValue::next_lines`).
     pub next_lines: &'a [(dreammaker::Location, u32)],
-    /// Lookahead line for the current statement.
     pub next_line: Option<u32>,
-    /// `ProcValue::end_lines` and `ProcValue::operator_lines`
     pub end_lines: &'a [(dreammaker::Location, u32)],
     pub operator_lines: &'a [(dreammaker::Location, u32)],
-    /// Every local slot's name, in allocation order.
     pub locals: Vec<String>,
-    /// Each local's declared type path, or "".
     pub local_types: Vec<String>,
     pub param_types: Vec<String>,
-    /// Visible locals, innermost scope last.
     pub scopes: Vec<Vec<(String, u32)>>,
     pub loops: Vec<LoopLabels>,
-    /// Nested for-in depth; inner loops save the outer iterator with IterPush.
     pub iterators: u32,
-    /// Pending loop label, block exit label and active cleanups.
     pub pending_loop_name: Option<(String, String, usize)>,
-    /// `var/static` and `var/global` locals: globals under the local's name.
     pub static_locals: Vec<String>,
     pub statics: Vec<StaticLocal>,
-    /// The declared type paths of static locals.
     pub static_local_types: std::collections::HashMap<(String, u32), String>,
-    /// After the first for loop, label, switch or pick(), initialize
-    /// uninitialized declarations to null, matching DreamMaker.
     pub clear_new_vars: bool,
-    /// How many try blocks the code being compiled is in.
     pub try_depth: u32,
-    /// The for-in iterators active at each `label:` of the proc.
     pub label_iterators: std::collections::HashMap<String, u32>,
-    /// The labels written as a bare name, not yet emitted.
     pub bare_labels: std::collections::HashSet<String>,
-    /// Cleanup instructions for enclosing loops, innermost last.
-    /// For-in uses IterPop; range loops use PopN for bounds.
     pub cleanups: Vec<Instruction>,
-    /// Local `var/const`s with number values, which are folded in.
     pub local_consts: std::collections::HashMap<String, dreammaker::constants::Constant>,
-    /// The proc's path, for __PROC__.
     pub proc_path: String,
     pub file: String,
-    /// The file the proc is in, and how to name the others
     pub file_id: dreammaker::FileId,
     pub file_names: Option<&'a dyn Fn(dreammaker::FileId) -> String>,
-    /// The line of the proc's header, for the default-argument prologue.
     pub header_line: u32,
 }
 
 #[derive(Clone)]
 pub(super) struct LoopLabels {
     pub name: Option<String>,
-    /// How many loop cleanups (see `ProcCtx::cleanups`) are live inside it.
     pub cleanups: usize,
-    /// How many are live where `break` goes.
     pub break_cleanups: usize,
     pub continue_label: String,
     pub break_label: String,
-    /// A labeled block that isn't a loop: only `break label` leaves it.
     pub block: bool,
 }
 
 impl ProcCtx<'_> {
-    /// Resolve the innermost declaration: local slot or static index
-    /// with `STATIC_LOCAL` set.
     fn find_declared(&self, name: &str) -> Option<u32> {
         self.scopes
             .iter()
@@ -155,15 +103,12 @@ impl ProcCtx<'_> {
             .filter(|slot| slot & STATIC_LOCAL == 0)
     }
 
-    /// Resolve a static local's declaration index among same-named statics.
     pub fn find_static(&self, name: &str) -> Option<u32> {
         self.find_declared(name)
             .filter(|slot| slot & STATIC_LOCAL != 0)
             .map(|slot| slot & !STATIC_LOCAL)
     }
 
-    /// Declares a static local in the current block, with its type and
-    /// constant initial value.
     pub fn declare_static(
         &mut self,
         name: &str,
@@ -203,15 +148,11 @@ pub fn compile_proc(source: &ProcSource) -> Result<CompiledProc, CompileError> {
     compile_proc_as(source, None, &[])
 }
 
-/// Compile with an optional `__PROC__` override. Static initializers must name
-/// their containing proc rather than the synthetic initializer proc.
-/// `statics` lists visible proc statics by name and same-name declaration index.
 pub(crate) fn compile_proc_as(
     source: &ProcSource,
     proc_path: Option<&str>,
     statics: &[(String, u32)],
 ) -> Result<CompiledProc, CompileError> {
-    // Exclude `...` and absolute-path parameters, matching BYOND.
     let declared: Vec<&dreammaker::ast::Parameter> = source
         .value
         .parameters
@@ -257,8 +198,6 @@ pub(crate) fn compile_proc_as(
     })
 }
 
-/// Proc path used by `__PROC__` and static-variable scopes:
-/// `/type/proc/name` for a declaration, `/type/name` for an override.
 pub(crate) fn proc_path(ty: TypeRef, name: &str, first: bool) -> String {
     let ty_path = if ty.is_root() {
         ""
@@ -276,7 +215,6 @@ pub(crate) fn proc_path(ty: TypeRef, name: &str, first: bool) -> String {
     }
 }
 
-/// Create the initial name-resolution context for `source`.
 pub(super) fn proc_ctx<'a>(source: &ProcSource<'a>, param_types: Vec<String>) -> ProcCtx<'a> {
     ProcCtx {
         tree: source.tree,
@@ -320,8 +258,6 @@ pub(super) fn proc_ctx<'a>(source: &ProcSource<'a>, param_types: Vec<String>) ->
     }
 }
 
-/// Resolves a bare identifier inside a proc: locals, then parameters, then
-/// `src`'s vars, then globals. `None` outside proc compilation.
 pub(super) fn find_var(compiler: &Compiler, name: &str) -> Option<EvalKind> {
     let ctx = compiler.proc.as_ref()?;
     if let Some(slot) = ctx.find_local(name) {
@@ -331,8 +267,6 @@ pub(super) fn find_var(compiler: &Compiler, name: &str) -> Option<EvalKind> {
         return Some(EvalKind::Var(Variable::Arg(index as u32)));
     }
     if let Some(number) = ctx.find_static(name) {
-        // Static locals are scoped by proc and block. `proc:PATH#N` identifies
-        // the Nth declaration of a given name.
         let scope = format!("proc:{}#{}", ctx.proc_path, number);
         return Some(EvalKind::Var(Variable::Global(GlobalVar::named(
             name.as_bytes(),
@@ -343,7 +277,6 @@ pub(super) fn find_var(compiler: &Compiler, name: &str) -> Option<EvalKind> {
         "." | "usr" | "src" | "args" | "world" | "caller" | "callee" | "global" => return None,
         _ => {}
     }
-    // A debugger's code: the rest is what its scope says (see `ExprScope`)
     if compiler.expr_scope.is_some() {
         return None;
     }
@@ -365,9 +298,6 @@ pub(super) fn find_var(compiler: &Compiler, name: &str) -> Option<EvalKind> {
     ))))
 }
 
-/// Resolve a proc call operand, using dynamic_verb for verb display names.
-/// Runtime names use `set name` when present; otherwise replace
-/// underscores in the identifier with spaces.
 pub(super) fn call_var(ty: Option<TypeRef>, name: &str) -> Variable {
     let is_verb = ty
         .and_then(|t| t.get_proc_declaration(name))
@@ -397,7 +327,6 @@ pub(super) fn call_name(ty: Option<TypeRef>, name: &str) -> DMString {
                                 dreammaker::ast::Term::String(s) => Some(s.clone()),
                                 _ => None,
                             }) {
-                                // (with its escapes, `\"` and the like, worked out)
                                 return super::strings::parse(s.as_str())
                                     .unwrap_or_else(|_| DMString(s.as_str().as_bytes().to_vec()));
                             }
@@ -414,7 +343,6 @@ pub(super) fn call_name(ty: Option<TypeRef>, name: &str) -> DMString {
     super::dynamic_name(name)
 }
 
-/// `foo(...)` inside a proc: a proc of `src` by name, or else a global proc.
 pub(super) fn emit_bare_call(
     compiler: &mut Compiler,
     ident: &str,
@@ -423,7 +351,6 @@ pub(super) fn emit_bare_call(
     let Some(ctx) = compiler.proc.as_ref() else {
         return Ok(None);
     };
-    // (a debugger's code: its scope says whose it is)
     if compiler.expr_scope.is_some() {
         return Ok(None);
     }
@@ -458,8 +385,6 @@ pub(super) fn emit_bare_call(
     Ok(None)
 }
 
-/// A var objects of `ty` have, declared on it or a parent type (but not a
-/// global var, which the root type holds).
 pub(super) fn member_var<'a>(
     ty: TypeRef<'a>,
     name: &str,
@@ -467,7 +392,6 @@ pub(super) fn member_var<'a>(
     ty.get_var_declaration(name).filter(|d| !d.ty().is_root())
 }
 
-/// Resolve `ty:name`, searching subtypes depth first if needed.
 pub(super) fn colon_var<'a>(
     ty: TypeRef<'a>,
     name: &str,
@@ -478,22 +402,17 @@ pub(super) fn colon_var<'a>(
     ty.children().find_map(|child| colon_var(child, name))
 }
 
-/// Generation counter for trees registered through `new_tree`.
 static TREES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
-/// Invalidate address-based caches when a new compilation tree is created.
 pub(crate) fn new_tree() {
     TREES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 }
 
-/// Resolve an unknown receiver's call using the first declaration's
-/// display name, matching DreamMaker.
 pub(super) fn first_declaring_type<'a>(tree: &'a ObjectTree, name: &str) -> Option<TypeRef<'a>> {
     thread_local! {
         static FIRST: std::cell::RefCell<((usize, usize), HashMap<String, String>)> =
             std::cell::RefCell::new(((0, 0), HashMap::new()));
     }
-    // Include the generation because a new tree can reuse an old tree's address.
     let key = (
         tree as *const ObjectTree as usize,
         TREES.load(std::sync::atomic::Ordering::Relaxed),
@@ -523,14 +442,11 @@ pub(super) fn first_declaring_type<'a>(tree: &'a ObjectTree, name: &str) -> Opti
     tree.find(&path)
 }
 
-/// T, for a var declared `/list/T` (with T a type).
 pub(super) fn list_elem_type<'a>(compiler: &Compiler<'a>, path: &str) -> Option<TypeRef<'a>> {
     let rest = path.strip_prefix("/list/")?;
     compiler.proc.as_ref()?.tree.find(&format!("/{rest}"))
 }
 
-/// The type whose proc `ty:name()` calls: `ty` if it has one, or else the
-/// first subtype that does (depth first, like `colon_var`).
 pub(super) fn colon_proc_type<'a>(ty: TypeRef<'a>, name: &str) -> Option<TypeRef<'a>> {
     if ty.get_proc(name).is_some() {
         return Some(ty);
@@ -538,16 +454,12 @@ pub(super) fn colon_proc_type<'a>(ty: TypeRef<'a>, name: &str) -> Option<TypeRef
     ty.children().find_map(|child| colon_proc_type(child, name))
 }
 
-/// Whether a variable is stored globally: static and user-defined const
-/// variables, excluding per-object built-in constants such as `type`.
 pub(super) fn is_global_member(decl: &dreammaker::objtree::VarDeclarationRef) -> bool {
     let flags = decl.get().var_type.flags;
     flags.is_static()
         || (flags.is_const() && decl.get().location.file != dreammaker::FileId::BUILTINS)
 }
 
-/// Follows `::name` steps from `ty` to the declaration they end at, as long
-/// as each step's var is declared with a type.
 pub(super) fn static_chain<'a>(
     compiler: &Compiler<'a>,
     mut ty: Option<TypeRef<'a>>,
@@ -561,7 +473,6 @@ pub(super) fn static_chain<'a>(
     member_var(ty?, last)
 }
 
-/// The type a declaration names, if it names one in the tree.
 pub(super) fn declared_type<'a>(
     compiler: &Compiler<'a>,
     var_type: &dreammaker::ast::VarType,
@@ -574,7 +485,6 @@ fn find_type<'a>(compiler: &Compiler<'a>, path: &str) -> Option<TypeRef<'a>> {
     if path.is_empty() || path == "/" {
         return None;
     }
-    // `var/list/datum/x` is a list (of datums, which nothing checks)
     let path = if path.starts_with("/list/") {
         "/list"
     } else {
@@ -583,7 +493,6 @@ fn find_type<'a>(compiler: &Compiler<'a>, path: &str) -> Option<TypeRef<'a>> {
     compiler.proc.as_ref()?.tree.find(path)
 }
 
-/// The static type of a term, where it's a variable with a declared type.
 pub(super) fn term_type<'a>(
     compiler: &Compiler<'a>,
     term: &dreammaker::ast::Term,
@@ -626,7 +535,6 @@ pub(super) fn term_type<'a>(
     declared_type(compiler, &decl.get().var_type)
 }
 
-/// The static type of an expression made of a variable and field accesses.
 pub(super) fn expr_type<'a>(
     compiler: &Compiler<'a>,
     expr: &dreammaker::ast::Expression,
@@ -640,7 +548,6 @@ pub(super) fn expr_type<'a>(
             return expr_type(compiler, inner);
         }
     }
-    // global.x: x's declared type
     let global = matches!(&term.elem, Term::Ident(i) if i.as_str() == "global")
         && matches!(follow.first().map(|f| &f.elem), Some(Follow::Field(..)));
     let mut ty = if global {
@@ -670,13 +577,10 @@ pub(super) fn expr_type<'a>(
     Some(ty)
 }
 
-/// A proc reference like `.proc/foo` or `/obj/x.proc/foo`, as the path of the
-/// proc declaration it names (`/obj/proc/foo`).
 pub(super) fn resolve_proc_path(compiler: &Compiler, path: &str) -> Option<String> {
     let ctx = compiler.proc.as_ref()?;
     let (type_part, sep, kind, name) = ["proc", "verb"].iter().find_map(|kind| {
         for sep in ['.', '/', ':'] {
-            // (`/type/proc.name` too)
             for end in ['/', '.'] {
                 let marker = format!("{}{}{}", sep, kind, end);
                 if let Some(i) = path.find(&marker) {
@@ -686,8 +590,6 @@ pub(super) fn resolve_proc_path(compiler: &Compiler, path: &str) -> Option<Strin
         }
         None
     })?;
-    // DreamMaker requires `/type/proc/name` on the declaring type;
-    // `.proc/name` searches the ancestry.
     let written_on_type = sep == '/' && !type_part.is_empty();
     let warn_elsewhere = |found: &str| {
         if written_on_type {
@@ -723,7 +625,6 @@ pub(super) fn resolve_proc_path(compiler: &Compiler, path: &str) -> Option<Strin
         }
         current = t.parent_type();
     }
-    // Global procs are reachable from any type
     if ctx.tree.root().get().procs.contains_key(name) {
         let found = format!("/{}/{}", kind, name);
         if ty != ctx.tree.root() {
@@ -734,8 +635,6 @@ pub(super) fn resolve_proc_path(compiler: &Compiler, path: &str) -> Option<Strin
     None
 }
 
-/// The declared type path of a variable expression, even one that isn't a
-/// type in the tree (like `/list`).
 pub(super) fn declared_type_path(
     compiler: &Compiler,
     expr: &dreammaker::ast::Expression,
@@ -784,7 +683,6 @@ pub(super) fn declared_type_path(
     }
 }
 
-/// The named labels an instruction can jump to.
 pub(super) fn label_targets(ins: &Instruction) -> Vec<String> {
     use crate::operands::Label;
     use Instruction::*;
@@ -836,7 +734,6 @@ pub(super) fn label_targets(ins: &Instruction) -> Vec<String> {
     }
 }
 
-/// Mutable jump targets of an instruction.
 pub(crate) fn labels_mut(ins: &mut Instruction) -> Vec<&mut crate::operands::Label> {
     use Instruction::*;
     match ins {
@@ -880,8 +777,6 @@ pub(crate) fn labels_mut(ins: &mut Instruction) -> Vec<&mut crate::operands::Lab
     }
 }
 
-/// The value of a `const` var a bare identifier names, if it does (and isn't
-/// shadowed by a local or parameter).
 pub(super) fn const_value(
     compiler: &Compiler,
     name: &str,
@@ -889,7 +784,6 @@ pub(super) fn const_value(
     const_lookup(compiler, name).map(|(value, _)| value)
 }
 
-/// The value of `global.name`, where that's a const of the code's own.
 pub(super) fn global_const_value(
     compiler: &Compiler,
     name: &str,
@@ -904,8 +798,6 @@ pub(super) fn global_const_value(
     root.get_value(name)?.constant.clone()
 }
 
-/// Whether a bare name is a built-in constant. Emit built-ins as values;
-/// user constants remain global reads outside larger constant expressions.
 pub(super) fn is_builtin_const(compiler: &Compiler, name: &str) -> bool {
     const_lookup(compiler, name).is_some_and(|(_, builtin)| builtin)
 }
@@ -933,7 +825,6 @@ fn const_lookup(
     if !decl.get().var_type.flags.is_const() {
         return None;
     }
-    // Builtin vars like `type` are declared const but differ per object
     let builtin = decl.get().location.file == dreammaker::FileId::BUILTINS;
     if !ty.is_root() && builtin {
         return None;
@@ -941,8 +832,6 @@ fn const_lookup(
     Some((ty.get_value(name)?.constant.clone()?, builtin))
 }
 
-/// `/type::name` (a var's initial value, or a static var) or `/type::name()`
-/// (a proc reference).
 pub(super) fn emit_type_scope(
     compiler: &mut Compiler,
     path: &str,
@@ -954,7 +843,6 @@ pub(super) fn emit_type_scope(
         .find(path)
         .ok_or(CompileError::UnsupportedStatement("::"))?;
     match follow {
-        // A type's own path and its parent's
         Follow::StaticField(name) if name.as_str() == "type" || name.as_str() == "parent_type" => {
             let path = if name.as_str() == "type" {
                 ty.get().path.clone()
@@ -976,11 +864,7 @@ pub(super) fn emit_type_scope(
                     Some(scope),
                 ))));
             }
-            // The initial value: a constant, or else its expression evaluated
-            // again (a list, say)
             let value = ty.get_value(name.as_str());
-            // recorded where it's written, which may be another file (and the
-            // next compound term records its own line again)
             if let Some(at) = value.filter(|v| v.expression.is_some()).map(|v| v.location) {
                 let ctx = compiler.proc.as_ref().unwrap();
                 if at.file == ctx.file_id {
@@ -1015,8 +899,6 @@ pub(super) fn emit_type_scope(
             Ok(EvalKind::Stack)
         }
         Follow::ProcReference(name) => {
-            // The type's own version of the proc, or the nearest parent's: an
-            // override is named without `proc/`
             let mut current = Some(ty);
             let mut found = None;
             while let Some(t) = current {
@@ -1040,7 +922,6 @@ pub(super) fn emit_type_scope(
     }
 }
 
-/// Whether an instruction reads or changes the cache register.
 pub(super) fn touches_cache(ins: &Instruction) -> bool {
     use Instruction::*;
     if matches!(
@@ -1080,7 +961,6 @@ pub(super) fn touches_cache(ins: &Instruction) -> bool {
     var_operand(&mut ins).is_some_and(|v| uses(v))
 }
 
-/// The variable operand of an instruction, if it has one.
 pub(super) fn var_operand(ins: &mut Instruction) -> Option<&mut Variable> {
     use Instruction::*;
     match ins {
@@ -1113,18 +993,13 @@ pub(super) fn var_operand(ins: &mut Instruction) -> Option<&mut Variable> {
     }
 }
 
-/// Remove cache-chain prefixes already loaded and update cache state.
 pub(super) fn track_cache(
     cache: &mut Option<Vec<Variable>>,
     ins: &mut Instruction,
     explicit_src: &mut bool,
 ) {
     track_cache_inner(cache, ins, explicit_src);
-    // (`src.` applies to the chain right after it: `src?.x` has none)
     *explicit_src = false;
-    // Invalidate field chains after calls outside the cache. Calls through
-    // `a.b.f()` retain the old receiver even if f changes the field chain;
-    // existing code depends on this DreamMaker behavior.
     use Instruction::*;
     let call = matches!(
         ins,
@@ -1140,15 +1015,12 @@ pub(super) fn track_cache(
             | Del
             | Sleep
     ) || matches!(ins, Call(v, _) | CallStatement(v, _) if !uses_cache(v))
-        // (and after `a.b.c++` or `a.b.c += v` as a value)
         || matches!(ins, PreInc(_) | PostInc(_) | PreDec(_) | PostDec(_) | PushEval);
     if call && cache.as_ref().is_some_and(|held| held.len() > 1) {
         *cache = None;
     }
 }
 
-/// Whether a variable operand reads the cache (a chain from it, or one that
-/// loads it).
 pub(super) fn uses_cache(var: &Variable) -> bool {
     match var {
         Variable::Cache | Variable::CacheKey | Variable::CacheIndex => true,
@@ -1185,7 +1057,6 @@ fn track_cache_inner(
         return;
     };
 
-    // Writing to what the cache was loaded from leaves it stale
     if writes
         && cache
             .as_ref()
@@ -1205,8 +1076,6 @@ fn track_cache_inner(
         return;
     }
 
-    // Explicit `src.x` and bare `x` access the same value, but DreamMaker
-    // does not reuse their cache states interchangeably.
     if bases[0] == Variable::Src && *explicit_src {
         bases[0] = Variable::PtrRef(Box::new(Variable::Src));
         *explicit_src = false;

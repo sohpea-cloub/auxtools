@@ -1,5 +1,3 @@
-//! Print proc bytecode: `probe_compile FILE TYPE PROC`.
-//! Set `BYOND=515.1647` to select a target build, `DEBUG=1` for DbgFile and DbgLine.
 use dmasm::compiler::{compile_proc, ProcSource};
 fn main() {
     let a: Vec<String> = std::env::args().collect();

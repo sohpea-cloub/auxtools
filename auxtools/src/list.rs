@@ -17,7 +17,6 @@ impl List {
 		Ok(Self { value: val.clone() })
 	}
 
-	/// Creates a new empty list.
 	pub fn new() -> Self {
 		Self::default()
 	}
@@ -46,7 +45,6 @@ impl List {
 			data: raw_types::values::ValueData { id: 0 }
 		};
 
-		// assoc funcs for everything else
 		unsafe {
 			if raw_types::funcs::get_assoc_element(&mut value, self.value.raw, index.raw) == 1 {
 				return Ok(Value::from_raw_owned(value));
@@ -97,7 +95,6 @@ impl List {
 		self.len() == 0
 	}
 
-	/// Whether this is a DM `/alist`, where numbers are keys and not positions.
 	pub fn is_alist(&self) -> bool {
 		self.value.raw.tag == raw_types::values::ValueTag::Alist
 	}
@@ -114,13 +111,9 @@ impl List {
 
 		let id = unsafe { self.value.raw.data.id } as usize;
 		let record = unsafe {
-			// raw reads of BYOND's table, so a stale id has to be turned away
-			// here
 			if id >= *raw_types::funcs::ALIST_TABLE_COUNT as usize {
 				return Err(runtime!("alist id {} is outside the alist table", id));
 			}
-			// BYOND reallocates the table as it grows, so read the pointer
-			// every time
 			*(*raw_types::funcs::ALIST_TABLE).add(id)
 		};
 		if record.is_null() {
@@ -130,7 +123,6 @@ impl List {
 		let mut pairs = vec![];
 		let mut node = unsafe { (*record).root };
 		let mut pending = vec![];
-		// left, node, right, without recursing
 		while !node.is_null() || !pending.is_empty() {
 			while !node.is_null() {
 				pending.push(node);

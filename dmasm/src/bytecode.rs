@@ -17,8 +17,6 @@ pub struct InstructionSpan<'a> {
 pub struct ScannedBytecode<'a> {
     pub instructions: Vec<InstructionSpan<'a>>,
     pub label_operands: Vec<LabelOperand>,
-    /// Some operand is `caller` or `callee`. A raw word search cannot say
-    /// this: 0xFFF0 is also a fine proc id, type id or half of a float.
     pub reads_caller: bool,
 }
 
@@ -59,9 +57,7 @@ pub fn scan(bytecode: &[u32]) -> Result<ScannedBytecode<'_>, BytecodeError> {
     })
 }
 
-/// Whether any operand is `caller` or `callee`.
 pub fn reads_caller(bytecode: &[u32]) -> Result<bool, BytecodeError> {
-    // nearly no proc has either word at all, so most never get scanned
     let has_word = bytecode
         .iter()
         .any(|&word| matches!(word, access_modifiers::Caller | access_modifiers::Callee));
@@ -351,8 +347,6 @@ mod tests {
 
     #[test]
     fn finds_caller_under_another_operand() {
-        // `cache = caller; cache.<field 5>`, then a proc that only calls proc
-        // 0xFFF0, which holds the same word and reads nothing
         let nested = [
             Opcode::GetVar.word(),
             access_modifiers::SetCache,

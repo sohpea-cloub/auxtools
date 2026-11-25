@@ -1,16 +1,3 @@
-//! Apply code and metadata changes to a running world.
-//!
-//! Preparation validates and assembles the reload before replacing existing
-//! code. Active and sleeping frames retain their original bytecode buffers.
-//!
-//! New procs update type lists, name maps and override chains. Removed
-//! definitions are unlinked but remain allocated for active frames and old
-//! call sites. Variable defaults update inheriting types; computed defaults
-//! run through init procs. New variables receive appended IDs.
-//!
-//! Parameter `in` expressions use generated procs that return their lists.
-//! Prefabs use init procs and instance-table entries.
-
 use std::{
 	collections::{btree_map::Entry, BTreeMap, BTreeSet, HashMap, HashSet},
 	sync::Mutex
@@ -38,73 +25,46 @@ mod inherit;
 #[path = "reload_reparent.rs"]
 mod reparent;
 
-/// A reload, checked and assembled, ready to apply.
 #[derive(Default)]
 pub struct Prepared {
 	new_vars: Vec<PreparedNewVar>,
-	/// New globals: name, var id and declaration flags
 	new_globals: Vec<(String, u32, u32)>,
 	removed_procs: Vec<PreparedRemoval>,
 	new_procs: Vec<PreparedNewProc>,
 	init_procs: Vec<PreparedInitProc>,
 	code: Vec<PreparedCode>,
-	/// (proc, word, value) for procs' new settings
 	entry_words: Vec<(u32, usize, u32)>,
-	/// Procs given new names, for the name maps
 	renames: Vec<Rename>,
-	/// Types whose default appearances must be rebuilt after verb or built-in
-	/// changes.
 	appearances: BTreeSet<u32>,
-	/// New values of built-in vars, by type
 	builtin_writes: Vec<(u32, Vec<BuiltinWrite>)>,
-	/// (type id, field, misc id) for the types' new var tables and declared
-	/// vars
 	type_fields: Vec<(u32, usize, u32)>,
-	/// (var id, name, bytecode) for initial values to work out once
 	run_once: Vec<(u32, String, Vec<u32>)>,
-	/// (var id, value) for the global slots of vars that are static now
 	global_values: Vec<(u32, (u32, u32))>,
-	/// Global init proc to run at startup when the world has none.
 	global_init_now: Option<Vec<u32>>,
-	/// Replaced global init proc, when the world is starting at its call.
 	global_init_at_start: Option<raw_types::procs::ProcId>,
-	/// Procs that return parameters' `in` lists, by the index each gets
 	in_lists: Vec<(u32, ProcEntryWords)>,
-	/// New prefab instances and init proc entries, in ID allocation order.
 	instances: Vec<(u32, runtime_tables::Instance, ProcEntryWords)>,
-	/// Inherited built-in defaults as (type ID, var), parents first.
 	builtin_inherits: Vec<(u32, String)>,
-	/// Types with changed parents.
 	reparent: reparent::PreparedReparents
 }
 
-/// Variable to append: name string ID and initial global-slot value.
 struct PreparedNewVar {
-	/// Expected appended variable ID.
 	id: u32,
 	name: u32,
 	value: (u32, u32)
 }
 
-/// Variables staged in ID allocation order.
 struct AddedVars {
 	first: u32,
 	vars: Vec<PreparedNewVar>,
-	/// Ids added to name parameters, by name
 	param_names: HashMap<String, u32>,
-	/// Computed global and static initializers: variable ID, label and
-	/// bytecode.
 	run_once: Vec<(u32, String, dmasm::reload::ProcReload)>,
-	/// Existing parameter `in` proc count and staged additions by index.
 	in_lists_before: u32,
 	in_lists: Vec<(u32, ProcEntryWords)>,
 	instances: StagedInstances,
-	/// The static vars of procs this reload adds, by scope and name
 	statics: HashMap<(String, Vec<u8>), u32>
 }
 
-/// Existing and staged prefab instances, including init proc entries and
-/// bytecode.
 #[derive(Default)]
 struct StagedInstances {
 	existing: Option<Vec<runtime_tables::Instance>>,
@@ -112,8 +72,6 @@ struct StagedInstances {
 }
 
 impl StagedInstances {
-	/// Find or stage a prefab instance of `path` with initializer `init`
-	/// and typepath value `tag`/`data`.
 	fn find_or_add(&mut self, path: &str, (tag, data): (u8, u32), init: &[u32]) -> Result<u32, String> {
 		let existing = match &mut self.existing {
 			Some(existing) => existing,
@@ -135,8 +93,6 @@ impl StagedInstances {
 			return Ok(count + id as u32);
 		}
 
-		// As DreamMaker makes them, named as BYOND names them when it loads
-		// the world
 		let mut entry = proc_template()?;
 		for word in [
 			ProcEntryWords::NAME,
@@ -160,8 +116,6 @@ impl AddedVars {
 		self.first + self.vars.len() as u32
 	}
 
-	/// Find or allocate a variable ID for a parameter name. BYOND uses it
-	/// only to match named arguments.
 	fn param_name(&mut self, name: &str) -> Result<u32, String> {
 		if let Some(id) = variable_ids(name.as_bytes()).first().or_else(|| self.param_names.get(name)).copied() {
 			return Ok(id);
@@ -171,7 +125,6 @@ impl AddedVars {
 		Ok(id)
 	}
 
-	/// A new var id, with its name's string id and its global slot's value
 	fn add(&mut self, name: u32, value: (u32, u32)) -> u32 {
 		let id = self.next_id();
 		self.vars.push(PreparedNewVar { id, name, value });
@@ -179,24 +132,14 @@ impl AddedVars {
 	}
 }
 
-/// Staged name maps and override links. Later additions in the same reload
-/// resolve against earlier staged definitions.
 #[derive(Default)]
 struct StagedProcs {
 	maps: HashMap<(u32, u32), Vec<u32>>,
-	/// New `..()` targets of existing procs
 	next_override: HashMap<u32, u32>,
-	/// The entries of new procs
 	entries: HashMap<u32, ProcEntryWords>,
-	/// New procs and verbs, by the type they're on and its list's field
 	own: HashMap<(u32, usize), Vec<u32>>,
-	/// New verbs that go after another on their type's list, rather than
-	/// first
 	listed_after: HashMap<u32, u32>,
-	/// Procs taken out of their types' lists
 	removed: HashSet<u32>,
-	/// Definitions by proc path in source order; each `..()` targets its
-	/// predecessor.
 	world: HashMap<String, Vec<u32>>
 }
 
@@ -219,14 +162,12 @@ impl StagedProcs {
 		Some(entry)
 	}
 
-	/// Current staged definitions for `path`, without `/proc`.
 	fn world_definitions(&mut self, path: &str) -> &mut Vec<u32> {
 		self.world
 			.entry(path.to_owned())
 			.or_insert_with(|| Proc::overrides(path).iter().map(|p| p.id.0).collect())
 	}
 
-	/// Staged proc or verb list declared directly on a type.
 	fn own(&self, type_id: u32, field: usize) -> Result<Vec<u32>, String> {
 		let mut procs = runtime_tables::misc_words(runtime_tables::type_field(type_id, field)?).unwrap_or_default();
 		procs.retain(|proc| !self.removed.contains(proc));
@@ -240,29 +181,21 @@ impl StagedProcs {
 	}
 }
 
-/// Staged additions available to assembled code under their expected IDs.
 #[derive(Default)]
 struct Pending {
-	/// Procs, by path without `/proc`
 	procs: HashMap<String, u32>,
-	/// Static and global vars, by declaring type (`""` for a global) and name
 	globals: HashMap<(String, Vec<u8>), u32>
 }
 
-/// Mutable copies of type variable tables, indexed by type ID.
-/// Intern only after all edits are prepared.
 #[derive(Default)]
 struct TypeVars {
 	tables: BTreeMap<u32, Vec<u32>>,
 	declared: BTreeMap<u32, Vec<u32>>,
-	/// The names of var ids this reload adds
 	new_names: HashMap<u32, u32>,
-	/// Each type's parent
 	parents: Option<Vec<u32>>
 }
 
 impl TypeVars {
-	/// Lazily read a type's misc entry at `field`.
 	fn words(tables: &mut BTreeMap<u32, Vec<u32>>, type_id: u32, field: usize) -> Result<&mut Vec<u32>, String> {
 		Ok(match tables.entry(type_id) {
 			Entry::Occupied(entry) => entry.into_mut(),
@@ -273,12 +206,10 @@ impl TypeVars {
 		})
 	}
 
-	/// (name, var id, tag, data) per var, sorted by name
 	fn table(&mut self, type_id: u32) -> Result<&mut Vec<u32>, String> {
 		Self::words(&mut self.tables, type_id, type_fields::VAR_TABLE)
 	}
 
-	/// (var id, flags) per var, sorted by the var ids' names
 	fn declared(&mut self, type_id: u32) -> Result<&mut Vec<u32>, String> {
 		Self::words(&mut self.declared, type_id, type_fields::DECLARED_VARS)
 	}
@@ -291,7 +222,6 @@ impl TypeVars {
 			.unwrap_or(u32::MAX)
 	}
 
-	/// `type_id` and every type that descends from it
 	fn subtree(&mut self, type_id: u32) -> Result<Vec<u32>, String> {
 		if self.parents.is_none() {
 			let count = runtime_tables::type_count()?;
@@ -315,12 +245,10 @@ impl TypeVars {
 			.collect())
 	}
 
-	/// Intern changed tables as (type ID, field, misc ID).
 	fn intern(self) -> Result<Vec<(u32, usize, u32)>, String> {
 		let mut out = vec![];
 		for (field, tables) in [(type_fields::VAR_TABLE, self.tables), (type_fields::DECLARED_VARS, self.declared)] {
 			for (type_id, words) in tables {
-				// (an empty one is none at all, as in a built world)
 				let id = if words.is_empty() { NONE } else { runtime_tables::intern_misc(&words)? };
 				out.push((type_id, field, id));
 			}
@@ -329,7 +257,6 @@ impl TypeVars {
 	}
 }
 
-/// New contents for an existing proc's table entry.
 struct PreparedCode {
 	proc: Proc,
 	name: String,
@@ -337,88 +264,59 @@ struct PreparedCode {
 	bytecode_id: u32,
 	locals_id: Option<u32>,
 	params_id: Option<u32>,
-	/// (word, value) for the entry's new settings
 	settings: Vec<(usize, u32)>,
-	/// Optional renamed proc metadata.
 	rename: Option<Rename>,
-	/// Replacement local names, if changed.
 	local_names: Option<Vec<String>>,
-	/// Line remapping for unchanged code. `None` for replaced code, where
-	/// breakpoints retain their requested source lines.
 	lines: Option<Vec<(u32, u32)>>
 }
 
-/// A type's new init proc
 struct PreparedInitProc {
 	type_id: u32,
-	/// The new proc's entry and local names, or none for no init proc
 	proc: Option<(ProcEntryWords, Vec<String>)>
 }
 
 struct PreparedNewProc {
 	entry: ProcEntryWords,
-	/// Expected proc ID; IDs are append-only.
 	id: u32,
-	/// Position in the path's definition list, used when renumbering overrides.
 	place: ProcRef,
 	local_names: Vec<String>,
 	on_type: Option<NewProcOnType>,
-	/// Where a world proc goes in the world's own name map
 	on_world: Option<WorldEdit>
 }
 
-/// Unlinked proc definition. Keep its table entry, but remove it from
-/// type lists, name maps and override chains.
 struct PreparedRemoval {
 	id: u32,
-	/// `NONE` for a global proc's or the world's: neither is on a type
 	type_id: u32,
-	/// The type's list it's on: `type_fields::PROCS` or `VERBS`
 	field: usize,
-	/// (type id, name key, procs) for each proc name map it was in
 	map_entries: Vec<(u32, u32, Vec<u32>)>,
-	/// Procs whose `..()` must skip the removed definition.
 	relinked: Vec<u32>,
 	next: u32,
-	/// How a world proc comes out of the world's own name map
 	on_world: Option<WorldEdit>
 }
 
-/// Type metadata changes required when adding a proc.
 struct NewProcOnType {
 	type_id: u32,
-	/// The type's list it goes on: `type_fields::PROCS` or `VERBS`
 	field: usize,
-	/// (type id, name key, procs) for each proc name map that gets it
 	map_entries: Vec<(u32, u32, Vec<u32>)>,
-	/// Procs whose `..()` must target the new definition.
 	relinked: Vec<u32>,
-	/// (proc, path string) for declarations moved to an ancestor.
-	/// These become overrides, whose paths omit `/proc`.
 	paths: Vec<(u32, u32)>,
-	/// Insert after this proc, or use the default `add_to_list` position.
 	after: Option<u32>
 }
 
-/// A change to the world's own proc names (see `edit_world_names`)
 #[derive(Clone)]
 enum WorldEdit {
-	/// Insert under `keys`, overriding `below` and overridden by `above`,
-	/// or as the most derived definition if `above` is absent.
 	Add {
 		id: u32,
 		keys: Vec<u32>,
 		below: u32,
 		above: Option<u32>
 	},
-	/// Remove from `keys` and redirect incoming `..()` calls to its
-	/// predecessor.
-	Remove { id: u32, keys: Vec<u32> }
+	Remove {
+		id: u32,
+		keys: Vec<u32>
+	}
 }
 
-/// Map each client's original breakpoint offsets to their reloaded positions.
-/// Retain the mapping until the client acknowledges the new position by
-/// setting or removing the breakpoint there, or disconnects.
 pub type MovedBreakpoints<K> = HashMap<(raw_types::procs::ProcId, u32, K), u32>;
 
 fn describe(proc: &ProcRef) -> String {
@@ -433,13 +331,10 @@ fn find(proc: &ProcRef) -> Result<Proc, String> {
 	Proc::find_override(&proc.path, proc.override_id).ok_or_else(|| format!("{}: there's no such proc in the running world", describe(proc)))
 }
 
-/// A proc path the way auxtools keys procs: without `/proc` or `/verb`.
 fn strip_path(path: &str) -> String {
 	path.replace("/proc/", "/").replace("/verb/", "/")
 }
 
-/// Validate and assemble a reload. Errors prevent application.
-/// Add removed proc paths absent from the world to `skipped`.
 pub fn prepare(request: &HotReloadRequest, warnings: &mut Vec<String>, skipped: &mut Vec<String>) -> Result<Prepared, Vec<String>> {
 	let HotReloadRequest {
 		new_types: _,
@@ -456,14 +351,12 @@ pub fn prepare(request: &HotReloadRequest, warnings: &mut Vec<String>, skipped: 
 		removed_vars,
 		builtin_inherited,
 		reparented,
-		// (see `resource_reload`)
 		resources: _,
 		resource_dirs: _,
 		global_init
 	} = request;
 	runtime_tables::available().map_err(|e| vec![format!("hot reloading isn't available on this build of BYOND: {}", e)])?;
 
-	// Check removed vars before this reload changes the tables.
 	for var in removed_vars {
 		warnings.push(if world_lacks(var) {
 			format!(
@@ -483,7 +376,6 @@ pub fn prepare(request: &HotReloadRequest, warnings: &mut Vec<String>, skipped: 
 	let mut world_globals = WorldGlobals::default();
 
 	let mut pending = Pending::default();
-	// Reserve proc IDs before resolving references in defaults and code.
 	let first_id = runtime_tables::proc_count();
 	let ids: Vec<u32> = (first_id..).take(new_procs.len()).collect();
 	pending.procs = new_procs
@@ -495,8 +387,6 @@ pub fn prepare(request: &HotReloadRequest, warnings: &mut Vec<String>, skipped: 
 	let mut staged = StagedProcs::default();
 	reparent::prepare(reparented, &mut type_vars, &mut staged, &mut prepared, &mut errors);
 
-	// Reserve IDs in allocation order so new code can refer to staged
-	// additions.
 	let mut added = AddedVars {
 		first: runtime_tables::variable_count(),
 		vars: vec![],
@@ -519,7 +409,6 @@ pub fn prepare(request: &HotReloadRequest, warnings: &mut Vec<String>, skipped: 
 	}
 
 	for removed in removed_procs {
-		// An already removed proc must not block subsequent reloads.
 		if Proc::overrides(removed.proc.path.as_str()).is_empty() {
 			warnings.push(format!("{}: not found in the running world; skipping removal", removed.proc.path));
 			if !skipped.contains(&removed.proc.path) {
@@ -564,8 +453,6 @@ pub fn prepare(request: &HotReloadRequest, warnings: &mut Vec<String>, skipped: 
 		}
 	}
 
-	// Replace global initialization before it runs after reboot,
-	// including initializers for newly added globals.
 	let mut restarted = false;
 	if let Some(init) = global_init {
 		match prepare_global_init(init, &pending, &mut world_globals, &mut added, warnings) {
@@ -579,8 +466,6 @@ pub fn prepare(request: &HotReloadRequest, warnings: &mut Vec<String>, skipped: 
 				restarted = true;
 			}
 			Ok(None) => {}
-			// Failure to replace initialization must not block the remaining
-			// reload.
 			Err(e) => warnings.push(format!("{}: reboot will use the build's global and static initializers", e))
 		}
 	}
@@ -614,7 +499,6 @@ pub fn prepare(request: &HotReloadRequest, warnings: &mut Vec<String>, skipped: 
 			}
 		};
 
-		// A world built without DEBUG has no lines to move
 		if let Some(bytecode) = remap_lines(&original_bytecode(&proc), &moved.lines) {
 			match runtime_tables::intern_misc(&bytecode) {
 				Ok(bytecode_id) => prepared.code.push(PreparedCode {
@@ -659,7 +543,6 @@ pub fn prepare(request: &HotReloadRequest, warnings: &mut Vec<String>, skipped: 
 
 	inherit::prepare(builtin_inherited, &mut prepared, &mut errors);
 
-	// Computed initializers may use other additions in this reload.
 	for (id, name, init) in std::mem::take(&mut added.run_once) {
 		let code = value_code(init);
 		if !code.locals.is_empty() {
@@ -718,7 +601,6 @@ pub fn prepare(request: &HotReloadRequest, warnings: &mut Vec<String>, skipped: 
 	}
 }
 
-/// Assembles a proc's code for the running world.
 fn assemble(
 	name: &str,
 	code: &HotReloadProc,
@@ -730,7 +612,6 @@ fn assemble(
 	assemble_with(name, code, original, HashMap::new(), pending, world_globals, added)
 }
 
-/// Assemble code using known global slots indexed by scope and name.
 fn assemble_with(
 	name: &str,
 	code: &HotReloadProc,
@@ -788,7 +669,6 @@ fn prepare_code(
 	prepared_code(proc, name, reload, bytecode, pending, world_globals, added)
 }
 
-/// Assembled replacement proc code and tables, ready to apply.
 fn prepared_code(
 	proc: Proc,
 	name: String,
@@ -801,7 +681,6 @@ fn prepared_code(
 	let entry = runtime_tables::proc_entry(proc.id).ok_or_else(|| format!("{}: couldn't read its table entry", name))?;
 	let bytecode_id = runtime_tables::intern_misc(&bytecode).map_err(|e| format!("{}: {}", name, e))?;
 
-	// Frames get as many locals as the table has names
 	let locals_id = if reload.locals.len() == proc.locals_count() {
 		None
 	} else {
@@ -831,18 +710,11 @@ fn prepared_code(
 	})
 }
 
-/// Prepared global initialization for a rebooted world.
 enum StartingInit {
-	/// Replacement for the existing proc, and whether its call is pending.
 	Proc(PreparedCode, bool),
-	/// Run immediately because the world has no global init proc.
 	Now(Vec<u32>)
 }
 
-/// Prepare replacement global initialization before the original runs.
-/// The world starts at an earlier call or at the init proc's call.
-/// If no original exists, run the replacement immediately. If the original
-/// has already run, return none and warn.
 fn prepare_global_init(
 	init: &dmasm::reload::GlobalInit,
 	pending: &Pending,
@@ -870,22 +742,16 @@ fn prepare_global_init(
 		let bytecode = assemble_with(NAME, &code, &[], known, pending, world_globals, added)?;
 		return Ok(Some(StartingInit::Now(bytecode)));
 	};
-	// Map areas can initialize before global init, as in tgstation.
-	// A different start proc is too late only if global init is on the stack.
 	if proc.id != start && debug::CallStacks::active().iter().any(|frame| frame.proc.id == proc.id) {
 		warnings.push(ran());
 		return Ok(None);
 	}
-	// Use dmasm ordering for all initializers, including existing ones.
 	let known = global_slots(&code, &init.proc_statics, pending, added, world_globals);
 	let bytecode = assemble_with(NAME, &code, &[], known, pending, world_globals, added)?;
 	let at_start = proc.id == start;
 	prepared_code(proc, NAME.to_owned(), &code, bytecode, pending, world_globals, added).map(|code| Some(StartingInit::Proc(code, at_start)))
 }
 
-/// Prepare global initialization even when the rest of a restore waits
-/// for world/New. Omit statics whose slots do not exist yet; the deferred
-/// restore allocates and initializes them once. Return the omitted count.
 pub fn early_global_init(init: &dmasm::reload::GlobalInit, rest: &HotReloadRequest) -> (dmasm::reload::GlobalInit, usize) {
 	let later: HashSet<(String, Vec<u8>)> = rest
 		.procs
@@ -921,12 +787,6 @@ pub fn early_global_init(init: &dmasm::reload::GlobalInit, rest: &HotReloadReque
 	(init, left)
 }
 
-/// Resolve global/static slots by scope and name. Use staged additions,
-/// the world's global list, type var tables, or proc bytecode. For proc
-/// statics, require the bytecode to reference as many same-named slots as
-/// `counts` declares. Otherwise match a unique assignment in the built
-/// global init proc by name and built proc lines, falling back to file.
-/// Leave unresolved slots to the assembler.
 fn global_slots(
 	code: &HotReloadProc,
 	counts: &BTreeMap<String, BTreeMap<String, usize>>,
@@ -960,7 +820,6 @@ fn global_slots(
 				}
 			} else if scope.starts_with("proc:") {
 				proc_static(scope, name, counts).or_else(|| {
-					// Match built source lines; edits can shift the new ones.
 					let unique = |ids: BTreeSet<u32>| (ids.len() == 1).then(|| ids.first().copied()).flatten();
 					let path = scope.strip_prefix("proc:").unwrap_or(scope);
 					let path = path.rsplit_once('#').map_or(path, |(path, _)| path);
@@ -994,8 +853,6 @@ fn global_slots(
 	known
 }
 
-/// Find the built global init proc: the last pathless proc, unless it is
-/// a type init proc. Worlds with only constant global initializers have none.
 fn global_init_proc() -> Option<Proc> {
 	let proc = crate::unnamed::find(crate::server_types::GLOBAL_INIT, 0)?;
 	let types = runtime_tables::type_count().ok()?;
@@ -1003,9 +860,6 @@ fn global_init_proc() -> Option<Proc> {
 	(!a_types).then_some(proc)
 }
 
-/// Resolve a proc static by scope (`proc:PATH#N`) and name. Bytecode lists
-/// slots in use order, so trust it only if it references every declaration
-/// of that name (`counts`, see `GlobalInit::proc_statics`).
 fn proc_static(scope: &str, name: &[u8], counts: &BTreeMap<String, BTreeMap<String, usize>>) -> Option<u32> {
 	let path = scope.strip_prefix("proc:")?;
 	let path = path.rsplit_once('#').map_or(path, |(path, _)| path);
@@ -1023,11 +877,8 @@ fn proc_static(scope: &str, name: &[u8], counts: &BTreeMap<String, BTreeMap<Stri
 	}
 }
 
-/// Compute changed proc settings as entry-word updates: flags, `set src`,
-/// invisibility, name, description and category. `path` identifies the proc.
 fn settings_words(entry: &ProcEntryWords, settings: &ProcSettings, path: &str) -> Result<Vec<(usize, u32)>, String> {
 	let string = |text: Option<&str>| text.map_or(Ok(NONE), leaked_string);
-	// Without `set name`, the name in its path with spaces for underscores
 	let basename = path.rsplit('/').next().unwrap_or(path).replace('_', " ");
 	let words = [
 		(
@@ -1042,18 +893,15 @@ fn settings_words(entry: &ProcEntryWords, settings: &ProcSettings, path: &str) -
 	Ok(words.into_iter().filter(|&(word, value)| entry.0[word] != value).collect())
 }
 
-/// Update dynamic-call name maps for a renamed proc on its type and subtypes.
 #[derive(Clone, Copy)]
 struct Rename {
 	proc: u32,
 	type_id: u32,
 	from: u32,
 	to: u32,
-	/// The name of its path, which it's also found by
 	basename: u32
 }
 
-/// Find a renamed proc whose table updates require name-map changes.
 fn renamed(proc: &Proc, entry: &ProcEntryWords, words: &[(usize, u32)]) -> Option<Rename> {
 	let to = words.iter().find(|&&(word, _)| word == ProcEntryWords::NAME)?.1;
 	let from = entry.0[ProcEntryWords::NAME];
@@ -1073,7 +921,6 @@ fn renamed(proc: &Proc, entry: &ProcEntryWords, words: &[(usize, u32)]) -> Optio
 	})
 }
 
-/// Move a renamed proc between name-map entries, preserving override order.
 fn rename(r: Rename) -> Result<(), String> {
 	let depth = |id: u32| {
 		Proc::from_id(raw_types::procs::ProcId(id))
@@ -1089,7 +936,6 @@ fn rename(r: Rename) -> Result<(), String> {
 		if !type_and_ancestors(sub).contains(&r.type_id) {
 			continue;
 		}
-		// Still found by its path's name
 		if r.from != r.basename {
 			let mut old = runtime_tables::named_procs(sub, r.from)?;
 			if let Some(at) = old.iter().position(|&p| p == r.proc) {
@@ -1107,11 +953,6 @@ fn rename(r: Rename) -> Result<(), String> {
 	Ok(())
 }
 
-/// Build a locals table, reusing `empty` for zero locals because BYOND does
-/// not handle creating empty misc entries reliably.
-///
-/// BYOND initializes locals from their variable IDs' global slots. Choose
-/// IDs with null slots; the debugger stores display names separately.
 pub(crate) fn locals_table(names: &[String], empty: u32) -> Result<u32, String> {
 	if names.is_empty() {
 		return Ok(empty);
@@ -1131,8 +972,6 @@ pub(crate) fn locals_table(names: &[String], empty: u32) -> Result<u32, String> 
 	runtime_tables::intern_misc(&words)
 }
 
-/// Wrap compiled value code (an initializer or parameter `in` list) as a proc
-/// for assembly.
 fn value_code(code: dmasm::reload::ProcReload) -> HotReloadProc {
 	HotReloadProc {
 		proc: ProcRef {
@@ -1147,8 +986,6 @@ fn value_code(code: dmasm::reload::ProcReload) -> HotReloadProc {
 	}
 }
 
-/// Add a generated proc returning a parameter's `in` list.
-/// Return the encoded parameter word.
 fn in_list_proc(
 	param: &str,
 	code: &dmasm::reload::ProcReload,
@@ -1221,7 +1058,6 @@ fn params_table(
 	if unchanged {
 		return Ok(None);
 	}
-	// What a proc with no parameters has
 	if params.is_empty() {
 		return Ok(Some(NONE));
 	}
@@ -1234,8 +1070,6 @@ fn params_table(
 	runtime_tables::intern_misc(&words).map(Some)
 }
 
-/// Whether the type is absent or its readable declarations lack this var.
-/// Unreadable declarations cannot confirm absence.
 fn world_lacks(var: &RemovedVar) -> bool {
 	let Ok(type_id) = find_type(&var.type_path) else {
 		return true;
@@ -1251,7 +1085,6 @@ fn world_lacks(var: &RemovedVar) -> bool {
 	}
 }
 
-/// The type whose path is `path`.
 fn find_type(path: &str) -> Result<u32, String> {
 	let id = StringRef::new(path).map_err(|_| format!("couldn't make the string {}", path))?.get_id().0;
 	(0..runtime_tables::type_count()?)
@@ -1259,27 +1092,21 @@ fn find_type(path: &str) -> Result<u32, String> {
 		.ok_or_else(|| format!("there's no type {} in the running world", path))
 }
 
-/// Resolve a type path from the runtime table.
 pub(crate) fn type_id(path: &str) -> Option<u32> {
 	find_type(path).ok()
 }
 
-/// Resolve `/image` and its subtypes directly from the type table.
-/// text2path("/image") can return null before a rebooted world starts
-/// executing.
 pub(crate) fn image_type(path: &str) -> Option<u32> {
 	let id = find_type(path).ok()?;
 	let image = find_type("/image").ok()?;
 	type_and_ancestors(id).contains(&image).then_some(id)
 }
 
-/// Return the type and its ancestors, nearest first, or `None` if unavailable.
 pub(crate) fn ancestry(path: &str) -> Option<Vec<String>> {
 	let id = find_type(path).ok()?;
 	Some(type_and_ancestors(id).into_iter().map(type_path).collect())
 }
 
-/// Format a runtime type path for diagnostics.
 fn type_path(type_id: u32) -> String {
 	runtime_tables::type_field(type_id, type_fields::PATH)
 		.ok()
@@ -1287,7 +1114,6 @@ fn type_path(type_id: u32) -> String {
 		.unwrap_or_else(|| format!("type {}", type_id))
 }
 
-/// The types `type_id` is or descends from, itself first.
 fn type_and_ancestors(type_id: u32) -> Vec<u32> {
 	let mut out = vec![type_id];
 	let mut at = type_id;
@@ -1314,7 +1140,6 @@ fn prepare_init_proc(
 		return Ok(PreparedInitProc { type_id, proc: None });
 	};
 
-	// Like the one it replaces, or like any proc
 	let current = runtime_tables::type_field(type_id, type_fields::INIT_PROC).map_err(fail)?;
 	let current = (current != NONE).then(|| Proc::from_id(raw_types::procs::ProcId(current))).flatten();
 	let template = match &current {
@@ -1327,7 +1152,6 @@ fn prepare_init_proc(
 	let bytecode = assemble(&shown, code, &original, pending, world_globals, added)?;
 	let mut entry = template;
 	if current.is_none() {
-		// As BYOND names the init procs it makes
 		entry.0[ProcEntryWords::PATH] = leaked_string(&format!("{}/proc/(init)", init.type_path)).map_err(fail)?;
 		entry.0[ProcEntryWords::NAME] = NONE;
 		entry.0[ProcEntryWords::DESC] = NONE;
@@ -1356,8 +1180,6 @@ fn prepare_removal(removed: &RemovedProc, staged: &mut StagedProcs) -> Result<Pr
 	let entry = staged.entry(id).ok_or_else(|| fail("couldn't read its table entry".to_owned()))?;
 	let next = entry.0[ProcEntryWords::NEXT_OVERRIDE];
 
-	// Keep removed global procs for old call sites but exclude them from
-	// override numbering. Remove world procs from the world name map.
 	if removed.type_path.is_empty() || (removed.type_path == "/world" && !removed.verb) {
 		let on_world = if removed.type_path.is_empty() {
 			None
@@ -1381,7 +1203,6 @@ fn prepare_removal(removed: &RemovedProc, staged: &mut StagedProcs) -> Result<Pr
 
 	let type_id = find_type(&removed.type_path).map_err(fail)?;
 	let field = if removed.verb { type_fields::VERBS } else { type_fields::PROCS };
-	// Verbs aren't in the proc name maps
 	let keys = if removed.verb {
 		vec![]
 	} else {
@@ -1413,7 +1234,6 @@ fn prepare_removal(removed: &RemovedProc, staged: &mut StagedProcs) -> Result<Pr
 		}
 	}
 
-	// New procs in this reload see it gone
 	for &proc in &relinked {
 		if let Some(e) = staged.entries.get_mut(&proc) {
 			e.0[ProcEntryWords::NEXT_OVERRIDE] = next;
@@ -1445,8 +1265,6 @@ fn prepare_new_proc(
 	let shown = describe(&new.code.proc);
 	let fail = |e: String| format!("{}: {}", shown, e);
 
-	// Copied from a plain proc, like BYOND copies an existing proc for the
-	// init procs it makes
 	let template = proc_template().map_err(fail)?;
 
 	let bytecode = assemble(&shown, &new.code, &[], pending, world_globals, added)?;
@@ -1454,13 +1272,10 @@ fn prepare_new_proc(
 	let string = |text: &str| -> Result<u32, String> {
 		let string = StringRef::new(text).map_err(|_| fail(format!("couldn't make the string {}", text)))?;
 		let id = string.get_id().0;
-		// The proc table entry holds it from now on
 		std::mem::forget(string);
 		Ok(id)
 	};
 
-	// As DreamMaker writes them: `proc/` or `verb/` where the proc is
-	// declared
 	let path = match (new.type_path.as_str(), new.declared, new.verb) {
 		("", true, _) => format!("/proc/{}", new.name),
 		(ty, true, false) => format!("{}/proc/{}", ty, new.name),
@@ -1486,8 +1301,6 @@ fn prepare_new_proc(
 	};
 	entry.0[ProcEntryWords::NEXT_OVERRIDE] = NONE;
 
-	// World procs use a separate name map. Insert between the adjacent
-	// definitions when committing the addition (see `edit_world_names`).
 	let at = new.code.proc.override_id as usize;
 	let mut on_world = None;
 	if new.type_path == "/world" && !new.verb {
@@ -1496,7 +1309,6 @@ fn prepare_new_proc(
 		let below = at.checked_sub(1).map_or(NONE, |below| definitions[below]);
 		let new_ids: Vec<u32> = staged.entries.keys().copied().collect();
 		let definitions = staged.world_definitions(&strip_path(&new.code.proc.path));
-		// The world has this one already: new ones go in in order
 		let above = definitions[at..].iter().copied().find(|p| !new_ids.contains(p));
 		definitions.insert(at, id);
 		entry.0[ProcEntryWords::NEXT_OVERRIDE] = below;
@@ -1517,8 +1329,6 @@ fn prepare_new_proc(
 		let type_id = find_type(&new.type_path).map_err(fail)?;
 		let keys = [entry.0[ProcEntryWords::NAME], entry.0[ProcEntryWords::PATH_BASENAME]];
 
-		// Find the predecessor at this insertion point, including inherited
-		// definitions when inserting before the type's first override.
 		let own = own_definitions(staged, type_id, type_fields::PROCS, ProcEntryWords::NAME, keys[0]).map_err(fail)?;
 		let overridden = match (own.get(at), at.checked_sub(1).and_then(|below| own.get(below))) {
 			(Some(_), Some(&below)) => below,
@@ -1527,8 +1337,6 @@ fn prepare_new_proc(
 		};
 		entry.0[ProcEntryWords::NEXT_OVERRIDE] = overridden;
 
-		// Insert into this type and every subtype, preserving more derived
-		// overrides before it and its predecessors after it.
 		let mut map_entries = vec![];
 		let mut relinked = vec![];
 		for sub in 0..runtime_tables::type_count().map_err(fail)? {
@@ -1547,7 +1355,6 @@ fn prepare_new_proc(
 				map_entries.push((sub, key, procs));
 			}
 
-			// Redirect the next definition's `..()` through the inserted proc.
 			for proc in staged.own(sub, type_fields::PROCS).map_err(fail)? {
 				if let Some(e) = staged.entry(proc) {
 					if e.0[ProcEntryWords::NAME] == keys[0] && e.0[ProcEntryWords::NEXT_OVERRIDE] == overridden && !relinked.contains(&proc) {
@@ -1557,7 +1364,6 @@ fn prepare_new_proc(
 			}
 		}
 
-		// Procs added after this one in the same reload see it
 		for (sub, key, procs) in &map_entries {
 			staged.maps.insert((*sub, *key), procs.clone());
 		}
@@ -1571,8 +1377,6 @@ fn prepare_new_proc(
 		staged.entries.insert(id, entry);
 		staged.own.entry((type_id, type_fields::PROCS)).or_default().push(id);
 
-		// The moved declaration is now an override; use its built override
-		// path.
 		let mut paths = vec![];
 		for &proc in &relinked {
 			let Some(path) = staged.entry(proc).map(|e| e.0[ProcEntryWords::PATH]) else {
@@ -1608,8 +1412,6 @@ fn prepare_new_proc(
 	})
 }
 
-/// Append procs to `PROCS`; prepend verbs to `VERBS`.
-/// DreamMaker stores verbs newest first and calls the first match.
 fn add_to_list(list: &mut Vec<u32>, field: usize, proc: u32) {
 	if list.contains(&proc) {
 		return;
@@ -1621,9 +1423,6 @@ fn add_to_list(list: &mut Vec<u32>, field: usize, proc: u32) {
 	}
 }
 
-/// Insert a verb at definition index `at`. Verbs use type verb lists,
-/// not proc name maps. `..()` resolves the preceding local definition
-/// or the nearest ancestor's latest definition.
 fn new_verb_on_type(type_path: &str, id: u32, at: usize, entry: &mut ProcEntryWords, staged: &mut StagedProcs) -> Result<NewProcOnType, String> {
 	let type_id = find_type(type_path)?;
 	let name = entry.0[ProcEntryWords::PATH_BASENAME];
@@ -1644,8 +1443,6 @@ fn new_verb_on_type(type_path: &str, id: u32, at: usize, entry: &mut ProcEntryWo
 	};
 	entry.0[ProcEntryWords::NEXT_OVERRIDE] = below;
 
-	// An existing successor now overrides this verb. Otherwise, insert
-	// as the newest definition and redirect subtype override chains.
 	let mut relinked = vec![];
 	let after = own.get(at).copied();
 	match after {
@@ -1690,8 +1487,6 @@ fn new_verb_on_type(type_path: &str, id: u32, at: usize, entry: &mut ProcEntryWo
 	})
 }
 
-/// The keys a world proc goes under in the world's name map: its name, and
-/// its path's name where that's another
 fn world_keys(entry: &ProcEntryWords) -> Vec<u32> {
 	let mut keys = vec![entry.0[ProcEntryWords::NAME]];
 	if entry.0[ProcEntryWords::PATH_BASENAME] != keys[0] {
@@ -1700,13 +1495,10 @@ fn world_keys(entry: &ProcEntryWords) -> Vec<u32> {
 	keys
 }
 
-/// Which of a proc's same-named static locals a scope (`proc:PATH#N`) means
 fn static_number(scope: &str) -> usize {
 	scope.rsplit_once('#').and_then(|(_, n)| n.parse().ok()).unwrap_or(0)
 }
 
-/// Allocate missing static locals by comparing scopes and globals used
-/// in the current bytecode. Initialize their global slots.
 fn new_statics(
 	code: &HotReloadProc,
 	proc_globals: &HashMap<Vec<u8>, Vec<u32>>,
@@ -1734,8 +1526,6 @@ fn new_statics(
 	Ok(out)
 }
 
-/// Add missing types and populate their records. Reuse types left by an
-/// earlier failed reload. Return the number added.
 pub fn add_types(new_types: &[NewType]) -> Result<usize, Vec<String>> {
 	if new_types.is_empty() {
 		return Ok(0);
@@ -1749,7 +1539,6 @@ pub fn add_types(new_types: &[NewType]) -> Result<usize, Vec<String>> {
 		if find_type(&new.path).is_ok() {
 			continue;
 		}
-		// Its subtypes can't be added without it
 		add_type(new).map_err(|e| vec![format!("{}: {}", new.path, e)])?;
 		added += 1;
 	}
@@ -1757,7 +1546,6 @@ pub fn add_types(new_types: &[NewType]) -> Result<usize, Vec<String>> {
 }
 
 fn add_type(new: &NewType) -> Result<(), String> {
-	// Everything is worked out before the type exists
 	let parent = find_type(&new.parent)?;
 	let mut writes = vec![];
 	for (field, value) in &new.fields {
@@ -1767,24 +1555,16 @@ fn add_type(new: &NewType) -> Result<(), String> {
 	write_builtins(id, &writes)
 }
 
-/// A change to a type's table entry that sets a built-in var.
 #[derive(Clone, Debug)]
 enum BuiltinWrite {
 	Word(usize, u32),
 	Half(usize, u16),
 	Byte(usize, u8),
-	/// Bits of a word: offset, mask, bits
 	Bits(usize, u32, u32),
-	/// An entry of the type's list of built-in values: the var name's string
-	/// id, and the value as bytecode has it
 	Listed(u32, Vec<u32>),
-	/// A mob type's `key` (a string id), `sight`, `see_in_dark` or
-	/// `see_invisible`, in the mob table
 	Mob(&'static str, u32)
 }
 
-/// Built-in variable storage, determined by comparing probe types
-/// (see `type_fields`).
 fn builtin_writes(var: &str, value: &ConstValue) -> Result<Vec<BuiltinWrite>, String> {
 	use BuiltinWrite::*;
 	let number = || match value {
@@ -1831,7 +1611,6 @@ fn builtin_writes(var: &str, value: &ConstValue) -> Result<Vec<BuiltinWrite>, St
 			};
 			vec![Bits(type_fields::FLAGS, 0xC0, gender << 6)]
 		}
-		// 1, the default, is 0
 		"mouse_opacity" => vec![Bits(type_fields::FLAGS, 0x3000, ((number()? as i32 - 1) as u32 & 3) << 12)],
 		"animate_movement" => {
 			let bits = match number()? as i32 {
@@ -1891,8 +1670,6 @@ fn builtin_writes(var: &str, value: &ConstValue) -> Result<Vec<BuiltinWrite>, St
 		| "edge_limit"
 		| "mouse_pointer_icon" => {
 			let (tag, data) = const_value(value, &Pending::default())?;
-			// As `PushVal` has it: a number's two halves after its tag, or
-			// the top byte of the data in the tag word
 			let words = if tag == 0x2A {
 				vec![tag, data >> 16, data & 0xFFFF]
 			} else {
@@ -1908,7 +1685,6 @@ fn builtin_writes(var: &str, value: &ConstValue) -> Result<Vec<BuiltinWrite>, St
 	})
 }
 
-/// Sets built-in vars on a type.
 fn write_builtins(type_id: u32, writes: &[BuiltinWrite]) -> Result<(), String> {
 	use runtime_tables::{set_type_byte, set_type_field, set_type_half, type_field};
 	for write in writes {
@@ -1921,7 +1697,6 @@ fn write_builtins(type_id: u32, writes: &[BuiltinWrite]) -> Result<(), String> {
 				set_type_field(type_id, *offset, (word & !mask) | bits)?;
 			}
 			BuiltinWrite::Listed(name, value) => {
-				// The others, then this one
 				let list = runtime_tables::misc_words(type_field(type_id, type_fields::BUILTIN_VALUES)?).unwrap_or_default();
 				let mut words = vec![];
 				let mut at = 0;
@@ -1948,8 +1723,6 @@ fn write_builtins(type_id: u32, writes: &[BuiltinWrite]) -> Result<(), String> {
 	Ok(())
 }
 
-/// Convert a constant to tag/data words. The destination retains any
-/// string reference permanently. A path can name a proc in `pending`.
 fn const_value(value: &ConstValue, pending: &Pending) -> Result<(u32, u32), String> {
 	Ok(match value {
 		ConstValue::Null => (0, 0),
@@ -1973,7 +1746,6 @@ fn const_value(value: &ConstValue, pending: &Pending) -> Result<(u32, u32), Stri
 	})
 }
 
-/// Intern a string and retain its reference permanently.
 fn leaked_string(text: &str) -> Result<u32, String> {
 	let string = StringRef::new(text).map_err(|_| format!("couldn't make the string {}", text))?;
 	let id = string.get_id().0;
@@ -1991,8 +1763,6 @@ fn prepare_new_var(
 	const STATIC: u32 = 1;
 	let fail = |e: String| format!("{}/var/{}: {}", new.type_path, new.var, e);
 
-	// Removed vars remain in the world. Reuse a matching declaration;
-	// any new default is applied separately.
 	if !new.type_path.is_empty() {
 		let type_id = find_type(&new.type_path).map_err(fail)?;
 		let name = leaked_string(&new.var).map_err(fail)?;
@@ -2024,8 +1794,6 @@ fn prepare_new_var(
 
 	if !new.type_path.is_empty() {
 		let type_id = find_type(&new.type_path).map_err(fail)?;
-		// Retain declarations on moved-from subtypes and their descendants.
-		// Any other declaration of that name is a duplicate.
 		let moved_from = new
 			.moved_from
 			.iter()
@@ -2077,9 +1845,7 @@ fn prepare_new_var(
 	Ok(())
 }
 
-/// Warn about retained runtime declarations after a var moves to an ancestor.
 fn moved_var_warning(declaring: &str, var: &str, kept: &[u32]) -> Option<String> {
-	// Only topmost moved-from types are needed; their descendants inherit them.
 	let tops: Vec<String> = kept
 		.iter()
 		.filter(|&&t| !type_and_ancestors(t).iter().skip(1).any(|a| kept.contains(a)))
@@ -2099,9 +1865,6 @@ fn moved_var_warning(declaring: &str, var: &str, kept: &[u32]) -> Option<String>
 	))
 }
 
-/// Update variable declaration flags on a type and its subtypes.
-/// Static variables leave instance tables and become available as globals
-/// to code in this reload.
 fn prepare_redeclared(
 	var: &Redeclared,
 	added: &mut AddedVars,
@@ -2112,7 +1875,6 @@ fn prepare_redeclared(
 	const STATIC: u32 = 1;
 	let fail = |e: String| format!("{}/var/{}: {}", var.type_path, var.var, e);
 
-	// A global const's new value, set now: the one var of that name
 	if var.type_path.is_empty() {
 		let ids = variable_ids(var.var.as_bytes());
 		let [id] = ids[..] else {
@@ -2127,7 +1889,6 @@ fn prepare_redeclared(
 	}
 
 	let type_id = find_type(&var.type_path).map_err(fail)?;
-	// Keep the name alive while the type var table references it.
 	let name = leaked_string(&var.var).map_err(fail)?;
 	let declared = type_vars.declared(type_id).map_err(fail)?.clone();
 	let id = declared
@@ -2148,7 +1909,6 @@ fn prepare_redeclared(
 				table.drain(at * 4..at * 4 + 4);
 			}
 		} else if !there {
-			// The defaults follow
 			table.splice(at * 4..at * 4, [name, id, 0, 0]);
 		}
 	}
@@ -2181,8 +1941,6 @@ fn prepare_var_default(default: &HotReloadVarDefault, pending: &Pending, type_va
 				entry[2] = value.0;
 				entry[3] = value.1;
 			}
-			// Sound and similar built-in vars acquire a var-table entry only
-			// when the type sets them.
 			None if inherit::builtin_in_table(type_id, &default.var) => {
 				let id = match variable_ids(default.var.as_bytes()).first() {
 					Some(&id) => id,
@@ -2197,8 +1955,6 @@ fn prepare_var_default(default: &HotReloadVarDefault, pending: &Pending, type_va
 	Ok(())
 }
 
-/// Commit a prepared reload. Temporarily remove affected breakpoints,
-/// then restore them at their remapped source lines and update their metadata.
 pub fn apply<K: Ord + std::hash::Hash + Copy, T>(
 	mut prepared: Prepared,
 	breakpoints: &mut HashMap<(raw_types::procs::ProcId, u16), BTreeMap<K, T>>,
@@ -2207,7 +1963,6 @@ pub fn apply<K: Ord + std::hash::Hash + Copy, T>(
 ) {
 	code_changed();
 	reparent::apply_tree(&mut prepared.reparent);
-	// The id each new var really got, if it got one
 	let mut got = HashMap::new();
 	for new in &prepared.new_vars {
 		let id = match runtime_tables::add_variable(new.name, new.value.0 as u8, new.value.1) {
@@ -2224,8 +1979,6 @@ pub fn apply<K: Ord + std::hash::Hash + Copy, T>(
 		};
 		got.insert(new.id, id);
 	}
-	// Register globals under their allocated IDs for global.vars and
-	// evaluation. Preserve IDs of existing globals.
 	let globals: Vec<(String, u32, u32)> = prepared
 		.new_globals
 		.iter()
@@ -2253,7 +2006,6 @@ pub fn apply<K: Ord + std::hash::Hash + Copy, T>(
 		let procs = runtime_tables::type_field(removal.type_id, removal.field).unwrap_or(NONE);
 		let mut list = runtime_tables::misc_words(procs).unwrap_or_default();
 		list.retain(|&proc| proc != removal.id);
-		// (BYOND makes empty misc entries poorly, and has none for no procs)
 		let list = if list.is_empty() { Ok(NONE) } else { runtime_tables::intern_misc(&list) };
 		match list {
 			Ok(list) => {
@@ -2271,12 +2023,9 @@ pub fn apply<K: Ord + std::hash::Hash + Copy, T>(
 		}
 	}
 
-	// Install all entries before relinking `..()` chains.
-	// Force fresh IDs when re-adding removed procs.
 	for new in &prepared.new_procs {
 		match runtime_tables::append_proc(&new.entry) {
 			Ok(id) if id.0 != new.id => {
-				// Code in this reload calls it by the id it expected
 				warnings.push(format!("new proc ID mismatch: got {}, expected {}", id.0, new.id));
 			}
 			Ok(_) => {}
@@ -2335,8 +2084,6 @@ pub fn apply<K: Ord + std::hash::Hash + Copy, T>(
 			Err(e) => warnings.push(format!("couldn't add a prefab: {}", e))
 		}
 	}
-	// (BYOND gives a proc the id of another with the same entry, which is
-	// as good)
 	for (expected, entry) in &prepared.in_lists {
 		match runtime_tables::add_proc(entry).and_then(runtime_tables::add_in_list) {
 			Ok(index) if index != *expected => warnings.push(format!("input list index mismatch: got {}, expected {}", index, expected)),
@@ -2348,8 +2095,6 @@ pub fn apply<K: Ord + std::hash::Hash + Copy, T>(
 		let id = match &init.proc {
 			None => NONE,
 			Some((entry, local_names)) => {
-				// BYOND gives a type the same init proc as another with the
-				// same code, and nothing else refers to it by id
 				let id = match runtime_tables::add_proc(entry) {
 					Ok(id) => id,
 					Err(e) => {
@@ -2405,8 +2150,6 @@ pub fn apply<K: Ord + std::hash::Hash + Copy, T>(
 		}
 	}
 
-	// Run computed initializers after installing the remaining changes,
-	// using the expression stub.
 	if let Some(proc) = prepared.global_init_at_start {
 		auxtools::start_runs_new_code(proc);
 	}
@@ -2427,7 +2170,6 @@ pub fn apply<K: Ord + std::hash::Hash + Copy, T>(
 			continue;
 		};
 		stub.set_bytecode(bytecode);
-		// Keep initializer failures out of paused callers' try blocks.
 		let ends = crate::WORLD_ENDS.load(std::sync::atomic::Ordering::Relaxed);
 		let tries = crate::server::Server::hide_tries();
 		let result = stub.call(&[]);
@@ -2455,7 +2197,6 @@ fn apply_code<K: Ord + std::hash::Hash + Copy, T>(
 	let old_bytecode = original_bytecode(&p.proc);
 	mark_reloaded(p.proc.id.0, if p.lines.is_some() { Reloaded::Lines } else { Reloaded::Code });
 
-	// Retain old local names for frames still running pre-reload bytecode.
 	if !auxtools::debug::has_local_names(old_ptr) {
 		let names = auxtools::debug::local_names_for(&p.proc, old_ptr);
 		auxtools::debug::set_local_names(old_ptr, names);
@@ -2494,8 +2235,6 @@ fn apply_code<K: Ord + std::hash::Hash + Copy, T>(
 			None => line
 		};
 
-		// Preserve each client's original offset, including prior reload
-		// mappings.
 		let mut known_as: Vec<(raw_types::procs::ProcId, u32, K)> = moved_breakpoints
 			.iter()
 			.filter(|((proc, ..), at)| *proc == p.proc.id && **at == old_offset)
@@ -2510,15 +2249,12 @@ fn apply_code<K: Ord + std::hash::Hash + Copy, T>(
 			}
 		}
 
-		// Preserve breakpoint offsets relative to the proc's first line when it
-		// moves files.
 		let moved = match (first_line(&old_bytecode), first_line(&p.bytecode)) {
 			(Some(old_first), Some(new_first)) if debug_file(&old_bytecode) != debug_file(&p.bytecode) && line >= old_first => {
 				Some(line - old_first + new_first)
 			}
 			_ => None
 		};
-		// Absolute line numbers are unrelated in the destination file.
 		let Some((line, offset)) = (match moved {
 			Some(moved) => offset_of_line(&p.bytecode, moved).map(|offset| (moved, offset)),
 			None => offset_of_line(&p.bytecode, line).map(|offset| (line, offset))
@@ -2546,12 +2282,9 @@ fn apply_code<K: Ord + std::hash::Hash + Copy, T>(
 	}
 }
 
-/// Adapt debug file and line instructions to the running world.
 fn adapt_debug_info(nodes: &[Node], original: &[u32]) -> Vec<Node> {
 	let is_debug_info = |node: &Node| matches!(node, Node::Instruction(Instruction::DbgFile(_) | Instruction::DbgLine(_), _));
 
-	// DreamMaker only writes them for worlds built with DEBUG. A new proc has
-	// them if the world's procs do.
 	if original.is_empty() && world_has_debug_info() {
 		return nodes.to_vec();
 	}
@@ -2559,8 +2292,6 @@ fn adapt_debug_info(nodes: &[Node], original: &[u32]) -> Vec<Node> {
 		return nodes.iter().filter(|node| !is_debug_info(node)).cloned().collect();
 	}
 
-	// Preserve DreamMaker's debug file names, which can differ from
-	// project-relative paths for nested includes.
 	let old_name = unsafe { StringRef::from_id(raw_types::strings::StringId(original[1])) }.data().to_vec();
 	let mut suffix = b"/".to_vec();
 	suffix.extend_from_slice(&old_name);
@@ -2576,63 +2307,46 @@ fn adapt_debug_info(nodes: &[Node], original: &[u32]) -> Vec<Node> {
 		.collect()
 }
 
-// Changes to the world's proc names waiting for them to be built (see
-// `edit_world_names`)
 static WAITING_WORLD_EDITS: Mutex<Vec<WorldEdit>> = Mutex::new(Vec::new());
 
-/// Generation for code and macro changes that invalidate compiled evaluations.
 static CODE_GENERATION: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 
-/// Invalidate compiled evaluation caches after code or macro changes.
 pub fn code_changed() {
 	CODE_GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 }
 
-/// Current code and macro generation.
 pub fn code_generation() -> u32 {
 	CODE_GENERATION.load(std::sync::atomic::Ordering::Relaxed)
 }
 
-/// The global vars that reloads have added to this world, by name, with
-/// their var ids
 static ADDED_GLOBALS: Mutex<BTreeMap<String, u32>> = Mutex::new(BTreeMap::new());
 
-/// Look up a newly added global's var ID for expression evaluation.
 pub fn added_global(name: &str) -> Option<u32> {
 	ADDED_GLOBALS.lock().unwrap().get(name).copied()
 }
 
-/// The names of the global vars hot reloads have added
 pub fn added_globals() -> Vec<String> {
 	ADDED_GLOBALS.lock().unwrap().keys().cloned().collect()
 }
 
-/// What reloads have done to procs in this world, by the procs' ids
 static RELOADED: Mutex<BTreeMap<u32, Reloaded>> = Mutex::new(BTreeMap::new());
 
-/// Most significant reload change to a proc since world load.
 pub fn reloaded(id: u32) -> Option<Reloaded> {
 	RELOADED.lock().unwrap().get(&id).copied()
 }
 
-/// Record a proc reload without downgrading its previous change classification.
 fn mark_reloaded(id: u32, how: Reloaded) {
 	let mut reloaded = RELOADED.lock().unwrap();
 	let was = reloaded.entry(id).or_insert(how);
 	*was = (*was).max(how);
 }
 
-/// Debugger helper overrides remain most derived; insert reloaded world
-/// procs below them.
 static PINNED_WORLD_PROCS: Mutex<Vec<u32>> = Mutex::new(Vec::new());
 
 pub fn pin_world_proc(id: u32) {
 	PINNED_WORLD_PROCS.lock().unwrap().push(id);
 }
 
-/// Update the world proc name map after BYOND builds it. The map is built
-/// after global initialization and before `world/New`; earlier edits would
-/// be overwritten. Queue them until the next proc call after construction.
 fn edit_world_names(edit: WorldEdit) -> Result<(), String> {
 	if runtime_tables::world_names_built()? {
 		return edit_built_world_names(&edit);
@@ -2662,7 +2376,6 @@ fn edit_built_world_names(edit: &WorldEdit) -> Result<(), String> {
 			let pinned = PINNED_WORLD_PROCS.lock().unwrap().clone();
 			set_next(*id, *below);
 			for (k, &key) in keys.iter().enumerate() {
-				// Most derived first
 				let mut procs = runtime_tables::world_named_procs(key)?;
 				procs.retain(|proc| proc != id);
 				let at = match above.and_then(|above| procs.iter().position(|&p| p == above)) {
@@ -2695,9 +2408,6 @@ fn edit_built_world_names(edit: &WorldEdit) -> Result<(), String> {
 	Ok(())
 }
 
-/// Return staged definitions of a type's proc in source order.
-/// Proc override chains link through `..()`; verb definitions are stored
-/// newest first and resolved by name.
 fn own_definitions(staged: &StagedProcs, type_id: u32, field: usize, word: usize, name: u32) -> Result<Vec<u32>, String> {
 	let own: Vec<u32> = staged
 		.own(type_id, field)?
@@ -2708,7 +2418,6 @@ fn own_definitions(staged: &StagedProcs, type_id: u32, field: usize, word: usize
 		return Ok(own.into_iter().rev().collect());
 	}
 	let next = |p: u32| staged.entry(p).map_or(NONE, |e| e.0[ProcEntryWords::NEXT_OVERRIDE]);
-	// The last is the one no other's `..()` goes to
 	let mut chain = vec![];
 	let mut at = own.iter().copied().find(|&p| !own.iter().any(|&q| next(q) == p));
 	while let Some(p) = at {
@@ -2719,8 +2428,6 @@ fn own_definitions(staged: &StagedProcs, type_id: u32, field: usize, word: usize
 	Ok(chain)
 }
 
-/// Renumber affected override paths to match source order after additions
-/// and removals.
 fn renumber(removed: &[PreparedRemoval], added: &[PreparedNewProc]) {
 	let mut paths: Vec<String> = vec![];
 	let removed_ids: HashSet<u32> = removed.iter().map(|r| r.id).collect();
@@ -2749,8 +2456,6 @@ fn renumber(removed: &[PreparedRemoval], added: &[PreparedNewProc]) {
 	}
 }
 
-/// Copy the expression stub's proc entry for new procs, falling back to
-/// stddef.dm's `/icon/proc/Width`. The launcher's stub is based on Width.
 fn proc_template() -> Result<ProcEntryWords, String> {
 	Proc::find("/proc/auxtools_expr_stub")
 		.or_else(|| Proc::find("/icon/proc/Width"))
@@ -2758,11 +2463,8 @@ fn proc_template() -> Result<ProcEntryWords, String> {
 		.ok_or_else(|| "couldn't find a proc entry to copy (/proc/auxtools_expr_stub or /icon/proc/Width)".to_owned())
 }
 
-// Worked out once per world
 static WORLD_HAS_DEBUG_INFO: Mutex<Option<bool>> = Mutex::new(None);
 
-/// Detect a DEBUG build from the world's original procs' initial DbgFile.
-/// The expression stub may have been recompiled, so it is not a reliable probe.
 fn world_has_debug_info() -> bool {
 	let mut known = WORLD_HAS_DEBUG_INFO.lock().unwrap();
 	*known.get_or_insert_with(|| {
@@ -2781,7 +2483,6 @@ fn forget_world() {
 	PINNED_WORLD_PROCS.lock().unwrap().clear();
 }
 
-/// `bytecode` with its DbgLines renumbered, or `None` when none changes.
 fn remap_lines(bytecode: &[u32], lines: &[(u32, u32)]) -> Option<Vec<u32>> {
 	let scanned = dmasm::scan(bytecode).ok()?;
 	let mut out = bytecode.to_vec();
@@ -2799,7 +2500,6 @@ fn remap_lines(bytecode: &[u32], lines: &[(u32, u32)]) -> Option<Vec<u32>> {
 	changed.then_some(out)
 }
 
-/// Remap a line using the nearest preceding mapping when no exact entry exists.
 fn map_line(line: u32, lines: &[(u32, u32)]) -> u32 {
 	let mut sorted = lines.to_vec();
 	sorted.sort_unstable();
@@ -2816,7 +2516,6 @@ fn map_line(line: u32, lines: &[(u32, u32)]) -> u32 {
 	}
 }
 
-/// The line the instruction at `offset` is on.
 fn line_at(bytecode: &[u32], offset: u32) -> Option<u32> {
 	let mut line = None;
 	for ins in dmasm::scan(bytecode).ok()?.instructions {
@@ -2830,14 +2529,12 @@ fn line_at(bytecode: &[u32], offset: u32) -> Option<u32> {
 	line
 }
 
-/// First DbgFile string ID in the proc bytecode.
 fn debug_file(bytecode: &[u32]) -> Option<u32> {
 	(bytecode.first() == Some(&Opcode::DbgFile.word()))
 		.then(|| bytecode.get(1).copied())
 		.flatten()
 }
 
-/// First source line in the proc bytecode.
 fn first_line(bytecode: &[u32]) -> Option<u32> {
 	dmasm::scan(bytecode)
 		.ok()?
@@ -2847,8 +2544,6 @@ fn first_line(bytecode: &[u32]) -> Option<u32> {
 		.and_then(|ins| ins.bytecode.get(1).copied())
 }
 
-/// Resolve a line breakpoint to the instruction after its DbgLine,
-/// matching the server's `Offset` request.
 fn offset_of_line(bytecode: &[u32], line: u32) -> Option<u32> {
 	let instructions = dmasm::scan(bytecode).ok()?.instructions;
 	let at = instructions
@@ -2871,7 +2566,6 @@ fn describe_assemble_error(e: &dmasm::assembler::AssembleError) -> String {
 	}
 }
 
-/// Every variable id whose name is `name`.
 fn variable_ids(name: &[u8]) -> Vec<u32> {
 	let Ok(string) = StringRef::from_raw(name) else {
 		return vec![];
@@ -2886,8 +2580,6 @@ fn variable_ids(name: &[u8]) -> Vec<u32> {
 	}
 }
 
-/// Group referenced globals by name, sorting IDs within each group.
-/// Same-named static locals have IDs in declaration order.
 fn globals_in(bytecode: &[u32]) -> HashMap<Vec<u8>, Vec<u32>> {
 	let mut out: HashMap<Vec<u8>, Vec<u32>> = HashMap::new();
 	let (nodes, _) = dmasm::disassembler::disassemble(bytecode, &mut LenientDisassembleEnv);
@@ -2908,7 +2600,6 @@ fn globals_in(bytecode: &[u32]) -> HashMap<Vec<u8>, Vec<u32>> {
 	out
 }
 
-/// First source file and source line range in the proc bytecode.
 fn code_place(bytecode: &[u32]) -> Option<(Vec<u8>, u32, u32)> {
 	let (nodes, _) = dmasm::disassembler::disassemble(bytecode, &mut LenientDisassembleEnv);
 	let mut file = None;
@@ -2926,14 +2617,10 @@ fn code_place(bytecode: &[u32]) -> Option<(Vec<u8>, u32, u32)> {
 	Some((file?, first, last))
 }
 
-/// Index global variable users by disassembling all procs.
-/// Build lazily, only when a name is ambiguous.
 #[derive(Default)]
 struct WorldGlobals(Option<HashMap<Vec<u8>, Vec<(u32, String)>>>, Option<Vec<(Vec<u8>, Vec<u8>, u32, u32)>>);
 
 impl WorldGlobals {
-	/// Globals referenced by the global init proc, with file, name, line and
-	/// ID.
 	fn initialized(&mut self) -> &[(Vec<u8>, Vec<u8>, u32, u32)] {
 		self.1.get_or_insert_with(|| {
 			let Some(proc) = crate::unnamed::find(crate::server_types::GLOBAL_INIT, 0) else {
@@ -2979,22 +2666,14 @@ impl WorldGlobals {
 	}
 }
 
-/// Assembly environment combining runtime lookups with the existing proc's
-/// global variable IDs.
 struct ReloadEnv<'a> {
 	proc_globals: HashMap<Vec<u8>, Vec<u32>>,
 	world_globals: &'a mut WorldGlobals,
-	/// What this reload adds
 	pending: &'a Pending,
-	/// The proc's static locals the running world doesn't have yet, by scope
-	/// and name
 	new_statics: HashMap<(String, Vec<u8>), u32>,
-	/// Global vars whose slots are known, by scope and name
 	known: HashMap<(String, Vec<u8>), u32>,
 	instances: &'a mut StagedInstances,
-	/// Source file and line range of the proc.
 	place: Option<(Vec<u8>, u32, u32)>,
-	/// Lookup failure details more specific than the assembler error.
 	error: Option<String>
 }
 
@@ -3015,7 +2694,6 @@ impl dmasm::assembler::AssembleEnv for ReloadEnv<'_> {
 	}
 
 	fn get_type(&mut self, path: &str) -> Option<(u8, u32)> {
-		// A reference to a proc this reload adds
 		if let Some(&id) = self.pending.procs.get(&strip_path(path)) {
 			return Some((raw_types::values::ValueTag::ProcRef as u8, id));
 		}
@@ -3046,14 +2724,10 @@ impl dmasm::assembler::AssembleEnv for ReloadEnv<'_> {
 			return Some(id);
 		}
 
-		// Resolve an existing static local by its proc scope and declaration
-		// index.
 		if let Some(scope) = scope.filter(|s| s.starts_with("proc:")) {
 			let n = static_number(scope);
 			let id = self.proc_globals.get(name).and_then(|ids| ids.get(n)).copied();
 			let id = id.or_else(|| self.new_statics.get(&(scope.to_owned(), name.to_vec())).copied());
-			// For unread statics, find a matching initializer within the proc's
-			// source range, or fall back to a unique global of that name.
 			let id = id.or_else(|| {
 				let (file, first, last) = self.place.as_ref()?;
 				let set: Vec<u32> = self
@@ -3082,7 +2756,6 @@ impl dmasm::assembler::AssembleEnv for ReloadEnv<'_> {
 			return id;
 		}
 
-		// A var this reload adds
 		let key = (scope.unwrap_or_default().to_owned(), name.to_vec());
 		if let Some(&id) = self.pending.globals.get(&key) {
 			return Some(id);
@@ -3098,7 +2771,6 @@ impl dmasm::assembler::AssembleEnv for ReloadEnv<'_> {
 			_ => {}
 		}
 
-		// Disambiguate global names using the world's global list.
 		if scope == Some("") {
 			if let Ok(globals) = runtime_tables::global_var_ids() {
 				if let [id] = candidates.iter().filter(|id| globals.contains(id)).collect::<Vec<_>>()[..] {
@@ -3107,20 +2779,14 @@ impl dmasm::assembler::AssembleEnv for ReloadEnv<'_> {
 			}
 		}
 
-		// Resolve type statics and consts on their declaring type first.
-		// Reparented code may have referenced a different var with the same
-		// name.
 		if let Some(id) = scope.filter(|s| s.starts_with('/')).and_then(|ty| declared_global(ty, &shown)) {
 			return Some(id);
 		}
 
-		// Prefer the same-named variable already referenced by this proc.
 		if let Some([id]) = self.proc_globals.get(name).map(Vec::as_slice) {
 			return Some(*id);
 		}
 
-		// Otherwise use the unique global or unique static referenced by
-		// code on the declaring type.
 		let users = self.world_globals.users(name);
 		let ids: BTreeSet<u32> = users.iter().map(|(id, _)| *id).collect();
 		if ids.len() == 1 {
@@ -3144,12 +2810,10 @@ impl dmasm::assembler::AssembleEnv for ReloadEnv<'_> {
 	}
 }
 
-/// The static or const var `name` that type `path` declares, if it's one.
 fn declared_global(path: &str, name: &str) -> Option<u32> {
 	let type_id = find_type(path).ok()?;
 	let name = StringRef::new(name).ok()?.get_id().0;
 	let declared = runtime_tables::misc_words(runtime_tables::type_field(type_id, type_fields::DECLARED_VARS).ok()?)?;
-	// (flags 1 static, 2 const)
 	let found: Vec<u32> = declared
 		.chunks(2)
 		.filter(|c| c.len() == 2 && c[1] & 3 != 0 && runtime_tables::variable_name(c[0]) == Some(name))
@@ -3161,7 +2825,6 @@ fn declared_global(path: &str, name: &str) -> Option<u32> {
 	}
 }
 
-/// Disassemble to the end, retaining unnamed values as raw operands.
 struct LenientDisassembleEnv;
 
 impl dmasm::disassembler::DisassembleEnv for LenientDisassembleEnv {
@@ -3201,7 +2864,6 @@ mod tests {
 
 	#[test]
 	fn renumbers_dbgline_operands_only() {
-		// DbgLine 10; PushInt 10; DbgLine 11; Ret
 		let dbgline = dmasm::Opcode::DbgLine.word();
 		let push_int = dmasm::Opcode::PushInt.word();
 		let ret = dmasm::Opcode::Ret.word();
