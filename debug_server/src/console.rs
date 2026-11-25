@@ -18,6 +18,11 @@ pub enum Command<'a> {
 	DeclaredReferences(&'a str),
 	#[cfg(feature = "test-commands")]
 	NextSpawn(u64),
+	#[cfg(feature = "test-commands")]
+	InList {
+		proc: &'a str,
+		param: &'a str
+	},
 	Help(&'static str)
 }
 
@@ -71,6 +76,9 @@ const FAIL_RELOAD_USAGE: &str = "fail-reload <append|change|copy>";
 
 #[cfg(feature = "test-commands")]
 const NEXT_SPAWN_USAGE: &str = "next-spawn <number>";
+
+#[cfg(feature = "test-commands")]
+const IN_LIST_USAGE: &str = "in-list <proc> <parameter>";
 
 const HELP_HELP: &str = "\
 Print this message or the help of the given subcommand(s)
@@ -155,6 +163,14 @@ pub fn parse(command: &str) -> Result<Command<'_>, String> {
 				_ => Err(format!("error: a spawn number is required\n\nUsage: {}\n", NEXT_SPAWN_USAGE))
 			}
 		}
+		#[cfg(feature = "test-commands")]
+		"in-list" => {
+			at_most(&args, 2, IN_LIST_USAGE)?;
+			match args[..] {
+				[proc, param] => Ok(Command::InList { proc, param }),
+				_ => Err(format!("error: a proc and a parameter are required\n\nUsage: {}\n", IN_LIST_USAGE))
+			}
+		}
 		"help" => {
 			at_most(&args, 1, "help [COMMAND]")?;
 			match args.first().copied() {
@@ -212,6 +228,14 @@ mod tests {
 		assert_eq!(parse("declared-refs /datum/a"), Ok(Command::DeclaredReferences("/datum/a")));
 		#[cfg(feature = "test-commands")]
 		assert_eq!(parse("next-spawn 16777217"), Ok(Command::NextSpawn(16777217)));
+		#[cfg(feature = "test-commands")]
+		assert_eq!(
+			parse("in-list /mob/verb/choose state"),
+			Ok(Command::InList {
+				proc: "/mob/verb/choose",
+				param: "state"
+			})
+		);
 		#[cfg(not(feature = "test-commands"))]
 		assert!(parse("skin").is_err() && parse("script").is_err() && parse("help skin").is_err() && parse("fail-reload append").is_err());
 	}

@@ -366,6 +366,11 @@ impl Server {
 				Err(e) => format!("Failed: {}", e)
 			},
 			#[cfg(feature = "test-commands")]
+			Ok(console::Command::InList { proc, param }) => match self.evaluating(|| hot_reload::in_list_values(proc, param)) {
+				Ok(values) => values.join(","),
+				Err(e) => format!("Failed: {}", e)
+			},
+			#[cfg(feature = "test-commands")]
 			Ok(console::Command::NextSpawn(number)) => {
 				spawn::number_next(number);
 				format!("the next spawn is number {}", number)

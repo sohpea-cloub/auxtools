@@ -3273,12 +3273,8 @@ fn resources(built: Built) {
 	assert_eq!(eval(&mut client, "make_lamps()"), "\"made\"");
 	assert_eq!(eval(&mut client, "lamp_states()"), "\"on,off\"");
 	let built_lamp = resource_id(&eval(&mut client, "lamp_ref()"));
-	let users = source.snapshot.as_ref().unwrap().resource_users(&["lamp.dmi".to_owned()]);
-	let chooser = users.plan.reloads.iter().find(|r| r.proc.path == "/mob/lamp_chooser/choose_lamp_state");
-	let Some(InList::New(choices)) = chooser.map(|r| &r.params[0].in_list) else {
-		panic!("the verb's `in` list that names lamp.dmi isn't compiled again: {:?}", chooser);
-	};
-	assert!(dmasm::format(&choices.nodes).contains("lamp.dmi"), "{}", dmasm::format(&choices.nodes));
+	const LAMP_CHOICES: &str = "#in-list /mob/lamp_chooser/verb/choose_lamp_state state";
+	assert_eq!(eval(&mut client, LAMP_CHOICES), "on,off");
 	let result = reload_resource(&mut watcher, &source, "lamp.dmi", "lamp_edited.dmi", vec![built_lamp]);
 	let lamp = result.resources.first().unwrap_or_else(|| panic!("no resource in {:?}", result));
 	assert_ne!(lamp.id, built_lamp, "the edited file kept its resource");
@@ -3290,6 +3286,11 @@ fn resources(built: Built) {
 	assert_eq!(eval(&mut client, "overlay_states()"), "\"on,off,new\"");
 	assert_eq!(resource_id(&eval(&mut client, "\"\\ref[placed_lamp.mouse_over_pointer]\"")), lamp.id);
 	println!("ok: resource reload of an icon");
+	assert_eq!(
+		eval(&mut client, LAMP_CHOICES),
+		"on,off,new",
+		"the verb's choices are the built icon states"
+	);
 	println!("ok: a resource reload compiles again the `in` lists that name it");
 
 	let built_beep = resource_id(&eval(&mut client, "beep_ref()"));
