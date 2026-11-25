@@ -1307,8 +1307,7 @@ impl<'a> Compiler<'a> {
                 {
                     if prefab.vars.is_empty() && !self.debugger {
                         self.global_field = true;
-                        let path = prefab.path.to_string();
-                        let ty = self.proc.tree.find(&path);
+                        let ty = procs::scope_head_type(self, prefab);
                         let names: Vec<&str> = unspanned_follows
                             .iter()
                             .map_while(|f| match f {
@@ -1316,16 +1315,18 @@ impl<'a> Compiler<'a> {
                                 _ => None,
                             })
                             .collect();
-                        let leads_to_static = (2..=names.len()).any(|n| {
-                            procs::static_chain(self, ty, &names[..n])
-                                .is_some_and(|d| procs::is_global_member(&d))
-                        }) && !names.first().is_some_and(|name| {
-                            ty.and_then(|t| procs::member_var(t, name))
-                                .is_some_and(|d| procs::is_global_member(&d))
-                        });
+                        let leads_to_static = ty.is_some()
+                            && (2..=names.len()).any(|n| {
+                                procs::static_chain(self, ty, &names[..n])
+                                    .is_some_and(|d| procs::is_global_member(&d))
+                            })
+                            && !names.first().is_some_and(|name| {
+                                ty.and_then(|t| procs::member_var(t, name))
+                                    .is_some_and(|d| procs::is_global_member(&d))
+                            });
                         let kind = match leads_to_static {
                             true => EvalKind::Global,
-                            false => procs::emit_type_scope(self, &path, &unspanned_follows[0])?,
+                            false => procs::emit_type_scope(self, ty, &unspanned_follows[0])?,
                         };
                         let ty = match &unspanned_follows[0] {
                             Follow::StaticField(name)

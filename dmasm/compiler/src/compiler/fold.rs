@@ -223,13 +223,12 @@ fn static_const(
     term: &Term,
     steps: &[dreammaker::ast::Spanned<Follow>],
 ) -> Option<Constant> {
-    let ctx = &c.proc;
     if c.debugger {
         return None;
     }
     let ty = match term {
         Term::Prefab(prefab) if prefab.vars.is_empty() => {
-            Some(ctx.tree.find(&prefab.path.to_string())?)
+            Some(super::procs::scope_head_type(c, prefab)?)
         }
         other => super::procs::start_type(c, other).0,
     };
