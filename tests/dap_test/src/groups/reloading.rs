@@ -396,6 +396,36 @@ fn starting_at_world_new() {
 	world.end();
 }
 
+fn edited_during_a_reboot() {
+	let (mut world, _dir) = watched_world("edited_during_a_reboot");
+	let at = world.marks.clone();
+	world.break_on(&["leaf_2"]);
+	let before = at.line("leaf_2");
+	edit(
+		&mut world,
+		"main.dm",
+		"/proc/sc_reboot()\n",
+		"/proc/sc_edit_and_reboot()\n\tvar/text = file2text(\"stepping.dm\")\n\tfdel(\"stepping.dm\")\n\ttext2file(replacetext(text, \
+		 \"/proc/leaf(x)\\n\", \"/proc/above()\\n\\treturn 1\\n\\n/proc/leaf(x)\\n\"), \
+		 \"stepping.dm\")\n\ttext2file(\"\\n/proc/appended()\\n\\treturn 1\\n\", \"main.dm\")\n\tworld.Reboot()\n\n/proc/sc_reboot()\n"
+	);
+	let restarts = world.output.matches("The world restarted").count();
+	world.run("edit_and_reboot");
+	rebooted(&mut world, 2, restarts);
+	assert_eq!(at.line("leaf_2"), before + 3);
+	assert_eq!(moved(&mut world), (before + 3, true));
+	let set = world.try_break_if(&[("leaf_2", ""), ("early_value", "")]);
+	assert_eq!((&set[0]["line"], &set[0]["verified"]), (&json!(before + 3), &json!(true)), "{}", set[0]);
+	assert_eq!(set[1]["verified"], true, "{}", set[1]);
+	world.run("middle");
+	world.stop_on("breakpoint", "/leaf", "leaf_2");
+	world.resume();
+	world.stop_on("breakpoint", "/leaf", "leaf_2");
+	world.resume_through("middle");
+	ok("breakpoints follow an edit read after a reboot");
+	world.end();
+}
+
 fn types_changed_before_reboot() {
 	let (mut world, _dir) = watched_world("types_changed_before_reboot");
 	edit(
@@ -1510,6 +1540,7 @@ pub fn edits() {
 	types_changed_before_reboot();
 	saves_with_nothing_to_reload();
 	retry_after_a_refused_save();
+	edited_during_a_reboot();
 }
 
 const STARTS_AT_AN_AREA: &str = "/area

@@ -512,11 +512,13 @@ impl Code {
 		}
 
 		let looked_at = watching.files.unchanged(&self.root);
+		let read = self.read_texts(&watching.edited_since_built);
 		if looked_at && !other_defines && watching.edited_since_built.len() <= MOST_ALONE {
 			let mut files: Vec<&Path> = watching.edited_since_built.iter().map(PathBuf::as_path).collect();
 			files.sort();
 			if let Ok(reload) = watching.built.reload_files(&self.root, &files) {
-				let Some(applied) = self.reload(&reload.changes, &watching.built, vec![], true, true, Read::default()) else {
+				let texts = Some(self.still_read(read));
+				let Some(applied) = self.reload(&reload.changes, &watching.built, vec![], true, true, Read { defines: None, texts }) else {
 					return false;
 				};
 				if applied {
@@ -547,10 +549,8 @@ impl Code {
 		refuse_hidden(&watching.built, &current, &mut changes);
 		refuse_other_maps(&watching.built, &current, &mut changes);
 		let read_with = other_defines.then(|| selected.clone());
-		let Some(applied) = self.reload(&changes, &watching.built, vec![], true, true, Read {
-			defines: read_with,
-			texts: None
-		}) else {
+		let texts = Some(self.still_read(read));
+		let Some(applied) = self.reload(&changes, &watching.built, vec![], true, true, Read { defines: read_with, texts }) else {
 			return false;
 		};
 		if applied {
