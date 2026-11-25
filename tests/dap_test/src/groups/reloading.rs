@@ -95,6 +95,15 @@ fn behind_the_clients_back() {
 	world.wait_output("Hot reload active");
 	let at = world.marks.clone();
 	assert_eq!(world.eval_global("TWICE(21)"), "42");
+	for _ in 0..3 {
+		let why = world.refused("evaluate", json!({ "expression": "CURRENT", "context": "hover" }));
+		assert_eq!(why, "the expression may run code, so it is evaluated only when asked");
+		let offered = world.request("completions", json!({ "text": "CURRENT.re", "column": 11 }));
+		assert_eq!(offered["targets"], json!([]));
+	}
+	assert_eq!(world.eval_global("counted.reads"), "0");
+	assert_eq!(world.eval_global("CURRENT.reads"), "1");
+	ok("hover and completion run no macro's call");
 
 	world.break_on(&["leaf_2"]);
 	let before = at.line("leaf_2");

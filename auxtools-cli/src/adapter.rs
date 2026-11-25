@@ -2009,11 +2009,19 @@ impl Adapter {
 			}
 		}
 		let hex = args.format.is_some_and(|format| format.hex == Some(true));
-		match self.request(&AuxRequest::Eval {
-			frame_id: args.frameId.map(|id| id as u32),
-			command: args.expression,
-			ending: false
-		})? {
+		let frame_id = args.frameId.map(|id| id as u32);
+		let request = match args.context.as_deref() {
+			Some("hover") => AuxRequest::Read {
+				frame_id,
+				expression: args.expression
+			},
+			_ => AuxRequest::Eval {
+				frame_id,
+				command: args.expression,
+				ending: false
+			}
+		};
+		match self.request(&request)? {
 			AuxResponse::Eval(Ok(result)) => json(EvaluateResponse {
 				result: shown(result.value, hex),
 				type_: result.kind,
@@ -2311,63 +2319,15 @@ fn completion_place(text: &str) -> Option<CompletionPlace<'_>> {
 		}
 		at = name;
 	}
-	let base = base_end.map(|end| &text[at..end]);
-	if base.is_some_and(changes_things) {
-		return None;
-	}
-	Some(CompletionPlace { start, base, command: false })
+	Some(CompletionPlace {
+		start,
+		base: base_end.map(|end| &text[at..end]),
+		command: false
+	})
 }
 
 fn hover_refuses(code: &str) -> Option<&'static str> {
-	if dmasm::compiler::is_body(code) {
-		return Some("hover requires a single expression");
-	}
-	changes_things(code).then_some("hover expression may have side effects")
-}
-
-fn changes_things(expression: &str) -> bool {
-	let mut quoted = false;
-	let mut chars = expression.chars().peekable();
-	let mut last = ' ';
-	let mut word = String::new();
-	while let Some(c) = chars.next() {
-		if !quoted && (c.is_ascii_alphanumeric() || c == '_') {
-			word.push(c);
-		} else {
-			if matches!(word.as_str(), "new" | "del") {
-				return true;
-			}
-			word.clear();
-		}
-		if quoted {
-			match c {
-				'\\' => {
-					chars.next();
-				}
-				'"' => quoted = false,
-				'[' => return true,
-				_ => {}
-			}
-			continue;
-		}
-		let next = chars.peek().copied().unwrap_or(' ');
-		match c {
-			'"' => quoted = true,
-			'(' => return true,
-			'+' | '-' if next == c => return true,
-			'<' | '>' if next == c => return true,
-			'=' if next != '=' && !matches!(last, '=' | '!' | '<' | '>') => return true,
-			'=' if next != '=' && matches!(last, '<' | '>') => {
-				let shifts = expression.contains("<<=") || expression.contains(">>=");
-				if shifts {
-					return true;
-				}
-			}
-			_ => {}
-		}
-		last = c;
-	}
-	matches!(word.as_str(), "new" | "del")
+	dmasm::compiler::is_body(code).then_some("hover requires a single expression")
 }
 
 fn shown(value: String, hex: bool) -> String {
@@ -2502,9 +2462,7 @@ mod tests {
 
 	use auxtools_protocol::{HitCondition, LogPart, RuntimeFilter};
 
-	use super::{
-		changes_things, completion_place, hover_refuses, instruction_window, named_proc, parse_address, reloaded_text, runtime_place, shown
-	};
+	use super::{completion_place, hover_refuses, instruction_window, named_proc, parse_address, reloaded_text, runtime_place, shown};
 
 	#[test]
 	fn a_reloaded_file_is_found_by_another_spelling_of_its_path() {
@@ -2588,66 +2546,9 @@ mod tests {
 			"x + 3",
 			".na",
 			"a..b",
-			"].",
-			"items[i++].na",
-			"items[--i].",
-			"items[i = 2].",
-			"items[i += 1].",
-			"items[\"[i++]\"].",
-			"items[new /datum].na"
+			"]."
 		] {
 			assert_eq!(completion_place(text), None, "{}", text);
-		}
-	}
-
-	#[test]
-	fn a_hover_reads_and_does_nothing_else() {
-		for reads in [
-			"x",
-			"src.health",
-			"a?.b:c",
-			"x == 1",
-			"x != y && x <= 2 || y >= 3",
-			"L[2]",
-			"L[\"a = b\"]",
-			"\"text with (parens) and = signs++\"",
-			"x - -y",
-			"x + +y",
-			"a < b",
-			"/datum/thing",
-			"newest",
-			"src.renew",
-			"x.del_count",
-			"model",
-			"\"new del << >>\"",
-			"x < -y",
-			"a > b"
-		] {
-			assert!(!changes_things(reads), "{}", reads);
-		}
-		for changes in [
-			"f()",
-			"src.bump(1)",
-			"x = 1",
-			"x += 1",
-			"x ||= y",
-			"x <<= 1",
-			"x++",
-			"--x",
-			"L[f()]",
-			"\"[f()]\"",
-			"new /datum/thing()",
-			"new /datum/thing",
-			"new/datum/thing",
-			"x = new",
-			"del x",
-			"del(x)",
-			"world << \"x\"",
-			"src << x",
-			"x >> y",
-			"L[new /datum/thing]"
-		] {
-			assert!(changes_things(changes), "{}", changes);
 		}
 	}
 
@@ -2656,8 +2557,8 @@ mod tests {
 		for body in ["again:\ngoto again", "var/x\nx", "return n", "n; n", "x\ny"] {
 			assert_eq!(hover_refuses(body), Some("hover requires a single expression"), "{:?}", body);
 		}
-		for (code, why) in [("x", None), ("src.n;", None), ("x = 1", Some("hover expression may have side effects"))] {
-			assert_eq!(hover_refuses(code), why, "{:?}", code);
+		for code in ["x", "src.n;", "x = 1"] {
+			assert_eq!(hover_refuses(code), None, "{:?}", code);
 		}
 	}
 

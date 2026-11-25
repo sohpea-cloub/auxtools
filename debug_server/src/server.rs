@@ -31,6 +31,7 @@ mod eval;
 mod journaling;
 mod pause;
 mod profile;
+mod reading;
 mod reload;
 mod render;
 mod sessions;
@@ -139,6 +140,7 @@ impl Server {
 				self.answer(Response::SetVariable(result));
 			}
 			Request::Eval { frame_id, command, ending } => self.handle_eval_request(frame_id, &command, ending),
+			Request::Read { frame_id, expression } => self.handle_read(frame_id, &expression),
 
 			Request::StackFrames {
 				stack_id,

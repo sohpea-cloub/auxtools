@@ -230,9 +230,11 @@ as `~-4` and `new /obj` in conditions. Some differences remain:
   when `x` is null.
 - `..()`, `__FILE__`, `__LINE__`, `__PROC__` and `__TYPE__` are not available.
 
-When you hover over source code, the debugger evaluates one expression in the selected frame. It
-doesn't call procs or assign values for a hover. The Debug Console completes the names of
-visible variables and procs, also after a `.`.
+When you hover over source code, the debugger reads one expression in the selected frame. A hover
+runs no code: it shows names, variables and list entries, such as `src.items[i]`, and nothing
+that would call a proc, an operator overload or an object's `operator[]`. The Debug Console
+completes the names of visible variables and procs, also after a `.`, reading the value before
+the `.` the same way.
 
 `#dis` shows the bytecode of the selected proc. `#dis /proc/name` shows another proc.
 

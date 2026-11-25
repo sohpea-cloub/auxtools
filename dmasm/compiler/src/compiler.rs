@@ -361,7 +361,7 @@ fn proc_value(
     }
 }
 
-fn parse_expr(code: &str, byond: ByondVersion) -> Result<Expression, CompileError> {
+pub fn parse_expr(code: &str, byond: ByondVersion) -> Result<Expression, CompileError> {
     let ctx = dreammaker::Context::default();
     byond.read_as(&ctx);
 

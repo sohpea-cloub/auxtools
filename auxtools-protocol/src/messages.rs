@@ -16,6 +16,10 @@ pub enum Request {
 		command: String,
 		ending: bool
 	},
+	Read {
+		frame_id: Option<u32>,
+		expression: String
+	},
 	BreakpointSet {
 		instruction: InstructionRef,
 		condition: Option<String>,

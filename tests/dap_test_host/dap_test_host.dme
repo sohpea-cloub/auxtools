@@ -1,5 +1,6 @@
 #define DEBUG
 #define TWICE(x) ((x) * 2)
+#define CURRENT counted_current()
 #include "main.dm"
 #include "stepping.dm"
 #include "values.dm"

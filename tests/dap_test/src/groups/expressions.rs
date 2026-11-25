@@ -77,10 +77,19 @@ fn completions(world: &mut World) {
 	}
 	assert_eq!(world.eval("n"), "1");
 	for _ in 0..3 {
-		assert_eq!(names(world, "counted[1].re"), Vec::<String>::new());
+		for text in [
+			"counted[1].re",
+			"counted_in[counted + 0].re",
+			"counted_in[counted[1]].re",
+			"counted_in[counted_keys[counted + 0]].re"
+		] {
+			assert_eq!(names(world, text), Vec::<String>::new(), "{}", text);
+		}
 	}
 	assert_eq!(world.eval("counted.reads"), "0");
 	assert_eq!(names(world, "counted_in[1].re"), ["reads"]);
+	assert_eq!(names(world, "counted_in[counted_keys[1]].re"), ["reads"]);
+	assert_eq!(names(world, "counted_in[counted_keys[src.n]].re"), ["reads"]);
 	ok("completion rejects unsafe or invalid receivers");
 
 	let targets = world.request("completions", json!({ "frameId": frame, "text": "leaf(by) + n", "column": 8 }));
@@ -403,16 +412,33 @@ pub fn run() {
 	for (expression, shown) in [
 		("n", "1"),
 		("src.items[2]", "\"y\""),
-		("by == 4 && n <= 1", "1"),
-		("\"(a = b)\"", "\"(a = b)\"")
+		("\"(a = b)\"", "\"(a = b)\""),
+		("counted_in[counted_keys[1]]", "/datum/counted"),
+		("global.counted_in[1].reads", "0")
 	] {
 		assert_eq!(world.evaluate_in(&frame, expression, "hover")["result"], shown, "{}", expression);
 	}
-	for expression in ["bump(1)", "src.bump(1)", "n = 5", "n += 1", "n++", "leaf(n)", "\"[bump(1)]\""] {
-		let why = world.refused("evaluate", json!({ "expression": expression, "frameId": frame, "context": "hover" }));
-		assert_eq!(why, "hover expression may have side effects", "{}", expression);
+	for _ in 0..3 {
+		for expression in [
+			"bump(1)",
+			"src.bump(1)",
+			"n = 5",
+			"n += 1",
+			"n++",
+			"leaf(n)",
+			"\"[bump(1)]\"",
+			"by == 4 && n <= 1",
+			"counted[1]",
+			"counted + 1",
+			"counted_in[counted[1]]",
+			"new /datum/thing"
+		] {
+			let why = world.refused("evaluate", json!({ "expression": expression, "frameId": frame, "context": "hover" }));
+			assert_eq!(why, "the expression may run code, so it is evaluated only when asked", "{}", expression);
+		}
 	}
 	assert_eq!(world.eval("n"), "1");
+	assert_eq!(world.eval("counted.reads"), "0");
 	ok("hover rejects side effects");
 
 	completions(&mut world);

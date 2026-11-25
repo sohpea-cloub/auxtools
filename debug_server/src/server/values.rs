@@ -313,30 +313,6 @@ pub(super) fn each_proc(mut each: impl FnMut(&str, &str)) {
 	}
 }
 
-pub(super) fn indexed(base: &str) -> Option<Vec<&str>> {
-	let mut receivers = vec![];
-	let mut inside = false;
-	let mut quoted = false;
-	let mut chars = base.char_indices();
-	while let Some((at, c)) = chars.next() {
-		match c {
-			'\\' if quoted => {
-				chars.next();
-			}
-			'"' => quoted = !quoted,
-			_ if quoted => {}
-			'[' if inside => return None,
-			'[' => {
-				receivers.push(&base[..at]);
-				inside = true;
-			}
-			']' => inside = false,
-			_ => {}
-		}
-	}
-	Some(receivers)
-}
-
 pub(super) fn entry_number(name: &str) -> Option<u32> {
 	name.strip_prefix('[')?.strip_suffix(']')?.parse().ok().filter(|&n| n > 0)
 }
@@ -376,23 +352,7 @@ impl Server {
 		let mut found: BTreeMap<String, bool> = BTreeMap::new();
 		match base {
 			Some(base) => {
-				let mut read = |expression: &str| {
-					let value = self.eval_expr(EvalRequest::new(frame_id, expression)).value;
-					if let Some(state) = self.pause.state.as_mut() {
-						state.invalidate_stacks();
-					}
-					value.ok()
-				};
-				let Some(receivers) = indexed(base) else {
-					return vec![];
-				};
-				if !receivers
-					.into_iter()
-					.all(|receiver| read(receiver).is_some_and(|value| List::is_list(&value)))
-				{
-					return vec![];
-				}
-				let Some(value) = read(base) else {
+				let Ok(value) = self.read_expr(frame_id, base) else {
 					return vec![];
 				};
 				members_of(&value, &mut found);
