@@ -1,6 +1,3 @@
-// Started by auxtools' launcher, which loads the debugger into it. It has
-// no auxtools code: no auxtools_init and no enable_debugging.
-
 /world/New()
 	..()
 	world.log << "launcher test: world/New"
@@ -10,11 +7,9 @@
 /proc/run_test()
 	world.log << "launcher test: [target(21)]"
 	second_target()
-	// A runtime error ends the proc it is in and its callers
 	spawn(0)
 		fail()
 	sleep(2)
-	// The first world reboots, which loads the world again
 	if (fexists("rebooted"))
 		fdel("rebooted")
 		world.log << "launcher test: done"

@@ -23,17 +23,19 @@ use test_support::{
 	temp::TempDir
 };
 
-const TARGET_LINE: u64 = 28;
-
 fn host_file(name: &str) -> PathBuf {
 	std::env::current_dir().unwrap().join("tests/launcher_test_host").join(name)
+}
+
+fn target_line() -> u64 {
+	line_of(&host_file("launcher_test_host.dm"), "\tvar/doubled = n * 2")
 }
 
 fn at_target(launcher: &mut Launcher) {
 	launcher.stopped("breakpoint");
 	let frame = launcher.top_frame();
 	assert!(frame["name"].as_str().unwrap().ends_with("target"), "stopped in {}", frame);
-	assert_eq!(frame["line"], TARGET_LINE);
+	assert_eq!(frame["line"], target_line());
 	let source = frame["source"]["path"].as_str().unwrap_or_default();
 	assert!(source.ends_with("launcher_test_host.dm"), "the frame's source is {:?}", source);
 
@@ -194,7 +196,7 @@ fn launch(server: &str, library: &Path) {
 		"setBreakpoints",
 		json!({
 			"source": { "path": host_file("launcher_test_host.dm") },
-			"breakpoints": [{ "line": TARGET_LINE }]
+			"breakpoints": [{ "line": target_line() }]
 		})
 	);
 	assert_eq!(set["breakpoints"][0]["verified"], true, "the breakpoint wasn't set: {}", set);
