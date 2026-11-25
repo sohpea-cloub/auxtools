@@ -3659,6 +3659,28 @@ fn a_resource_file_names_the_code_and_defaults_that_use_it() {
 }
 
 #[test]
+fn a_resource_file_compiles_again_the_in_lists_that_name_it() {
+    let world = World::new(
+        "resource-in-lists",
+        "/mob/verb/choose(state in icon_states('lamp.dmi'), other in list(1, 2))\n\
+         \treturn state\n",
+    );
+    let users = world.parse().resource_users(&["lamp.dmi".to_owned()]);
+    assert!(users.refused.is_empty(), "{:?}", users.refused);
+    assert_eq!(reloaded(&users), vec![key("/mob/choose", 0)]);
+    let params = &users.plan.reloads[0].params;
+    let InList::New(choices) = &params[0].in_list else {
+        panic!(
+            "the `in` list that names lamp.dmi isn't compiled again: {:?}",
+            params[0].in_list
+        );
+    };
+    let code = dmasm_bytecode::format(&choices.nodes);
+    assert!(code.contains("lamp.dmi"), "{}", code);
+    assert_eq!(params[1].in_list, InList::Kept, "{:?}", params[1].in_list);
+}
+
+#[test]
 fn a_resource_is_found_wherever_code_or_a_default_names_it() {
     let world = World::new(
         "resource-places",

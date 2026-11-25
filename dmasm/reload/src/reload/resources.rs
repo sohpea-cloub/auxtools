@@ -104,9 +104,18 @@ impl Snapshot {
         defaults.sort();
         defaults.dedup();
 
+        let wanted: Vec<String> = names.iter().map(|name| normalized(name)).collect();
+        let names_one = |expression: &dreammaker::ast::Expression| {
+            let mut found = false;
+            syntax::walk_expression(expression, &mut |node| {
+                found |= matches!(node, syntax::Node::Term(Term::Resource(name))
+                    if wanted.contains(&normalized(name)));
+            });
+            found
+        };
         for key in procs {
             let reload = self.compile_code(key).and_then(|mut reload| {
-                self.compile_in_lists(key, &mut reload, |_, _| false)?;
+                self.compile_in_lists(key, &mut reload, |_, list| names_one(list))?;
                 Ok(reload)
             });
             match reload {

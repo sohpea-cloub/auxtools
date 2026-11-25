@@ -57,6 +57,9 @@ var/obj/held_lamp
 /proc/crate_ref()
 	return "\ref['crate.dmi']"
 
+/mob/lamp_chooser/verb/choose_lamp_state(state in icon_states('lamp.dmi'))
+	return state
+
 var/list/many_appearances
 
 /proc/make_many_appearances()
