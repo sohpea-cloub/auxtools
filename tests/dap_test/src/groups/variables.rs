@@ -73,6 +73,9 @@ fn kinds_and_expressions(world: &mut World, locals: &[Value], version: u64) {
 	for (entry, value) in inside.iter().zip(["1", "2", "3", "4"]) {
 		let expression = entry["evaluateName"].as_str().unwrap();
 		assert_eq!(world.evaluate_in(&frame, expression, "watch")["result"], value, "{}", expression);
+		if value != "4" {
+			assert_eq!(world.evaluate_in(&frame, expression, "hover")["result"], value, "hovering {}", expression);
+		}
 		let pair = world.variables(&entry["variablesReference"].clone());
 		assert_eq!(pair[1]["evaluateName"], expression);
 	}

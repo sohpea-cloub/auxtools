@@ -33,7 +33,11 @@ mod unary;
 mod versions;
 
 pub fn text(raw: &str) -> Option<String> {
-    String::from_utf8(strings::parse(raw).ok()?.0).ok()
+    String::from_utf8(text_bytes(raw)?).ok()
+}
+
+pub fn text_bytes(raw: &str) -> Option<Vec<u8>> {
+    Some(strings::parse(raw).ok()?.0)
 }
 
 use chain_builder::ChainBuilder;

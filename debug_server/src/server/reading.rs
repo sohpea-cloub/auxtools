@@ -45,7 +45,10 @@ fn read(expression: &Expression, frame: Option<&debug::StackFrame>) -> Result<Va
 		Term::Null => Value::NULL,
 		Term::Int(number) => Value::from(*number as f32),
 		Term::Float(number) => Value::from(*number),
-		Term::String(text) => Value::from_string(text).map_err(runtime)?,
+		Term::String(text) => {
+			let bytes = dmasm::compiler::text_bytes(text).ok_or_else(|| format!("invalid text: {}", text))?;
+			Value::from_string_raw(&bytes).map_err(runtime)?
+		}
 		Term::Expr(inner) => read(inner, frame)?,
 		Term::Ident(name) => named(name, frame)?,
 		Term::GlobalIdent(name) => global(name)?,
