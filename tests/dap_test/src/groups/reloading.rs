@@ -1542,6 +1542,45 @@ fn retry_after_a_refused_save() {
 	world.end();
 }
 
+fn reboot_refusing_the_edits() {
+	let (mut world, _dir) = watched_world("reboot_refusing_the_edits");
+	let at = world.marks.clone();
+	world.break_on(&["leaf_1"]);
+	let leaf_1 = at.line("leaf_1");
+	edit(&mut world, "stepping.dm", "/proc/leaf(x)\n", "/proc/leaf(x)\n\tvar/first = 1\n");
+	assert_eq!(moved(&mut world), (leaf_1 + 1, true));
+	saved(
+		&mut world,
+		"errors.dm",
+		"\tvar/zero = 0\n",
+		"\tvar/zero = 0\n\tvar/list/broken = (\n",
+		REFUSED
+	);
+	let refusals = world.count(REFUSED);
+	world.drop_events("breakpoint");
+	world.run("reboot");
+	world.wait_count("dap: world/New", 2);
+	world.wait_until("the refusal after the reboot", |output| output.matches(REFUSED).count() > refusals);
+	let told = world.event("breakpoint")["body"]["breakpoint"].clone();
+	assert_eq!(
+		(&told["verified"], &told["line"], &told["message"]),
+		(&json!(false), &json!(leaf_1 + 1), &json!("pending hot reload")),
+		"{}",
+		told
+	);
+	world.run_through("middle");
+	ok("breakpoint in an edit a reboot refuses waits");
+
+	saved(&mut world, "errors.dm", "\tvar/list/broken = (\n", "", " ms");
+	assert_eq!(moved(&mut world), (leaf_1 + 1, true));
+	world.run("middle");
+	world.stop_on("breakpoint", "/leaf", "leaf_1");
+	world.break_on(&[]);
+	world.resume_through("middle");
+	ok("breakpoint in an edit a reboot refused, once a reload has it");
+	world.end();
+}
+
 pub fn edits() {
 	saved_without_reloading();
 	behind_the_clients_back();
@@ -1550,6 +1589,7 @@ pub fn edits() {
 	saves_with_nothing_to_reload();
 	retry_after_a_refused_save();
 	edited_during_a_reboot();
+	reboot_refusing_the_edits();
 }
 
 const STARTS_AT_AN_AREA: &str = "/area

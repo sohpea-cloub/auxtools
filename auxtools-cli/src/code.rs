@@ -64,7 +64,8 @@ pub enum Event {
 		summary: String,
 		errors: Vec<String>,
 		refused: Vec<Refusal>,
-		warnings: Vec<Diagnostic>
+		warnings: Vec<Diagnostic>,
+		built: Vec<PathBuf>
 	},
 	NothingChanged {
 		warnings: Vec<Diagnostic>,
@@ -375,7 +376,7 @@ impl Code {
 			Ok(new) => new,
 			Err(e) => {
 				self.log(format!("couldn't read the code: {}", e));
-				return self.not_reloaded(e);
+				return self.not_reloaded(e, vec![]);
 			}
 		};
 		let texts = self.still_read(read);
@@ -541,7 +542,8 @@ impl Code {
 				Ok(current) => current,
 				Err(e) => {
 					self.log(format!("couldn't read the code: {}", e));
-					return self.not_reloaded(e) && self.ready();
+					let built = watching.edited_since_built.iter().map(|file| self.root.join(file)).collect();
+					return self.not_reloaded(e, built) && self.ready();
 				}
 			}
 		};
@@ -712,12 +714,13 @@ impl Code {
 		self.send(Event::Macros(macros))
 	}
 
-	fn not_reloaded(&self, error: String) -> AdapterConnected {
+	fn not_reloaded(&self, error: String, built: Vec<PathBuf>) -> AdapterConnected {
 		self.send(Event::NotReloaded {
 			summary: "couldn't read the code".to_owned(),
 			errors: vec![error],
 			refused: vec![],
-			warnings: vec![]
+			warnings: vec![],
+			built
 		})
 	}
 
@@ -761,7 +764,11 @@ impl Code {
 				summary: summary.to_owned(),
 				errors: vec![],
 				refused: refused.iter().cloned().chain(defines).collect(),
-				warnings: changes.warnings.clone()
+				warnings: changes.warnings.clone(),
+				built: match (restarted, texts) {
+					(true, Some(texts)) => texts.into_keys().collect(),
+					_ => vec![]
+				}
 			};
 			return (self.send(event) && self.refused_by(refused, whole)).then_some(false);
 		}
@@ -1610,6 +1617,29 @@ mod tests {
 				(root.join("code/b.dm"), lines(&original("b")))
 			]))
 		);
+	}
+
+	#[test]
+	fn a_refused_reboot_names_the_files_the_world_runs_as_built() {
+		let mut worker = Worker::start("refused-reboot-built");
+		let built = |worker: &Worker| {
+			let mut built = worker.next("refusal", |event| match event {
+				Event::NotReloaded { built, .. } => Some(built.clone()),
+				Event::Reload { summary, .. } => panic!("reloaded: {}", summary.text(&[])),
+				_ => None
+			});
+			built.sort();
+			built
+		};
+		worker.write("a", &format!("// above\n{}", body("a", "return 1")));
+		worker.prepared();
+		worker.write("b", &body("b", "switch(1)\n\t\tif(rand())\n\t\t\treturn 1"));
+		worker.applied(false);
+		assert_eq!(built(&worker), Vec::<PathBuf>::new());
+		worker.next("looked", |event| matches!(event, Event::Looked).then_some(()));
+		worker.reboot();
+		let root = &worker.project.root;
+		assert_eq!(built(&worker), [root.join("code/a.dm"), root.join("code/b.dm")]);
 	}
 
 	#[test]

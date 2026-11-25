@@ -315,6 +315,7 @@ pub struct Adapter {
 	unsaved: HashSet<String>,
 	world_texts: HashMap<String, Option<Vec<String>>>,
 	caught_up: Option<code::Texts>,
+	running_built: code::Texts,
 	world_as_of: Option<std::time::SystemTime>,
 	deferred: HashSet<String>,
 	waiting: HashSet<String>,
@@ -404,6 +405,7 @@ pub fn serve(out: Output, inputs: mpsc::Sender<Input>, receiver: &mpsc::Receiver
 		reloaded_resources: vec![],
 		world_texts: HashMap::new(),
 		caught_up: None,
+		running_built: code::Texts::new(),
 		world_as_of: None,
 		said_changed: HashSet::new(),
 		next_breakpoint_id: 1,
@@ -813,10 +815,20 @@ impl Adapter {
 					let _ = code.send(code::Command::Reloaded(applied));
 				}
 			}
-			code::Event::NotReloaded { refused, warnings, .. } if !refused.is_empty() => self.refused(refused, texts(&warnings)),
 			code::Event::NotReloaded {
-				summary, errors, warnings, ..
+				refused, warnings, built, ..
+			} if !refused.is_empty() => {
+				self.running_built.extend(built.into_iter().map(|file| (file, None)));
+				self.refused(refused, texts(&warnings));
+			}
+			code::Event::NotReloaded {
+				summary,
+				errors,
+				warnings,
+				built,
+				..
 			} => {
+				self.running_built.extend(built.into_iter().map(|file| (file, None)));
 				self.reload_state("failed", Some(summary.clone()));
 				self.journal_reload(false, summary, errors, texts(&warnings));
 			}
@@ -861,6 +873,10 @@ impl Adapter {
 	}
 
 	fn code_changed(&mut self, texts: Option<&code::Texts>) {
+		match texts {
+			Some(texts) => self.running_built.retain(|file, _| !texts.contains_key(file)),
+			None => self.running_built.clear()
+		}
 		self.world_as_of = self.reload_seen.take().or_else(|| Some(std::time::SystemTime::now()));
 		if self.code_read && self.debuggee.is_some() && self.debugging {
 			match (self.world.waiting_for_code, texts) {
@@ -1054,7 +1070,7 @@ impl Adapter {
 			if self.deferred.contains(&file) {
 				continue;
 			}
-			if self.waiting.contains(&file) && matches!(reloaded, Some(None)) {
+			if self.waiting.contains(&file) && (matches!(reloaded, Some(None)) || self.runs_built(&file)) {
 				continue;
 			}
 			if matches!(reloaded, Some(Some(None))) {
@@ -1197,6 +1213,9 @@ impl Adapter {
 		if self.code.is_none() || !self.code_read {
 			return false;
 		}
+		if self.runs_built(path) {
+			return true;
+		}
 		match self.world_texts.get(path) {
 			Some(world) => world != text,
 			None => {
@@ -1204,6 +1223,10 @@ impl Adapter {
 				matches!((modified, self.world_as_of), (Some(modified), Some(as_of)) if modified > as_of)
 			}
 		}
+	}
+
+	fn runs_built(&self, path: &str) -> bool {
+		!self.running_built.is_empty() && reloaded_text(&self.running_built, path).is_some()
 	}
 
 	fn waiting_for_the_world(wanted: &[(i64, SourceBreakpoint)]) -> Vec<Breakpoint> {

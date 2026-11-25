@@ -381,6 +381,12 @@ impl Adapter {
 			let _ = self.catch_runtimes();
 			let files: Vec<String> = self.breakpoints.keys().filter(|file| !self.deferred.contains(*file)).cloned().collect();
 			for file in files {
+				if self.runs_built(&file) {
+					let breakpoints = Self::waiting_for_the_world(&self.breakpoints[&file]);
+					self.tell(breakpoints, false);
+					self.waiting.insert(file);
+					continue;
+				}
 				let breakpoints = self.apply_breakpoints(&file);
 				self.tell(breakpoints, false);
 			}
