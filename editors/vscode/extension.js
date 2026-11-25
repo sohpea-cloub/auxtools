@@ -4,7 +4,7 @@ const childProcess = require("child_process");
 const fs = require("fs");
 const path = require("path");
 const vscode = require("vscode");
-const { expressionAt } = require("./expression");
+const { evaluatableExpression } = require("./expression");
 const { UnsavedFiles } = require("./unsaved");
 const buildFlags = require("./buildflags");
 const langclient = require("./langclient");
@@ -695,11 +695,7 @@ function activate(context) {
 			{ language: "dm" },
 			{
 				provideEvaluatableExpression(document, position) {
-					const found = expressionAt(document.lineAt(position.line).text, position.character);
-					if (!found) {
-						return undefined;
-					}
-					return new vscode.EvaluatableExpression(new vscode.Range(position.line, found.start, position.line, found.end));
+					return evaluatableExpression(vscode, document, position);
 				},
 			}
 		)

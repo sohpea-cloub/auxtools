@@ -33,34 +33,84 @@ function inTextOrComment(line, position) {
 	return quoted;
 }
 
-function expressionAt(line, column) {
-	const name = nameAt(line, column);
-	if (!name || inTextOrComment(line, name[0])) {
-		return undefined;
+function brackets(line) {
+	const opened = [];
+	const opens = new Map();
+	let quoted = false;
+	for (let i = 0; i < line.length; i++) {
+		const c = line[i];
+		if (quoted) {
+			if (c === "\\") {
+				i++;
+			} else if (c === '"') {
+				quoted = false;
+			}
+		} else if (c === '"') {
+			quoted = true;
+		} else if (c === "[" || c === "(") {
+			opened.push(i);
+		} else if (c === "]" || c === ")") {
+			const open = opened.pop();
+			if (open !== undefined && line[open] === (c === "]" ? "[" : "(")) {
+				opens.set(i, open);
+			}
+		}
 	}
-	let [start, end] = name;
+	return opens;
+}
 
-	if (/^\s*\(/.test(line.slice(end))) {
-		return undefined;
+function operandStart(line, end, opens) {
+	let at = end;
+	while (line[at - 1] === "]" && opens.has(at - 1)) {
+		at = opens.get(at - 1);
+		if (line[at - 1] === "?") {
+			at--;
+		}
 	}
-	const word = line.slice(start, end);
-	if (KEYWORD.test(word)) {
-		return undefined;
-	}
-	if (start > 1 && line[start - 1] === "." && /[0-9]/.test(line[start - 2])) {
-		return undefined;
+	const name = /[A-Za-z_][A-Za-z0-9_]*$/.exec(line.slice(0, at));
+	return name ? name.index : undefined;
+}
+
+function expressionAt(line, column) {
+	const opens = brackets(line);
+	let start;
+	let end;
+	if (line[column] === "]" && opens.has(column)) {
+		if (inTextOrComment(line, column)) {
+			return undefined;
+		}
+		end = column + 1;
+		start = operandStart(line, end, opens);
+		if (start === undefined) {
+			return undefined;
+		}
+	} else {
+		const name = nameAt(line, column);
+		if (!name || inTextOrComment(line, name[0])) {
+			return undefined;
+		}
+		[start, end] = name;
+		if (/^\s*\(/.test(line.slice(end))) {
+			return undefined;
+		}
+		if (KEYWORD.test(line.slice(start, end))) {
+			return undefined;
+		}
+		if (start > 1 && line[start - 1] === "." && /[0-9]/.test(line[start - 2])) {
+			return undefined;
+		}
 	}
 
 	for (;;) {
-		const before = /([A-Za-z_][A-Za-z0-9_]*)\s*(\?\.|\?:|\.|:)\s*$/.exec(line.slice(0, start));
-		if (!before || (/:$/.test(before[2]) && /\s:\s*$/.test(line.slice(0, start)))) {
+		const joined = /\s*(\?\.|\?:|\.|:)\s*$/.exec(line.slice(0, start));
+		if (!joined || (/:$/.test(joined[1]) && /\s:\s*$/.test(line.slice(0, start)))) {
 			break;
 		}
-		start = before.index;
-	}
-	const through = /(\?\.|\?:|\.|:)\s*$/.exec(line.slice(0, start));
-	if (through && !(through[1] === ":" && /\s:\s*$/.test(line.slice(0, start)))) {
-		return undefined;
+		const before = operandStart(line, joined.index, opens);
+		if (before === undefined) {
+			return undefined;
+		}
+		start = before;
 	}
 	if (start > 0 && line[start - 1] === "/") {
 		return undefined;
@@ -68,4 +118,12 @@ function expressionAt(line, column) {
 	return { start, end };
 }
 
-module.exports = { expressionAt };
+function evaluatableExpression(vscode, document, position) {
+	const found = expressionAt(document.lineAt(position.line).text, position.character);
+	if (!found) {
+		return undefined;
+	}
+	return new vscode.EvaluatableExpression(new vscode.Range(position.line, found.start, position.line, found.end));
+}
+
+module.exports = { evaluatableExpression, expressionAt };
