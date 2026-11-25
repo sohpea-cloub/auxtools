@@ -24,7 +24,8 @@ pub(crate) struct Evaluation {
 #[derive(Clone)]
 pub(super) struct CodeError {
 	text: String,
-	unknown: Option<String>
+	unknown: Option<String>,
+	assembly: bool
 }
 
 impl CodeError {
@@ -36,7 +37,8 @@ impl CodeError {
 		};
 		CodeError {
 			text: error.to_string(),
-			unknown
+			unknown,
+			assembly: false
 		}
 	}
 
@@ -48,7 +50,8 @@ impl CodeError {
 		};
 		CodeError {
 			text: Evaluation::assemble_error(error),
-			unknown
+			unknown,
+			assembly: true
 		}
 	}
 }
@@ -227,7 +230,8 @@ impl Evaluation {
 				Err(error.map_or_else(
 					|| CodeError {
 						text: "invalid expression or proc body".to_owned(),
-						unknown: None
+						unknown: None,
+						assembly: false
 					},
 					CodeError::compiled
 				))
@@ -520,10 +524,12 @@ impl Server {
 					let assembly = dmasm::assembler::assemble(&code, &mut crate::assemble_env::AssembleEnv).map_err(CodeError::assembled)?;
 					Ok((assembly, locals, warnings))
 				});
-				if self.eval.eval_code.len() >= EVAL_CODE_KEPT {
-					self.eval.eval_code.clear();
+				if !compiled.as_ref().is_err_and(|error| error.assembly) {
+					if self.eval.eval_code.len() >= EVAL_CODE_KEPT {
+						self.eval.eval_code.clear();
+					}
+					self.eval.eval_code.insert(key, compiled.clone());
 				}
-				self.eval.eval_code.insert(key, compiled.clone());
 				compiled
 			}
 		};

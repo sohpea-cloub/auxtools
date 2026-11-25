@@ -475,6 +475,16 @@ pub fn run() {
 	assert_eq!(why, "undefined var: by");
 	ok("global evaluation while paused");
 
+	let made = crate::world::host_file("eval_made.txt");
+	let _ = std::fs::remove_file(&made);
+	let missing = json!({ "expression": "'eval_made.txt'", "context": "repl" });
+	assert!(!world.refused("evaluate", missing.clone()).is_empty());
+	std::fs::write(&made, "made after the evaluation\n").unwrap();
+	let found = world.request("evaluate", missing);
+	std::fs::remove_file(&made).unwrap();
+	assert_eq!(found["result"], "eval_made.txt");
+	ok("an evaluation finds a resource made after it failed");
+
 	world.break_on(&["leaf_1"]);
 	assert_eq!(world.eval("leaf(1)"), "4");
 	assert_eq!(world.eval("middle(1)"), "14");
