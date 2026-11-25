@@ -2096,7 +2096,7 @@ impl Adapter {
 			prefix: prefix.to_owned()
 		})? {
 			AuxResponse::Complete(names) => {
-				let member = place.base.is_some();
+				let member = place.base.is_some_and(|base| base != "global");
 				let targets: Vec<Value> = names
 					.iter()
 					.map(|name| {

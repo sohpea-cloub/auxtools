@@ -313,6 +313,14 @@ pub(super) fn each_proc(mut each: impl FnMut(&str, &str)) {
 	}
 }
 
+fn root_procs(found: &mut BTreeMap<String, bool>) {
+	each_proc(|owner, name| {
+		if owner.is_empty() {
+			found.entry(name.to_owned()).or_insert(true);
+		}
+	});
+}
+
 fn global_names(found: &mut BTreeMap<String, bool>) {
 	if let Ok(names) = List::from_value(&unsafe { Value::new(ValueTag::GlobalVars, ValueData { id: 0 }) }) {
 		for i in 1..=names.len() {
@@ -370,6 +378,7 @@ impl Server {
 				};
 				if value == Value::GLOBAL {
 					global_names(&mut found);
+					root_procs(&mut found);
 				} else {
 					members_of(&value, &mut found);
 				}
@@ -399,11 +408,7 @@ impl Server {
 					found.entry(name.to_owned()).or_insert(false);
 				}
 				global_names(&mut found);
-				each_proc(|owner, name| {
-					if owner.is_empty() {
-						found.entry(name.to_owned()).or_insert(true);
-					}
-				});
+				root_procs(&mut found);
 			}
 		}
 

@@ -102,7 +102,8 @@ fn completions(world: &mut World) {
 	] {
 		assert_eq!(names(world, text), ["reads"], "{}", text);
 	}
-	assert_eq!(names(world, "::regi"), ["registry"]);
+	assert_eq!(offered(world, "::regi", Some(&frame)), [pair("registry", "variable")]);
+	assert_eq!(offered(world, "::bum", Some(&frame)), [pair("bump", "function")]);
 	assert_eq!(names(world, "::amou"), ["amount"]);
 	ok("completion rejects unsafe or invalid receivers");
 
