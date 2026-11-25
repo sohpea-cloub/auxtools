@@ -3911,3 +3911,29 @@ fn a_scoped_read_from_a_path_that_names_no_type_is_refused() {
         assert!(compile_error(&src).contains("::"), "{}", body);
     }
 }
+
+#[test]
+fn an_astype_of_a_scoped_var_casts_to_its_declared_type() {
+    let types = "/datum/config\n\tvar/datum/settings/settings\n\
+                 /datum/config/proc/refresh() as /datum/config\n\treturn src\n\
+                 /datum/settings\n\tvar/datum/config/back\n\
+                 var/datum/config/config\n";
+    for (body, cast) in [
+        ("return astype(config::settings)", "/datum/settings"),
+        ("return astype(/datum/config::settings)", "/datum/settings"),
+        (
+            "return astype(config.refresh()::settings)",
+            "/datum/settings",
+        ),
+        ("return astype(config::settings::back)", "/datum/config"),
+    ] {
+        let code = compile(&format!("{types}/proc/f()\n\t{body}\n"), "", "f");
+        assert!(
+            code.contains(&format!("PushVal {cast}\nAsType")),
+            "{}: doesn't cast to {}:\n{}",
+            body,
+            cast,
+            code
+        );
+    }
+}

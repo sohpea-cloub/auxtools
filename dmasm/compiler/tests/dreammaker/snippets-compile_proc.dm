@@ -3005,3 +3005,29 @@ var/list/configs = list(null)
 	return a?.b.f2()::x
 /datum/settings/proc/f2() as /datum/settings
 	return src
+// Guards: an_astype_of_a_scoped_var_casts_to_its_declared_type (compile_proc.rs)
+// Builds: 516.1648-
+/datum/config
+	var/datum/settings/settings
+	var/static/datum/settings/shared
+/datum/config/proc/refresh() as /datum/config
+	return src
+/datum/settings
+	var/datum/config/back
+var/datum/config/config
+/proc/get_config() as /datum/config
+	return config
+/proc/f1()
+	return astype(config::settings)
+/proc/f2()
+	return astype(/datum/config::settings)
+/proc/f3()
+	return astype(get_config()::settings)
+/proc/f4()
+	return astype(config.settings::back)
+/proc/f5()
+	return astype(config::settings::back)
+/proc/f6()
+	return astype(config::shared)
+/proc/f7()
+	return astype(config.refresh()::settings)

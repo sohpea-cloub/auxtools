@@ -807,6 +807,16 @@ pub(super) fn expr_type<'a>(
     let global = matches!(&term.elem, Term::Ident(i) if i.as_str() == "global");
     let mut follow = follow.iter();
     let (mut ty, mut after) = match (global, follow.as_slice().first().map(|f| &f.elem)) {
+        (false, Some(Follow::StaticField(_))) if matches!(&term.elem, Term::Prefab(p) if p.vars.is_empty()) =>
+        {
+            let Term::Prefab(prefab) = &term.elem else {
+                unreachable!()
+            };
+            (
+                Some(compiler.proc.tree.find(&prefab.path.to_string())?),
+                After::Typed,
+            )
+        }
         (true, Some(Follow::Field(_, name))) => {
             follow.next();
             let decl = compiler
@@ -828,6 +838,11 @@ pub(super) fn expr_type<'a>(
             }
             Follow::Call(access, name, _) => {
                 (ty, after) = call_result(compiler, ty, *access, name.as_str());
+            }
+            Follow::StaticField(name) => {
+                let decl = scope_var(compiler, ty, name.as_str())?;
+                ty = declared_type(compiler, &decl.get().var_type);
+                after = After::Typed;
             }
             _ => return None,
         }
