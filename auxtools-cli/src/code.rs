@@ -67,7 +67,8 @@ pub enum Event {
 		warnings: Vec<Diagnostic>
 	},
 	NothingChanged {
-		warnings: Vec<Diagnostic>
+		warnings: Vec<Diagnostic>,
+		texts: Option<Texts>
 	},
 	Macros(Vec<Macro>),
 	Skin {
@@ -774,7 +775,8 @@ impl Code {
 				*self.running_defines.borrow_mut() = defines;
 			}
 			let sent = self.send(Event::NothingChanged {
-				warnings: changes.warnings.clone()
+				warnings: changes.warnings.clone(),
+				texts
 			});
 			return (sent && self.refused_by(vec![], whole)).then_some(true);
 		}
@@ -1404,14 +1406,15 @@ mod tests {
 			}
 		}
 
-		fn nothing_changed(&self) {
-			self.next("no changes", |event| match event {
-				Event::NothingChanged { .. } => Some(()),
+		fn nothing_changed(&self) -> Option<Texts> {
+			let texts = self.next("no changes", |event| match event {
+				Event::NothingChanged { texts, .. } => Some(texts.clone()),
 				Event::Reload { summary, .. } => panic!("reloaded: {}", summary.text(&[])),
 				Event::NotReloaded { summary, refused, .. } => panic!("not reloaded: {summary}: {refused:?}"),
 				_ => None
 			});
 			self.next("looked", |event| matches!(event, Event::Looked).then_some(()));
+			texts
 		}
 
 		fn write(&self, file: &str, text: &str) {
@@ -1553,6 +1556,16 @@ mod tests {
 		assert_eq!(first.texts, Some(Texts::from([(path.clone(), lines(&read))])));
 		worker.applied(false);
 		assert_eq!(worker.prepared().texts, Some(Texts::from([(path, lines(&again))])));
+	}
+
+	#[test]
+	fn a_save_with_nothing_to_reload_says_what_text_it_read() {
+		let worker = Worker::start("texts-unchanged");
+		let path = worker.project.root.join("code/a.dm");
+		let text = body("a", "return 1 // one");
+		worker.write("a", &text);
+		let lines = Some(text.lines().map(str::to_owned).collect::<Vec<_>>());
+		assert_eq!(worker.nothing_changed(), Some(Texts::from([(path, lines)])));
 	}
 
 	#[test]

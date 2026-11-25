@@ -1440,11 +1440,49 @@ fn nothing_to_run() {
 	world.end();
 }
 
+fn saved(world: &mut World, file: &str, old: &str, new: &str, outcome: &str) {
+	let before = world.count(outcome);
+	world.marks.edit(file, old, new);
+	world.wait_until(outcome, |output| output.matches(outcome).count() > before);
+}
+
+const NOTHING: &str = "Hot reload: no changes to the running code";
+const REFUSED: &str = "Hot reload requires a rebuild";
+
+fn saves_with_nothing_to_reload() {
+	let (mut world, _dir) = watched_world("nothing_to_reload");
+	world.break_on(&["leaf_1"]);
+	saved(&mut world, "stepping.dm", "/proc/leaf(x)\n", "/proc/leaf(x) // doubles x + 1\n", NOTHING);
+	world.break_on(&["leaf_2"]);
+	world.run("middle");
+	world.stop_on("breakpoint", "/leaf", "leaf_2");
+	world.break_on(&[]);
+	world.resume_through("middle");
+	ok("breakpoint set after a save that changes only a comment");
+
+	saved(
+		&mut world,
+		"errors.dm",
+		"\tvar/zero = 0\n",
+		"\tvar/zero = 0\n\tvar/list/broken = (\n",
+		REFUSED
+	);
+	saved(&mut world, "errors.dm", "\tvar/list/broken = (\n", "", NOTHING);
+	world.break_on(&["fail_caught_here"]);
+	world.run("fail_caught_here");
+	world.stop_on("breakpoint", "/fail_caught_here", "fail_caught_here");
+	world.break_on(&[]);
+	world.resume_through("fail_caught_here");
+	ok("breakpoint set after a refused save is undone");
+	world.end();
+}
+
 pub fn edits() {
 	saved_without_reloading();
 	behind_the_clients_back();
 	starting_at_world_new();
 	types_changed_before_reboot();
+	saves_with_nothing_to_reload();
 }
 
 const STARTS_AT_AN_AREA: &str = "/area

@@ -815,7 +815,10 @@ impl Adapter {
 				self.reload_state("failed", Some(summary.clone()));
 				self.journal_reload(false, summary, errors, texts(&warnings));
 			}
-			code::Event::NothingChanged { warnings } => {
+			code::Event::NothingChanged { warnings, texts: read } => {
+				if let Some(read) = read {
+					self.code_changed(Some(&read));
+				}
 				self.reload_state("reloaded", Some("no changes to the running code".to_owned()));
 				self.journal_reload(true, "no runtime changes".to_owned(), vec![], texts(&warnings));
 			}
