@@ -756,13 +756,7 @@ impl Adapter {
 			self.progress_end(READING);
 		}
 		match event {
-			code::Event::Changed(texts) => {
-				self.world_as_of = self.reload_seen.take().or_else(|| Some(std::time::SystemTime::now()));
-				if self.code_read && !self.world.waiting_for_code && self.debuggee.is_some() && self.debugging {
-					self.reapply_breakpoints(texts.as_ref());
-				}
-				self.code_read = true;
-			}
+			code::Event::Changed(texts) => self.code_changed(texts.as_ref()),
 			code::Event::Failed(e) => {
 				self.out.console(format!("Hot reload disabled: could not parse source: {}", e));
 				self.reload_state("off", Some(format!("could not parse source: {}", e)));
@@ -793,7 +787,8 @@ impl Adapter {
 				request,
 				summary,
 				notes,
-				world
+				world,
+				texts
 			} => {
 				let applied = if self.debuggee.as_ref().is_some_and(|d| d.generation != world) {
 					self.out.console(format!(
@@ -805,6 +800,9 @@ impl Adapter {
 					self.reload_seen = Some(std::time::SystemTime::now());
 					self.reload(*request, &summary, notes)
 				};
+				if let Some(texts) = texts.filter(|_| applied) {
+					self.code_changed(Some(&texts));
+				}
 				if let Some(code) = &self.code {
 					let _ = code.send(code::Command::Resources(std::mem::take(&mut self.reloaded_resources)));
 					let _ = code.send(code::Command::Reloaded(applied));
@@ -852,6 +850,14 @@ impl Adapter {
 				}
 			}
 		}
+	}
+
+	fn code_changed(&mut self, texts: Option<&code::Texts>) {
+		self.world_as_of = self.reload_seen.take().or_else(|| Some(std::time::SystemTime::now()));
+		if self.code_read && !self.world.waiting_for_code && self.debuggee.is_some() && self.debugging {
+			self.reapply_breakpoints(texts);
+		}
+		self.code_read = true;
 	}
 
 	fn give_macros(&mut self) {
