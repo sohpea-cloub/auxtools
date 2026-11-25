@@ -96,7 +96,7 @@ function expressionAt(line, column) {
 		if (KEYWORD.test(line.slice(start, end))) {
 			return undefined;
 		}
-		if (start > 1 && line[start - 1] === "." && /[0-9]/.test(line[start - 2])) {
+		if (/(^|[^A-Za-z0-9_])[0-9][A-Za-z0-9_]*\.$/.test(line.slice(0, start))) {
 			return undefined;
 		}
 	}

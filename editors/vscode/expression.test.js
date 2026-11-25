@@ -42,6 +42,9 @@ assert.strictEqual(at("\tx = 1 // then |y"), undefined);
 assert.strictEqual(at("\tret|urn x"), undefined);
 assert.strictEqual(at("\tvar/|y = 1"), undefined);
 assert.strictEqual(at("\tx = 1e|3"), undefined);
+assert.strictEqual(at("\tx = 1.e|5"), undefined);
+assert.strictEqual(at("\tx = target1.na|me"), "target1.name");
+assert.strictEqual(at("\tx = src.slot2.na|me"), "src.slot2.name");
 assert.strictEqual(at("\tnew /datum/th|ing(x)"), undefined);
 assert.strictEqual(at("\tvar/datum/thing/|t = x"), undefined);
 assert.strictEqual(at("\treturn a ? b : |c"), "c");
@@ -74,4 +77,4 @@ assert.deepStrictEqual({ ...evaluatableExpression(vscode, document, { line: 1, c
 	end: 21,
 });
 assert.strictEqual(evaluatableExpression(vscode, document, { line: 1, character: 3 }), undefined);
-console.log("ok: 43 hover expressions");
+console.log("ok: 46 hover expressions");
