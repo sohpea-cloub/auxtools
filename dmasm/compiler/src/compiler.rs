@@ -43,18 +43,18 @@ pub fn text_bytes(raw: &str) -> Option<Vec<u8>> {
 use chain_builder::ChainBuilder;
 
 fn is_writable(var: &Variable) -> bool {
-    match var {
+    matches!(
+        var,
         Variable::Usr
-        | Variable::Src
-        | Variable::Args
-        | Variable::Dot
-        | Variable::CacheIndex
-        | Variable::Arg { .. }
-        | Variable::Local { .. }
-        | Variable::Global { .. } => true,
-        Variable::PtrDeref(_) => true,
-        _ => false,
-    }
+            | Variable::Src
+            | Variable::Args
+            | Variable::Dot
+            | Variable::CacheIndex
+            | Variable::Arg { .. }
+            | Variable::Local { .. }
+            | Variable::Global { .. }
+            | Variable::PtrDeref(_)
+    )
 }
 
 fn dynamic_name(ident: &str) -> DMString {
