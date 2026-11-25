@@ -76,6 +76,11 @@ fn completions(world: &mut World) {
 		names(world, "local_list[n++].");
 	}
 	assert_eq!(world.eval("n"), "1");
+	for _ in 0..3 {
+		assert_eq!(names(world, "counted[1].re"), Vec::<String>::new());
+	}
+	assert_eq!(world.eval("counted.reads"), "0");
+	assert_eq!(names(world, "counted_in[1].re"), ["reads"]);
 	ok("completion rejects unsafe or invalid receivers");
 
 	let targets = world.request("completions", json!({ "frameId": frame, "text": "leaf(by) + n", "column": 8 }));
