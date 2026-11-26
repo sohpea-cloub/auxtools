@@ -458,7 +458,7 @@ jobs:
           git archive --format=tar.gz -o "$RUNNER_TEMP/source.tar.gz" HEAD
           COMMIT=$(git rev-parse HEAD)
           export COMMIT
-          if [ -n "$RELEASE" ]; then
+          if true; then
             BUILDS=$(tr '\n' ' ' <ci/supported-builds.txt)
             RERUNS=2
             KNOWN_BROKEN=$(tr '\n' ' ' <ci/known-broken-builds.txt)
