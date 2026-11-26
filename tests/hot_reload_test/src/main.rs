@@ -2902,6 +2902,34 @@ fn types(built: Built) {
 	assert_eq!(eval(&mut client, "(new /obj/crate/bounded).bound_width"), "8");
 	assert_eq!(eval(&mut client, "(new /obj/crate/bounded).bound_height"), "24");
 	println!("ok: var-table built-ins and bounds");
+
+	let changes = source.edit(
+		"reload.dm",
+		"/proc/first_def()\n",
+		"/obj/crate\n\tbound_width = 48\n\tstep_size = 16\n\n/proc/first_def()\n"
+	);
+	reload(&mut watcher, &changes);
+	assert_eq!(
+		eval(
+			&mut client,
+			"\"[(new /obj/crate).bound_width] [(new /obj/crate).step_size] [initial(/obj/crate::bound_width)]\""
+		),
+		"\"48 16 48\""
+	);
+	let changes = source.edit(
+		"reload.dm",
+		"\tbound_width = 48\n\tstep_size = 16\n",
+		"\tbound_width = 24\n\tstep_size = 8\n"
+	);
+	reload(&mut watcher, &changes);
+	assert_eq!(
+		eval(
+			&mut client,
+			"\"[(new /obj/crate).bound_width] [(new /obj/crate).step_size] [initial(/obj/crate::bound_width)]\""
+		),
+		"\"24 8 24\""
+	);
+	println!("ok: bound and step defaults of a built type");
 }
 
 fn declarations(built: Built) {
