@@ -266,6 +266,18 @@ no longer matches. It refuses older builds and other major versions with a versi
 debugger fails to start, the world keeps running. The launcher, VS Code and the command line
 report the reason. `auxtools stop` ends the world.
 
+auxtools 4.0.0 is known to be broken on ten of these builds. Its tests fail there on Linux
+and under Wine unless a platform is named, and pass on the other 42 builds. The fixes are
+planned for 4.0.1:
+
+- **516.1648–516.1651:** the debugger shows a `filters` list by its name, not as a list.
+- **516.1660 on Windows:** `initial()` of a variable that a hot reload added gives 0.
+- **516.1665:** a world's own `world/Del()` isn't called when the world reboots, and the
+  launcher's and the debug adapter's tests of starting and ending a world fail.
+- **516.1666–516.1668:** reading variables in the debugger can disconnect the world.
+- **516.1678:** a world can crash as it starts with the debugger. It always does in one test
+  on Linux, and does in another some of the time under Wine.
+
 CI tests the library, the debugger, hot reload and the CLI on 515.1637, 515.1647, 516.1659,
 516.1685 and 516.1689. The tests cover the library's hooks and values, the debug server, source
 reloads, the launcher's lifecycle, CLI output and the debug adapter. Linux tests run on Ubuntu
