@@ -148,6 +148,67 @@ fn a_wait_for_a_reboot_from_a_journal_entry_survives_a_reboot_while_it_registers
 	);
 }
 
+#[test]
+fn a_wait_for_a_reboot_survives_the_ending_worlds_listener_taking_its_reconnect() {
+	let rebooted = Arc::new(AtomicBool::new(false));
+	let loaded = JournalEntry {
+		number: 6,
+		time: 0,
+		world_time: 0.0,
+		event: JournalEvent::Loaded { load: 2 }
+	};
+	let flag = rebooted.clone();
+	let mut watchers = 0;
+	let mut stand_in = StandIn::new(Box::new(move |request| {
+		let rebooted = flag.load(Ordering::SeqCst);
+		match request {
+			Request::Watcher => {
+				watchers += 1;
+				match watchers {
+					2 => Answer::ToTest,
+					_ => Answer::Reply(Response::Ack)
+				}
+			}
+			Request::Journal { .. } if !rebooted => Answer::ToTest,
+			Request::Journal { after, .. } => Answer::Reply(Response::Journal {
+				entries: if *after < 6 { vec![loaded.clone()] } else { vec![] },
+				first: 1,
+				last: 6
+			}),
+			Request::Uptime => Answer::Reply(Response::Uptime {
+				loaded: 0,
+				up: 1.0,
+				world_time: 0.0,
+				loads: 2,
+				last_reload: None,
+				started: true
+			}),
+			_ => Answer::Nothing
+		}
+	}));
+	let pid = stand_in.spawn();
+	let started = Instant::now();
+	let waiting = command(pid, &["wait", "reboot", "--since", "5", "--timeout", "5"]);
+	let mut first = stand_in.world();
+	first.next("Journal", |request| matches!(request, Request::Journal { .. }));
+	first.event(Response::Disconnect);
+	first.close();
+	let mut ending = stand_in.world();
+	ending.next("Watcher", |request| matches!(request, Request::Watcher));
+	rebooted.store(true, Ordering::SeqCst);
+	ending.event(Response::Disconnect);
+	ending.close();
+	let output = waiting.wait_with_output().unwrap();
+	let took = started.elapsed();
+	assert!(
+		output.status.code() == Some(0) && printed(&output).starts_with("#6 ") && took < LATE,
+		"wait reboot --since 5 ended after {:?} with {:?}: {}",
+		took,
+		output.status.code(),
+		printed(&output)
+	);
+}
+
 fn rebooting(cut: fn(&Request) -> bool) -> (StandIn, Arc<AtomicBool>) {
 	let rebooted = Arc::new(AtomicBool::new(false));
 	let loaded = JournalEntry {

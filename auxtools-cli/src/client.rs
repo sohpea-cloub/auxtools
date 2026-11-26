@@ -228,7 +228,7 @@ fn read_on(reader: &mut Shared, greeted: bool, read: &Sender<Read>, mut listener
 	}
 }
 
-const LISTEN_INTERVAL: Duration = Duration::from_millis(100);
+pub const LISTEN_INTERVAL: Duration = Duration::from_millis(100);
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum NotListening {
