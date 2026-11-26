@@ -186,6 +186,12 @@ jobs:
             target/${{ env.TARGET }}/release/.fingerprint
             target/${{ env.TARGET }}/release/build
             target/${{ env.TARGET }}/release/deps
+            target/test-commands/release/.fingerprint
+            target/test-commands/release/build
+            target/test-commands/release/deps
+            target/test-commands/${{ env.TARGET }}/release/.fingerprint
+            target/test-commands/${{ env.TARGET }}/release/build
+            target/test-commands/${{ env.TARGET }}/release/deps
           key: build-linux-${{ env.RUST_VERSION }}-${{ hashFiles('Cargo.lock') }}-${{ github.sha }}
           restore-keys: build-linux-${{ env.RUST_VERSION }}-${{ hashFiles('Cargo.lock') }}-
 
@@ -218,23 +224,26 @@ jobs:
 
       - name: Split the debug information off, check and pack
         run: |
+          mkdir -p "$RUNNER_TEMP/programs/released"
           cd "target/$TARGET/release"
+          cp auxtools libdebug_server.so libauxtest.so test_runner debug_test hot_reload_test launcher_test dap_test examples/check_recipes examples/compare_dreammaker "$RUNNER_TEMP/programs"
+          cd "$RUNNER_TEMP/programs"
           "$GITHUB_WORKSPACE/ci/split-debug.sh" auxtools libdebug_server.so
           "$GITHUB_WORKSPACE/ci/check-linux.sh" auxtools libdebug_server.so
           if grep -q 'asked for with #panic' libdebug_server.so; then echo "the debug library has the tests' console commands"; exit 1; fi
-          strip --strip-debug libauxtest.so test_runner debug_test hot_reload_test launcher_test dap_test examples/check_recipes examples/compare_dreammaker
+          strip --strip-debug libauxtest.so test_runner debug_test hot_reload_test launcher_test dap_test check_recipes compare_dreammaker
           tar -czf "$RUNNER_TEMP/auxtools-linux.tar.gz" auxtools libdebug_server.so
           tar -czf "$RUNNER_TEMP/auxtools-linux-symbols.tar.gz" auxtools.debug libdebug_server.so.debug
-          mkdir released
-          cp libdebug_server.so released/
+          mv libdebug_server.so released/
 
       - name: Build the debug library the tests use
         run: |
-          cargo build --release --locked --target "$TARGET" --workspace --features debug_server/test-commands
-          cd "target/$TARGET/release"
+          cargo build --release --locked --target "$TARGET" --workspace --features debug_server/test-commands --target-dir target/test-commands
+          cd "$RUNNER_TEMP/programs"
+          cp "$GITHUB_WORKSPACE/target/test-commands/$TARGET/release/libdebug_server.so" .
           strip --strip-debug libdebug_server.so
           grep -q 'asked for with #panic' libdebug_server.so
-          tar -cf "$RUNNER_TEMP/bundle-linux.tar" auxtools libdebug_server.so released/libdebug_server.so libauxtest.so test_runner debug_test hot_reload_test launcher_test dap_test -C examples check_recipes compare_dreammaker
+          tar -cf "$RUNNER_TEMP/bundle-linux.tar" auxtools libdebug_server.so released/libdebug_server.so libauxtest.so test_runner debug_test hot_reload_test launcher_test dap_test check_recipes compare_dreammaker
 
       - name: Upload the launcher and the debug library
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -317,6 +326,12 @@ jobs:
             target/${{ env.TARGET }}/release/.fingerprint
             target/${{ env.TARGET }}/release/build
             target/${{ env.TARGET }}/release/deps
+            target/test-commands/release/.fingerprint
+            target/test-commands/release/build
+            target/test-commands/release/deps
+            target/test-commands/${{ env.TARGET }}/release/.fingerprint
+            target/test-commands/${{ env.TARGET }}/release/build
+            target/test-commands/${{ env.TARGET }}/release/deps
           key: build-windows-${{ env.RUST_VERSION }}-${{ hashFiles('Cargo.lock') }}-${{ github.sha }}
           restore-keys: build-windows-${{ env.RUST_VERSION }}-${{ hashFiles('Cargo.lock') }}-
 
@@ -351,21 +366,24 @@ jobs:
 
       - name: Check and pack
         run: |
+          mkdir -p "$RUNNER_TEMP/programs/released"
           cd "target/$TARGET/release"
+          cp -r auxtools.exe auxtools.pdb debug_server.dll debug_server.pdb auxtest.dll test_runner.exe debug_test.exe hot_reload_test.exe launcher_test.exe dap_test.exe unit examples/check_recipes.exe "$RUNNER_TEMP/programs"
+          cd "$RUNNER_TEMP/programs"
           "$GITHUB_WORKSPACE/ci/check-windows.sh" auxtools.exe debug_server.dll
           if grep -q 'asked for with #panic' debug_server.dll; then echo "the debug library has the tests' console commands"; exit 1; fi
           python3 -m zipfile -c "$RUNNER_TEMP/auxtools-windows.zip" auxtools.exe debug_server.dll
           python3 -m zipfile -c "$RUNNER_TEMP/auxtools-windows-symbols.zip" auxtools.pdb debug_server.pdb
-          mkdir released
-          cp debug_server.dll released/
+          mv debug_server.dll released/
 
       - name: Build the debug library the tests use
         run: |
           . ci/msvc/env.sh
-          cargo build --release --locked --target "$TARGET" --workspace --features debug_server/test-commands
-          cd "target/$TARGET/release"
+          cargo build --release --locked --target "$TARGET" --workspace --features debug_server/test-commands --target-dir target/test-commands
+          cd "$RUNNER_TEMP/programs"
+          cp "$GITHUB_WORKSPACE/target/test-commands/$TARGET/release/debug_server.dll" .
           grep -q 'asked for with #panic' debug_server.dll
-          tar -cf "$RUNNER_TEMP/bundle-windows.tar" auxtools.exe debug_server.dll released/debug_server.dll auxtest.dll test_runner.exe debug_test.exe hot_reload_test.exe launcher_test.exe dap_test.exe unit -C examples check_recipes.exe
+          tar -cf "$RUNNER_TEMP/bundle-windows.tar" auxtools.exe debug_server.dll released/debug_server.dll auxtest.dll test_runner.exe debug_test.exe hot_reload_test.exe launcher_test.exe dap_test.exe unit check_recipes.exe
 
       - name: Upload the launcher and the debug library
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
