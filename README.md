@@ -257,61 +257,23 @@ between major versions. [tests/auxtest](tests/auxtest) and its world in
 
 ## Supported BYOND versions
 
-auxtools supports these BYOND builds on Windows and Linux: 515.1637–515.1647 and
-516.1648–516.1689.
-
-auxtools finds BYOND's functions by byte patterns. The patterns were checked on every build in
-these ranges. auxtools also tries newer builds, but it fails to start on a build where a pattern
-no longer matches. It refuses older builds and other major versions with a version error. If the
-debugger fails to start, the world keeps running. The launcher, VS Code and the command line
-report the reason. `auxtools stop` ends the world.
-
-auxtools 4.0.0 is known to be broken on ten of these builds. Its tests fail there on Linux
-and under Wine unless a platform is named, and pass on the other 42 builds. The fixes are
-planned for 4.0.1:
-
-- **516.1648–516.1651:** the debugger shows a `filters` list by its name, not as a list.
-- **516.1660 on Windows:** `initial()` of a variable that a hot reload added gives 0.
-- **516.1665:** a world's own `world/Del()` isn't called when the world reboots, and the
-  launcher's and the debug adapter's tests of starting and ending a world fail.
-- **516.1666–516.1668:** reading variables in the debugger can disconnect the world.
-- **516.1678:** a world can crash as it starts with the debugger. It always does in one test
-  on Linux, and does in another some of the time under Wine.
-
-CI tests the library, the debugger, hot reload and the CLI on ten builds: 515.1637, 515.1644,
-515.1647, 516.1652, 516.1657, 516.1659, 516.1670, 516.1674, 516.1685 and 516.1689. A release
-tests them on every supported build. The tests cover the library's hooks and values, the debug
-server, source reloads, the launcher's lifecycle, CLI output and the debug adapter. The Linux
-tests (on Ubuntu 22.04) and the Windows programs under Wine run in containers, which
-`ci/cloud.sh` starts. A pull request from a fork can't start them, so its tests run once it is
-merged. A release also runs the tests in `dd.exe` on Windows Server 2022, on the ten builds.
-
-A harness outside this repository tests the VS Code extension on Linux with 516.1688. No
-automated test covers the extension on Windows. The automated tests don't cover DreamSeeker or
-windowed DreamDaemon. Both were checked by hand with the first part of `launcher_test`, before
-the CLI was added.
+auxtools supports BYOND 515.1637–515.1647 and 516.1648–516.1689, on Windows and Linux. It refuses
+older builds and other major versions with a version error. It also tries newer builds, but it
+fails to start on one where it can no longer find BYOND's functions. If the debugger fails to
+start, the world keeps running, and the launcher, VS Code and the command line report the reason.
+The [changelog](CHANGELOG.md) lists the builds that a release is known to be broken on.
 
 ### Checking a new BYOND build
 
-The patterns are in `auxtools/src/registry/` and use
-[byond-scan](https://github.com/Absolucy/byond-scan). The `check_recipes` example checks them
-against a BYOND build without running it. Give it the build's `libbyond.so` or
-`byondcore.dll`. Its first argument, `linux` or `windows`, names the kind of file. You can check
-either file on either system.
-
-Build the checker for your system's 32-bit target. The `auxtools` crate contains 32-bit
-assembly, so it doesn't build for a 64-bit target. On Linux:
+The `check_recipes` example checks whether auxtools finds BYOND's functions in a build, without
+running it. Give it `linux` or `windows`, the build, and its `libbyond.so` or `byondcore.dll`:
 
 ```sh
 cargo run -p auxtools --target i686-unknown-linux-gnu --example check_recipes -- linux 516.1689 byond/bin/libbyond.so
-cargo run -p auxtools --target i686-unknown-linux-gnu --example check_recipes -- windows 516.1689 byond/bin/byondcore.dll
 ```
 
-On Windows, use `--target i686-pc-windows-msvc` instead.
-
-The checker reports whether it found each pattern. It exits with status 1 if the build lacks a
-function that auxtools needs on that build. If a new BYOND build passes, the patterns need no
-change. CI runs the checker on each build it tests, for Linux and for Windows.
+On Windows, use `--target i686-pc-windows-msvc`. It exits with status 1 if the build lacks a
+function that auxtools needs. The patterns are in `auxtools/src/registry/`.
 
 ## Dependencies
 
@@ -394,23 +356,11 @@ cargo build --workspace --release --target i686-pc-windows-msvc
 
 ## Continuous integration
 
-`.github/workflows/ci.yml` builds, tests and packages both platforms. It runs on pull requests
-and on pushes to `master` in the willox and auxtools organizations. Other forks can start it by
-hand.
+`.github/workflows/ci.yml` builds, tests and packages both platforms. Format code with
+`cargo +nightly-2026-10-24 fmt --all`. To run the integration tests locally, build with
+`--features debug_server/test-commands` and run `ci/run-tests.sh PROGRAMS BYOND`.
 
-Linux binaries need glibc 2.35 or later. Windows binaries need Windows 10 or later and link the
-C runtime statically. `ci/check-linux.sh` and `ci/check-windows.sh` check these requirements.
-
-CI pins its Rust version and action versions. `rust-toolchain.toml` selects the same Rust
-version and both targets for local builds. CI also builds the workspace with Rust 1.95, and
-`auxtools`, `auxtools-impl` and `dmasm-bytecode` with Rust 1.88. These are the minimum versions
-that the manifests name. Format code with
-`cargo +nightly-2026-10-24 fmt --all`. The rustfmt configuration uses options that need nightly.
-
-CI downloads BYOND from the [BYOND build mirror](https://byond-builds.dm-lang.org) and checks
-the archives against `ci/byond.sha256`. To run the integration tests locally, build with
-`--features debug_server/test-commands` and run `ci/run-tests.sh PROGRAMS BYOND`. The feature
-adds the console commands that the tests use to inspect a world. Release builds leave them out.
+Linux binaries need glibc 2.35 or later. Windows binaries need Windows 10 or later.
 
 | Artifact | Contents |
 | --- | --- |

@@ -20,6 +20,16 @@
   differently there. For example, the debugger refuses `__PROC__`.
   [dmasm's COMPILER.md](dmasm/COMPILER.md#debugger-code) lists the differences.
 
+### Known problems
+
+auxtools 4.0.0 is broken on ten of the BYOND builds it supports. The fixes are planned for 4.0.1.
+
+- **516.1648–516.1651:** the debugger shows a `filters` list by its name, not as a list.
+- **516.1660 on Windows:** `initial()` of a variable that a hot reload added gives 0.
+- **516.1665:** a world's own `world/Del()` isn't called when the world reboots.
+- **516.1666–516.1668:** reading variables in the debugger can disconnect the world.
+- **516.1678:** a world can crash as it starts with the debugger.
+
 ### Removed
 
 - auxcov, the code coverage library.
