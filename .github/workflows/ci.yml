@@ -186,6 +186,7 @@ jobs:
             target/${{ env.TARGET }}/release/.fingerprint
             target/${{ env.TARGET }}/release/build
             target/${{ env.TARGET }}/release/deps
+            target/${{ env.TARGET }}/release/examples
             target/test-commands/release/.fingerprint
             target/test-commands/release/build
             target/test-commands/release/deps
@@ -326,6 +327,7 @@ jobs:
             target/${{ env.TARGET }}/release/.fingerprint
             target/${{ env.TARGET }}/release/build
             target/${{ env.TARGET }}/release/deps
+            target/${{ env.TARGET }}/release/examples
             target/test-commands/release/.fingerprint
             target/test-commands/release/build
             target/test-commands/release/deps
