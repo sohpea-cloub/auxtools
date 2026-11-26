@@ -16,4 +16,4 @@ AR_i686_pc_windows_msvc=$(msvc_llvm_tool llvm-lib)
 export AR_i686_pc_windows_msvc
 CARGO_TARGET_I686_PC_WINDOWS_MSVC_LINKER=$(msvc_llvm_tool lld-link)
 export CARGO_TARGET_I686_PC_WINDOWS_MSVC_LINKER
-export CARGO_TARGET_I686_PC_WINDOWS_MSVC_RUSTFLAGS="-C target-feature=+crt-static -C link-arg=/PDBALTPATH:%_PDB% -Lnative=$MSVC_SDK/crt/lib/x86 -Lnative=$MSVC_SDK/sdk/lib/um/x86 -Lnative=$MSVC_SDK/sdk/lib/ucrt/x86"
+export CARGO_TARGET_I686_PC_WINDOWS_MSVC_RUSTFLAGS="-C target-feature=+crt-static -C link-arg=/PDBALTPATH:%_PDB% -C link-arg=/IGNORE:4099 -Lnative=$MSVC_SDK/crt/lib/x86 -Lnative=$MSVC_SDK/sdk/lib/um/x86 -Lnative=$MSVC_SDK/sdk/lib/ucrt/x86"
