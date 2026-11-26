@@ -14,8 +14,8 @@
 # often a failed job is run again [1], KNOWN_BROKEN, builds whose failures are
 # expected and don't fail the run, and CLOUD, the service's address.
 #
-# Prints a line for each build, the unexpected failures last, then the logs
-# of those. Exits with 1 if there was one.
+# Prints a line for each build, in version order, then the logs of the jobs
+# that failed unexpectedly. Exits with 1 if one did.
 set -euo pipefail
 [ $# -ge 4 ] || { sed -n '2,18p' "$0" >&2; exit 2; }
 linux_bundle=$1 windows_bundle=$2 source_archive=$3
@@ -61,27 +61,26 @@ done
 
 lines=$(jq -r '
 	{passed: "Passed", known: "Known failure", failed: "FAILED", running: "Not finished"} as $words |
-	{FAILED: 0, "Not finished": 1, "Known failure": 2, Passed: 3} as $rank |
 	(.jobs | map({key: .name, value: .}) | from_entries) as $jobs |
 	def results: map(select(.state != "passed") | "\(.title) — " +
 		(if .state == "flaky" then "passed on retry"
 		 elif (.failed | length) > 0 then "\(.failed | join(", ")) failed"
 		 else .error // "failed" end)) | join("; ");
-	.versions[] | $words[.state] as $status | [$rank[$status], "BYOND \(.version)", $status, (.jobs | map($jobs[.]) | results)] |
-	@tsv' <<<"$status")
+	.versions | sort_by(.version | split(".") | map(tonumber)) | .[] |
+	["BYOND \(.version)", $words[.state], (.jobs | map($jobs[.]) | results)] | @tsv' <<<"$status")
 echo
-while IFS=$'\t' read -r _ name state results; do
+while IFS=$'\t' read -r name state results; do
 	printf '%-20s %-14s %s\n' "$name" "$state" "$results"
-done < <(sort -s -t $'\t' -k 1,1nr <<<"$lines")
+done <<<"$lines"
 if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
 	{
 		echo "[View test results]($page)"
 		echo
 		echo "| BYOND version | Status | Results |"
 		echo "|---|---|---|"
-		while IFS=$'\t' read -r _ name state results; do
+		while IFS=$'\t' read -r name state results; do
 			echo "| ${name#BYOND } | $state | $results |"
-		done < <(sort -s -t $'\t' -k 1,1n <<<"$lines")
+		done <<<"$lines"
 	} >>"$GITHUB_STEP_SUMMARY"
 fi
 
