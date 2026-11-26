@@ -387,7 +387,7 @@ jobs:
       contents: read
       id-token: write
     env:
-      BUILDS: 515.1637 515.1647 516.1659 516.1685 516.1689
+      BUILDS: 515.1637 515.1644 515.1647 516.1652 516.1657 516.1659 516.1670 516.1674 516.1685 516.1689
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
