@@ -85,7 +85,7 @@ impl Server {
 		self.eval.in_eval
 	}
 
-	pub fn eval_runs(&mut self, ctx: *mut raw_types::procs::ExecutionContext) {
+	pub const fn eval_runs(&mut self, ctx: *mut raw_types::procs::ExecutionContext) {
 		self.eval.eval_runs(ctx);
 	}
 

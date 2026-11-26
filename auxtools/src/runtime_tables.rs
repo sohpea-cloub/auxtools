@@ -144,7 +144,7 @@ pub fn recache_path(path: u32, value: [u32; 2]) {
 	}
 }
 
-fn type_stride(build: u32) -> usize {
+const fn type_stride(build: u32) -> usize {
 	if build < builds::TYPEPATHS {
 		if cfg!(windows) {
 			0x90

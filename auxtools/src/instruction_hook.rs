@@ -98,13 +98,14 @@ pub fn hear_only(opcodes: &[u32]) -> bool {
 	};
 	let _writing = LISTENING.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
 	ALL.store(false, Ordering::SeqCst);
-	for opcode in 0..table.count {
+	let originals = unsafe { &*std::ptr::addr_of!(ORIGINAL_TABLE) };
+	for (opcode, original) in originals.iter().enumerate().take(table.count) {
 		let entry = if opcodes.contains(&(opcode as u32)) {
 			table.handler_stub
 		} else if table.first_stub != 0 {
 			table.first_stub
 		} else {
-			unsafe { ORIGINAL_TABLE[opcode] }
+			*original
 		};
 		unsafe { (*table.entries.add(opcode)).store(entry, Ordering::SeqCst) };
 	}
@@ -362,12 +363,13 @@ unsafe fn take_table(execute_instruction: usize) -> Result<(), &'static str> {
 		}
 		let entries = entries as *const AtomicUsize;
 		const NEAR: usize = 0x0010_0000;
-		for opcode in 0..count {
+		let originals = &mut *std::ptr::addr_of_mut!(ORIGINAL_TABLE);
+		for (opcode, original) in originals.iter_mut().enumerate().take(count) {
 			let entry = (*entries.add(opcode)).load(Ordering::Relaxed);
 			if entry.abs_diff(execute_instruction) > NEAR {
 				return Err("jump-table entry is outside the interpreter");
 			}
-			ORIGINAL_TABLE[opcode] = entry;
+			*original = entry;
 		}
 		if !writable(entries as usize, count * std::mem::size_of::<usize>()) {
 			return Err("cannot make jump table writable");

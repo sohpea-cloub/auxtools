@@ -32,7 +32,7 @@ pub fn long_name(dir: PathBuf) -> PathBuf {
 }
 
 #[cfg(not(windows))]
-pub fn long_name(dir: PathBuf) -> PathBuf {
+pub const fn long_name(dir: PathBuf) -> PathBuf {
 	dir
 }
 

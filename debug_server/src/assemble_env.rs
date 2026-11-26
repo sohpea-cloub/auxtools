@@ -135,7 +135,7 @@ pub fn proc_path(path: &str) -> Option<dmasm::compiler::FoundProc> {
 	let (at, proc) = ancestry(ty)
 		.into_iter()
 		.filter_map(|at| declaration(&format!("{}/{}", at, name)).map(|proc| (at, proc)))
-		.last()?;
+		.next_back()?;
 	let warning = (at != ty).then(|| {
 		format!(
 			"{}: DreamMaker does not accept this path, because {} is not declared on {}. The proc is {}/proc/{}",

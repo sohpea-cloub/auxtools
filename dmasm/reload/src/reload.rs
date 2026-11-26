@@ -616,7 +616,7 @@ pub struct Snapshot {
     byond: ByondVersion,
     root: Option<PathBuf>,
     debug_names: HashMap<PathBuf, String>,
-    default_lines: std::sync::Mutex<HashMap<ProcKey, Vec<(Vec<u8>, u32)>>>,
+    default_lines: std::sync::Mutex<HashMap<ProcKey, DefaultLines>>,
     folded: std::collections::BTreeSet<dreammaker::Location>,
     mended: HashSet<FileId>,
     moved_defaults: Vec<(FileId, String, u32)>,
@@ -630,6 +630,24 @@ pub struct FileReload {
     patched: Vec<(ProcKey, ProcValue)>,
     files: Vec<FileId>,
     moved: Vec<(FileId, String, u32)>,
+}
+
+type DefaultLines = Vec<(Vec<u8>, u32)>;
+
+type ProcDeclaration = (
+    dreammaker::ast::ProcDeclKind,
+    dreammaker::ast::ProcFlags,
+    dreammaker::ast::ProcReturnType,
+);
+
+type KeyedProc<'a> = (Option<ProcKey>, &'a ProcValue);
+
+type FunctionMacro = (String, Vec<String>, bool, Vec<dreammaker::lexer::Token>);
+
+struct ValueOf<'a> {
+    proc_path: Option<&'a str>,
+    statics: &'a [(String, u32, String)],
+    declared: &'a str,
 }
 
 struct Reparsed {
@@ -1291,7 +1309,7 @@ impl Snapshot {
             location,
             Statement::Return(Some(expression.clone())),
         )]);
-        self.compile_synthetic(ty, "(in list)", block, location, true, None, &[], None)
+        self.compile_synthetic(ty, "(in list)", block, location, true, None)
     }
 
     pub(crate) fn compile_value(
@@ -1332,9 +1350,11 @@ impl Snapshot {
             block,
             ty.get().location,
             false,
-            proc_path,
-            statics,
-            Some(declared),
+            Some(ValueOf {
+                proc_path,
+                statics,
+                declared,
+            }),
         )
     }
 
@@ -1366,16 +1386,7 @@ impl Snapshot {
                 )
             })
             .collect();
-        self.compile_synthetic(
-            ty,
-            "(init)",
-            block,
-            ty.get().location,
-            false,
-            None,
-            &[],
-            None,
-        )
+        self.compile_synthetic(ty, "(init)", block, ty.get().location, false, None)
     }
 
     fn compile_synthetic(
@@ -1385,10 +1396,12 @@ impl Snapshot {
         block: Block,
         location: dreammaker::Location,
         debug_info: bool,
-        proc_path: Option<&str>,
-        statics: &[(String, u32, String)],
-        value_type: Option<&str>,
+        value_of: Option<ValueOf<'_>>,
     ) -> Result<ProcReload, Diagnostic> {
+        let (proc_path, statics, value_type) = match value_of {
+            Some(of) => (of.proc_path, of.statics, Some(of.declared)),
+            None => (None, &[][..], None),
+        };
         let value = ProcValue {
             location,
             parameters: Box::new([]),
@@ -1786,11 +1799,11 @@ pub fn diff(old: &Snapshot, new: &Snapshot, changed_files: Option<&HashSet<PathB
         None => true,
         Some(files) => new
             .proc_file(key)
-            .map_or(false, |f| files.contains(Path::new(&f))),
+            .is_some_and(|f| files.contains(Path::new(&f))),
     };
 
     let (mut old_declared, mut new_declared) = (DeclaredSettings::new(), DeclaredSettings::new());
-    for (key, _) in new.procs.iter() {
+    for key in new.procs.keys() {
         let Some(old_key) = old_key(key) else {
             continue;
         };
@@ -2122,27 +2135,24 @@ fn const_users(old: &Snapshot, new: &Snapshot, realigned: &Realigned, changes: &
                 .collect()
         };
         if let Some((before, after)) = compiled.filter(|(b, a)| code(&b.nodes) == code(&a.nodes)) {
-            match line_map(&before.nodes, &after.nodes) {
-                Some(lines) => {
-                    let lines: Vec<(u32, u32)> = lines.into_iter().collect();
-                    match changes
-                        .plan
-                        .line_moves
-                        .iter_mut()
-                        .find(|m| m.proc == old_key)
-                    {
-                        Some(found) => found.lines = lines,
-                        None if lines.iter().any(|(o, n)| o != n) => {
-                            changes.plan.line_moves.push(LineMove {
-                                proc: old_key,
-                                lines,
-                            })
-                        }
-                        None => {}
+            if let Some(lines) = line_map(&before.nodes, &after.nodes) {
+                let lines: Vec<(u32, u32)> = lines.into_iter().collect();
+                match changes
+                    .plan
+                    .line_moves
+                    .iter_mut()
+                    .find(|m| m.proc == old_key)
+                {
+                    Some(found) => found.lines = lines,
+                    None if lines.iter().any(|(o, n)| o != n) => {
+                        changes.plan.line_moves.push(LineMove {
+                            proc: old_key,
+                            lines,
+                        })
                     }
-                    continue;
+                    None => {}
                 }
-                None => {}
+                continue;
             }
         }
         let reload = new.compile_code(key).and_then(|mut reload| {
@@ -2650,12 +2660,11 @@ fn line_change(
     new_value: &ProcValue,
 ) -> LineChange {
     let mut lines = BTreeMap::new();
-    match (old_code, new_code) {
-        (Ok(old_code), Ok(new_code)) => match line_map(&old_code.nodes, &new_code.nodes) {
+    if let (Ok(old_code), Ok(new_code)) = (old_code, new_code) {
+        match line_map(&old_code.nodes, &new_code.nodes) {
             Some(map) => lines.extend(map),
             None => return LineChange::Recompile,
-        },
-        _ => {}
+        }
     }
     if lines.is_empty() {
         let Some(range) = old_value.body_range.as_ref() else {
@@ -2755,15 +2764,8 @@ struct FileContents<'a> {
         ),
     >,
     var_lines: BTreeMap<(String, String), u32>,
-    declarations: BTreeMap<
-        (String, String),
-        (
-            dreammaker::ast::ProcDeclKind,
-            dreammaker::ast::ProcFlags,
-            dreammaker::ast::ProcReturnType,
-        ),
-    >,
-    procs: BTreeMap<(String, String), Vec<(Option<ProcKey>, &'a ProcValue)>>,
+    declarations: BTreeMap<(String, String), ProcDeclaration>,
+    procs: BTreeMap<(String, String), Vec<KeyedProc<'a>>>,
 }
 
 impl<'a> FileContents<'a> {
@@ -2809,13 +2811,7 @@ impl<'a> FileContents<'a> {
     }
 }
 
-fn macros_in(
-    history: &DefineHistory,
-    file: FileId,
-) -> (
-    Vec<(String, Vec<String>, bool, Vec<dreammaker::lexer::Token>)>,
-    Vec<String>,
-) {
+fn macros_in(history: &DefineHistory, file: FileId) -> (Vec<FunctionMacro>, Vec<String>) {
     let mut defined = vec![];
     let mut undefined = vec![];
     for (range, (name, define)) in history.iter() {
@@ -3645,7 +3641,7 @@ fn compare_types(
                     if let Some(why) = dm_refused_const(var) {
                         changes
                             .warnings
-                            .push(refused_const_warning(&shown, name, why));
+                            .push(refused_const_warning(shown, name, why));
                     }
                     if redeclared {
                         redeclare(new, n, name.as_str(), old_var, var, changes);

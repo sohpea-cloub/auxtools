@@ -1688,15 +1688,18 @@ pub(super) fn track_cache(
 }
 
 pub(super) fn uses_cache(var: &Variable) -> bool {
-    match var {
-        Variable::Cache | Variable::CacheKey | Variable::CacheIndex => true,
-        Variable::SetCache(..) | Variable::Field(_) => true,
-        Variable::DynamicProc(_)
-        | Variable::DynamicVerb(_)
-        | Variable::StaticProc(_)
-        | Variable::StaticVerb(_) => true,
-        _ => false,
-    }
+    matches!(
+        var,
+        Variable::Cache
+            | Variable::CacheKey
+            | Variable::CacheIndex
+            | Variable::SetCache(..)
+            | Variable::Field(_)
+            | Variable::DynamicProc(_)
+            | Variable::DynamicVerb(_)
+            | Variable::StaticProc(_)
+            | Variable::StaticVerb(_)
+    )
 }
 
 fn track_cache_inner(

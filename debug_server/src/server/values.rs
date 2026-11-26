@@ -400,7 +400,7 @@ impl Server {
 							.filter_map(|(name, _)| name.as_ref())
 							.map(|name| (String::from(name), false))
 					);
-					found.extend(visible_locals(&frame).into_iter().flatten().map(|name| (name, false)));
+					found.extend(visible_locals(frame).into_iter().flatten().map(|name| (name, false)));
 					src = Some(frame.src.clone()).filter(|src| *src != Value::NULL);
 				}
 				if let Some(src) = &src {
@@ -673,7 +673,7 @@ impl Pausing {
 					unsafe { put((*frame.context).dot_mut(), value) };
 					return Ok(());
 				}
-				let visible = visible_locals(&frame);
+				let visible = visible_locals(frame);
 				let mut named = visible.iter().enumerate().filter(|(_, local)| local.as_deref() == Some(name));
 				match (named.next(), named.next()) {
 					(Some((index, _)), None) => {

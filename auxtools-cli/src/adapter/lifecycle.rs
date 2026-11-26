@@ -640,7 +640,7 @@ impl Adapter {
 		self.ended(code.unwrap_or(-1));
 	}
 
-	fn outliving_its_world(&self) -> bool {
+	const fn outliving_its_world(&self) -> bool {
 		self.world.shutting_down && self.world.game.is_some()
 	}
 

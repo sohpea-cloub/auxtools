@@ -7,7 +7,7 @@ pub(super) struct Codes {
 }
 
 impl Codes {
-	pub(super) fn new() -> Self {
+	pub(super) const fn new() -> Self {
 		Self {
 			old_codes: RefCell::new(vec![])
 		}

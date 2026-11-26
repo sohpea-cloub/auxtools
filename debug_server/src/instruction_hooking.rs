@@ -187,12 +187,7 @@ unsafe fn mark_caller(ctx: *mut raw_types::procs::ExecutionContext) -> Option<Pr
 }
 
 fn handle_breakpoint(ctx: *mut raw_types::procs::ExecutionContext, reason: BreakpointReason) -> Option<DebuggerAction> {
-	let action = unsafe {
-		match &mut *DEBUG_SERVER.get() {
-			Some(server) => server.handle_breakpoint(ctx, reason)?,
-			None => return None
-		}
-	};
+	let action = unsafe { (*DEBUG_SERVER.get()).as_mut()?.handle_breakpoint(ctx, reason)? };
 
 	Some(match action {
 		ContinueKind::Continue => DebuggerAction::None,
@@ -358,7 +353,7 @@ unsafe fn thrown(ctx: *mut raw_types::procs::ExecutionContext) -> String {
 	}
 }
 
-pub(crate) fn is_breakpoint_word(word: u32) -> bool {
+pub(crate) const fn is_breakpoint_word(word: u32) -> bool {
 	matches!(word, OPCODE_DEBUG_BREAK | OPCODE_DEBUG_OPERAND)
 }
 

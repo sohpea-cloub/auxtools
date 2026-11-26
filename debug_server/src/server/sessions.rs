@@ -147,7 +147,7 @@ impl Sessions {
 		self.asking.map(|asking| asking.client)
 	}
 
-	pub(super) fn request_over(&mut self) {
+	pub(super) const fn request_over(&mut self) {
 		self.asking = None;
 	}
 

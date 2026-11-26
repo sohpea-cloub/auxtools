@@ -277,7 +277,7 @@ fn math1(name: &str, x: f32, byond: crate::ByondVersion) -> Option<Option<f32>> 
     let d = x as f64;
     let degrees = super::versions::degrees;
     let r = match name {
-        "sqrt" => (!(d < 0.0)).then(|| d.sqrt()),
+        "sqrt" => (d >= 0.0 || d.is_nan()).then(|| d.sqrt()),
         "ceil" => Some(d.ceil()),
         "floor" | "round" => Some(d.floor()),
         "trunc" => Some(d.trunc()),

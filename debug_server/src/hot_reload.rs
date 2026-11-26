@@ -1061,7 +1061,7 @@ fn global_slots(
 				}
 				StaticScope::Proc { path, nth } => proc_static(path, *nth, name, counts, world_globals).or_else(|| {
 					let unique = |ids: BTreeSet<u32>| (ids.len() == 1).then(|| ids.first().copied()).flatten();
-					let places: Vec<_> = Proc::overrides(&strip_path(path))
+					let places: Vec<_> = Proc::overrides(strip_path(path))
 						.iter()
 						.filter_map(|proc| world_globals.of(proc).place())
 						.collect();
@@ -1177,7 +1177,7 @@ fn proc_static(
 	world_globals: &mut WorldGlobals
 ) -> Option<u32> {
 	let declared = *counts.get(path)?.get(String::from_utf8_lossy(name).as_ref())?;
-	let ids: BTreeSet<u32> = Proc::overrides(&strip_path(path))
+	let ids: BTreeSet<u32> = Proc::overrides(strip_path(path))
 		.iter()
 		.filter_map(|proc| {
 			let named = world_globals.of(proc).by_name().remove(name)?;
@@ -2801,6 +2801,7 @@ pub fn fail_next(at: FailAt) {
 	*FAIL_NEXT.lock().unwrap() = Some(at);
 }
 
+#[cfg_attr(not(feature = "test-commands"), allow(clippy::missing_const_for_fn))]
 fn failing(at: FailAt) -> Result<(), String> {
 	#[cfg(feature = "test-commands")]
 	if FAIL_NEXT.lock().unwrap().take_if(|next| *next == at).is_some() {

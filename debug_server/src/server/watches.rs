@@ -73,7 +73,7 @@ pub(super) struct Watches {
 }
 
 impl Watches {
-	pub(super) fn new() -> Self {
+	pub(super) const fn new() -> Self {
 		Self {
 			watched: vec![],
 			next_watch: 0,
@@ -111,7 +111,7 @@ impl Watches {
 }
 
 impl Server {
-	pub fn has_watches(&self) -> bool {
+	pub const fn has_watches(&self) -> bool {
 		!self.watches.watched.is_empty()
 	}
 

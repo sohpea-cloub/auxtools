@@ -166,7 +166,7 @@ impl Output {
 		});
 	}
 
-	pub fn to_client(&self) -> bool {
+	pub const fn to_client(&self) -> bool {
 		matches!(self.to, To::Client(_))
 	}
 

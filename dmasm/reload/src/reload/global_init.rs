@@ -1409,6 +1409,8 @@ impl<'a> Walk<'a> {
     }
 }
 
+type Declared = (u32, u32, Vec<(String, u32)>);
+
 fn var_blocks(lines: &[String], declared: &[u32]) -> HashMap<u32, Vec<u32>> {
     let indent = |line: &str| line.len() - line.trim_start().len();
     let path = |line: &str| -> (Vec<String>, bool) {
@@ -1424,7 +1426,7 @@ fn var_blocks(lines: &[String], declared: &[u32]) -> HashMap<u32, Vec<u32>> {
             .collect();
         (parts, rest.is_empty() || rest.starts_with("//"))
     };
-    let mut found: Vec<(u32, u32, Vec<(String, u32)>)> = vec![];
+    let mut found: Vec<Declared> = vec![];
     for &line in declared {
         let Some(own) = lines.get(line.saturating_sub(1) as usize) else {
             continue;

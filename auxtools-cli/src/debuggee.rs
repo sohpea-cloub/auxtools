@@ -306,7 +306,7 @@ impl Debuggee {
 		Ok(())
 	}
 
-	pub fn stop_number(&self) -> u32 {
+	pub const fn stop_number(&self) -> u32 {
 		self.stops
 	}
 

@@ -97,7 +97,7 @@ impl Client {
 		}
 	}
 
-	fn greet(&mut self, hello: &Hello) -> Result<(), Lost> {
+	const fn greet(&mut self, hello: &Hello) -> Result<(), Lost> {
 		if hello.protocol != PROTOCOL_VERSION {
 			return Err(Lost::Incompatible(hello.protocol));
 		}

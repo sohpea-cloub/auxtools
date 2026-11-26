@@ -70,7 +70,7 @@ pub(super) enum EvalMode {
 }
 
 impl<'a> EvalRequest<'a> {
-	pub(super) fn new(frame: Option<u32>, command: &'a str) -> Self {
+	pub(super) const fn new(frame: Option<u32>, command: &'a str) -> Self {
 		Self {
 			frame,
 			command,
@@ -118,7 +118,7 @@ impl Evaluation {
 		}
 	}
 
-	pub(super) fn eval_runs(&mut self, ctx: *mut raw_types::procs::ExecutionContext) {
+	pub(super) const fn eval_runs(&mut self, ctx: *mut raw_types::procs::ExecutionContext) {
 		self.eval_ran = ctx;
 	}
 
@@ -484,7 +484,7 @@ impl Server {
 					}
 				}
 
-				for (idx, (local, name)) in frame.locals.iter().zip(values::visible_locals(&frame)).enumerate() {
+				for (idx, (local, name)) in frame.locals.iter().zip(values::visible_locals(frame)).enumerate() {
 					if let Some(name) = name {
 						args.push((name, local.1.clone(), ArgType::Local(idx as u32)));
 					}

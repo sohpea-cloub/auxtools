@@ -82,7 +82,7 @@ fn pin_dll() -> Result<(), ()> {
 	Ok(())
 }
 #[cfg(unix)]
-fn pin_dll() -> Result<(), ()> {
+const fn pin_dll() -> Result<(), ()> {
 	Ok(())
 }
 

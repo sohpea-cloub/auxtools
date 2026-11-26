@@ -444,7 +444,7 @@ fn is_statement_builtin(expr: &Expression, byond: ByondVersion) -> bool {
     let source = stub_source(&value, byond);
     let mut compiler = debugger_compiler(&source, &[], None);
     if !matches!(
-        builtin_procs::emit(&mut compiler, name.as_str(), &args.to_vec()),
+        builtin_procs::emit(&mut compiler, name.as_str(), args),
         Ok(None)
     ) {
         return false;

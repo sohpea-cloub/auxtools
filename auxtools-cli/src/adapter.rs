@@ -907,7 +907,7 @@ impl Adapter {
 			.filter(|removed| removed.type_path.is_empty())
 			.map(|removed| removed.proc.path.clone())
 			.collect();
-		let result = match self.request(&AuxRequest::HotReload(request)) {
+		let result = match self.request(&AuxRequest::HotReload(Box::new(request))) {
 			Ok(AuxResponse::HotReload(result)) => result,
 			Ok(other) => {
 				let why = unexpected(other);
@@ -1751,13 +1751,11 @@ impl Adapter {
 				breakpoints.push(unverified("cannot set a breakpoint in pre-reload bytecode".to_owned()));
 				continue;
 			}
-			if !code.contains_key(&place) {
-				let disassembly = match self.request(&AuxRequest::Disassemble { code: place }) {
+			code.entry(place)
+				.or_insert_with(|| match self.request(&AuxRequest::Disassemble { code: place }) {
 					Ok(AuxResponse::Disassemble(Ok(disassembly))) => Some(disassembly),
 					_ => None
-				};
-				code.insert(place, disassembly);
-			}
+				});
 			let Some(disassembly) = &code[&place] else {
 				breakpoints.push(unverified(format!("no proc at address {}", address_text(address))));
 				continue;

@@ -480,7 +480,7 @@ fn emit_statement_inner(
             let head = compiler.new_label();
             let end = compiler.new_label();
             compiler.emit_loop_label(head.clone());
-            if super::fold::value(compiler, &condition.elem).map_or(true, |c| !c.truthy()) {
+            if super::fold::value(compiler, &condition.elem).is_none_or(|c| !c.truthy()) {
                 condition_end(compiler, condition);
                 emit_condition_jz(compiler, &condition.elem, &end)?;
             }
@@ -1887,7 +1887,9 @@ pub(super) fn emit_safe_chain_write<'a>(
             }
         }
         if !holder_saved {
-            ends.pop().map(|end| compiler.emit_label(end));
+            if let Some(end) = ends.pop() {
+                compiler.emit_label(end)
+            }
         }
         for end in ends.into_iter().rev() {
             compiler.emit_ins(Instruction::PopCache);
@@ -1901,7 +1903,9 @@ pub(super) fn emit_safe_chain_write<'a>(
             for ins in write(last_var.clone()) {
                 compiler.emit_ins(ins);
             }
-            ends.pop().map(|end| compiler.emit_label(end));
+            if let Some(end) = ends.pop() {
+                compiler.emit_label(end)
+            }
         }
         (SafeWrite::Assign, Some(index)) => {
             compiler.emit_ins(Instruction::PopCache);
@@ -1911,7 +1915,9 @@ pub(super) fn emit_safe_chain_write<'a>(
             compiler.emit_ins(Instruction::GetVar(last_var.clone()));
             emit_value(compiler, &index)?;
             compiler.emit_ins(Instruction::ListSet);
-            ends.pop().map(|end| compiler.emit_label(end));
+            if let Some(end) = ends.pop() {
+                compiler.emit_label(end)
+            }
         }
         (SafeWrite::Change(write), Some(index)) => {
             let restore_first = compiler.byond.restores_cache_for_safe_element();
@@ -1931,7 +1937,9 @@ pub(super) fn emit_safe_chain_write<'a>(
             for ins in write(Variable::CacheIndex) {
                 compiler.emit_ins(ins);
             }
-            ends.pop().map(|end| compiler.emit_label(end));
+            if let Some(end) = ends.pop() {
+                compiler.emit_label(end)
+            }
         }
         (SafeWrite::Logical { or }, index) => {
             if !compiler.byond.keeps_safe_logical_null_tests() {

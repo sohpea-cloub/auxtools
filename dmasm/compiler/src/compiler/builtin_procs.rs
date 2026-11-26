@@ -56,7 +56,7 @@ fn emit_counted(
 pub(super) fn emit(
     compiler: &mut Compiler<'_>,
     name: &str,
-    args: &Vec<Expression>,
+    args: &[Expression],
 ) -> Result<Option<EvalKind>, CompileError> {
     let Some(builtin) = builtins::find(name).filter(|builtin| builtin.is_in(compiler.byond)) else {
         return Ok(None);

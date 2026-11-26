@@ -15,7 +15,7 @@ pub struct WorldFiles {
 }
 
 impl WorldFiles {
-	pub fn new(dme: Option<PathBuf>) -> Self {
+	pub const fn new(dme: Option<PathBuf>) -> Self {
 		WorldFiles { dme, names: None }
 	}
 

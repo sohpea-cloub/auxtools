@@ -85,7 +85,7 @@ pub fn reloaded(world: &mut World) -> HotReloadRequest {
 	let message = world.next("a reload", |request| matches!(request, Request::HotReload(_)));
 	world.answer(&message, applied());
 	match message.request {
-		Request::HotReload(request) => request,
+		Request::HotReload(request) => *request,
 		_ => unreachable!()
 	}
 }

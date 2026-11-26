@@ -61,7 +61,7 @@ pub enum Request {
 	Pause,
 
 	ByondVersion,
-	HotReload(HotReloadRequest),
+	HotReload(Box<HotReloadRequest>),
 	WorldInfo,
 	Status,
 	HoldPause,
@@ -665,7 +665,7 @@ impl HitCondition {
 			Self::More(n) => hits > n,
 			Self::Less(n) => hits < n,
 			Self::AtMost(n) => hits <= n,
-			Self::Every(n) => n != 0 && hits % n == 0
+			Self::Every(n) => n != 0 && hits.is_multiple_of(n)
 		}
 	}
 }

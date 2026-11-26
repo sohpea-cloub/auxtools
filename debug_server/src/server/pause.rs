@@ -92,7 +92,7 @@ pub(super) struct Pausing {
 }
 
 impl Pausing {
-	pub(super) fn new() -> Self {
+	pub(super) const fn new() -> Self {
 		Self {
 			state: None,
 			paused: None,
@@ -481,7 +481,7 @@ impl Server {
 		}
 	}
 
-	pub fn world_carries_on(&mut self) {
+	pub const fn world_carries_on(&mut self) {
 		self.pause.ending = None;
 	}
 }

@@ -127,7 +127,7 @@ impl std::ops::Deref for Edit {
 }
 
 fn reload_request(edit: &Edit) -> Request {
-	Request::HotReload(auxtools_cli::reload::request(&edit.changes, &edit.before, false))
+	Request::HotReload(Box::new(auxtools_cli::reload::request(&edit.changes, &edit.before, false)))
 }
 
 fn resource_id(reference: &str) -> u32 {
@@ -155,7 +155,7 @@ fn reload_resources(client: &mut Client, source: &Source, files: &[(&str, &str, 
 			ids: ids.clone()
 		})
 		.collect();
-	let result = expect_reload_result(client.request(Request::HotReload(request)));
+	let result = expect_reload_result(client.request(Request::HotReload(Box::new(request))));
 	assert!(result.applied, "resource reload rejected: {:?}", result.errors);
 	result
 }
@@ -987,10 +987,10 @@ fn debugger(built: Built) {
 	println!("ok: ordered reload and evaluation");
 
 	let mut request = reload_request(&source.edit("reload.dm", "\treturn 4", "\treturn 5"));
-	if let Request::HotReload(HotReloadRequest { plan, .. }) = &mut request {
-		let mut bad = plan.reloads[0].clone();
+	if let Request::HotReload(reload) = &mut request {
+		let mut bad = reload.plan.reloads[0].clone();
 		bad.proc.path = "/a_proc_the_world_doesnt_have".to_owned();
-		plan.reloads.push(bad);
+		reload.plan.reloads.push(bad);
 	}
 	let result = expect_reload_result(client.request(request));
 	assert!(!result.applied);
@@ -1002,7 +1002,7 @@ fn debugger(built: Built) {
 	assert_eq!(eval(&mut client, "answer()"), "4");
 	println!("ok: rejected reload preserves existing code");
 
-	let request = Request::HotReload(HotReloadRequest {
+	let request = Request::HotReload(Box::new(HotReloadRequest {
 		plan: dmasm::reload::Plan {
 			removed_procs: vec![dmasm::reload::RemovedProc {
 				proc: dmasm::reload::ProcKey {
@@ -1026,7 +1026,7 @@ fn debugger(built: Built) {
 			..Default::default()
 		},
 		..Default::default()
-	});
+	}));
 	let result = expect_reload_result(client.request(request));
 	assert!(result.applied, "{:?}", result.errors);
 	assert_eq!(result.skipped, ["/datum/declared/never_built"]);

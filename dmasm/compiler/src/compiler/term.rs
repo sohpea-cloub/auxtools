@@ -264,7 +264,7 @@ pub(super) fn emit(compiler: &mut Compiler<'_>, term: Term) -> Result<EvalKind, 
                 compiler.explicit_src = true;
             }
             let ty = super::procs::term_type(compiler, &Term::Ident(expr.ident.clone()));
-            let var = compiler.emit_find_var(expr.ident.into())?;
+            let var = compiler.emit_find_var(expr.ident)?;
             let follows: Vec<Follow> = expr
                 .fields
                 .iter()
@@ -358,7 +358,7 @@ pub(super) fn emit(compiler: &mut Compiler<'_>, term: Term) -> Result<EvalKind, 
 
                 _ if args.iter().all(|(w, _)| {
                     w.as_ref()
-                        .map_or(true, |w| pick_weight(compiler, w).is_some())
+                        .is_none_or(|w| pick_weight(compiler, w).is_some())
                 }) =>
                 {
                     let weights: Vec<f32> = args
@@ -766,6 +766,33 @@ fn emit_new(
     Ok(EvalKind::Stack)
 }
 
+fn emit_prefab_var(
+    compiler: &mut Compiler<'_>,
+    name: &str,
+    value: &Expression,
+) -> Result<(), CompileError> {
+    let literal = matches!(value, Expression::Base { term, follow }
+        if follow.is_empty()
+            && matches!(term.elem, Term::Resource(_) | Term::Prefab(_) | Term::String(_) | Term::Null));
+    if !literal
+        && super::fold::value(compiler, value).is_none_or(|v| v == super::fold::Constant::New)
+    {
+        let line = value_line(value);
+        let file = compiler.proc.file.clone();
+        compiler.emit_ins(Instruction::DbgLine(line));
+        compiler.emit_ins(Instruction::DbgFile(crate::operands::DMString(
+            file.into_bytes(),
+        )));
+    }
+    let kind = compiler.emit_expr(value.clone())?;
+    compiler.emit_move_to_stack(kind)?;
+    let var = super::chain_builder::ChainBuilder::begin(Variable::Src)
+        .get_field(crate::operands::DMString(name.as_bytes().to_vec()));
+    compiler.cache = None;
+    compiler.emit_ins(Instruction::SetVar(var));
+    Ok(())
+}
+
 fn prefab_value(
     compiler: &mut Compiler,
     prefab: &dreammaker::ast::Prefab,
@@ -784,30 +811,7 @@ fn prefab_value(
     for (name, value) in prefab.vars.iter() {
         compiler.cache = None;
         compiler.last_line = None;
-        let mut emit = || -> Result<(), CompileError> {
-            let literal = matches!(value, Expression::Base { term, follow }
-                if follow.is_empty()
-                    && matches!(term.elem, Term::Resource(_) | Term::Prefab(_) | Term::String(_) | Term::Null));
-            if !literal
-                && super::fold::value(compiler, value)
-                    .is_none_or(|v| v == super::fold::Constant::New)
-            {
-                let line = value_line(value);
-                let file = compiler.proc.file.clone();
-                compiler.emit_ins(Instruction::DbgLine(line));
-                compiler.emit_ins(Instruction::DbgFile(crate::operands::DMString(
-                    file.into_bytes(),
-                )));
-            }
-            let kind = compiler.emit_expr(value.clone())?;
-            compiler.emit_move_to_stack(kind)?;
-            let var = super::chain_builder::ChainBuilder::begin(Variable::Src)
-                .get_field(crate::operands::DMString(name.as_str().as_bytes().to_vec()));
-            compiler.cache = None;
-            compiler.emit_ins(Instruction::SetVar(var));
-            Ok(())
-        };
-        res = emit();
+        res = emit_prefab_var(compiler, name.as_str(), value);
         vars.push((name.to_string(), std::mem::take(&mut compiler.nodes)));
         if res.is_err() {
             break;

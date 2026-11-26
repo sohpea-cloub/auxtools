@@ -230,7 +230,9 @@ pub fn resource_crcs(data: &[u8]) -> Result<Vec<u32>, Error> {
 		));
 	}
 	Ok(table
-		.chunks_exact(5)
+		.as_chunks::<5>()
+		.0
+		.iter()
 		.map(|entry| u32::from_le_bytes(entry[..4].try_into().unwrap()))
 		.collect())
 }
