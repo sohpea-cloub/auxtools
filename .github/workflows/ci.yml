@@ -174,18 +174,24 @@ jobs:
           key: crates-linux-${{ hashFiles('Cargo.lock') }}
           restore-keys: crates-linux-
 
-      - name: Restore built dependencies
+      - name: Restore what the last run built
         if: ${{ !inputs.version }}
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
+            target/built-from
             target/release/.fingerprint
             target/release/build
             target/release/deps
             target/${{ env.TARGET }}/release/.fingerprint
             target/${{ env.TARGET }}/release/build
             target/${{ env.TARGET }}/release/deps
-          key: built-linux-${{ env.RUST_VERSION }}-${{ hashFiles('Cargo.lock') }}
+          key: build-linux-${{ env.RUST_VERSION }}-${{ hashFiles('Cargo.lock') }}-${{ github.sha }}
+          restore-keys: build-linux-${{ env.RUST_VERSION }}-${{ hashFiles('Cargo.lock') }}-
+
+      - name: Give unchanged files the times they had in that run
+        if: ${{ !inputs.version }}
+        run: ci/source-times.sh target/built-from
 
       - name: Build
         run: cargo build --release --locked --target "$TARGET" --workspace
@@ -299,18 +305,24 @@ jobs:
           key: crates-windows-${{ hashFiles('Cargo.lock') }}
           restore-keys: crates-windows-
 
-      - name: Restore built dependencies
+      - name: Restore what the last run built
         if: ${{ !inputs.version }}
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
+            target/built-from
             target/release/.fingerprint
             target/release/build
             target/release/deps
             target/${{ env.TARGET }}/release/.fingerprint
             target/${{ env.TARGET }}/release/build
             target/${{ env.TARGET }}/release/deps
-          key: built-windows-${{ env.RUST_VERSION }}-${{ hashFiles('Cargo.lock') }}
+          key: build-windows-${{ env.RUST_VERSION }}-${{ hashFiles('Cargo.lock') }}-${{ github.sha }}
+          restore-keys: build-windows-${{ env.RUST_VERSION }}-${{ hashFiles('Cargo.lock') }}-
+
+      - name: Give unchanged files the times they had in that run
+        if: ${{ !inputs.version }}
+        run: ci/source-times.sh target/built-from
 
       - name: Restore the Windows SDK
         if: ${{ !inputs.version }}
