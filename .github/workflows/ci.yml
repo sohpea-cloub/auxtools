@@ -174,6 +174,19 @@ jobs:
           key: crates-linux-${{ hashFiles('Cargo.lock') }}
           restore-keys: crates-linux-
 
+      - name: Restore built dependencies
+        if: ${{ !inputs.version }}
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            target/release/.fingerprint
+            target/release/build
+            target/release/deps
+            target/${{ env.TARGET }}/release/.fingerprint
+            target/${{ env.TARGET }}/release/build
+            target/${{ env.TARGET }}/release/deps
+          key: built-linux-${{ env.RUST_VERSION }}-${{ hashFiles('Cargo.lock') }}
+
       - name: Build
         run: cargo build --release --locked --target "$TARGET" --workspace
 
@@ -286,6 +299,19 @@ jobs:
           key: crates-windows-${{ hashFiles('Cargo.lock') }}
           restore-keys: crates-windows-
 
+      - name: Restore built dependencies
+        if: ${{ !inputs.version }}
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            target/release/.fingerprint
+            target/release/build
+            target/release/deps
+            target/${{ env.TARGET }}/release/.fingerprint
+            target/${{ env.TARGET }}/release/build
+            target/${{ env.TARGET }}/release/deps
+          key: built-windows-${{ env.RUST_VERSION }}-${{ hashFiles('Cargo.lock') }}
+
       - name: Restore the Windows SDK
         if: ${{ !inputs.version }}
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -351,103 +377,73 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-  test-linux:
-    name: Linux, BYOND ${{ matrix.byond }}
-    needs: build-linux
-    if: github.event_name != 'push' || github.event.head_commit.author.name != 'github-actions[bot]' || !startsWith(github.event.head_commit.message, 'Start development on ')
-    runs-on: ubuntu-22.04
-    timeout-minutes: 20
-    strategy:
-      fail-fast: false
-      matrix:
-        byond: ["515.1637", "515.1647", "516.1659", "516.1685", "516.1689"]
+  test-linux-wine:
+    name: Linux and Wine Tests
+    needs: [build-linux, build-windows]
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      BUILDS: 515.1637 515.1647 516.1659 516.1685 516.1689
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Install the 32-bit libraries BYOND needs
-        run: |
-          sudo dpkg --add-architecture i386
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libc6:i386 libstdc++6:i386 libgcc-s1:i386 libcurl4:i386
+      - name: Download the release commits
+        if: inputs.version
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release.bundle
+          path: ${{ runner.temp }}
 
-      - name: Download the bundle
+      - name: Check out the release commit
+        if: inputs.version
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          git fetch --no-tags "$RUNNER_TEMP/release.bundle" "refs/tags/v$VERSION:refs/tags/v$VERSION"
+          git checkout --detach "v$VERSION"
+
+      - name: Download the Linux bundle
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: bundle-linux
           path: bundle
 
-      - name: Restore BYOND
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - name: Download the Windows bundle
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          path: .byond
-          key: byond-${{ matrix.byond }}-linux-${{ hashFiles('ci/byond.sha256') }}
-
-      - name: Fetch BYOND
-        run: ci/fetch-byond.sh "${{ matrix.byond }}" linux .byond
-
-      - name: Unpack the programs
-        run: |
-          mkdir programs
-          tar -xf bundle/bundle-linux.tar -C programs
-
-      - name: Check the registry's patterns
-        run: programs/check_recipes linux "${{ matrix.byond }}" .byond/byond/bin/libbyond.so
+          name: bundle-windows
+          path: bundle
 
       - name: Test
-        run: ci/run-tests.sh programs .byond/byond
-
-  dmasm-dreammaker:
-    name: dmasm against DreamMaker, BYOND ${{ matrix.byond }}
-    needs: build-linux
-    if: github.event_name != 'push' || github.event.head_commit.author.name != 'github-actions[bot]' || !startsWith(github.event.head_commit.message, 'Start development on ')
-    runs-on: ubuntu-22.04
-    timeout-minutes: 10
-    strategy:
-      fail-fast: false
-      matrix:
-        byond: ["515.1637", "515.1647", "516.1659", "516.1685", "516.1689"]
-    env:
-      BYOND: ${{ matrix.byond }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Install the 32-bit libraries BYOND needs
+        env:
+          REPOSITORY: ${{ github.repository }}
+          RELEASE: ${{ inputs.version }}
         run: |
-          sudo dpkg --add-architecture i386
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libc6:i386 libstdc++6:i386 libgcc-s1:i386 libcurl4:i386
-
-      - name: Download the bundle
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: bundle-linux
-          path: bundle
-
-      - name: Restore BYOND
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: .byond
-          key: byond-${{ env.BYOND }}-linux-${{ hashFiles('ci/byond.sha256') }}
-
-      - name: Fetch BYOND
-        run: ci/fetch-byond.sh "$BYOND" linux .byond
-
-      - name: Compare dmasm with DreamMaker
-        run: |
-          mkdir programs
-          tar -xf bundle/bundle-linux.tar -C programs compare_dreammaker
-          programs/compare_dreammaker .byond/byond/bin/DreamMaker dmasm/compiler/tests/dreammaker --out "$RUNNER_TEMP/dreammaker"
+          git archive --format=tar.gz -o "$RUNNER_TEMP/source.tar.gz" HEAD
+          COMMIT=$(git rev-parse HEAD)
+          export COMMIT
+          if [ -n "$RELEASE" ]; then
+            BUILDS=$(tr '\n' ' ' <ci/supported-builds.txt)
+            RERUNS=2
+            KNOWN_BROKEN=$(tr '\n' ' ' <ci/known-broken-builds.txt)
+            export RERUNS KNOWN_BROKEN
+          fi
+          ci/cloud.sh bundle/bundle-linux.tar bundle/bundle-windows.tar "$RUNNER_TEMP/source.tar.gz" $BUILDS
 
   test-windows:
-    name: Windows, BYOND ${{ matrix.byond }}
+    name: Windows Tests
     needs: build-windows
-    if: github.event_name != 'push' || github.event.head_commit.author.name != 'github-actions[bot]' || !startsWith(github.event.head_commit.message, 'Start development on ')
+    if: inputs.version
     runs-on: windows-2022
     timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
-        byond: ["515.1637", "515.1647", "516.1659", "516.1685", "516.1689"]
+        byond: ["515.1637", "515.1644", "515.1647", "516.1652", "516.1657", "516.1659", "516.1670", "516.1674", "516.1685", "516.1689"]
     defaults:
       run:
         shell: bash
@@ -479,50 +475,6 @@ jobs:
 
       - name: Test
         run: ci/run-tests.sh programs .byond/byond
-
-  test-wine:
-    name: Wine, BYOND ${{ matrix.byond }}
-    needs: build-windows
-    if: github.event_name != 'push' || github.event.head_commit.author.name != 'github-actions[bot]' || !startsWith(github.event.head_commit.message, 'Start development on ')
-    runs-on: ubuntu-26.04
-    timeout-minutes: 20
-    strategy:
-      fail-fast: false
-      matrix:
-        byond: ["515.1637", "515.1647", "516.1659", "516.1685", "516.1689"]
-    env:
-      WINE: wine
-      WINEARCH: win32
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Install Wine
-        run: |
-          sudo dpkg --add-architecture i386
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends wine wine32:i386
-          wine --version
-
-      - name: Download the bundle
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: bundle-windows
-          path: bundle
-
-      - name: Restore BYOND
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: .byond
-          key: byond-${{ matrix.byond }}-windows-${{ hashFiles('ci/byond.sha256') }}
-
-      - name: Fetch BYOND
-        run: ci/fetch-byond.sh "${{ matrix.byond }}" windows .byond
-
-      - name: Test
-        run: |
-          mkdir programs
-          tar -xf bundle/bundle-windows.tar -C programs
-          ci/run-tests.sh programs .byond/byond
 
   package:
     name: Pack the VS Code extension

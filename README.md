@@ -279,9 +279,13 @@ planned for 4.0.1:
   on Linux, and does in another some of the time under Wine.
 
 CI tests the library, the debugger, hot reload and the CLI on 515.1637, 515.1647, 516.1659,
-516.1685 and 516.1689. The tests cover the library's hooks and values, the debug server, source
-reloads, the launcher's lifecycle, CLI output and the debug adapter. Linux tests run on Ubuntu
-22.04. Windows tests run in `dd.exe` on Windows Server 2022 and under Wine.
+516.1685 and 516.1689, and a release tests them on every supported build. The tests cover the
+library's hooks and values, the debug server, source reloads, the launcher's lifecycle, CLI
+output and the debug adapter. The Linux tests (on Ubuntu 22.04) and the Windows programs under
+Wine run in containers, which `ci/cloud.sh` starts. A pull request from a fork can't start
+them, so its tests run once it is merged. A release also runs the tests in `dd.exe` on Windows
+Server 2022, on ten builds: 515.1637, 515.1644, 515.1647, 516.1652, 516.1657, 516.1659,
+516.1670, 516.1674, 516.1685 and 516.1689.
 
 A harness outside this repository tests the VS Code extension on Linux with 516.1688. No
 automated test covers the extension on Windows. The automated tests don't cover DreamSeeker or
