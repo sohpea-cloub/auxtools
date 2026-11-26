@@ -189,6 +189,7 @@ struct Functions {
 #[derive(Clone, Copy)]
 enum MiscIntern {
 	Copy(extern "C" fn(*const u32, u32) -> u32),
+	#[cfg(unix)]
 	Take(extern "C" fn(*mut u8) -> u32)
 }
 
@@ -412,6 +413,7 @@ pub fn intern_misc(words: &[u32]) -> Result<u32, String> {
 	let functions = functions()?;
 	let id = match functions.misc_intern {
 		MiscIntern::Copy(copy) => copy(words.as_ptr(), words.len() as u32),
+		#[cfg(unix)]
 		MiscIntern::Take(take) => unsafe {
 			let entry = (functions.crt_realloc)(std::ptr::null_mut(), 12) as *mut u8;
 			if entry.is_null() {

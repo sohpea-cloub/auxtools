@@ -154,7 +154,7 @@ fn completions(world: &mut World) {
 }
 
 fn bodies(world: &mut World) {
-	let mut gives = |world: &mut World, cases: &[(&str, &str)]| {
+	let gives = |world: &mut World, cases: &[(&str, &str)]| {
 		for (body, expected) in cases {
 			assert_eq!(world.eval(body), *expected, "{}", body);
 		}
@@ -189,7 +189,7 @@ fn bodies(world: &mut World) {
 	ok("body writes frame variables");
 
 	let frame = world.frame_id();
-	let mut fails = |world: &mut World, cases: &[(&str, &str)]| {
+	let fails = |world: &mut World, cases: &[(&str, &str)]| {
 		for (body, expected) in cases {
 			for context in ["repl", "watch"] {
 				let why = world.refused("evaluate", json!({ "expression": body, "frameId": frame, "context": context }));
@@ -230,7 +230,7 @@ fn bodies(world: &mut World) {
 }
 
 fn smaller_things(world: &mut World) {
-	let mut gives = |world: &mut World, cases: &[(&str, &str)]| {
+	let gives = |world: &mut World, cases: &[(&str, &str)]| {
 		for (expression, expected) in cases {
 			assert_eq!(world.eval(expression), *expected, "{}", expression);
 		}
@@ -261,7 +261,7 @@ fn smaller_things(world: &mut World) {
 pub fn run() {
 	let mut world = World::start();
 	world.run_to("inside", "/datum/thing/inside", "inside_stop");
-	let mut gives = |world: &mut World, cases: &[(&str, &str)]| {
+	let gives = |world: &mut World, cases: &[(&str, &str)]| {
 		for (expression, expected) in cases {
 			assert_eq!(world.eval(expression), *expected, "{}", expression);
 		}
@@ -495,7 +495,7 @@ pub fn run() {
 	bodies(&mut world);
 	smaller_things(&mut world);
 
-	let mut fails = |world: &mut World, cases: &[(&str, &str)]| {
+	let fails = |world: &mut World, cases: &[(&str, &str)]| {
 		let frame = world.frame_id();
 		for (expression, expected) in cases {
 			for context in ["repl", "watch"] {

@@ -939,7 +939,7 @@ fn debugger(built: Built) {
 		"{:?}",
 		response
 	);
-	let mut logged = |client: &mut Client, object: &str| {
+	let logged = |client: &mut Client, object: &str| {
 		eval(client, &format!("spawn(0) (new {}).probe(); 1", object));
 		match client.recv() {
 			Response::Log { message, .. } => message,
