@@ -111,6 +111,9 @@ pub enum Input {
 	WorldOutput(Vec<String>),
 	GameExited(Option<i32>),
 	ProcessGone,
+	ExitOverdue {
+		process: u32
+	},
 	TerminateOverdue {
 		process: u32
 	},
@@ -490,7 +493,7 @@ impl Adapter {
 			Input::ConnectionClosed { generation, reason } => self.connection_closed(generation, &reason),
 			Input::ShuttingDown { generation } => {
 				if self.debuggee.as_ref().is_some_and(|d| d.generation == generation) {
-					self.world.shutting_down = true;
+					self.world_shutting_down();
 				}
 			}
 			Input::Unavailable { generation, reason } => self.debugger_unavailable(generation, &reason),
@@ -533,6 +536,7 @@ impl Adapter {
 				}
 			}
 			Input::GameExited(code) => self.game_exited(code),
+			Input::ExitOverdue { process } => self.exit_overdue(process),
 			Input::TerminateOverdue { process } => self.terminate_overdue(process),
 			Input::ProcessGone => self.process_gone()
 		}

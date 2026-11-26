@@ -427,7 +427,7 @@ impl Adapter {
 		self.world.waiting_for_code = false;
 		self.set.lock().unwrap().clear();
 
-		if self.world.pid.is_some() && !self.world.ending {
+		if self.world.pid.is_some() && !self.world.ending && !self.outliving_its_world() {
 			if !self.world.shutting_down && !self.world.rebooting {
 				self.out.console(format!("Debug server disconnected: {}. Waiting to reconnect", reason));
 				self.progress_start(RESTARTING, "Waiting to reconnect".to_owned());
@@ -638,6 +638,36 @@ impl Adapter {
 			None => self.out.console("The world was terminated")
 		}
 		self.ended(code.unwrap_or(-1));
+	}
+
+	fn outliving_its_world(&self) -> bool {
+		self.world.shutting_down && self.world.game.is_some()
+	}
+
+	pub(super) fn world_shutting_down(&mut self) {
+		self.world.shutting_down = true;
+		if self.world.ending || !self.outliving_its_world() {
+			return;
+		}
+		let Some(process) = self.world_process() else {
+			return;
+		};
+		let inputs = self.inputs.clone();
+		std::thread::spawn(move || {
+			std::thread::sleep(local::test_patience(TERMINATE_GRACE));
+			let _ = inputs.send(Input::ExitOverdue { process });
+		});
+	}
+
+	pub(super) fn exit_overdue(&mut self, process: u32) {
+		if self.outliving_its_world() && self.world_process() == Some(process) {
+			self.out.console(format!(
+				"The world ended, but its process is still running after {} seconds. Terminating process {}",
+				local::test_patience(TERMINATE_GRACE).as_secs(),
+				process
+			));
+			self.kill_world();
+		}
 	}
 
 	pub(super) fn terminate_overdue(&mut self, process: u32) {

@@ -1,6 +1,6 @@
 use std::time::{Duration, Instant};
 
-use auxtools_protocol::Request;
+use auxtools_protocol::{Request, Response};
 use serde_json::json;
 use test_support::standin::{StandIn, World};
 
@@ -43,6 +43,39 @@ fn shutdown_timeout_terminates_the_process() {
 	assert!(
 		!launcher.output.contains("Waiting to reconnect"),
 		"the launcher waited for the debugger of a world it was ending:\n{}",
+		launcher.output
+	);
+	launcher.disconnect(json!({}));
+}
+
+#[test]
+fn a_process_that_outlives_its_world_is_terminated() {
+	let (_dir, dme) = code("outlives_its_world", HELD);
+	let mut stand_in = StandIn::new(answers(&dme));
+	let launcher = launcher_with(&[("AUXTOOLS_TEST_PATIENCE", "1000")]);
+	let (mut launcher, world) = launched(&mut stand_in, launcher, &dme, json!({}));
+	let ended = Instant::now();
+	world.event(Response::ShuttingDown);
+	world.close();
+	launcher.event("terminated");
+	let exited = launcher.event("exited");
+	let took = ended.elapsed();
+	assert!(exited["body"]["exitCode"].is_number(), "no exit code: {}", exited);
+	assert!(
+		took >= GRACE && took < GRACE + Duration::from_secs(5),
+		"the process was ended after {:?}",
+		took
+	);
+	assert!(
+		launcher
+			.output
+			.contains("The world ended, but its process is still running after 1 seconds. Terminating process"),
+		"the launcher didn't say why:\n{}",
+		launcher.output
+	);
+	assert!(
+		!launcher.output.contains("The world restarted"),
+		"the launcher took a world that had ended for one that came back:\n{}",
 		launcher.output
 	);
 	launcher.disconnect(json!({}));

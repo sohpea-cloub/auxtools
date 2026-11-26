@@ -91,7 +91,8 @@ and reloads.
 
 **Stop** asks the world to shut down through `world/Del()`, so it can clean up, for example to
 save. After five seconds, the launcher ends the process. To end a launched world at once, press
-**Stop** again or use **Disconnect**. For attached worlds, see
+**Stop** again or use **Disconnect**. A launched world that ends on its own gets the same five
+seconds: DreamDaemon can take 20 seconds to exit when it can't reach BYOND's hub. For attached worlds, see
 [Attach to a running world](#attach-to-a-running-world).
 
 **Restart** runs the configuration's `preLaunchTask`, then reboots the world with
